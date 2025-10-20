@@ -10,6 +10,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
 
+# === ADICIONADOS ===
+from PIL import Image, ImageDraw, ImageFont
+from io import BytesIO
+
 # =============================
 # CONFIGURAÇÕES (coloque suas chaves)
 # =============================
@@ -24,10 +28,17 @@ TELEGRAM_TOKEN = "7900056631:AAHjG6iCDqQdGTfJI6ce0AZ0E2ilV2fV9RY"
 TELEGRAM_CHAT_ID = "-1002754276285"
 TELEGRAM_CHAT_ID_ALT2 = "-1002754276285"
 BASE_URL_TG = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+BASE_URL_TG_SENDPHOTO = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
 
 ALERTAS_PATH = "alertas.json"
 CACHE_JOGOS = "cache_jogos.json"
 CACHE_CLASSIFICACAO = "cache_classificacao.json"
+
+# Controle de comportamento
+ENVIAR_ARTES_PARA_TELEGRAM = True   # definir False para apenas salvar local
+SALVAR_ARTES_LOCAL = True
+PASTA_ARTES = "artes_resultados"
+os.makedirs(PASTA_ARTES, exist_ok=True)
 
 # =============================
 # Inicialização do Session State
@@ -50,11 +61,7 @@ def inicializar_session_state():
 # =============================
 # Mapeamento TheSportsDB -> Football-Data (comum)
 # =============================
-# =============================
-# Mapeamento TheSportsDB -> Football-Data (comum)
-# =============================
 TSD_TO_FD = {
-    # Ligas Europeias
     "English Premier League": 2021,
     "Premier League": 2021,
     "La Liga": 2014,
@@ -64,19 +71,15 @@ TSD_TO_FD = {
     "Ligue 1": 2015,
     "Primeira Liga": 2017,
     "UEFA Champions League": 2001,
-
-    # Ligas Brasileiras
     "Brazilian Serie A": 2013,
     "Campeonato Brasileiro Série A": 2013,
-    "Brazilian Serie B": 2014,  # ⚠️ Football-Data não tem oficialmente a Série B, ID fictício interno
+    "Brazilian Serie B": 2014,
     "Campeonato Brasileiro Série B": 2014,
-
-    # Outras Ligas Internacionais
-    "Major League Soccer": 2145,  # MLS (EUA/Canadá)
+    "Major League Soccer": 2145,
     "American Major League Soccer": 2145,
-    "Liga MX": 2150,              # México (ID estimado)
+    "Liga MX": 2150,
     "Mexican Primera League": 2150,
-    "Saudi Pro League": 2160,     # Arábia Saudita
+    "Saudi Pro League": 2160,
     "Saudi-Arabian Pro League": 2160,
 }
 
@@ -115,7 +118,7 @@ def salvar_cache_classificacao(dados):
     salvar_json(CACHE_CLASSIFICACAO, dados)
 
 # =============================
-# Envio Telegram
+# Envio Telegram (texto)
 # =============================
 def enviar_telegram(msg, chat_id=TELEGRAM_CHAT_ID):
     try:
@@ -445,6 +448,212 @@ def enviar_top_consolidado(top_jogos):
     return enviar_telegram(mensagem, TELEGRAM_CHAT_ID_ALT2)
 
 # =============================
+# NOVAS FUNÇÕES: Obter resultado + conferir + gerar arte + enviar imagem
+# =============================
+def obter_resultado_final(jogo):
+    """
+    Tenta obter o placar final do jogo.
+    - Se origem FD e tiver id -> usa endpoint /matches/{id}
+    - Se origem TSD -> tenta buscar por idEvent, se não, tenta busca por nome
+    Retorna (home_gols, away_gols) ou (None, None) se não encontrado.
+    """
+    try:
+        if jogo.get("origem") == "FD":
+            match_id = jogo.get("id")
+            if match_id:
+                try:
+                    url = f"{BASE_URL_FD}/matches/{match_id}"
+                    resp = requests.get(url, headers=HEADERS_FD, timeout=10)
+                    resp.raise_for_status()
+                    data = resp.json().get("match") or resp.json().get("match")
+                    # football-data retorna objeto "match" em alguns endpoints ou em "matches"
+                    # Tentar caminhos seguros:
+                    if "score" in resp.json():
+                        score = resp.json().get("score", {})
+                        ft = score.get("fullTime", {})
+                        return ft.get("home"), ft.get("away")
+                    # fallback:
+                    content = resp.json()
+                    if content.get("match") and content["match"].get("score"):
+                        ft = content["match"]["score"].get("fullTime", {})
+                        return ft.get("home"), ft.get("away")
+                except Exception:
+                    # tenta buscar nos matches do dia como fallback
+                    data_str = datetime.today().strftime("%Y-%m-%d")
+                    jogos = obter_jogos_fd(jogo.get("competition_id", ""), data_str)
+                    for m in jogos:
+                        try:
+                            if str(m.get("id")) == str(match_id):
+                                score = m.get("score", {}).get("fullTime", {})
+                                return score.get("home"), score.get("away")
+                        except:
+                            pass
+        # TheSportsDB branch
+        if jogo.get("origem") == "TSD":
+            # Se tivermos idEvent, usar events.php?id=
+            id_event = jogo.get("id")
+            if id_event and str(id_event).startswith("tsd_") is False:
+                try:
+                    url = f"{BASE_URL_TSD}/lookupevent.php"
+                    r = requests.get(url, params={"id": id_event}, timeout=10)
+                    r.raise_for_status()
+                    evs = r.json().get("events")
+                    if evs:
+                        ev = evs[0]
+                        return int(ev.get("intHomeScore") or 0), int(ev.get("intAwayScore") or 0)
+                except Exception:
+                    pass
+            # fallback por busca de evento por nomes
+            try:
+                q = f"{jogo['home']} vs {jogo['away']}"
+                url = f"{BASE_URL_TSD}/searchevents.php"
+                r = requests.get(url, params={"e": q}, timeout=10)
+                r.raise_for_status()
+                data = r.json().get("event") or r.json().get("events")
+                if data:
+                    ev = data[0]
+                    return int(ev.get("intHomeScore") or 0), int(ev.get("intAwayScore") or 0)
+            except Exception:
+                pass
+        # Se não encontrado
+        return None, None
+    except Exception as e:
+        print("Erro obter_resultado_final:", e)
+        return None, None
+
+def conferir_resultados(jogos):
+    """
+    Para cada jogo em 'jogos' tenta obter placar final e compara com tendência.
+    Retorna lista de resultados conferidos.
+    """
+    resultados = []
+    for jogo in jogos:
+        home_gols, away_gols = obter_resultado_final(jogo)
+        if home_gols is None and away_gols is None:
+            # Não conseguiu obter resultado para este jogo
+            continue
+
+        # Garantir inteiros
+        try:
+            home_gols = int(home_gols or 0)
+            away_gols = int(away_gols or 0)
+        except:
+            continue
+
+        total_gols = home_gols + away_gols
+        acertou = False
+        tendencia_text = (jogo.get("tendencia") or "").lower()
+
+        # Comparação simples baseada em texto de tendência
+        if "1.5" in tendencia_text:
+            acertou = total_gols > 1.5
+        elif "2.5" in tendencia_text:
+            acertou = total_gols > 2.5
+        elif "3.5" in tendencia_text:
+            acertou = total_gols > 3.5
+        else:
+            # fallback: se estimativa >= 2.5 considera Mais 2.5
+            estim = float(jogo.get("estimativa") or 0)
+            acertou = total_gols > 2.5 if estim >= 2.5 else total_gols > 1.5
+
+        resultados.append({
+            "id": jogo.get("id"),
+            "home": jogo.get("home"),
+            "away": jogo.get("away"),
+            "liga": jogo.get("liga"),
+            "tendencia": jogo.get("tendencia"),
+            "estimativa": jogo.get("estimativa"),
+            "confianca": jogo.get("confianca"),
+            "resultado_final": f"{home_gols} x {away_gols}",
+            "status": "🟢 GREEN" if acertou else "🔴 RED",
+            "origem": jogo.get("origem"),
+            "data_brt": jogo.get("data_brt"),
+            "hora": jogo.get("hora")
+        })
+    return resultados
+
+def gerar_arte_resultado(resultados):
+    """
+    Gera imagem PNG no estilo 'Elite Master' com os resultados conferidos.
+    Retorna BytesIO contendo a imagem.
+    """
+    largura, altura = 1080, 1350
+    bg_color = (12, 12, 12)
+    text_color = (235, 235, 235)
+    accent_color = (200, 200, 200)
+
+    img = Image.new("RGB", (largura, altura), bg_color)
+    draw = ImageDraw.Draw(img)
+
+    # Tentar carregar fontes mais legais, senão fallback
+    try:
+        font_titulo = ImageFont.truetype("arialbd.ttf", 56)
+        font_sub = ImageFont.truetype("arial.ttf", 28)
+        font_texto = ImageFont.truetype("arial.ttf", 34)
+        font_menor = ImageFont.truetype("arial.ttf", 22)
+    except Exception:
+        font_titulo = ImageFont.load_default()
+        font_sub = ImageFont.load_default()
+        font_texto = ImageFont.load_default()
+        font_menor = ImageFont.load_default()
+
+    # Título
+    titulo = "📊 Resultado Conferido"
+    w, h = draw.textsize(titulo, font=font_titulo)
+    draw.text(((largura - w) / 2, 60), titulo, fill=text_color, font=font_titulo)
+
+    # Subtítulo com data/hora de conferência
+    subt = datetime.now().strftime("%d/%m/%Y %H:%M")
+    w2, h2 = draw.textsize(subt, font=font_sub)
+    draw.text(((largura - w2) / 2, 60 + h + 8), subt, fill=accent_color, font=font_sub)
+
+    # Conteúdo: listar os resultados (até o que couber)
+    y = 170
+    espacamento = 120
+    for i, r in enumerate(resultados):
+        if y + espacamento > altura - 160:
+            break
+
+        # Linha 1: nome dos times + status emoji
+        linha1 = f"{r['home']}  x  {r['away']}    {r['status']}"
+        draw.text((80, y), linha1, fill=text_color, font=font_texto)
+
+        # Linha 2: tendência, estimativa, confiança
+        linha2 = f"{r['tendencia']}  |  Estim.: {r['estimativa']}  |  Conf.: {r['confianca']}%"
+        draw.text((80, y + 40), linha2, fill=accent_color, font=font_menor)
+
+        # Linha 3: placar final e liga
+        linha3 = f"Placar: {r['resultado_final']}  •  {r.get('liga','')}"
+        draw.text((80, y + 70), linha3, fill=accent_color, font=font_menor)
+
+        y += espacamento
+
+    # Rodapé
+    footer = "Elite Master • Resultado Conferido"
+    wf, hf = draw.textsize(footer, font=font_menor)
+    draw.text(((largura - wf) / 2, altura - 80), footer, fill=(150,150,150), font=font_menor)
+
+    # Salvar em BytesIO
+    output = BytesIO()
+    img.save(output, format="PNG")
+    output.seek(0)
+    return output
+
+def enviar_imagem_telegram(imagem_bytesio, caption="📊 Resultado Conferido - Elite Master", chat_id=TELEGRAM_CHAT_ID):
+    """
+    Envia imagem (BytesIO) para o Telegram usando sendPhoto.
+    """
+    try:
+        imagem_bytesio.seek(0)
+        files = {"photo": ("resultado.png", imagem_bytesio, "image/png")}
+        data = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
+        resp = requests.post(BASE_URL_TG_SENDPHOTO, files=files, data=data, timeout=15)
+        return resp.status_code == 200
+    except Exception as e:
+        st.warning(f"Erro ao enviar imagem para Telegram: {e}")
+        return False
+
+# =============================
 # UI e Lógica principal
 # =============================
 def main():
@@ -590,15 +799,52 @@ def main():
                 st.error("❌ Erro ao enviar top consolidado")
 
     # =================================================================================
-    # CONFERÊNCIA DE RESULTADOS (mantida do código original)
+    # CONFERÊNCIA DE RESULTADOS (integrada)
     # =================================================================================
     st.markdown("---")
     conferir_btn = st.button("📊 Conferir resultados (usar alertas salvo)")
     
     if conferir_btn:
-        # ... (manter a lógica original de conferência)
-        st.info("Conferindo resultados dos alertas salvos...")
-        # Sua lógica original de conferência aqui
+        if not st.session_state.jogos_encontrados:
+            st.warning("⚠️ Nenhum jogo salvo para conferir. Execute uma busca primeiro.")
+        else:
+            with st.spinner("Conferindo resultados e gerando artes..."):
+                resultados = conferir_resultados(st.session_state.jogos_encontrados)
+                st.session_state.resultados_conferidos = resultados
+
+                if resultados:
+                    st.success(f"✅ {len(resultados)} resultados conferidos!")
+                    st.subheader("📊 Resultado Conferido (detalhes)")
+                    for res in resultados:
+                        st.write(f"""
+                        🏟️ **{res['home']}** vs **{res['away']}**
+                        ⚽ Tendência: {res['tendencia']} | Estim.: {res['estimativa']} | Conf.: {res['confianca']}%
+                        📊 Placar Final: {res['resultado_final']}
+                        ✅ Resultado: {res['status']}
+                        """)
+                        st.divider()
+
+                    # Gerar arte
+                    imagem_io = gerar_arte_resultado(resultados)
+                    st.image(imagem_io, caption="📸 Arte gerada (Elite Master Resultado Conferido)", use_container_width=True)
+
+                    # Salvar localmente (opcional)
+                    if SALVAR_ARTES_LOCAL:
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        nome_arquivo = os.path.join(PASTA_ARTES, f"resultado_conferido_{timestamp}.png")
+                        with open(nome_arquivo, "wb") as f:
+                            f.write(imagem_io.getbuffer())
+                        st.info(f"🖼️ Arte salva localmente: {nome_arquivo}")
+
+                    # Enviar ao Telegram (opcional)
+                    if ENVIAR_ARTES_PARA_TELEGRAM:
+                        enviado = enviar_imagem_telegram(imagem_io, caption="📊 Resultado Conferido - Elite Master")
+                        if enviado:
+                            st.success("✅ Imagem enviada com sucesso ao Telegram!")
+                        else:
+                            st.warning("⚠️ Arte gerada mas não enviada ao Telegram. Verifique token/chat_id.")
+                else:
+                    st.warning("Nenhum resultado encontrado nas APIs para conferência.")
 
 if __name__ == "__main__":
     main()
