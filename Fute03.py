@@ -55,15 +55,7 @@ def inicializar_session_state():
 # =============================
 TSD_TO_FD = {
     # Ligas Europeias
-    "English Premier League": 2021,
-    "Premier League": 2021,
-    "La Liga": 2014,
-    "Primera División": 2014,
-    "Serie A": 2019,
-    "Bundesliga": 2002,
-    "Ligue 1": 2015,
-    "Primeira Liga": 2017,
-    "UEFA Champions League": 2001,
+   
 
     # Ligas Brasileiras
     "Brazilian Serie A": 2013,
