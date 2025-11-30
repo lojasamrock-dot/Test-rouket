@@ -16,3 +16,8 @@ reportlab
 tensorflow
 psutil
 flask
+fastapi
+httpx
+pillow
+cairosvg
+feedparser

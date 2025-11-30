@@ -4,6 +4,9 @@ import numpy as np
 import random
 from collections import Counter
 from catboost import CatBoostClassifier
+import itertools
+import math
+import json
 
 st.set_page_config(page_title="Lotofácil Inteligente", layout="centered")
 
@@ -53,6 +56,262 @@ def capturar_ultimos_resultados(qtd=250):
     except Exception as e:
         st.error(f"Erro ao acessar API: {type(e).__name__}: {e}")
         return [], None
+
+# =========================
+# NOVA CLASSE: Análise Combinatória
+# =========================
+class AnaliseCombinatoria:
+    def __init__(self, concursos):
+        self.concursos = concursos
+        self.numeros = list(range(1, 26))
+        self.primos = {2, 3, 5, 7, 11, 13, 17, 19, 23}
+        
+    def calcular_estatisticas_base(self):
+        """Calcula estatísticas base dos concursos históricos"""
+        if not self.concursos:
+            return {}
+            
+        stats = {
+            'media_pares': [],
+            'media_soma': [],
+            'media_primos': [],
+            'distribuicoes': []
+        }
+        
+        for concurso in self.concursos:
+            pares = sum(1 for n in concurso if n % 2 == 0)
+            soma = sum(concurso)
+            primos = sum(1 for n in concurso if n in self.primos)
+            
+            stats['media_pares'].append(pares)
+            stats['media_soma'].append(soma)
+            stats['media_primos'].append(primos)
+            
+        return stats
+
+    def gerar_combinacoes_otimizadas(self, tamanhos, quantidade_por_tamanho=1000):
+        """Gera combinações otimizadas com filtros estatísticos"""
+        todas_combinacoes = {}
+        
+        for tamanho in tamanhos:
+            combinacoes_geradas = []
+            tentativas = 0
+            max_tentativas = quantidade_por_tamanho * 3
+            
+            while len(combinacoes_geradas) < quantidade_por_tamanho and tentativas < max_tentativas:
+                combo = sorted(random.sample(self.numeros, tamanho))
+                
+                if self.validar_combinacao(combo, tamanho):
+                    # Evitar duplicatas
+                    if combo not in combinacoes_geradas:
+                        combinacoes_geradas.append(combo)
+                
+                tentativas += 1
+            
+            # Analisar e ranquear as combinações
+            combinacoes_ranqueadas = self.ranquear_combinacoes(combinacoes_geradas, tamanho)
+            todas_combinacoes[tamanho] = combinacoes_ranqueadas[:quantidade_por_tamanho]
+            
+        return todas_combinacoes
+
+    def validar_combinacao(self, combinacao, tamanho):
+        """Valida combinação com base em estatísticas históricas"""
+        pares = sum(1 for n in combinacao if n % 2 == 0)
+        impares = len(combinacao) - pares
+        soma = sum(combinacao)
+        primos = sum(1 for n in combinacao if n in self.primos)
+        
+        # Critérios baseados no tamanho da combinação
+        if tamanho == 15:
+            return (6 <= pares <= 9 and 
+                    170 <= soma <= 210 and
+                    3 <= primos <= 7)
+        
+        elif tamanho == 14:
+            return (5 <= pares <= 8 and 
+                    160 <= soma <= 200 and
+                    2 <= primos <= 6)
+        
+        elif tamanho == 13:
+            return (5 <= pares <= 8 and 
+                    150 <= soma <= 190 and
+                    2 <= primos <= 6)
+        
+        elif tamanho == 12:
+            return (4 <= pares <= 7 and 
+                    130 <= soma <= 170 and
+                    2 <= primos <= 5)
+        
+        return True
+
+    def ranquear_combinacoes(self, combinacoes, tamanho):
+        """Ranqueia combinações por probabilidade"""
+        scores = []
+        
+        for combo in combinacoes:
+            score = self.calcular_score_combinacao(combo, tamanho)
+            scores.append((combo, score))
+        
+        # Ordenar por score (maiores primeiro)
+        return sorted(scores, key=lambda x: x[1], reverse=True)
+
+    def calcular_score_combinacao(self, combinacao, tamanho):
+        """Calcula score baseado em múltiplos fatores estatísticos"""
+        score = 0
+        
+        # Fator par/ímpar
+        pares = sum(1 for n in combinacao if n % 2 == 0)
+        if tamanho == 15 and 6 <= pares <= 8:
+            score += 3
+        elif tamanho == 14 and 5 <= pares <= 8:
+            score += 3
+        elif tamanho == 13 and 5 <= pares <= 7:
+            score += 3
+        elif tamanho == 12 and 4 <= pares <= 6:
+            score += 3
+            
+        # Fator soma
+        soma = sum(combinacao)
+        if tamanho == 15 and 180 <= soma <= 200:
+            score += 3
+        elif tamanho == 14 and 160 <= soma <= 190:
+            score += 3
+        elif tamanho == 13 and 150 <= soma <= 180:
+            score += 3
+        elif tamanho == 12 and 130 <= soma <= 160:
+            score += 3
+            
+        # Fator números consecutivos
+        consecutivos = self.contar_consecutivos(combinacao)
+        if consecutivos <= 4:
+            score += 2
+            
+        # Fator números primos
+        primos = sum(1 for n in combinacao if n in self.primos)
+        if 3 <= primos <= 6:
+            score += 2
+            
+        # Fator de distribuição
+        if self.validar_distribuicao(combinacao):
+            score += 2
+            
+        # Fator de frequência histórica
+        score += self.calcular_score_frequencia(combinacao)
+        
+        return score
+
+    def contar_consecutivos(self, combinacao):
+        """Conta números consecutivos na combinação"""
+        consecutivos = 0
+        for i in range(len(combinacao)-1):
+            if combinacao[i+1] - combinacao[i] == 1:
+                consecutivos += 1
+        return consecutivos
+
+    def validar_distribuicao(self, combinacao):
+        """Valida distribuição por faixas de números"""
+        faixa1 = sum(1 for n in combinacao if 1 <= n <= 9)   # 1-9
+        faixa2 = sum(1 for n in combinacao if 10 <= n <= 19) # 10-19
+        faixa3 = sum(1 for n in combinacao if 20 <= n <= 25) # 20-25
+        
+        total = len(combinacao)
+        if total == 15:
+            return (faixa1 >= 4 and faixa2 >= 5 and faixa3 >= 4)
+        elif total == 14:
+            return (faixa1 >= 4 and faixa2 >= 4 and faixa3 >= 4)
+        elif total == 13:
+            return (faixa1 >= 3 and faixa2 >= 4 and faixa3 >= 3)
+        elif total == 12:
+            return (faixa1 >= 3 and faixa2 >= 4 and faixa3 >= 3)
+        
+        return True
+
+    def calcular_score_frequencia(self, combinacao):
+        """Calcula score baseado na frequência histórica dos números"""
+        if not self.concursos:
+            return 0
+            
+        # Calcular frequência dos números nos últimos concursos
+        freq = Counter()
+        for concurso in self.concursos[:50]:  # Últimos 50 concursos
+            for numero in concurso:
+                freq[numero] += 1
+                
+        # Score baseado na frequência média dos números na combinação
+        freq_media = sum(freq[n] for n in combinacao) / len(combinacao)
+        freq_max = max(freq.values()) if freq.values() else 1
+        
+        # Normalizar score (0 a 2 pontos)
+        return (freq_media / freq_max) * 2
+
+    def gerar_relatorio_estatistico(self, combinacoes_por_tamanho):
+        """Gera relatório estatístico das combinações"""
+        relatorio = {}
+        
+        for tamanho, combinacoes in combinacoes_por_tamanho.items():
+            if not combinacoes:
+                continue
+                
+            stats = {
+                'total_combinacoes': len(combinacoes),
+                'media_score': np.mean([score for _, score in combinacoes]),
+                'melhor_score': max([score for _, score in combinacoes]),
+                'pior_score': min([score for _, score in combinacoes]),
+                'exemplos_top5': combinacoes[:5]
+            }
+            relatorio[tamanho] = stats
+            
+        return relatorio
+
+    # NOVO MÉTODO: Converter combinação para formato de cartão 5x5
+    def formatar_como_cartao(self, combinacao):
+        """Formata uma combinação como cartão da Lotofácil 5x5"""
+        cartao = []
+        for i in range(5):
+            linha = []
+            for j in range(5):
+                numero = i * 5 + j + 1
+                if numero in combinacao:
+                    linha.append(f"[{numero:2d}]")  # Número marcado
+                else:
+                    linha.append(f" {numero:2d} ")  # Número não marcado
+            cartao.append(linha)
+        return cartao
+
+    # NOVO MÉTODO: Gerar conteúdo para download em formato de cartão
+    def gerar_conteudo_cartoes(self, combinacoes_por_tamanho, top_n=10):
+        """Gera conteúdo formatado como cartões para download"""
+        conteudo = "CARTÕES LOTOFÁCIL - COMBINAÇÕES OTIMIZADAS\n"
+        conteudo += "=" * 50 + "\n\n"
+        
+        for tamanho in sorted(combinacoes_por_tamanho.keys()):
+            combinacoes = combinacoes_por_tamanho[tamanho][:top_n]
+            
+            if not combinacoes:
+                continue
+                
+            conteudo += f"COMBINAÇÕES COM {tamanho} NÚMEROS (Top {top_n})\n"
+            conteudo += "-" * 40 + "\n\n"
+            
+            for idx, (combo, score) in enumerate(combinacoes, 1):
+                conteudo += f"Cartão {idx} (Score: {score:.1f}):\n"
+                cartao = self.formatar_como_cartao(combo)
+                
+                for linha in cartao:
+                    conteudo += " ".join(linha) + "\n"
+                
+                # Adicionar lista dos números selecionados
+                numeros_selecionados = [n for n in combo]
+                conteudo += f"Números: {numeros_selecionados}\n"
+                
+                # Estatísticas do cartão
+                pares = sum(1 for n in combo if n % 2 == 0)
+                primos = sum(1 for n in combo if n in self.primos)
+                soma = sum(combo)
+                conteudo += f"Pares: {pares}, Ímpares: {len(combo)-pares}, Primos: {primos}, Soma: {soma}\n"
+                conteudo += "\n" + "=" * 50 + "\n\n"
+        
+        return conteudo
 
 # =========================
 # IA Avançada com CatBoost
@@ -286,16 +545,37 @@ def sugerir_padroes_futuros(freq_linhas, freq_colunas, n=5):
     return futuros
 
 # =========================
+# FUNÇÕES DE PERSISTÊNCIA
+# =========================
+def salvar_estado():
+    """Salva o estado atual da sessão"""
+    estado = {
+        'concursos': st.session_state.concursos,
+        'cartoes_gerados': st.session_state.cartoes_gerados,
+        'cartoes_gerados_padrao': st.session_state.cartoes_gerados_padrao,
+        'info_ultimo_concurso': st.session_state.info_ultimo_concurso,
+        'combinacoes_combinatorias': st.session_state.combinacoes_combinatorias
+    }
+    return estado
+
+def carregar_estado():
+    """Carrega o estado da sessão (para futuras implementações com arquivo)"""
+    # Por enquanto, apenas inicializa se não existir
+    if "concursos" not in st.session_state:
+        st.session_state.concursos = []
+    if "cartoes_gerados" not in st.session_state:
+        st.session_state.cartoes_gerados = []
+    if "cartoes_gerados_padrao" not in st.session_state:
+        st.session_state.cartoes_gerados_padrao = []
+    if "info_ultimo_concurso" not in st.session_state:
+        st.session_state.info_ultimo_concurso = None
+    if "combinacoes_combinatorias" not in st.session_state:
+        st.session_state.combinacoes_combinatorias = {}
+
+# =========================
 # Streamlit - Estado
 # =========================
-if "concursos" not in st.session_state:
-    st.session_state.concursos = []
-if "cartoes_gerados" not in st.session_state:
-    st.session_state.cartoes_gerados = []
-if "cartoes_gerados_padrao" not in st.session_state:
-    st.session_state.cartoes_gerados_padrao = []
-if "info_ultimo_concurso" not in st.session_state:
-    st.session_state.info_ultimo_concurso = None
+carregar_estado()  # Inicializa o estado
 
 st.markdown("<h1 style='text-align: center;'>Lotofácil Inteligente</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center;'>SAMUCJ TECHNOLOGY</p>", unsafe_allow_html=True)
@@ -322,11 +602,13 @@ if st.session_state.concursos:
     quentes_frios = ia.quentes_frios()
     pares_impares_primos = ia.pares_impares_primos()
 
+    # NOVA ABA: Análises Combinatórias
     abas = st.tabs([
         "📊 Estatísticas", 
         "🧠 Gerar Cartões", 
         "🧩 Gerar Cartões por Padrões",
-        "📐 Padrões Linha×Coluna",      # <- NOVA ABA
+        "🔢 Análises Combinatórias",  # NOVA ABA
+        "📐 Padrões Linha×Coluna",
         "✅ Conferência", 
         "📤 Conferir Arquivo TXT"
     ])
@@ -371,15 +653,161 @@ if st.session_state.concursos:
             conteudo_padrao = "\n".join(",".join(str(n) for n in cartao) for cartao in st.session_state.cartoes_gerados_padrao)
             st.download_button("💾 Baixar Arquivo Padrões", data=conteudo_padrao, file_name="cartoes_padroes_lotofacil.txt", mime="text/plain")
 
-    # Aba 4 - Padrões Linha×Coluna (NOVA)
+    # NOVA ABA 4 - Análises Combinatórias
     with abas[3]:
+        st.subheader("🔢 Análises Combinatórias - Combinações Matemáticas")
+        
+        # Inicializar analisador combinatorio
+        analisador_combinatorio = AnaliseCombinatoria(st.session_state.concursos)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### ⚙️ Configurações")
+            tamanhos_selecionados = st.multiselect(
+                "Selecione os tamanhos de combinação:",
+                [12, 13, 14, 15],
+                default=[14, 15]
+            )
+            
+            quantidade_por_tamanho = st.slider(
+                "Quantidade de combinações por tamanho:",
+                min_value=10,
+                max_value=500,
+                value=100,
+                step=10
+            )
+            
+            if st.button("🎯 Gerar Combinações Otimizadas", type="primary"):
+                with st.spinner("Gerando e analisando combinações..."):
+                    combinacoes = analisador_combinatorio.gerar_combinacoes_otimizadas(
+                        tamanhos_selecionados, 
+                        quantidade_por_tamanho
+                    )
+                    st.session_state.combinacoes_combinatorias = combinacoes
+                    st.success(f"Combinações geradas com sucesso!")
+        
+        with col2:
+            st.markdown("### 📈 Estatísticas dos Filtros")
+            stats_base = analisador_combinatorio.calcular_estatisticas_base()
+            if stats_base:
+                st.write(f"**Média de pares (histórico):** {np.mean(stats_base['media_pares']):.1f}")
+                st.write(f"**Média de soma (histórico):** {np.mean(stats_base['media_soma']):.1f}")
+                st.write(f"**Média de primos (histórico):** {np.mean(stats_base['media_primos']):.1f}")
+        
+        # Mostrar resultados
+        if st.session_state.combinacoes_combinatorias:
+            st.markdown("### 🎯 Combinações Geradas (Top 10 por Tamanho)")
+            
+            for tamanho in sorted(st.session_state.combinacoes_combinatorias.keys()):
+                combinacoes_tamanho = st.session_state.combinacoes_combinatorias[tamanho]
+                
+                if combinacoes_tamanho:
+                    st.markdown(f"#### 📊 Combinações com {tamanho} números (Top 10)")
+                    
+                    # Criar colunas para exibição
+                    cols = st.columns(2)
+                    for idx, (combo, score) in enumerate(combinacoes_tamanho[:10]):
+                        with cols[idx % 2]:
+                            st.code(f"Score: {score:.1f} → {combo}")
+            
+            # Relatório estatístico
+            st.markdown("### 📋 Relatório Estatístico")
+            relatorio = analisador_combinatorio.gerar_relatorio_estatistico(
+                st.session_state.combinacoes_combinatorias
+            )
+            
+            for tamanho, stats in relatorio.items():
+                with st.expander(f"Estatísticas para {tamanho} números"):
+                    st.write(f"Total de combinações: {stats['total_combinacoes']}")
+                    st.write(f"Score médio: {stats['media_score']:.2f}")
+                    st.write(f"Melhor score: {stats['melhor_score']:.2f}")
+                    st.write(f"Pior score: {stats['pior_score']:.2f}")
+            
+            # NOVO: Exportar combinações em formato de cartão
+            st.markdown("### 💾 Exportar Combinações")
+            
+            col_export1, col_export2 = st.columns(2)
+            
+            with col_export1:
+                # Botão para baixar em formato lista
+                conteudo_combinacoes = ""
+                for tamanho, combinacoes_list in st.session_state.combinacoes_combinatorias.items():
+                    conteudo_combinacoes += f"# Combinações com {tamanho} números\n"
+                    for combo, score in combinacoes_list[:20]:  # Top 20 de cada
+                        conteudo_combinacoes += f"{','.join(map(str, combo))} # Score: {score:.1f}\n"
+                    conteudo_combinacoes += "\n"
+                
+                st.download_button(
+                    "📥 Baixar Todas as Combinações (Lista)",
+                    data=conteudo_combinacoes,
+                    file_name="combinacoes_otimizadas.txt",
+                    mime="text/plain"
+                )
+            
+            with col_export2:
+                # NOVO BOTÃO: Baixar Top 10 como Cartões
+                conteudo_cartoes = analisador_combinatorio.gerar_conteudo_cartoes(
+                    st.session_state.combinacoes_combinatorias, 
+                    top_n=10
+                )
+                
+                st.download_button(
+                    "📥 Baixar Top 10 Cartões (Formato Cartão)",
+                    data=conteudo_cartoes,
+                    file_name="cartoes_lotofacil_formatados.txt",
+                    mime="text/plain"
+                )
+            
+            # NOVO: Visualização dos cartões em formato de matriz
+            st.markdown("### 👁️ Visualização dos Cartões (Top 3)")
+            
+            for tamanho in sorted(st.session_state.combinacoes_combinatorias.keys()):
+                combinacoes_tamanho = st.session_state.combinacoes_combinatorias[tamanho][:3]  # Top 3
+                
+                if combinacoes_tamanho:
+                    st.markdown(f"#### 🎯 Cartões com {tamanho} números")
+                    
+                    for idx, (combo, score) in enumerate(combinacoes_tamanho, 1):
+                        st.write(f"**Cartão {idx}** (Score: {score:.1f})")
+                        
+                        # Criar visualização do cartão
+                        cartao = analisador_combinatorio.formatar_como_cartao(combo)
+                        
+                        # Exibir como tabela formatada
+                        col1, col2, col3 = st.columns([1, 2, 1])
+                        with col2:
+                            for linha in cartao:
+                                st.code(" ".join(linha))
+                        
+                        # Estatísticas do cartão
+                        pares = sum(1 for n in combo if n % 2 == 0)
+                        primos = sum(1 for n in combo if n in analisador_combinatorio.primos)
+                        soma = sum(combo)
+                        
+                        st.write(f"**Estatísticas:** Pares: {pares}, Ímpares: {len(combo)-pares}, Primos: {primos}, Soma: {soma}")
+                        st.write("---")
+
+    # Aba 5 - Padrões Linha×Coluna (antiga 4)
+    with abas[4]:
         st.subheader("📐 Padrões de Linhas × Colunas")
         concursos = st.session_state.concursos
         if not concursos:
             st.info("Capture concursos na seção acima para analisar os padrões.")
         else:
-            janela_lc = st.slider("Concursos a considerar (mais recentes)", 20, min(500, len(concursos)), min(100, len(concursos)), 10)
-            subset = concursos[:janela_lc]  # concursos já estão em ordem do mais recente para trás
+            # CORREÇÃO AQUI: Slider com parâmetros nomeados corretamente
+            max_concursos = min(500, len(concursos))
+            valor_padrao = min(100, len(concursos))
+            
+            janela_lc = st.slider(
+                "Concursos a considerar (mais recentes)", 
+                min_value=20, 
+                max_value=max_concursos, 
+                value=valor_padrao, 
+                step=10
+            )
+            
+            subset = concursos[:janela_lc]
 
             if st.button("🔍 Analisar Padrões Linha×Coluna"):
                 freq_linhas, freq_colunas = contar_padroes_linha_coluna(subset)
@@ -397,8 +825,8 @@ if st.session_state.concursos:
                 for i, p in enumerate(futuros, 1):
                     st.write(f"**Padrão Futuro {i}:** Linhas {p['linhas']} | Colunas {p['colunas']}")
 
-    # Aba 5 - Conferência
-    with abas[4]:
+    # Aba 6 - Conferência (ATUALIZADA)
+    with abas[5]:
         st.subheader("🎯 Conferência de Cartões")
         if st.session_state.info_ultimo_concurso:
             info = st.session_state.info_ultimo_concurso
@@ -406,18 +834,60 @@ if st.session_state.concursos:
                 f"<h4 style='text-align: center;'>Último Concurso #{info['numero']} ({info['data']})<br>Dezenas: {info['dezenas']}</h4>",
                 unsafe_allow_html=True
             )
-            if st.button("🔍 Conferir agora"):
-                for i, cartao in enumerate(st.session_state.cartoes_gerados,1):
-                    acertos = len(set(cartao) & set(info['dezenas']))
-                    st.write(f"Jogo {i}: {cartao} - **{acertos} acertos**")
+            
+            if st.button("🔍 Conferir Todos os Cartões"):
+                # Conferir Cartões IA
+                if st.session_state.cartoes_gerados:
+                    st.markdown("### 🧠 Cartões Gerados por IA")
+                    for i, cartao in enumerate(st.session_state.cartoes_gerados, 1):
+                        acertos = len(set(cartao) & set(info['dezenas']))
+                        st.write(f"Jogo {i}: {cartao} - **{acertos} acertos**")
+                
+                # Conferir Cartões por Padrões
                 if st.session_state.cartoes_gerados_padrao:
-                    st.markdown("**Cartões por Padrões:**")
-                    for i, cartao in enumerate(st.session_state.cartoes_gerados_padrao,1):
+                    st.markdown("### 🧩 Cartões por Padrões")
+                    for i, cartao in enumerate(st.session_state.cartoes_gerados_padrao, 1):
                         acertos = len(set(cartao) & set(info['dezenas']))
                         st.write(f"Cartão {i}: {cartao} - **{acertos} acertos**")
+                
+                # NOVO: Conferir Combinações Combinatorias
+                if st.session_state.combinacoes_combinatorias:
+                    st.markdown("### 🔢 Combinações Combinatorias (Top 3 por Tamanho)")
+                    analisador_combinatorio = AnaliseCombinatoria(st.session_state.concursos)
+                    
+                    for tamanho in sorted(st.session_state.combinacoes_combinatorias.keys()):
+                        combinacoes_tamanho = st.session_state.combinacoes_combinatorias[tamanho][:3]  # Top 3
+                        
+                        if combinacoes_tamanho:
+                            st.markdown(f"#### 📊 Combinações com {tamanho} números")
+                            
+                            for idx, (combo, score) in enumerate(combinacoes_tamanho, 1):
+                                acertos = len(set(combo) & set(info['dezenas']))
+                                
+                                # Mostrar cartão formatado
+                                cartao = analisador_combinatorio.formatar_como_cartao(combo)
+                                
+                                col1, col2 = st.columns([2, 1])
+                                with col1:
+                                    st.write(f"**Cartão {idx}** (Score: {score:.1f}) - **{acertos} acertos**")
+                                    for linha in cartao:
+                                        st.code(" ".join(linha))
+                                
+                                with col2:
+                                    # Estatísticas
+                                    pares = sum(1 for n in combo if n % 2 == 0)
+                                    primos = sum(1 for n in combo if n in analisador_combinatorio.primos)
+                                    soma = sum(combo)
+                                    st.write(f"**Estatísticas:**")
+                                    st.write(f"Pares: {pares}")
+                                    st.write(f"Ímpares: {len(combo)-pares}")
+                                    st.write(f"Primos: {primos}")
+                                    st.write(f"Soma: {soma}")
+                                
+                                st.write("---")
 
-    # Aba 6 - Conferir Arquivo TXT
-    with abas[5]:
+    # Aba 7 - Conferir Arquivo TXT (antiga 6)
+    with abas[6]:
         st.subheader("📤 Conferir Cartões de um Arquivo TXT")
         uploaded_file = st.file_uploader("Faça upload do arquivo TXT com os cartões (15 dezenas separadas por vírgula)", type="txt")
         if uploaded_file:
@@ -445,5 +915,26 @@ if st.session_state.concursos:
                             st.write(f"Cartão {i}: {cartao} - **{acertos} acertos**")
             else:
                 st.warning("Nenhum cartão válido foi encontrado no arquivo.")
+
+# Botão para limpar todos os dados (útil para desenvolvimento)
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("⚙️ Gerenciamento de Dados")
+    if st.button("🗑️ Limpar Todos os Dados"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+    
+    # Mostrar estatísticas de uso
+    st.markdown("### 📊 Estatísticas da Sessão")
+    if st.session_state.concursos:
+        st.write(f"Concursos carregados: {len(st.session_state.concursos)}")
+    if st.session_state.cartoes_gerados:
+        st.write(f"Cartões IA gerados: {len(st.session_state.cartoes_gerados)}")
+    if st.session_state.cartoes_gerados_padrao:
+        st.write(f"Cartões por padrões: {len(st.session_state.cartoes_gerados_padrao)}")
+    if st.session_state.combinacoes_combinatorias:
+        total_combinacoes = sum(len(combinacoes) for combinacoes in st.session_state.combinacoes_combinatorias.values())
+        st.write(f"Combinações combinatorias: {total_combinacoes}")
 
 st.markdown("<hr><p style='text-align: center;'>SAMUCJ TECHNOLOGY</p>", unsafe_allow_html=True)
