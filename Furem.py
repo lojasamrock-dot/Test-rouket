@@ -1,4435 +1,3708 @@
 import streamlit as st
-from datetime import datetime, timedelta
-import requests
 import json
 import os
-import io
+import requests
+import logging
+import numpy as np
 import pandas as pd
-import time
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
-
-# Pillow
-from PIL import Image, ImageDraw, ImageFont, ImageOps
-
-# =============================
-# Configurações e Segurança
-# =============================
-
-# Versão de teste - usar apenas variáveis de ambiente
-API_KEY = os.getenv("FOOTBALL_API_KEY", "")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "") 
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-TELEGRAM_CHAT_ID_ALT2 = os.getenv("TELEGRAM_CHAT_ID_ALT2", "")
-
-# Validar credenciais
-if not all([API_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID]):
-    st.error("❌ Credenciais não configuradas. Configure as variáveis de ambiente:")
-    st.code("""
-    FOOTBALL_API_KEY=sua_api_key_aqui
-    TELEGRAM_TOKEN=seu_bot_token_aqui  
-    TELEGRAM_CHAT_ID=seu_chat_id_aqui
-    TELEGRAM_CHAT_ID_ALT2=seu_chat_id_alternativo_aqui
-    """)
-    st.stop()
-
-HEADERS = {"X-Auth-Token": API_KEY}
-BASE_URL_FD = "https://api.football-data.org/v4"
-BASE_URL_TG = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-
-# Constantes
-ALERTAS_PATH = "alertas.json"
-ALERTAS_AMBAS_MARCAM_PATH = "alertas_ambas_marcam.json"
-ALERTAS_CARTOES_PATH = "alertas_cartoes.json"
-ALERTAS_ESCANTEIOS_PATH = "alertas_escanteios.json"
-ALERTAS_COMPOSTOS_PATH = "alertas_compostos.json"  # NOVO
-CACHE_JOGOS = "cache_jogos.json"
-CACHE_CLASSIFICACAO = "cache_classificacao.json"
-CACHE_ESTATISTICAS = "cache_estatisticas.json"
-CACHE_TIMEOUT = 3600  # 1 hora em segundos
-
-# Histórico de conferências
-HISTORICO_PATH = "historico_conferencias.json"
-HISTORICO_AMBAS_MARCAM_PATH = "historico_ambas_marcam.json"
-HISTORICO_CARTOES_PATH = "historico_cartoes.json"
-HISTORICO_ESCANTEIOS_PATH = "historico_escanteios.json"
-HISTORICO_COMPOSTOS_PATH = "historico_compostos.json"  # NOVO
+from collections import Counter, deque
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score
+from sklearn.utils import resample
+import joblib
+from streamlit_autorefresh import st_autorefresh
+import pickle
 
 # =============================
-# SISTEMA DE RATE LIMIT AUTOMÁTICO
+# CONFIGURAÇÕES DE PERSISTÊNCIA
 # =============================
+SESSION_DATA_PATH = "session_data.pkl"
+HISTORICO_PATH = "historico_coluna_duzia.json"
+ML_MODEL_PATH = "ml_roleta_model.pkl"
+SCALER_PATH = "ml_scaler.pkl"
+META_PATH = "ml_meta.pkl"
 
-RATE_LIMIT_CACHE = "rate_limit_cache.json"
-RATE_LIMIT_CALLS_PER_MINUTE = 8  # Limite conservador para a API
-RATE_LIMIT_WAIT_TIME = 70  # Segundos para esperar (1 minuto + margem)
-
-class RateLimitManager:
-    """Gerenciador de Rate Limit automático para a API"""
-    
-    def __init__(self):
-        self.cache_file = RATE_LIMIT_CACHE
-        self.calls_per_minute = RATE_LIMIT_CALLS_PER_MINUTE
-        self.wait_time = RATE_LIMIT_WAIT_TIME
-        self._ensure_cache()
-    
-    def _ensure_cache(self):
-        """Garante que o cache de rate limit existe"""
-        try:
-            if not os.path.exists(self.cache_file):
-                cache_data = {
-                    "last_reset": datetime.now().timestamp(),
-                    "call_count": 0,
-                    "last_call_time": 0,
-                    "pause_until": 0
-                }
-                with open(self.cache_file, 'w') as f:
-                    json.dump(cache_data, f)
-        except Exception:
-            pass
-    
-    def _load_cache(self):
-        """Carrega o cache de rate limit"""
-        try:
-            with open(self.cache_file, 'r') as f:
-                return json.load(f)
-        except:
-            return {
-                "last_reset": datetime.now().timestamp(),
-                "call_count": 0,
-                "last_call_time": 0,
-                "pause_until": 0
-            }
-    
-    def _save_cache(self, cache_data):
-        """Salva o cache de rate limit"""
-        try:
-            with open(self.cache_file, 'w') as f:
-                json.dump(cache_data, f)
-        except Exception:
-            pass
-    
-    def check_rate_limit(self):
-        """Verifica e aplica o rate limit automaticamente"""
-        cache = self._load_cache()
-        now = datetime.now().timestamp()
+def salvar_sessao():
+    """Salva todos os dados da sessão em arquivo"""
+    try:
+        session_data = {
+            'historico': st.session_state.historico,
+            'telegram_token': st.session_state.telegram_token,
+            'telegram_chat_id': st.session_state.telegram_chat_id,
+            'sistema_acertos': st.session_state.sistema.acertos,
+            'sistema_erros': st.session_state.sistema.erros,
+            'sistema_estrategias_contador': st.session_state.sistema.estrategias_contador,
+            'sistema_historico_desempenho': st.session_state.sistema.historico_desempenho,
+            'sistema_contador_sorteios_global': st.session_state.sistema.contador_sorteios_global,
+            'sistema_sequencia_erros': st.session_state.sistema.sequencia_erros,
+            'sistema_ultima_estrategia_erro': st.session_state.sistema.ultima_estrategia_erro,
+            'sistema_sequencia_acertos': st.session_state.sistema.sequencia_acertos,
+            'sistema_ultima_combinacao_acerto': st.session_state.sistema.ultima_combinacao_acerto,
+            'sistema_historico_combinacoes_acerto': st.session_state.sistema.historico_combinacoes_acerto,
+            'zonas_historico': list(st.session_state.sistema.estrategia_zonas.historico),
+            'zonas_stats': st.session_state.sistema.estrategia_zonas.stats_zonas,
+            'midas_historico': list(st.session_state.sistema.estrategia_midas.historico),
+            'ml_historico': list(st.session_state.sistema.estrategia_ml.historico),
+            'ml_contador_sorteios': st.session_state.sistema.estrategia_ml.contador_sorteios,
+            'ml_sequencias_padroes': st.session_state.sistema.estrategia_ml.sequencias_padroes,
+            'ml_metricas_padroes': st.session_state.sistema.estrategia_ml.metricas_padroes,
+            'estrategia_selecionada': st.session_state.sistema.estrategia_selecionada,
+            'sistema_historico_combinacoes': st.session_state.sistema.historico_combinacoes,
+            'sistema_combinacoes_quentes': st.session_state.sistema.combinacoes_quentes,
+            'sistema_combinacoes_frias': st.session_state.sistema.combinacoes_frias,
+            # NOVO: Dados da estratégia Triângulo
+            'triangulo_historico': list(st.session_state.sistema.estrategia_triangulo.historico),
+            'triangulo_stats': st.session_state.sistema.estrategia_triangulo.stats_triangulos,
+            'triangulo_historico_entradas': st.session_state.sistema.estrategia_triangulo.historico_entradas,
+            'triangulo_ultimo_gatilho': st.session_state.sistema.estrategia_triangulo.ultimo_gatilho
+        }
         
-        # Verificar se estamos em pausa forçada
-        if now < cache.get("pause_until", 0):
-            wait_remaining = cache["pause_until"] - now
-            st.warning(f"⏳ Rate limit: Aguardando {wait_remaining:.1f}s...")
-            time.sleep(wait_remaining)
-            # Recarregar cache após espera
-            cache = self._load_cache()
-            now = datetime.now().timestamp()
+        with open(SESSION_DATA_PATH, 'wb') as f:
+            pickle.dump(session_data, f)
         
-        # Verificar se precisa resetar o contador (a cada minuto)
-        if now - cache["last_reset"] > 60:  # Mais de 1 minuto
-            cache["last_reset"] = now
-            cache["call_count"] = 0
-        
-        # Verificar se excedeu o limite
-        if cache["call_count"] >= self.calls_per_minute:
-            time_since_reset = now - cache["last_reset"]
-            wait_time = max(60 - time_since_reset + 1, 1)  # Esperar pelo menos 1 segundo
-            
-            st.warning(f"🚫 Rate limit atingido! Aguardando {wait_time:.1f}s...")
-            time.sleep(wait_time)
-            
-            # Resetar após espera
-            cache["last_reset"] = datetime.now().timestamp()
-            cache["call_count"] = 0
-            now = cache["last_reset"]
-        
-        # Atualizar contador
-        cache["call_count"] += 1
-        cache["last_call_time"] = now
-        
-        self._save_cache(cache)
-        
-        # Pequena pausa entre chamadas para distribuir melhor
-        time.sleep(0.5)
-        
+        logging.info("✅ Sessão salva com sucesso")
         return True
-
-# Instância global do gerenciador de rate limit
-rate_limit_manager = RateLimitManager()
-
-def obter_dados_api_com_rate_limit(url: str, timeout: int = 15) -> dict | None:
-    """
-    Versão da função de API com rate limit automático
-    """
-    try:
-        # Aplicar rate limit antes de cada chamada
-        rate_limit_manager.check_rate_limit()
-        
-        response = requests.get(url, headers=HEADERS, timeout=timeout)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.Timeout:
-        st.error(f"⏰ Timeout na requisição API: {url}")
-        return None
-    except requests.exceptions.RequestException as e:
-        # Verificar se é erro de rate limit da API
-        if hasattr(e, 'response') and e.response is not None:
-            if e.response.status_code == 429:
-                st.error("🚫 Rate Limit da API atingido! Aguardando 70s...")
-                # Pausa forçada no cache
-                cache = rate_limit_manager._load_cache()
-                cache["pause_until"] = datetime.now().timestamp() + RATE_LIMIT_WAIT_TIME
-                rate_limit_manager._save_cache(cache)
-                time.sleep(RATE_LIMIT_WAIT_TIME)
-                # Tentar novamente após espera
-                return obter_dados_api_com_rate_limit(url, timeout)
-            elif e.response.status_code == 404:
-                st.warning(f"⚠️ Recurso não encontrado: {url}")
-                return None
-            elif e.response.status_code >= 500:
-                st.error(f"🔴 Erro do servidor: {e.response.status_code}")
-                return None
-        
-        st.error(f"❌ Erro na requisição API: {e}")
-        return None
-
-# =============================
-# Dicionário de Ligas
-# =============================
-LIGA_DICT = {
-    "FIFA World Cup": "WC",
-    "UEFA Champions League": "CL",
-    "Bundesliga": "BL1",
-    "Eredivisie": "DED",
-    "Campeonato Brasileiro Série A": "BSA",
-    "Primera Division": "PD",
-    "Ligue 1": "FL1",
-    "Championship (Inglaterra)": "ELC",
-    "Primeira Liga (Portugal)": "PPL",
-    "European Championship": "EC",
-    "Serie A (Itália)": "SA",
-    "Premier League (Inglaterra)": "PL"
-}
-
-# =============================
-# Utilitários de Cache e Persistência - COM PERSISTÊNCIA ROBUSTA
-# =============================
-def garantir_diretorio():
-    """Garante que o diretório de trabalho existe para os arquivos de persistência"""
-    try:
-        os.makedirs("data", exist_ok=True)
-        return "data/"
-    except:
-        return ""
-
-def carregar_json(caminho: str) -> dict:
-    """Carrega JSON com persistência robusta e tratamento de erros"""
-    try:
-        caminho_completo = garantir_diretorio() + caminho
-        
-        if os.path.exists(caminho_completo):
-            with open(caminho_completo, "r", encoding='utf-8') as f:
-                dados = json.load(f)
-            
-            # Verificar expiração do cache apenas para caches temporários
-            if caminho in [CACHE_JOGOS, CACHE_CLASSIFICACAO, CACHE_ESTATISTICAS]:
-                agora = datetime.now().timestamp()
-                if isinstance(dados, dict) and '_timestamp' in dados:
-                    if agora - dados['_timestamp'] > CACHE_TIMEOUT:
-                        st.info(f"ℹ️ Cache expirado para {caminho}, recarregando...")
-                        return {}
-                else:
-                    # Se não tem timestamp, verifica pela data de modificação do arquivo
-                    if agora - os.path.getmtime(caminho_completo) > CACHE_TIMEOUT:
-                        st.info(f"ℹ️ Cache antigo para {caminho}, recarregando...")
-                        return {}
-            
-            return dados
-        else:
-            # Se o arquivo não existe, cria um dicionário vazio
-            dados_vazios = {}
-            salvar_json(caminho, dados_vazios)
-            return dados_vazios
-            
-    except (json.JSONDecodeError, IOError) as e:
-        st.warning(f"⚠️ Erro ao carregar {caminho}, criando novo: {e}")
-        # Se há erro, retorna dicionário vazio e tenta salvar um novo
-        dados_vazios = {}
-        salvar_json(caminho, dados_vazios)
-        return dados_vazios
-
-def salvar_json(caminho: str, dados: dict):
-    """Salva JSON com persistência robusta"""
-    try:
-        caminho_completo = garantir_diretorio() + caminho
-        
-        # Adicionar timestamp apenas para caches temporários
-        if caminho in [CACHE_JOGOS, CACHE_CLASSIFICACAO, CACHE_ESTATISTICAS]:
-            if isinstance(dados, dict):
-                dados['_timestamp'] = datetime.now().timestamp()
-        
-        # Garantir que o diretório existe
-        os.makedirs(os.path.dirname(caminho_completo) if os.path.dirname(caminho_completo) else ".", exist_ok=True)
-        
-        with open(caminho_completo, "w", encoding='utf-8') as f:
-            json.dump(dados, f, ensure_ascii=False, indent=2)
-        
-        return True
-    except IOError as e:
-        st.error(f"❌ Erro crítico ao salvar {caminho}: {e}")
+    except Exception as e:
+        logging.error(f"❌ Erro ao salvar sessão: {e}")
         return False
 
-# Funções para alertas das novas previsões - COM PERSISTÊNCIA
-def carregar_alertas_ambas_marcam() -> dict:
-    return carregar_json(ALERTAS_AMBAS_MARCAM_PATH)
-
-def salvar_alertas_ambas_marcam(alertas: dict):
-    return salvar_json(ALERTAS_AMBAS_MARCAM_PATH, alertas)
-
-def carregar_alertas_cartoes() -> dict:
-    return carregar_json(ALERTAS_CARTOES_PATH)
-
-def salvar_alertas_cartoes(alertas: dict):
-    return salvar_json(ALERTAS_CARTOES_PATH, alertas)
-
-def carregar_alertas_escanteios() -> dict:
-    return carregar_json(ALERTAS_ESCANTEIOS_PATH)
-
-def salvar_alertas_escanteios(alertas: dict):
-    return salvar_json(ALERTAS_ESCANTEIOS_PATH, alertas)
-
-def carregar_alertas() -> dict:
-    return carregar_json(ALERTAS_PATH)
-
-def salvar_alertas(alertas: dict):
-    return salvar_json(ALERTAS_PATH, alertas)
-
-def carregar_cache_jogos() -> dict:
-    return carregar_json(CACHE_JOGOS)
-
-def salvar_cache_jogos(dados: dict):
-    return salvar_json(CACHE_JOGOS, dados)
-
-def carregar_cache_classificacao() -> dict:
-    return carregar_json(CACHE_CLASSIFICACAO)
-
-def salvar_cache_classificacao(dados: dict):
-    return salvar_json(CACHE_CLASSIFICACAO, dados)
-
-def carregar_cache_estatisticas() -> dict:
-    return carregar_json(CACHE_ESTATISTICAS)
-
-def salvar_cache_estatisticas(dados: dict):
-    return salvar_json(CACHE_ESTATISTICAS, dados)
-
-# =============================
-# NOVAS FUNÇÕES PARA ALERTAS COMPOSTOS TEMPORÁRIOS
-# =============================
-
-def carregar_alertas_compostos() -> dict:
-    """Carrega alertas compostos com verificação de expiração (24h)"""
-    alertas = carregar_json(ALERTAS_COMPOSTOS_PATH)
-    
-    # Verificar e remover alertas expirados (mais de 24 horas)
-    agora = datetime.now()
-    alertas_validos = {}
-    
-    for alerta_id, alerta in alertas.items():
-        data_criacao = datetime.fromisoformat(alerta.get("data_criacao", "2000-01-01T00:00:00"))
-        if agora - data_criacao < timedelta(hours=24):
-            alertas_validos[alerta_id] = alerta
-        else:
-            st.info(f"ℹ️ Alerta composto {alerta_id} expirado (24h) e removido")
-    
-    # Se houve remoção, salvar a versão atualizada
-    if len(alertas_validos) != len(alertas):
-        salvar_alertas_compostos(alertas_validos)
-    
-    return alertas_validos
-
-def salvar_alertas_compostos(alertas: dict):
-    """Salva alertas compostos com timestamp"""
-    return salvar_json(ALERTAS_COMPOSTOS_PATH, alertas)
-
-def salvar_alerta_composto_para_conferencia(jogos_conf: list, threshold: int, poster_enviado: bool = True):
-    """Salva um alerta composto para futura conferência (24h) - VERSÃO ATUALIZADA COM ESCUDOS"""
+def carregar_sessao():
+    """Carrega todos os dados da sessão do arquivo"""
     try:
-        alertas = carregar_alertas_compostos()
-        
-        # Criar ID único baseado no timestamp
-        alerta_id = f"composto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
-        # Preparar dados dos jogos para conferência - AGORA COM ESCUDOS
-        jogos_para_salvar = []
-        for jogo in jogos_conf:
-            # Obter URLs dos escudos do fixture
-            home_crest = ""
-            away_crest = ""
-            if 'fixture' in jogo:
-                fixture = jogo['fixture']
-                home_crest = fixture.get("homeTeam", {}).get("crest") or fixture.get("homeTeam", {}).get("logo", "")
-                away_crest = fixture.get("awayTeam", {}).get("crest") or fixture.get("awayTeam", {}).get("logo", "")
+        if os.path.exists(SESSION_DATA_PATH):
+            with open(SESSION_DATA_PATH, 'rb') as f:
+                session_data = pickle.load(f)
             
-            jogos_para_salvar.append({
-                "fixture_id": jogo.get("id", ""),
-                "home": jogo["home"],
-                "away": jogo["away"],
-                "liga": jogo["liga"],
-                "tendencia": jogo["tendencia"],
-                "estimativa": jogo["estimativa"],
-                "confianca": jogo["confianca"],
-                "data_jogo": jogo.get("hora").isoformat() if isinstance(jogo.get("hora"), datetime) else datetime.now().isoformat(),
-                "conferido": False,
-                "resultado": None,
-                "placar_final": None,
-                "previsao_correta": None,
-                "home_crest": home_crest,  # NOVO: salvar escudo home
-                "away_crest": away_crest   # NOVO: salvar escudo away
-            })
-        
-        # Salvar alerta composto
-        alertas[alerta_id] = {
-            "data_criacao": datetime.now().isoformat(),
-            "data_expiracao": (datetime.now() + timedelta(hours=24)).isoformat(),
-            "total_jogos": len(jogos_para_salvar),
-            "threshold": threshold,
-            "poster_enviado": poster_enviado,
-            "jogos": jogos_para_salvar,
-            "conferido": False,
-            "estatisticas": None
-        }
-        
-        salvar_alertas_compostos(alertas)
-        st.success(f"✅ Alerta composto salvo para conferência (24h). ID: {alerta_id}")
-        return alerta_id
-        
-    except Exception as e:
-        st.error(f"❌ Erro ao salvar alerta composto: {e}")
-        return None
-
-# =============================
-# SISTEMA DE ALERTAS COMPOSTOS DE RESULTADOS - VERSÃO CORRIGIDA
-# =============================
-
-def enviar_alerta_composto_resultados_poster(alerta_id: str, alerta_data: dict):
-    """Envia alerta composto de RESULTS com poster para o Telegram - VERSÃO CORRIGIDA"""
-    try:
-        jogos = alerta_data.get("jogos", [])
-        if not jogos:
-            st.warning(f"⚠️ Nenhum jogo no alerta composto {alerta_id}")
-            return False
-
-        # Filtrar apenas jogos conferidos com resultados
-        jogos_com_resultado = [j for j in jogos if j.get("conferido", False) and j.get("placar_final")]
-        
-        if not jogos_com_resultado:
-            st.warning(f"⚠️ Nenhum resultado final no alerta composto {alerta_id}")
-            return False
-
-        # Agrupar por data do jogo
-        jogos_por_data = {}
-        for jogo in jogos_com_resultado:
-            try:
-                # Usar a data do jogo em vez da data do alerta
-                data_jogo_str = jogo.get("data_jogo", "")
-                if data_jogo_str:
-                    data_jogo = datetime.fromisoformat(data_jogo_str).date()
-                else:
-                    data_jogo = datetime.now().date()
+            if not isinstance(session_data, dict):
+                logging.error("❌ Dados de sessão corrompidos - não é um dicionário")
+                return False
+                
+            chaves_essenciais = ['historico', 'sistema_acertos', 'sistema_erros']
+            if not all(chave in session_data for chave in chaves_essenciais):
+                logging.error("❌ Dados de sessão incompletos")
+                return False
+                
+            st.session_state.historico = session_data.get('historico', [])
+            st.session_state.telegram_token = session_data.get('telegram_token', '')
+            st.session_state.telegram_chat_id = session_data.get('telegram_chat_id', '')
+            
+            if 'sistema' in st.session_state:
+                estrategias_contador = session_data.get('sistema_estrategias_contador', {})
+                if not isinstance(estrategias_contador, dict):
+                    estrategias_contador = {}
                     
-                if data_jogo not in jogos_por_data:
-                    jogos_por_data[data_jogo] = []
-                jogos_por_data[data_jogo].append(jogo)
-            except:
-                continue
-
-        enviados = 0
-        for data, jogos_data in jogos_por_data.items():
-            data_str = data.strftime("%d/%m/%Y")
-            titulo = f"ELITE MASTER - RESULTADOS {data_str}"
-            
-            st.info(f"🎨 Gerando poster de RESULTADOS compostos para {data_str} com {len(jogos_data)} jogos...")
-            
-            # Preparar dados para o poster de resultados COMPOSTOS - BUSCAR ESCUDOS
-            jogos_para_poster = []
-            for jogo_salvo in jogos_data:
-                # Obter dados atualizados do jogo para pegar os escudos
-                fixture_id = jogo_salvo.get("fixture_id")
-                home_crest = ""
-                away_crest = ""
+                st.session_state.sistema.acertos = session_data.get('sistema_acertos', 0)
+                st.session_state.sistema.erros = session_data.get('sistema_erros', 0)
+                st.session_state.sistema.estrategias_contador = estrategias_contador
+                st.session_state.sistema.historico_desempenho = session_data.get('sistema_historico_desempenho', [])
+                st.session_state.sistema.contador_sorteios_global = session_data.get('sistema_contador_sorteios_global', 0)
+                st.session_state.sistema.sequencia_erros = session_data.get('sistema_sequencia_erros', 0)
+                st.session_state.sistema.ultima_estrategia_erro = session_data.get('sistema_ultima_estrategia_erro', '')
                 
-                if fixture_id:
-                    try:
-                        url = f"{BASE_URL_FD}/matches/{fixture_id}"
-                        fixture = obter_dados_api_com_rate_limit(url)
-                        if fixture:
-                            home_crest = fixture.get("homeTeam", {}).get("crest") or fixture.get("homeTeam", {}).get("logo", "")
-                            away_crest = fixture.get("awayTeam", {}).get("crest") or fixture.get("awayTeam", {}).get("logo", "")
-                    except Exception as e:
-                        st.warning(f"⚠️ Não foi possível obter escudos para o jogo {fixture_id}: {e}")
+                st.session_state.sistema.sequencia_acertos = session_data.get('sistema_sequencia_acertos', 0)
+                st.session_state.sistema.ultima_combinacao_acerto = session_data.get('sistema_ultima_combinacao_acerto', [])
+                st.session_state.sistema.historico_combinacoes_acerto = session_data.get('sistema_historico_combinacoes_acerto', [])
                 
-                # Extrair placar do formato "XxY"
-                placar = jogo_salvo.get("placar_final", "0x0")
-                home_goals, away_goals = placar.split('x') if 'x' in placar else (0, 0)
+                st.session_state.sistema.estrategia_selecionada = session_data.get('estrategia_selecionada', 'Zonas')
                 
-                jogo_para_poster = {
-                    "id": fixture_id or "",
-                    "home": jogo_salvo["home"],
-                    "away": jogo_salvo["away"],
-                    "home_goals": int(home_goals),
-                    "away_goals": int(away_goals),
-                    "liga": jogo_salvo["liga"],
-                    "data": jogo_salvo.get("data_jogo", datetime.now().isoformat()),
-                    "tendencia_prevista": jogo_salvo["tendencia"],
-                    "estimativa_prevista": jogo_salvo["estimativa"],
-                    "confianca_prevista": jogo_salvo["confianca"],
-                    "resultado": jogo_salvo.get("resultado", "PENDENTE"),
-                    "home_crest": home_crest,  # NOVO: escudo do time da casa
-                    "away_crest": away_crest   # NOVO: escudo do time visitante
-                }
-                jogos_para_poster.append(jogo_para_poster)
-            
-            # Gerar poster de resultados COMPOSTOS com escudos
-            poster = gerar_poster_resultados_compostos_com_escudos(jogos_para_poster, titulo=titulo)
-            
-            # Calcular estatísticas do alerta composto
-            total_jogos = len(jogos_data)
-            green_count = sum(1 for j in jogos_data if j.get("resultado") == "GREEN")
-            red_count = total_jogos - green_count
-            taxa_acerto = (green_count / total_jogos * 100) if total_jogos > 0 else 0
-            
-            # Estatísticas do alerta original (se disponível)
-            stats_alerta = alerta_data.get("estatisticas", {})
-            green_count_alerta = stats_alerta.get("green_count", green_count)
-            red_count_alerta = stats_alerta.get("red_count", red_count)
-            taxa_acerto_alerta = stats_alerta.get("taxa_acerto", taxa_acerto)
-            
-            caption = (
-                f"<b>🏁 RESULTADOS OFICIAIS - ALERTA COMPOSTO</b>\n\n"
-                f"<b>📅 DATA DOS JOGOS: {data_str}</b>\n"
-                f"<b>📋 TOTAL DE JOGOS: {total_jogos}</b>\n"
-                f"<b>🟢 GREEN: {green_count} jogos</b>\n"
-                f"<b>🔴 RED: {red_count} jogos</b>\n"
-                f"<b>🎯 TAXA DE ACERTO: {taxa_acerto:.1f}%</b>\n\n"
-                f"<b>📊 DESEMPENHO DO ALERTA COMPOSTO:</b>\n"
-                f"<b>• Threshold Original: {alerta_data.get('threshold', 0)}%</b>\n"
-                f"<b>• Confiança Média: {sum(j.get('confianca', 0) for j in jogos_data) / len(jogos_data):.1f}%</b>\n"
-                f"<b>• Previsões Validadas</b>\n"
-                f"<b>• Resultados Oficiais</b>\n\n"
-                f"<b>🔥 ELITE MASTER - SISTEMA COMPOSTO VERIFICADO</b>"
-            )
-            
-            st.info("📤 Enviando poster de RESULTADOS compostos para o Telegram...")
-            ok = enviar_foto_telegram(poster, caption=caption, chat_id=TELEGRAM_CHAT_ID_ALT2)
-            
-            if ok:
-                st.success(f"🚀 Poster de RESULTADOS compostos enviado para {data_str}!")
+                st.session_state.sistema.historico_combinacoes = session_data.get('sistema_historico_combinacoes', {})
+                st.session_state.sistema.combinacoes_quentes = session_data.get('sistema_combinacoes_quentes', [])
+                st.session_state.sistema.combinacoes_frias = session_data.get('sistema_combinacoes_frias', [])
                 
-                # Registrar no histórico de resultados compostos
-                for jogo in jogos_data:
-                    registrar_no_historico({
-                        "home": jogo["home"],
-                        "away": jogo["away"],
-                        "tendencia": jogo["tendencia"],
-                        "estimativa": jogo["estimativa"],
-                        "confianca": jogo["confianca"],
-                        "placar": jogo.get("placar_final", "-"),
-                        "resultado": "🟢 GREEN" if jogo.get("resultado") == "GREEN" else "🔴 RED",
-                        "alerta_id": alerta_id  # NOVO: identificar o alerta composto
-                    }, "compostos")
+                zonas_historico = session_data.get('zonas_historico', [])
+                st.session_state.sistema.estrategia_zonas.historico = deque(zonas_historico, maxlen=70)
+                st.session_state.sistema.estrategia_zonas.stats_zonas = session_data.get('zonas_stats', {
+                    'Vermelha': {'acertos': 0, 'tentativas': 0, 'sequencia_atual': 0, 'sequencia_maxima': 0, 'performance_media': 0},
+                    'Azul': {'acertos': 0, 'tentativas': 0, 'sequencia_atual': 0, 'sequencia_maxima': 0, 'performance_media': 0},
+                    'Amarela': {'acertos': 0, 'tentativas': 0, 'sequencia_atual': 0, 'sequencia_maxima': 0, 'performance_media': 0}
+                })
                 
-                enviados += 1
-            else:
-                st.error(f"❌ Falha ao enviar poster de resultados compostos para {data_str}")
+                midas_historico = session_data.get('midas_historico', [])
+                st.session_state.sistema.estrategia_midas.historico = deque(midas_historico, maxlen=15)
                 
-        return enviados > 0
-        
-    except Exception as e:
-        st.error(f"❌ Erro crítico ao gerar/enviar poster de resultados compostos: {str(e)}")
-        # Fallback para mensagem de texto
-        return enviar_alerta_composto_resultados_texto(alerta_id, alerta_data)
-
-def gerar_poster_resultados_compostos_com_escudos(jogos: list, titulo: str = "ELITE MASTER - RESULTADOS COMPOSTOS") -> io.BytesIO:
-    """
-    Gera poster profissional com resultados finais dos jogos compostos - COM ESCUDOS
-    """
-    # Configurações do poster - MESMO ESTILO DOS OUTROS
-    LARGURA = 2400
-    ALTURA_TOPO = 400
-    ALTURA_POR_JOGO = 950  # Um pouco mais compacto para múltiplos jogos
-    PADDING = 60
-    
-    jogos_count = len(jogos)
-    altura_total = ALTURA_TOPO + jogos_count * ALTURA_POR_JOGO + PADDING
-
-    # Criar canvas
-    img = Image.new("RGB", (LARGURA, altura_total), color=(13, 25, 35))
-    draw = ImageDraw.Draw(img)
-
-    # Carregar fontes - MESMO ESTILO DOS OUTROS POSTERS
-    FONTE_TITULO = criar_fonte(100)
-    FONTE_SUBTITULO = criar_fonte(80)
-    FONTE_TIMES = criar_fonte(75)
-    FONTE_PLACAR = criar_fonte(85)
-    FONTE_INFO = criar_fonte(55)
-    FONTE_ANALISE = criar_fonte(75)
-    FONTE_RESULTADO = criar_fonte(75)
-
-    # Título PRINCIPAL - MESMO ESTILO
-    try:
-        titulo_bbox = draw.textbbox((0, 0), titulo, font=FONTE_TITULO)
-        titulo_w = titulo_bbox[2] - titulo_bbox[0]
-        draw.text(((LARGURA - titulo_w) // 2, 80), titulo, font=FONTE_TITULO, fill=(255, 215, 0))
-    except:
-        draw.text((LARGURA//2 - 300, 80), titulo, font=FONTE_TITULO, fill=(255, 215, 0))
-
-    # Linha decorativa
-    draw.line([(LARGURA//4, 200), (3*LARGURA//4, 200)], fill=(255, 215, 0), width=4)
-
-    y_pos = ALTURA_TOPO
-
-    for idx, jogo in enumerate(jogos):
-        # Calcular se a previsão foi correta
-        total_gols = jogo['home_goals'] + jogo['away_goals']
-        previsao_correta = False
-        
-        if jogo['tendencia_prevista'] == "Mais 2.5" and total_gols > 2.5:
-            previsao_correta = True
-        elif jogo['tendencia_prevista'] == "Mais 1.5" and total_gols > 1.5:
-            previsao_correta = True
-        elif jogo['tendencia_prevista'] == "Menos 2.5" and total_gols < 2.5:
-            previsao_correta = True
-        
-        # Definir cores baseadas no resultado - MESMO ESTILO
-        if previsao_correta:
-            cor_borda = (76, 175, 80)  # VERDE
-            cor_resultado = (76, 175, 80)
-            texto_resultado = "GREEN"
-        else:
-            cor_borda = (244, 67, 54)  # VERMELHO
-            cor_resultado = (244, 67, 54)
-            texto_resultado = "RED"
-
-        # Caixa do jogo com borda colorida conforme resultado - MESMO ESTILO
-        x0, y0 = PADDING, y_pos
-        x1, y1 = LARGURA - PADDING, y_pos + ALTURA_POR_JOGO - 30
-        
-        # Fundo com borda colorida
-        draw.rectangle([x0, y0, x1, y1], fill=(25, 40, 55), outline=cor_borda, width=4)
-
-        # BADGE RESULTADO (GREEN/RED) - MESMO ESTILO
-        badge_text = texto_resultado
-        badge_bg_color = cor_resultado
-        
-        try:
-            badge_bbox = draw.textbbox((0, 0), badge_text, font=FONTE_RESULTADO)
-            badge_w = badge_bbox[2] - badge_bbox[0] + 30
-            badge_h = 90
-            badge_x = x1 - badge_w - 15
-            badge_y = y0 + 40
-            
-            draw.rectangle([badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], 
-                          fill=badge_bg_color, outline=badge_bg_color)
-            draw.text((badge_x + 15, badge_y + 5), badge_text, font=FONTE_RESULTADO, fill=(255, 255, 255))
-        except:
-            pass
-
-        # Nome da liga - MESMO ESTILO
-        liga_text = jogo['liga'].upper()
-        try:
-            liga_bbox = draw.textbbox((0, 0), liga_text, font=FONTE_SUBTITULO)
-            liga_w = liga_bbox[2] - liga_bbox[0]
-            draw.text(((LARGURA - liga_w) // 2, y0 + 45), liga_text, font=FONTE_SUBTITULO, fill=(170, 190, 210))
-        except:
-            pass
-
-        # Times e placar - layout mais compacto COM ESCUDOS
-        home_text = jogo['home'][:20]
-        away_text = jogo['away'][:20]
-        
-        # ESCUDOS compactos - AGORA COM ESCUDOS REAIS
-        TAMANHO_ESCUDO = 180
-        TAMANHO_QUADRADO = 190
-        ESPACO_ENTRE_ESCUDOS = 800
-        
-        largura_total = 2 * TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS
-        x_inicio = (LARGURA - largura_total) // 2
-        y_escudos = y0 + 230
-
-        x_home = x_inicio
-        x_away = x_home + TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS
-
-        # Desenhar escudos compactos - USANDO ESCUDOS REAIS
-        escudo_home = baixar_imagem_url(jogo.get('home_crest', ''))
-        escudo_away = baixar_imagem_url(jogo.get('away_crest', ''))
-        
-        def desenhar_escudo_compacto(logo_img, x, y, tamanho_quadrado, tamanho_escudo):
-            draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(255, 255, 255), outline=(200, 200, 200), width=2)
-            if logo_img:
-                try:
-                    logo_img = logo_img.convert("RGBA")
-                    ratio = min(tamanho_escudo/logo_img.width, tamanho_escudo/logo_img.height)
-                    nova_largura = int(logo_img.width * ratio)
-                    nova_altura = int(logo_img.height * ratio)
-                    logo_img = logo_img.resize((nova_largura, nova_altura), Image.Resampling.LANCZOS)
-                    pos_x = x + (tamanho_quadrado - nova_largura) // 2
-                    pos_y = y + (tamanho_quadrado - nova_altura) // 2
-                    img.paste(logo_img, (pos_x, pos_y), logo_img)
-                except:
-                    draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(100, 100, 100))
-                    draw.text((x + 40, y + 50), "ERR", font=FONTE_INFO, fill=(255, 255, 255))
-            else:
-                # Placeholder se não tiver escudo
-                draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(100, 100, 100))
-                draw.text((x + 40, y + 50), "?", font=FONTE_INFO, fill=(255, 255, 255))
-
-        desenhar_escudo_compacto(escudo_home, x_home, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-        desenhar_escudo_compacto(escudo_away, x_away, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-
-        # Nomes dos times
-        try:
-            home_bbox = draw.textbbox((0, 0), home_text, font=FONTE_TIMES)
-            home_w = home_bbox[2] - home_bbox[0]
-            draw.text((x_home + (TAMANHO_QUADRADO - home_w)//2, y_escudos + TAMANHO_QUADRADO + 25),
-                     home_text, font=FONTE_TIMES, fill=(255, 255, 255))
-        except:
-            pass
-
-        try:
-            away_bbox = draw.textbbox((0, 0), away_text, font=FONTE_TIMES)
-            away_w = away_bbox[2] - away_bbox[0]
-            draw.text((x_away + (TAMANHO_QUADRADO - away_w)//2, y_escudos + TAMANHO_QUADRADO + 15),
-                     away_text, font=FONTE_TIMES, fill=(255, 255, 255))
-        except:
-            pass
-
-        # PLACAR CENTRAL - MESMO ESTILO
-        placar_text = f"{jogo['home_goals']}   -   {jogo['away_goals']}"
-        try:
-            placar_bbox = draw.textbbox((0, 0), placar_text, font=FONTE_PLACAR)
-            placar_w = placar_bbox[2] - placar_bbox[0]
-            placar_x = x_home + TAMANHO_QUADRADO + (ESPACO_ENTRE_ESCUDOS - placar_w) // 2
-            draw.text((placar_x, y_escudos + 40), placar_text, font=FONTE_PLACAR, fill=(255, 255, 255))
-        except:
-            pass
-
-        # SEÇÃO DE ANÁLISE COMPACTA - MESMO ESTILO
-        y_analysis = y_escudos + TAMANHO_QUADRADO + 90
-        
-        textos_analise = [
-            f"Previsão: {jogo['tendencia_prevista']}",
-            f"Real: {total_gols} gols | Estimativa: {jogo['estimativa_prevista']:.2f}",
-            f"Confiança: {jogo['confianca_prevista']:.0f}% | Resultado: {texto_resultado}"
-        ]
-        
-        cores = [(255, 255, 255), (200, 220, 255), cor_resultado]
-        
-        for i, (text, cor) in enumerate(zip(textos_analise, cores)):
-            try:
-                bbox = draw.textbbox((0, 0), text, font=FONTE_ANALISE)
-                w = bbox[2] - bbox[0]
-                draw.text(((LARGURA - w) // 2, y_analysis + i * 100), text, font=FONTE_ANALISE, fill=cor)
-            except:
-                pass
-
-        y_pos += ALTURA_POR_JOGO
-
-    # Rodapé - MESMO ESTILO
-    rodape_text = f"Resultados oficiais • Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')} • Elite Master System"
-    try:
-        rodape_bbox = draw.textbbox((0, 0), rodape_text, font=FONTE_INFO)
-        rodape_w = rodape_bbox[2] - rodape_bbox[0]
-        draw.text(((LARGURA - rodape_w) // 2, altura_total - 50), rodape_text, font=FONTE_INFO, fill=(120, 150, 180))
-    except:
-        pass
-
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG", optimize=True, quality=95)
-    buffer.seek(0)
-    
-    st.success(f"✅ Poster de resultados compostos GERADO com {len(jogos)} jogos")
-    return buffer
-
-def enviar_alerta_composto_resultados_texto(alerta_id: str, alerta_data: dict) -> bool:
-    """Fallback para alerta de resultados compostos em texto"""
-    try:
-        jogos = alerta_data.get("jogos", [])
-        jogos_com_resultado = [j for j in jogos if j.get("conferido", False) and j.get("placar_final")]
-        
-        if not jogos_com_resultado:
-            return False
-            
-        msg = f"<b>🏁 RESULTADOS OFICIAIS - ALERTA COMPOSTO {alerta_id}</b>\n\n"
-        
-        # Agrupar por data
-        jogos_por_data = {}
-        for jogo in jogos_com_resultado:
-            try:
-                data_jogo = datetime.fromisoformat(jogo.get("data_jogo", "")).date()
-                if data_jogo not in jogos_por_data:
-                    jogos_por_data[data_jogo] = []
-                jogos_por_data[data_jogo].append(jogo)
-            except:
-                continue
-        
-        for data, jogos_data in jogos_por_data.items():
-            data_str = data.strftime("%d/%m/%Y")
-            msg += f"<b>📅 {data_str}</b>\n\n"
-            
-            for jogo in jogos_data[:10]:  # Limitar a 10 por mensagem
-                resultado = "🟢 GREEN" if jogo.get("resultado") == "GREEN" else "🔴 RED"
-                msg += (
-                    f"{resultado} <b>{jogo['home']}</b> {jogo.get('placar_final', '0x0')} <b>{jogo['away']}</b>\n"
-                    f"Previsão: {jogo['tendencia']} | Conf: {jogo['confianca']:.0f}%\n\n"
-                )
-            
-            # Estatísticas
-            total_jogos = len(jogos_data)
-            green_count = sum(1 for j in jogos_data if j.get("resultado") == "GREEN")
-            taxa_acerto = (green_count / total_jogos * 100) if total_jogos > 0 else 0
-            
-            msg += (
-                f"<b>📊 ESTATÍSTICAS {data_str}:</b>\n"
-                f"<b>🟢 GREEN: {green_count}</b> | <b>🔴 RED: {total_jogos - green_count}</b>\n"
-                f"<b>🎯 TAXA DE ACERTO: {taxa_acerto:.1f}%</b>\n\n"
-            )
-        
-        msg += "<b>🔥 ELITE MASTER - SISTEMA COMPOSTO VERIFICADO</b>"
-        
-        return enviar_telegram(msg, chat_id=TELEGRAM_CHAT_ID_ALT2)
-        
-    except Exception as e:
-        st.error(f"❌ Erro no fallback de texto para resultados compostos: {e}")
-        return False
-
-def verificar_resultados_alertas_compostos(alerta_resultados: bool):
-    """Verifica resultados dos alertas compostos salvos - VERSÃO CORRIGIDA"""
-    st.info("🔍 Verificando resultados de alertas compostos salvos...")
-    
-    alertas = carregar_alertas_compostos()
-    if not alertas:
-        st.info("ℹ️ Nenhum alerta composto salvo para verificar.")
-        return False
-    
-    alertas_conferidos = 0
-    alertas_com_resultados = []
-    
-    for alerta_id, alerta in list(alertas.items()):
-        if alerta.get("conferido", False):
-            continue
-            
-        jogos_alerta = alerta.get("jogos", [])
-        todos_jogos_conferidos = True
-        algum_jogo_atualizado = False
-        
-        for jogo_salvo in jogos_alerta:
-            # Se já foi conferido, pular
-            if jogo_salvo.get("conferido", False):
-                continue
+                ml_historico = session_data.get('ml_historico', [])
+                st.session_state.sistema.estrategia_ml.historico = deque(ml_historico, maxlen=30)
+                st.session_state.sistema.estrategia_ml.contador_sorteios = session_data.get('ml_contador_sorteios', 0)
+                st.session_state.sistema.estrategia_ml.sequencias_padroes = session_data.get('ml_sequencias_padroes', {
+                    'sequencias_ativas': {},
+                    'historico_sequencias': [],
+                    'padroes_detectados': []
+                })
+                st.session_state.sistema.estrategia_ml.metricas_padroes = session_data.get('ml_metricas_padroes', {
+                    'padroes_detectados_total': 0,
+                    'padroes_acertados': 0,
+                    'padroes_errados': 0,
+                    'eficiencia_por_tipo': {},
+                    'historico_validacao': []
+                })
                 
-            fixture_id = jogo_salvo.get("fixture_id")
-            if not fixture_id:
-                continue
-                
-            try:
-                url = f"{BASE_URL_FD}/matches/{fixture_id}"
-                fixture = obter_dados_api_com_rate_limit(url)
-                
-                if not fixture:
-                    todos_jogos_conferidos = False
-                    continue
-                    
-                status = fixture.get("status", "")
-                score = fixture.get("score", {}).get("fullTime", {})
-                home_goals = score.get("home")
-                away_goals = score.get("away")
-                
-                # Verificar se jogo terminou e tem resultado
-                if status == "FINISHED" and home_goals is not None and away_goals is not None:
-                    # Calcular se previsão foi correta
-                    total_gols = home_goals + away_goals
-                    previsao_correta = False
-                    
-                    if jogo_salvo['tendencia'] == "Mais 2.5" and total_gols > 2.5:
-                        previsao_correta = True
-                    elif jogo_salvo['tendencia'] == "Mais 1.5" and total_gols > 1.5:
-                        previsao_correta = True
-                    elif jogo_salvo['tendencia'] == "Menos 2.5" and total_gols < 2.5:
-                        previsao_correta = True
-                    
-                    # Atualizar jogo salvo
-                    jogo_salvo["conferido"] = True
-                    jogo_salvo["resultado"] = "GREEN" if previsao_correta else "RED"
-                    jogo_salvo["placar_final"] = f"{home_goals}x{away_goals}"
-                    jogo_salvo["previsao_correta"] = previsao_correta
-                    jogo_salvo["total_gols"] = total_gols
-                    algum_jogo_atualizado = True
-                    
-                    st.info(f"✅ Jogo conferido: {jogo_salvo['home']} {home_goals}x{away_goals} {jogo_salvo['away']} - {jogo_salvo['resultado']}")
-                    
-                else:
-                    todos_jogos_conferidos = False
-                    st.info(f"⏳ Jogo pendente: {jogo_salvo['home']} vs {jogo_salvo['away']} - Status: {status}")
-                    
-            except Exception as e:
-                st.error(f"❌ Erro ao verificar jogo composto {fixture_id}: {e}")
-                todos_jogos_conferidos = False
-        
-        # Se todos os jogos deste alerta foram conferidos, marcar o alerta como conferido
-        if todos_jogos_conferidos:
-            alerta["conferido"] = True
+                # NOVO: Carregar dados da estratégia Triângulo
+                triangulo_historico = session_data.get('triangulo_historico', [])
+                st.session_state.sistema.estrategia_triangulo.historico = deque(triangulo_historico, maxlen=70)
+                st.session_state.sistema.estrategia_triangulo.stats_triangulos = session_data.get('triangulo_stats', {})
+                st.session_state.sistema.estrategia_triangulo.historico_entradas = session_data.get('triangulo_historico_entradas', [])
+                st.session_state.sistema.estrategia_triangulo.ultimo_gatilho = session_data.get('triangulo_ultimo_gatilho', None)
             
-            # Calcular estatísticas do alerta
-            jogos_conferidos = [j for j in jogos_alerta if j.get("conferido", False)]
-            if jogos_conferidos:
-                total_jogos = len(jogos_conferidos)
-                green_count = sum(1 for j in jogos_conferidos if j.get("resultado") == "GREEN")
-                taxa_acerto = (green_count / total_jogos * 100) if total_jogos > 0 else 0
-                
-                alerta["estatisticas"] = {
-                    "total_jogos": total_jogos,
-                    "green_count": green_count,
-                    "red_count": total_jogos - green_count,
-                    "taxa_acerto": taxa_acerto,
-                    "data_conferencia": datetime.now().isoformat()
-                }
-            
-            alertas_conferidos += 1
-            alertas_com_resultados.append((alerta_id, alerta))
-            st.success(f"🎯 Alerta composto {alerta_id} totalmente conferido! GREEN: {green_count}/{total_jogos}")
-        
-        # Se houve algum jogo atualizado, salvar as alterações
-        if algum_jogo_atualizado:
-            alerta["jogos"] = jogos_alerta
-            salvar_alertas_compostos(alertas)
-            st.info(f"💾 Alterações salvas para alerta {alerta_id}")
-    
-    # ENVIO DE ALERTAS DE RESULTADOS COMPOSTOS
-    resultados_enviados = 0
-    if alertas_com_resultados and alerta_resultados:
-        st.info(f"🎯 Enviando {len(alertas_com_resultados)} alertas de resultados compostos...")
-        
-        for alerta_id, alerta_data in alertas_com_resultados:
-            try:
-                if enviar_alerta_composto_resultados_poster(alerta_id, alerta_data):
-                    st.success(f"✅ Alerta de resultados compostos enviado: {alerta_id}")
-                    resultados_enviados += 1
-                else:
-                    st.error(f"❌ Falha ao enviar alerta de resultados compostos: {alerta_id}")
-            except Exception as e:
-                st.error(f"❌ Erro ao enviar alerta {alerta_id}: {e}")
-                
-        if resultados_enviados > 0:
-            st.success(f"🚀 {resultados_enviados} alertas de resultados compostos enviados!")
-    
-    elif alertas_com_resultados:
-        st.info(f"ℹ️ {len(alertas_com_resultados)} alertas compostos prontos para resultados, mas envio desativado")
-    
-    if alertas_conferidos > 0:
-        st.success(f"✅ {alertas_conferidos} alertas compostos totalmente conferidos!")
-    
-    return resultados_enviados > 0
-
-def debug_alertas_compostos():
-    """Função de debug para verificar o estado dos alertas compostos"""
-    st.subheader("🐛 Debug - Alertas Compostos")
-    
-    alertas = carregar_alertas_compostos()
-    st.write(f"Total de alertas compostos: {len(alertas)}")
-    
-    for alerta_id, alerta in alertas.items():
-        with st.expander(f"Alerta: {alerta_id}", expanded=False):
-            st.json(alerta)  # Mostra toda a estrutura do alerta
-            
-            jogos = alerta.get("jogos", [])
-            st.write(f"Total de jogos: {len(jogos)}")
-            
-            for jogo in jogos:
-                st.write(f"- {jogo['home']} vs {jogo['away']} | Conferido: {jogo.get('conferido', False)} | Resultado: {jogo.get('resultado', 'N/A')}")
-
-def exibir_alertas_compostos_salvos():
-    """Exibe interface para visualizar alertas compostos salvos"""
-    alertas = carregar_alertas_compostos()
-    
-    if not alertas:
-        st.info("ℹ️ Nenhum alerta composto salvo no momento.")
-        return
-    
-    st.subheader("📋 Alertas Compostos Salvos (24h)")
-    
-    for alerta_id, alerta in alertas.items():
-        data_criacao = datetime.fromisoformat(alerta.get("data_criacao", ""))
-        data_expiracao = datetime.fromisoformat(alerta.get("data_expiracao", ""))
-        tempo_restante = data_expiracao - datetime.now()
-        horas_restantes = max(0, tempo_restante.total_seconds() / 3600)
-        
-        status = "✅ Conferido" if alerta.get("conferido", False) else "⏳ Aguardando"
-        
-        with st.expander(f"📊 Alerta {alerta_id} - {status} - {horas_restantes:.1f}h restantes", expanded=False):
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.write(f"**Data Criação:** {data_criacao.strftime('%d/%m/%Y %H:%M')}")
-                st.write(f"**Expira em:** {data_expiracao.strftime('%d/%m/%Y %H:%M')}")
-                st.write(f"**Threshold:** {alerta.get('threshold', 0)}%")
-                
-            with col2:
-                st.write(f"**Total Jogos:** {alerta.get('total_jogos', 0)}")
-                st.write(f"**Poster Enviado:** {'✅ Sim' if alerta.get('poster_enviado') else '❌ Não'}")
-                st.write(f"**Status:** {status}")
-                
-            with col3:
-                if alerta.get("estatisticas"):
-                    stats = alerta["estatisticas"]
-                    st.write(f"**🟢 GREEN:** {stats.get('green_count', 0)}")
-                    st.write(f"**🔴 RED:** {stats.get('red_count', 0)}")
-                    st.write(f"**🎯 Taxa Acerto:** {stats.get('taxa_acerto', 0):.1f}%")
-            
-            # Lista de jogos
-            st.write("**🎯 Jogos Incluídos:**")
-            jogos = alerta.get("jogos", [])
-            
-            for i, jogo in enumerate(jogos):
-                cor_status = "🟢" if jogo.get("resultado") == "GREEN" else "🔴" if jogo.get("resultado") == "RED" else "⚪"
-                status_jogo = jogo.get("resultado", "Aguardando") if jogo.get("conferido") else "⏳ Pendente"
-                
-                col_j1, col_j2, col_j3 = st.columns([2, 2, 1])
-                
-                with col_j1:
-                    st.write(f"{cor_status} **{jogo['home']} vs {jogo['away']}**")
-                    st.write(f"🏆 {jogo['liga']}")
-                    
-                with col_j2:
-                    st.write(f"📈 {jogo['tendencia']}")
-                    st.write(f"🎯 {jogo['confianca']:.0f}%")
-                    
-                with col_j3:
-                    st.write(f"**{status_jogo}**")
-                    if jogo.get("placar_final"):
-                        st.write(f"🔢 {jogo['placar_final']}")
-            
-            # Botão para forçar conferência deste alerta
-            if st.button(f"🔄 Conferir Agora", key=f"conferir_{alerta_id}"):
-                with st.spinner("Conferindo resultados..."):
-                    # Lógica de conferência específica para este alerta
-                    jogos_atualizados = 0
-                    for jogo_salvo in jogos:
-                        if jogo_salvo.get("conferido", False):
-                            continue
-                            
-                        fixture_id = jogo_salvo.get("fixture_id")
-                        if fixture_id:
-                            url = f"{BASE_URL_FD}/matches/{fixture_id}"
-                            fixture = obter_dados_api_com_rate_limit(url)
-                            
-                            if fixture and fixture.get("status") == "FINISHED":
-                                score = fixture.get("score", {}).get("fullTime", {})
-                                home_goals = score.get("home")
-                                away_goals = score.get("away")
-                                
-                                if home_goals is not None and away_goals is not None:
-                                    total_gols = home_goals + away_goals
-                                    previsao_correta = False
-                                    
-                                    if jogo_salvo['tendencia'] == "Mais 2.5" and total_gols > 2.5:
-                                        previsao_correta = True
-                                    elif jogo_salvo['tendencia'] == "Mais 1.5" and total_gols > 1.5:
-                                        previsao_correta = True
-                                    elif jogo_salvo['tendencia'] == "Menos 2.5" and total_gols < 2.5:
-                                        previsao_correta = True
-                                    
-                                    jogo_salvo["conferido"] = True
-                                    jogo_salvo["resultado"] = "GREEN" if previsao_correta else "RED"
-                                    jogo_salvo["placar_final"] = f"{home_goals}x{away_goals}"
-                                    jogo_salvo["previsao_correta"] = previsao_correta
-                                    jogos_atualizados += 1
-                    
-                    if jogos_atualizados > 0:
-                        # Verificar se todos os jogos foram conferidos
-                        todos_conferidos = all(jogo.get("conferido", False) for jogo in jogos)
-                        if todos_conferidos:
-                            alerta["conferido"] = True
-                            
-                            # Calcular estatísticas
-                            jogos_conferidos = [j for j in jogos if j.get("conferido", False)]
-                            total_jogos = len(jogos_conferidos)
-                            green_count = sum(1 for j in jogos_conferidos if j.get("resultado") == "GREEN")
-                            taxa_acerto = (green_count / total_jogos * 100) if total_jogos > 0 else 0
-                            
-                            alerta["estatisticas"] = {
-                                "total_jogos": total_jogos,
-                                "green_count": green_count,
-                                "red_count": total_jogos - green_count,
-                                "taxa_acerto": taxa_acerto,
-                                "data_conferencia": datetime.now().isoformat()
-                            }
-                        
-                        salvar_alertas_compostos(alertas)
-                        st.success(f"✅ {jogos_atualizados} jogos conferidos!")
-                        st.rerun()
-                    else:
-                        st.info("ℹ️ Nenhum novo resultado encontrado para este alerta.")
-
-# =============================
-# Histórico de Conferências - COM PERSISTÊNCIA
-# =============================
-def carregar_historico(caminho: str = HISTORICO_PATH) -> list:
-    """Carrega histórico com persistência robusta"""
-    dados = carregar_json(caminho)
-    if isinstance(dados, list):
-        return dados
-    elif isinstance(dados, dict):
-        # Se por acaso foi salvo como dict, converte para list
-        return list(dados.values()) if dados else []
-    else:
-        return []
-
-def salvar_historico(historico: list, caminho: str = HISTORICO_PATH):
-    """Salva histórico mantendo a estrutura de lista"""
-    return salvar_json(caminho, historico)
-
-def registrar_no_historico(resultado: dict, tipo: str = "gols"):
-    """Registra no histórico específico para cada tipo de previsão com persistência"""
-    if not resultado:
-        return
-        
-    caminhos_historico = {
-        "gols": HISTORICO_PATH,
-        "ambas_marcam": HISTORICO_AMBAS_MARCAM_PATH,
-        "cartoes": HISTORICO_CARTOES_PATH,
-        "escanteios": HISTORICO_ESCANTEIOS_PATH,
-        "compostos": HISTORICO_COMPOSTOS_PATH  # NOVO
-    }
-    
-    caminho = caminhos_historico.get(tipo, HISTORICO_PATH)
-    historico = carregar_historico(caminho)
-    
-    registro = {
-        "data_conferencia": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "home": resultado.get("home"),
-        "away": resultado.get("away"),
-        "tendencia": resultado.get("tendencia"),
-        "estimativa": round(resultado.get("estimativa", 0), 2),
-        "confianca": round(resultado.get("confianca", 0), 1),
-        "placar": resultado.get("placar", "-"),
-        "resultado": resultado.get("resultado", "⏳ Aguardando")
-    }
-    
-    # Adicionar campos específicos para cada tipo
-    if tipo == "ambas_marcam":
-        registro["previsao"] = resultado.get("previsao", "")
-        registro["ambas_marcaram"] = resultado.get("ambas_marcaram", False)
-    elif tipo == "cartoes":
-        registro["cartoes_total"] = resultado.get("cartoes_total", 0)
-        registro["limiar_cartoes"] = resultado.get("limiar_cartoes", 0)
-    elif tipo == "escanteios":
-        registro["escanteios_total"] = resultado.get("escanteios_total", 0)
-        registro["limiar_escanteios"] = resultado.get("limiar_escanteios", 0)
-    elif tipo == "compostos":
-        registro["alerta_id"] = resultado.get("alerta_id", "")
-    
-    historico.append(registro)
-    
-    # Manter apenas os últimos 1000 registros para evitar arquivos muito grandes
-    if len(historico) > 1000:
-        historico = historico[-1000:]
-    
-    salvar_historico(historico, caminho)
-
-def limpar_historico(tipo: str = "todos"):
-    """Faz backup e limpa histórico específico ou todos com persistência"""
-    caminhos = {
-        "gols": HISTORICO_PATH,
-        "ambas_marcam": HISTORICO_AMBAS_MARCAM_PATH,
-        "cartoes": HISTORICO_CARTOES_PATH,
-        "escanteios": HISTORICO_ESCANTEIOS_PATH,
-        "compostos": HISTORICO_COMPOSTOS_PATH  # NOVO
-    }
-    
-    if tipo == "todos":
-        historicos_limpos = 0
-        for nome, caminho in caminhos.items():
-            historico = carregar_historico(caminho)
-            if historico:
-                try:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    backup_name = f"data/historico_{nome}_backup_{ts}.json"
-                    salvar_json(backup_name, historico)
-                    
-                    # Limpa o histórico atual
-                    salvar_historico([], caminho)
-                    historicos_limpos += 1
-                    st.success(f"✅ Histórico {nome} limpo. Backup: {backup_name}")
-                except Exception as e:
-                    st.error(f"Erro ao limpar {nome}: {e}")
-            else:
-                st.info(f"ℹ️ Histórico {nome} já está vazio")
-        st.success(f"🧹 Todos os históricos limpos. {historicos_limpos} backups criados.")
-    else:
-        caminho = caminhos.get(tipo)
-        if caminho:
-            historico = carregar_historico(caminho)
-            if historico:
-                try:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    backup_name = f"data/historico_{tipo}_backup_{ts}.json"
-                    salvar_json(backup_name, historico)
-                    
-                    # Limpa o histórico atual
-                    salvar_historico([], caminho)
-                    st.success(f"🧹 Histórico {tipo} limpo. Backup: {backup_name}")
-                except Exception as e:
-                    st.error(f"Erro ao limpar histórico {tipo}: {e}")
-            else:
-                st.info(f"⚠️ Histórico {tipo} já está vazio")
-        else:
-            st.error(f"❌ Tipo de histórico inválido: {tipo}")
-
-# =============================
-# Utilitários de Data e Formatação
-# =============================
-def formatar_data_iso(data_iso: str) -> tuple[str, str]:
-    """Formata data ISO de forma robusta - CORRIGIDA"""
-    try:
-        # Remover 'Z' e converter para datetime com timezone UTC
-        if data_iso.endswith('Z'):
-            data_iso = data_iso[:-1] + '+00:00'
-        
-        data_utc = datetime.fromisoformat(data_iso)
-        
-        # Converter para horário de Brasília (UTC-3)
-        data_brasilia = data_utc - timedelta(hours=3)
-        
-        return data_brasilia.strftime("%d/%m/%Y"), data_brasilia.strftime("%H:%M")
-    except (ValueError, TypeError) as e:
-        st.warning(f"⚠️ Erro ao formatar data {data_iso}: {e}")
-        return "Data inválida", "Hora inválida"
-
-def abreviar_nome(nome: str, max_len: int = 15) -> str:
-    if len(nome) <= max_len:
-        return nome
-    palavras = nome.split()
-    abreviado = " ".join([p[0] + "." if len(p) > 2 else p for p in palavras])
-    return abreviado[:max_len-3] + "..." if len(abreviado) > max_len else abreviado
-
-# =============================
-# Funções de Imagem e Fonte
-# =============================
-def criar_fonte(tamanho: int) -> ImageFont.ImageFont:
-    """Cria fonte com fallback robusto - CORRIGIDA E MELHORADA"""
-    try:
-        # Tentar fontes comuns em diferentes sistemas
-        font_paths = [
-            "arial.ttf", "Arial.ttf", "arialbd.ttf", "Arial_Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/System/Library/Fonts/Arial.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-            "C:/Windows/Fonts/arialbd.ttf"
-        ]
-        
-        for font_path in font_paths:
-            try:
-                if os.path.exists(font_path):
-                    return ImageFont.truetype(font_path, tamanho)
-            except Exception:
-                continue
-        
-        # Tentar fontes do Pillow
-        try:
-            return ImageFont.truetype("arial", tamanho)
-        except:
-            try:
-                return ImageFont.load_default()
-            except:
-                # Último fallback - criar fonte básica
-                return ImageFont.load_default()
-        
-    except Exception as e:
-        print(f"Erro ao carregar fonte: {e}")
-        return ImageFont.load_default()
-
-def baixar_imagem_url(url: str, timeout: int = 8) -> Image.Image | None:
-    """Tenta baixar uma imagem e retornar PIL.Image. Retorna None se falhar."""
-    if not url or url == "":
-        return None
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        resp = requests.get(url, timeout=timeout, stream=True, headers=headers)
-        resp.raise_for_status()
-        
-        # Verificar se é uma imagem válida
-        if 'image' not in resp.headers.get('content-type', ''):
-            return None
-            
-        img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-        return img
-    except Exception as e:
-        print(f"Erro ao baixar imagem {url}: {e}")
-        return None
-
-# =============================
-# Comunicação com APIs
-# =============================
-def enviar_telegram(msg: str, chat_id: str = TELEGRAM_CHAT_ID, disable_web_page_preview: bool = True) -> bool:
-    try:
-        params = {
-            "chat_id": chat_id,
-            "text": msg,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": str(disable_web_page_preview).lower()
-        }
-        response = requests.get(f"{BASE_URL_TG}/sendMessage", params=params, timeout=10)
-        return response.status_code == 200
-    except requests.RequestException as e:
-        st.error(f"Erro ao enviar para Telegram: {e}")
-        return False
-
-def enviar_foto_telegram(photo_bytes: io.BytesIO, caption: str = "", chat_id: str = TELEGRAM_CHAT_ID_ALT2) -> bool:
-    """Envia uma foto (BytesIO) para o Telegram via sendPhoto."""
-    try:
-        photo_bytes.seek(0)
-        files = {"photo": ("elite_master.png", photo_bytes, "image/png")}
-        data = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
-        resp = requests.post(f"{BASE_URL_TG}/sendPhoto", data=data, files=files, timeout=15)
-        return resp.status_code == 200
-    except requests.RequestException as e:
-        st.error(f"Erro ao enviar foto para Telegram: {e}")
-        return False
-
-def obter_dados_api(url: str, timeout: int = 10) -> dict | None:
-    """Função original mantida para compatibilidade - agora usa rate limit"""
-    return obter_dados_api_com_rate_limit(url, timeout)
-
-def obter_classificacao(liga_id: str) -> dict:
-    cache = carregar_cache_classificacao()
-    if liga_id in cache:
-        return cache[liga_id]
-
-    url = f"{BASE_URL_FD}/competitions/{liga_id}/standings"
-    data = obter_dados_api_com_rate_limit(url)
-    if not data:
-        return {}
-
-    standings = {}
-    for s in data.get("standings", []):
-        if s["type"] != "TOTAL":
-            continue
-        for t in s["table"]:
-            name = t["team"]["name"]
-            standings[name] = {
-                "scored": t.get("goalsFor", 0),
-                "against": t.get("goalsAgainst", 0),
-                "played": t.get("playedGames", 1)
-            }
-    cache[liga_id] = standings
-    salvar_cache_classificacao(cache)
-    return standings
-
-def obter_jogos(liga_id: str, data: str) -> list:
-    cache = carregar_cache_jogos()
-    key = f"{liga_id}_{data}"
-    if key in cache:
-        return cache[key]
-
-    url = f"{BASE_URL_FD}/competitions/{liga_id}/matches?dateFrom={data}&dateTo={data}"
-    data_api = obter_dados_api_com_rate_limit(url)
-    jogos = data_api.get("matches", []) if data_api else []
-    cache[key] = jogos
-    salvar_cache_jogos(cache)
-    return jogos
-
-# =============================
-# NOVAS FUNÇÕES DE PREVISÃO COM DADOS REAIS
-# =============================
-
-def obter_estatisticas_time_real(time_id: str, liga_id: str) -> dict:
-    """
-    Obtém estatísticas REAIS do time da API
-    """
-    cache = carregar_cache_estatisticas()
-    cache_key = f"{liga_id}_{time_id}"
-    
-    if cache_key in cache:
-        return cache[cache_key]
-    
-    try:
-        # Tentar obter estatísticas do time na competição
-        url = f"{BASE_URL_FD}/competitions/{liga_id}/teams"
-        data = obter_dados_api_com_rate_limit(url)
-        
-        estatisticas = {
-            "cartoes_media": 2.8,
-            "escanteios_media": 5.2,
-            "finalizacoes_media": 12.5,
-            "posse_media": 50.0
-        }
-        
-        if data and "teams" in data:
-            for team in data["teams"]:
-                if str(team.get("id")) == str(time_id):
-                    # Aqui podemos extrair mais dados quando disponíveis
-                    estatisticas["nome"] = team.get("name", "")
-                    estatisticas["fundacao"] = team.get("founded", "")
-                    estatisticas["cores"] = team.get("clubColors", "")
-                    
-                    # Ajustar baseado na reputação do time
-                    if any(name in team.get("name", "").lower() for name in ["city", "united", "real", "bayern"]):
-                        estatisticas["cartoes_media"] = 2.5
-                        estatisticas["escanteios_media"] = 6.8
-                    elif any(name in team.get("name", "").lower() for name in ["atletico", "atalanta", "leeds"]):
-                        estatisticas["cartoes_media"] = 3.8
-                        estatisticas["escanteios_media"] = 5.5
-        
-        cache[cache_key] = estatisticas
-        salvar_cache_estatisticas(cache)
-        return estatisticas
-        
-    except Exception as e:
-        st.error(f"Erro ao obter estatísticas do time {time_id}: {e}")
-        return {
-            "cartoes_media": 2.8,
-            "escanteios_media": 5.2,
-            "finalizacoes_media": 12.5,
-            "posse_media": 50.0
-        }
-
-def obter_estatisticas_partida(fixture_id: str) -> dict:
-    """
-    Obtém estatísticas REAIS de uma partida específica
-    """
-    try:
-        url = f"{BASE_URL_FD}/matches/{fixture_id}"
-        data = obter_dados_api_com_rate_limit(url)
-        
-        if not data:
-            return {}
-            
-        match = data.get("match", {})
-        statistics = match.get("statistics", {})
-        
-        return {
-            "cartoes_amarelos": statistics.get("yellowCards", 0),
-            "cartoes_vermelhos": statistics.get("redCards", 0),
-            "escanteios": statistics.get("cornerKicks", 0),
-            "finalizacoes": statistics.get("totalShots", 0),
-            "finalizacoes_gol": statistics.get("shotsOnGoal", 0),
-            "posse_bola": statistics.get("ballPossession", 0)
-        }
-    except Exception as e:
-        st.error(f"Erro ao obter estatísticas da partida {fixture_id}: {e}")
-        return {}
-
-def calcular_previsao_ambas_marcam_real(home: str, away: str, classificacao: dict) -> tuple[float, float, str]:
-    """
-    Previsão REAL: Ambas as equipes marcam usando dados reais da API
-    """
-    dados_home = classificacao.get(home, {"scored": 0, "against": 0, "played": 1})
-    dados_away = classificacao.get(away, {"scored": 0, "against": 0, "played": 1})
-    
-    played_home = max(dados_home["played"], 1)
-    played_away = max(dados_away["played"], 1)
-    
-    # Probabilidade home marcar: média de gols do home + média de gols sofridos do away
-    prob_home_marcar = (dados_home["scored"] / played_home + dados_away["against"] / played_away) / 2
-    
-    # Probabilidade away marcar: média de gols do away + média de gols sofridos do home
-    prob_away_marcar = (dados_away["scored"] / played_away + dados_home["against"] / played_home) / 2
-    
-    # Probabilidade de ambas marcarem
-    prob_ambas_marcam = prob_home_marcar * prob_away_marcar
-    
-    # Ajustar probabilidade base
-    probabilidade_base = prob_ambas_marcam * 100
-    
-    # Calcular confiança baseada na consistência dos times
-    consistencia_home = min(1.0, dados_home["scored"] / max(dados_home["against"], 0.1))
-    consistencia_away = min(1.0, dados_away["scored"] / max(dados_away["against"], 0.1))
-    fator_consistencia = (consistencia_home + consistencia_away) / 2
-    
-    confiança = min(95, probabilidade_base * fator_consistencia * 1.2)
-    
-    # Definir tendência
-    if probabilidade_base >= 60:
-        tendencia = "SIM - Ambas Marcam"
-        confiança = min(95, confiança + 10)
-    elif probabilidade_base >= 40:
-        tendencia = "PROVÁVEL - Ambas Marcam"
-    else:
-        tendencia = "NÃO - Ambas Marcam"
-        confiança = max(30, confiança - 10)
-    
-    return probabilidade_base, confiança, tendencia
-
-def calcular_previsao_cartoes_real(home_team: dict, away_team: dict, liga_id: str) -> tuple[float, float, str]:
-    """
-    Previsão REAL: Total de cartões usando dados reais da API
-    """
-    home_id = home_team.get("id")
-    away_id = away_team.get("id")
-    
-    # Obter estatísticas REAIS dos times
-    stats_home = obter_estatisticas_time_real(str(home_id), liga_id)
-    stats_away = obter_estatisticas_time_real(str(away_id), liga_id)
-    
-    # Médias baseadas em dados reais
-    media_cartoes_home = stats_home.get("cartoes_media", 2.8)
-    media_cartoes_away = stats_away.get("cartoes_media", 2.8)
-    
-    # Fatores de ajuste baseados na liga
-    fatores_liga = {
-        "BSA": 1.3,  # Brasileirão tem mais cartões
-        "SA": 1.2,   # Serie A italiana
-        "PL": 1.0,   # Premier League
-        "BL1": 0.9,  # Bundesliga tem menos cartões
-        "PD": 1.1,   # La Liga
-        "FL1": 1.0,  # Ligue 1
-    }
-    
-    fator_liga = fatores_liga.get(liga_id, 1.0)
-    
-    # Total estimado de cartões
-    total_estimado = (media_cartoes_home + media_cartoes_away) * fator_liga
-    
-    # Calcular confiança
-    confiança = min(85, 40 + (total_estimado * 8))
-    
-    # Definir tendências
-    if total_estimado >= 5.5:
-        tendencia = f"Mais 5.5 Cartões"
-        confiança = min(90, confiança + 5)
-    elif total_estimado >= 4.0:
-        tendencia = f"Mais 4.5 Cartões"
-    else:
-        tendencia = f"Menos 4.5 Cartões"
-        confiança = max(40, confiança - 5)
-    
-    return total_estimado, confiança, tendencia
-
-def calcular_previsao_escanteios_real(home_team: dict, away_team: dict, liga_id: str) -> tuple[float, float, str]:
-    """
-    Previsão REAL: Total de escanteios usando dados reais da API
-    """
-    home_id = home_team.get("id")
-    away_id = away_team.get("id")
-    
-    # Obter estatísticas REAIS dos times
-    stats_home = obter_estatisticas_time_real(str(home_id), liga_id)
-    stats_away = obter_estatisticas_time_real(str(away_id), liga_id)
-    
-    # Médias baseadas em dados reais
-    media_escanteios_home = stats_home.get("escanteios_media", 5.2)
-    media_escanteios_away = stats_away.get("escanteios_media", 5.2)
-    
-    # Fatores de ajuste baseados na liga
-    fatores_liga = {
-        "BSA": 1.2,  # Brasileirão tem mais escanteios
-        "PL": 1.1,   # Premier League
-        "BL1": 1.0,  # Bundesliga
-        "SA": 0.9,   # Serie A tem menos escanteios
-        "PD": 1.0,   # La Liga
-        "FL1": 0.9,  # Ligue 1
-    }
-    
-    fator_liga = fatores_liga.get(liga_id, 1.0)
-    
-    # Total estimado de escanteios
-    total_estimado = (media_escanteios_home + media_escanteios_away) * fator_liga
-    
-    # Calcular confiança
-    confiança = min(80, 35 + (total_estimado * 4))
-    
-    # Definir tendências
-    if total_estimado >= 10.5:
-        tendencia = f"Mais 10.5 Escanteios"
-        confiança = min(85, confiança + 5)
-    elif total_estimado >= 8.0:
-        tendencia = f"Mais 8.5 Escanteios"
-    else:
-        tendencia = f"Menos 8.5 Escanteios"
-        confiança = max(35, confiança - 5)
-    
-    return total_estimado, confiança, tendencia
-
-# =============================
-# SISTEMA DE ALERTAS PARA NOVAS PREVISÕES
-# =============================
-
-def verificar_enviar_alerta_ambas_marcam(fixture: dict, probabilidade: float, confiança: float, tendencia: str, alerta_individual: bool):
-    """Sistema de alertas para previsão Ambas Marcam"""
-    alertas = carregar_alertas_ambas_marcam()
-    fixture_id = str(fixture["id"])
-    
-    if fixture_id not in alertas and confiança >= 60:  # Limiar para ambas marcam
-        alertas[fixture_id] = {
-            "tendencia": tendencia,
-            "probabilidade": probabilidade,
-            "confiança": confiança,
-            "conferido": False
-        }
-        
-        if alerta_individual:
-            enviar_alerta_telegram_ambas_marcam(fixture, tendencia, probabilidade, confiança)
-        
-        salvar_alertas_ambas_marcam(alertas)
-
-def verificar_enviar_alerta_cartoes(fixture: dict, estimativa: float, confiança: float, tendencia: str, alerta_individual: bool):
-    """Sistema de alertas para previsão de Cartões"""
-    alertas = carregar_alertas_cartoes()
-    fixture_id = str(fixture["id"])
-    
-    if fixture_id not in alertas and confiança >= 55:  # Limiar para cartões
-        alertas[fixture_id] = {
-            "tendencia": tendencia,
-            "estimativa": estimativa,
-            "confiança": confiança,
-            "conferido": False
-        }
-        
-        if alerta_individual:
-            enviar_alerta_telegram_cartoes(fixture, tendencia, estimativa, confiança)
-        
-        salvar_alertas_cartoes(alertas)
-
-def verificar_enviar_alerta_escanteios(fixture: dict, estimativa: float, confiança: float, tendencia: str, alerta_individual: bool):
-    """Sistema de alertas para previsão de Escanteios"""
-    alertas = carregar_alertas_escanteios()
-    fixture_id = str(fixture["id"])
-    
-    if fixture_id not in alertas and confiança >= 50:  # Limiar para escanteios
-        alertas[fixture_id] = {
-            "tendencia": tendencia,
-            "estimativa": estimativa,
-            "confiança": confiança,
-            "conferido": False
-        }
-        
-        if alerta_individual:
-            enviar_alerta_telegram_escanteios(fixture, tendencia, estimativa, confiança)
-        
-        salvar_alertas_escanteios(alertas)
-
-# =============================
-# ALERTAS TELEGRAM PARA NOVAS PREVISÕES
-# =============================
-
-def enviar_alerta_telegram_ambas_marcam(fixture: dict, tendencia: str, probabilidade: float, confiança: float) -> bool:
-    """Envia alerta individual para Ambas Marcam - CORRIGIDA"""
-    home = fixture["homeTeam"]["name"]
-    away = fixture["awayTeam"]["name"]
-    
-    # CORREÇÃO: Garantir que a data seja formatada corretamente
-    data_formatada, hora_formatada = formatar_data_iso(fixture["utcDate"])
-    
-    competicao = fixture.get("competition", {}).get("name", "Desconhecido")
-    
-    emoji = "✅" if "SIM" in tendencia else "⚠️" if "PROVÁVEL" in tendencia else "❌"
-    
-    msg = (
-        f"<b>🎯 ALERTA AMBAS MARCAM</b>\n\n"
-        f"<b>🏆 {competicao}</b>\n"
-        f"<b>📅 {data_formatada}</b> | <b>⏰ {hora_formatada} BRT</b>\n\n"
-        f"<b>🏠 {home}</b> vs <b>✈️ {away}</b>\n\n"
-        f"<b>{emoji} Previsão: {tendencia}</b>\n"
-        f"<b>📊 Probabilidade: {probabilidade:.1f}%</b>\n"
-        f"<b>🎯 Confiança: {confiança:.0f}%</b>\n\n"
-        f"<b>⚽ ELITE MASTER - ANÁLISE AMBAS MARCAM</b>"
-    )
-    
-    return enviar_telegram(msg, TELEGRAM_CHAT_ID_ALT2)
-
-def enviar_alerta_telegram_cartoes(fixture: dict, tendencia: str, estimativa: float, confiança: float) -> bool:
-    """Envia alerta individual para Cartões - CORRIGIDA"""
-    home = fixture["homeTeam"]["name"]
-    away = fixture["awayTeam"]["name"]
-    
-    # CORREÇÃO: Garantir formatação correta da data
-    data_formatada, hora_formatada = formatar_data_iso(fixture["utcDate"])
-    
-    competicao = fixture.get("competition", {}).get("name", "Desconhecido")
-    
-    msg = (
-        f"<b>🟨 ALERTA TOTAL DE CARTÕES</b>\n\n"
-        f"<b>🏆 {competicao}</b>\n"
-        f"<b>📅 {data_formatada}</b> | <b>⏰ {hora_formatada} BRT</b>\n\n"
-        f"<b>🏠 {home}</b> vs <b>✈️ {away}</b>\n\n"
-        f"<b>📈 Tendência: {tendencia}</b>\n"
-        f"<b>🟨 Estimativa: {estimativa:.1f} cartões</b>\n"
-        f"<b>🎯 Confiança: {confiança:.0f}%</b>\n\n"
-        f"<b>⚽ ELITE MASTER - ANÁLISE DE CARTÕES</b>"
-    )
-    
-    return enviar_telegram(msg, TELEGRAM_CHAT_ID_ALT2)
-
-def enviar_alerta_telegram_escanteios(fixture: dict, tendencia: str, estimativa: float, confiança: float) -> bool:
-    """Envia alerta individual para Escanteios - CORRIGIDA"""
-    home = fixture["homeTeam"]["name"]
-    away = fixture["awayTeam"]["name"]
-    
-    # CORREÇÃO: Garantir formatação correta da data
-    data_formatada, hora_formatada = formatar_data_iso(fixture["utcDate"])
-    
-    competicao = fixture.get("competition", {}).get("name", "Desconhecido")
-    
-    msg = (
-        f"<b>🔄 ALERTA TOTAL DE ESCANTEIOS</b>\n\n"
-        f"<b>🏆 {competicao}</b>\n"
-        f"<b>📅 {data_formatada}</b> | <b>⏰ {hora_formatada} BRT</b>\n\n"
-        f"<b>🏠 {home}</b> vs <b>✈️ {away}</b>\n\n"
-        f"<b>📈 Tendência: {tendencia}</b>\n"
-        f"<b>🔄 Estimativa: {estimativa:.1f} escanteios</b>\n"
-        f"<b>🎯 Confiança: {confiança:.0f}%</b>\n\n"
-        f"<b>⚽ ELITE MASTER - ANÁLISE DE ESCANTEIOS</b>"
-    )
-    
-    return enviar_telegram(msg, TELEGRAM_CHAT_ID_ALT2)
-
-# =============================
-# SISTEMA DE CONFERÊNCIA PARA ALERTAS COMPOSTOS - NOVO
-# =============================
-
-def verificar_resultados_compostos(alerta_resultados: bool):
-    """Verifica resultados finais para alertas compostos (poster)"""
-    st.info("🔍 Verificando resultados dos alertas compostos...")
-    
-    # Carregar todos os alertas
-    alertas = carregar_alertas()
-    if not alertas:
-        st.info("ℹ️ Nenhum alerta composto para verificar.")
-        return
-    
-    resultados_enviados = 0
-    jogos_com_resultado = []
-    
-    for fixture_id, alerta in list(alertas.items()):
-        if alerta.get("conferido", False):
-            continue
-            
-        try:
-            url = f"{BASE_URL_FD}/matches/{fixture_id}"
-            fixture = obter_dados_api_com_rate_limit(url)
-            
-            if not fixture:
-                continue
-                
-            status = fixture.get("status", "")
-            score = fixture.get("score", {}).get("fullTime", {})
-            home_goals = score.get("home")
-            away_goals = score.get("away")
-            
-            # Verificar se jogo terminou e tem resultado
-            if status == "FINISHED" and home_goals is not None and away_goals is not None:
-                # Obter URLs dos escudos
-                home_crest = fixture.get("homeTeam", {}).get("crest") or fixture.get("homeTeam", {}).get("logo", "")
-                away_crest = fixture.get("awayTeam", {}).get("crest") or fixture.get("awayTeam", {}).get("logo", "")
-                
-                # Preparar dados para o poster
-                jogo_resultado = {
-                    "id": fixture_id,
-                    "home": fixture["homeTeam"]["name"],
-                    "away": fixture["awayTeam"]["name"],
-                    "home_goals": home_goals,
-                    "away_goals": away_goals,
-                    "liga": fixture.get("competition", {}).get("name", "Desconhecido"),
-                    "data": fixture["utcDate"],
-                    "tendencia_prevista": alerta.get("tendencia", "Desconhecida"),
-                    "estimativa_prevista": alerta.get("estimativa", 0),
-                    "confianca_prevista": alerta.get("confiança", 0),
-                    "home_crest": home_crest,
-                    "away_crest": away_crest
-                }
-                
-                jogos_com_resultado.append(jogo_resultado)
-                alerta["conferido"] = True
-                resultados_enviados += 1
-                
-        except Exception as e:
-            st.error(f"Erro ao verificar jogo composto {fixture_id}: {e}")
-    
-    # Enviar alertas em lote se houver resultados E a checkbox estiver ativada
-    if jogos_com_resultado and alerta_resultados:
-        enviar_alerta_resultados_compostos_poster(jogos_com_resultado)
-        salvar_alertas(alertas)
-        st.success(f"✅ {resultados_enviados} resultados compostos processados e alertas enviados!")
-    elif jogos_com_resultado:
-        st.info(f"ℹ️ {resultados_enviados} resultados compostos encontrados, mas alerta de resultados desativado")
-        # Apenas marca como conferido sem enviar alerta
-        salvar_alertas(alertas)
-    else:
-        st.info("ℹ️ Nenhum novo resultado composto final encontrado.")
-
-def enviar_alerta_resultados_compostos_poster(jogos_com_resultado: list):
-    """Envia alerta de resultados compostos com poster para o Telegram"""
-    if not jogos_com_resultado:
-        st.warning("⚠️ Nenhum resultado composto para enviar")
-        return
-
-    try:
-        # Agrupar por data
-        jogos_por_data = {}
-        for jogo in jogos_com_resultado:
-            data_jogo = datetime.fromisoformat(jogo["data"].replace("Z", "+00:00")).date()
-            if data_jogo not in jogos_por_data:
-                jogos_por_data[data_jogo] = []
-            
-            # Calcular RED/GREEN para cada jogo
-            total_gols = jogo['home_goals'] + jogo['away_goals']
-            previsao_correta = False
-            
-            if jogo['tendencia_prevista'] == "Mais 2.5" and total_gols > 2.5:
-                previsao_correta = True
-            elif jogo['tendencia_prevista'] == "Mais 1.5" and total_gols > 1.5:
-                previsao_correta = True
-            elif jogo['tendencia_prevista'] == "Menos 2.5" and total_gols < 2.5:
-                previsao_correta = True
-            
-            jogo['resultado'] = "GREEN" if previsao_correta else "RED"
-            jogos_por_data[data_jogo].append(jogo)
-
-        for data, jogos_data in jogos_por_data.items():
-            data_str = data.strftime("%d/%m/%Y")
-            titulo = f"ELITE MASTER - RESULTADOS COMPOSTOS {data_str}"
-            
-            st.info(f"🎨 Gerando poster de resultados compostos para {data_str} com {len(jogos_data)} jogos...")
-            
-            poster = gerar_poster_resultados_compostos_com_escudos(jogos_data, titulo=titulo)
-            
-            # Calcular estatísticas
-            total_jogos = len(jogos_data)
-            green_count = sum(1 for j in jogos_data if j.get('resultado') == "GREEN")
-            red_count = total_jogos - green_count
-            taxa_acerto = (green_count / total_jogos * 100) if total_jogos > 0 else 0
-            
-            caption = (
-                f"<b>🏁 RESULTADOS COMPOSTOS OFICIAIS - {data_str}</b>\n\n"
-                f"<b>📋 TOTAL DE JOGOS ANALISADOS: {total_jogos}</b>\n"
-                f"<b>🟢 GREEN: {green_count} jogos</b>\n"
-                f"<b>🔴 RED: {red_count} jogos</b>\n"
-                f"<b>🎯 TAXA DE ACERTO: {taxa_acerto:.1f}%</b>\n\n"
-                f"<b>📊 DESEMPENHO DO SISTEMA COMPOSTO:</b>\n"
-                f"<b>• Análise Preditiva Avançada</b>\n"
-                f"<b>• Resultados em Tempo Real</b>\n"
-                f"<b>• Precisão Comprovada</b>\n\n"
-                f"<b>🔥 ELITE MASTER SYSTEM - CONFIABILIDADE COMPROVADA</b>"
-            )
-            
-            st.info("📤 Enviando resultados compostos para o Telegram...")
-            ok = enviar_foto_telegram(poster, caption=caption, chat_id=TELEGRAM_CHAT_ID_ALT2)
-            
-            if ok:
-                st.success(f"🚀 Poster de resultados compostos enviado para {data_str}!")
-                
-                # Registrar no histórico
-                for jogo in jogos_data:
-                    registrar_no_historico({
-                        "home": jogo["home"],
-                        "away": jogo["away"], 
-                        "tendencia": jogo["tendencia_prevista"],
-                        "estimativa": jogo["estimativa_prevista"],
-                        "confianca": jogo["confianca_prevista"],
-                        "placar": f"{jogo['home_goals']}x{jogo['away_goals']}",
-                        "resultado": "🟢 GREEN" if jogo.get('resultado') == "GREEN" else "🔴 RED"
-                    })
-            else:
-                st.error(f"❌ Falha ao enviar poster de resultados compostos para {data_str}")
-                
-    except Exception as e:
-        st.error(f"❌ Erro crítico ao gerar/enviar poster de resultados compostos: {str(e)}")
-        # Fallback para mensagem de texto
-        enviar_alerta_resultados_compostos_texto(jogos_com_resultado)
-
-def enviar_alerta_resultados_compostos_texto(jogos_com_resultado: list):
-    """Fallback para envio de resultados compostos em texto"""
-    try:
-        msg = "<b>🏁 RESULTADOS COMPOSTOS - SISTEMA RED/GREEN</b>\n\n"
-        
-        for jogo in jogos_com_resultado[:10]:  # Limitar a 10 jogos para não exceder limite do Telegram
-            total_gols = jogo['home_goals'] + jogo['away_goals']
-            resultado = "🟢 GREEN" if ((jogo['tendencia_prevista'] == "Mais 2.5" and total_gols > 2.5) or 
-                            (jogo['tendencia_prevista'] == "Mais 1.5" and total_gols > 1.5) or
-                            (jogo['tendencia_prevista'] == "Menos 2.5" and total_gols < 2.5)) else "🔴 RED"
-            
-            msg += (
-                f"{resultado} <b>{jogo['home']}</b> {jogo['home_goals']}x{jogo['away_goals']} <b>{jogo['away']}</b>\n"
-                f"Previsão: {jogo['tendencia_prevista']} | Conf: {jogo['confianca_prevista']:.0f}%\n\n"
-            )
-        
-        msg += "<b>🔥 ELITE MASTER SYSTEM - RESULTADOS COMPOSTOS</b>"
-        
-        return enviar_telegram(msg, chat_id=TELEGRAM_CHAT_ID_ALT2)
-    except Exception as e:
-        st.error(f"❌ Erro no fallback de texto para resultados compostos: {e}")
-        return False
-
-# =============================
-# SISTEMA DE CONFERÊNCIA PARA NOVAS PREVISÕES - ATUALIZADO
-# =============================
-
-def verificar_resultados_finais_completo(alerta_resultados: bool):
-    """Verifica resultados finais para TODOS os tipos de previsão - ATUALIZADA"""
-    st.info("🔍 Verificando resultados para TODOS os tipos de previsão...")
-    
-    # Resultados Gols (Original)
-    verificar_resultados_finais(alerta_resultados)
-    
-    # Resultados Compostos (NOVO)
-    verificar_resultados_compostos(alerta_resultados)
-    
-    # Alertas Compostos Salvos (NOVO)
-    verificar_resultados_alertas_compostos(alerta_resultados)
-    
-    # Novas previsões
-    verificar_resultados_ambas_marcam(alerta_resultados)
-    verificar_resultados_cartoes(alerta_resultados) 
-    verificar_resultados_escanteios(alerta_resultados)
-    
-    st.success("✅ Verificação completa de resultados concluída!")
-
-def verificar_resultados_ambas_marcam(alerta_resultados: bool):
-    """Verifica resultados para previsão Ambas Marcam - CORRIGIDA"""
-    alertas = carregar_alertas_ambas_marcam()
-    if not alertas:
-        st.info("ℹ️ Nenhum alerta Ambas Marcam para verificar.")
-        return
-    
-    resultados_enviados = 0
-    jogos_com_resultado = []
-    
-    for fixture_id, alerta in list(alertas.items()):
-        if alerta.get("conferido", False):
-            continue
-            
-        try:
-            url = f"{BASE_URL_FD}/matches/{fixture_id}"
-            fixture = obter_dados_api_com_rate_limit(url)
-            
-            if not fixture:
-                continue
-                
-            status = fixture.get("status", "")
-            score = fixture.get("score", {}).get("fullTime", {})
-            home_goals = score.get("home", 0)
-            away_goals = score.get("away", 0)
-            
-            if status == "FINISHED" and home_goals is not None and away_goals is not None:
-                ambas_marcaram = home_goals > 0 and away_goals > 0
-                
-                # Determinar se previsão foi correta
-                previsao_correta = False
-                if "SIM" in alerta["tendencia"] and ambas_marcaram:
-                    previsao_correta = True
-                elif "NÃO" in alerta["tendencia"] and not ambas_marcaram:
-                    previsao_correta = True
-                elif "PROVÁVEL" in alerta["tendencia"] and ambas_marcaram:
-                    previsao_correta = True
-                
-                jogo_resultado = {
-                    "id": fixture_id,
-                    "home": fixture["homeTeam"]["name"],
-                    "away": fixture["awayTeam"]["name"],
-                    "home_goals": home_goals,
-                    "away_goals": away_goals,
-                    "liga": fixture.get("competition", {}).get("name", "Desconhecido"),
-                    "data": fixture["utcDate"],
-                    "previsao": alerta.get("tendencia", ""),
-                    "probabilidade_prevista": alerta.get("probabilidade", 0),
-                    "confianca_prevista": alerta.get("confiança", 0),
-                    "ambas_marcaram": ambas_marcaram,
-                    "previsao_correta": previsao_correta,
-                    "home_crest": fixture.get("homeTeam", {}).get("crest", ""),
-                    "away_crest": fixture.get("awayTeam", {}).get("crest", "")
-                }
-                
-                jogos_com_resultado.append(jogo_resultado)
-                alerta["conferido"] = True
-                resultados_enviados += 1
-                
-        except Exception as e:
-            st.error(f"Erro ao verificar ambas marcam {fixture_id}: {e}")
-    
-    if jogos_com_resultado:
-        if alerta_resultados:
-            enviar_alerta_resultados_ambas_marcam_poster(jogos_com_resultado)
-        salvar_alertas_ambas_marcam(alertas)
-        st.success(f"✅ {resultados_enviados} resultados Ambas Marcam processados!")
-    else:
-        st.info("ℹ️ Nenhum novo resultado Ambas Marcam encontrado.")
-
-def verificar_resultados_cartoes(alerta_resultados: bool):
-    """Verifica resultados para previsão de Cartões - CORRIGIDA"""
-    alertas = carregar_alertas_cartoes()
-    if not alertas:
-        st.info("ℹ️ Nenhum alerta Cartões para verificar.")
-        return
-    
-    resultados_enviados = 0
-    jogos_com_resultado = []
-    
-    for fixture_id, alerta in list(alertas.items()):
-        if alerta.get("conferido", False):
-            continue
-            
-        try:
-            # Obter estatísticas REAIS da partida
-            estatisticas = obter_estatisticas_partida(fixture_id)
-            
-            if estatisticas:
-                cartoes_total = estatisticas.get("cartoes_amarelos", 0) + estatisticas.get("cartoes_vermelhos", 0)
-                
-                # Determinar se a previsão foi correta
-                previsao_correta = False
-                if "Mais" in alerta["tendencia"]:
-                    try:
-                        limiar = float(alerta["tendencia"].split(" ")[1].replace(".5", ""))
-                        previsao_correta = cartoes_total > limiar
-                    except:
-                        previsao_correta = cartoes_total > 4.5  # Fallback
-                else:
-                    try:
-                        limiar = float(alerta["tendencia"].split(" ")[1].replace(".5", ""))
-                        previsao_correta = cartoes_total < limiar
-                    except:
-                        previsao_correta = cartoes_total < 4.5  # Fallback
-                
-                # Obter dados básicos do jogo
-                url = f"{BASE_URL_FD}/matches/{fixture_id}"
-                fixture = obter_dados_api_com_rate_limit(url)
-                
-                if fixture:
-                    jogo_resultado = {
-                        "id": fixture_id,
-                        "home": fixture["homeTeam"]["name"],
-                        "away": fixture["awayTeam"]["name"],
-                        "cartoes_total": cartoes_total,
-                        "liga": fixture.get("competition", {}).get("name", "Desconhecido"),
-                        "data": fixture["utcDate"],
-                        "previsao": alerta.get("tendencia", ""),
-                        "estimativa_prevista": alerta.get("estimativa", 0),
-                        "confianca_prevista": alerta.get("confiança", 0),
-                        "previsao_correta": previsao_correta,
-                        "limiar_cartoes": limiar if 'limiar' in locals() else 4.5,
-                        "home_crest": fixture.get("homeTeam", {}).get("crest", ""),
-                        "away_crest": fixture.get("awayTeam", {}).get("crest", "")
-                    }
-                    
-                    jogos_com_resultado.append(jogo_resultado)
-                    alerta["conferido"] = True
-                    resultados_enviados += 1
-                
-        except Exception as e:
-            st.error(f"Erro ao verificar cartões {fixture_id}: {e}")
-    
-    if jogos_com_resultado:
-        if alerta_resultados:
-            enviar_alerta_resultados_cartoes_poster(jogos_com_resultado)
-        salvar_alertas_cartoes(alertas)
-        st.success(f"✅ {resultados_enviados} resultados Cartões processados!")
-    else:
-        st.info("ℹ️ Nenhum novo resultado Cartões encontrado.")
-
-def verificar_resultados_escanteios(alerta_resultados: bool):
-    """Verifica resultados para previsão de Escanteios - CORRIGIDA"""
-    alertas = carregar_alertas_escanteios()
-    if not alertas:
-        st.info("ℹ️ Nenhum alerta Escanteios para verificar.")
-        return
-    
-    resultados_enviados = 0
-    jogos_com_resultado = []
-    
-    for fixture_id, alerta in list(alertas.items()):
-        if alerta.get("conferido", False):
-            continue
-            
-        try:
-            # Obter estatísticas REAIS da partida
-            estatisticas = obter_estatisticas_partida(fixture_id)
-            
-            if estatisticas:
-                escanteios_total = estatisticas.get("escanteios", 0)
-                
-                # Determinar se a previsão foi correta
-                previsao_correta = False
-                if "Mais" in alerta["tendencia"]:
-                    try:
-                        limiar = float(alerta["tendencia"].split(" ")[1].replace(".5", ""))
-                        previsao_correta = escanteios_total > limiar
-                    except:
-                        previsao_correta = escanteios_total > 8.5  # Fallback
-                else:
-                    try:
-                        limiar = float(alerta["tendencia"].split(" ")[1].replace(".5", ""))
-                        previsao_correta = escanteios_total < limiar
-                    except:
-                        previsao_correta = escanteios_total < 8.5  # Fallback
-                
-                # Obter dados básicos do jogo
-                url = f"{BASE_URL_FD}/matches/{fixture_id}"
-                fixture = obter_dados_api_com_rate_limit(url)
-                
-                if fixture:
-                    jogo_resultado = {
-                        "id": fixture_id,
-                        "home": fixture["homeTeam"]["name"],
-                        "away": fixture["awayTeam"]["name"],
-                        "escanteios_total": escanteios_total,
-                        "liga": fixture.get("competition", {}).get("name", "Desconhecido"),
-                        "data": fixture["utcDate"],
-                        "previsao": alerta.get("tendencia", ""),
-                        "estimativa_prevista": alerta.get("estimativa", 0),
-                        "confianca_prevista": alerta.get("confiança", 0),
-                        "previsao_correta": previsao_correta,
-                        "limiar_escanteios": limiar if 'limiar' in locals() else 8.5,
-                        "home_crest": fixture.get("homeTeam", {}).get("crest", ""),
-                        "away_crest": fixture.get("awayTeam", {}).get("crest", "")
-                    }
-                    
-                    jogos_com_resultado.append(jogo_resultado)
-                    alerta["conferido"] = True
-                    resultados_enviados += 1
-                
-        except Exception as e:
-            st.error(f"Erro ao verificar escanteios {fixture_id}: {e}")
-    
-    if jogos_com_resultado:
-        if alerta_resultados:
-            enviar_alerta_resultados_escanteios_poster(jogos_com_resultado)
-        salvar_alertas_escanteios(alertas)
-        st.success(f"✅ {resultados_enviados} resultados Escanteios processados!")
-    else:
-        st.info("ℹ️ Nenhum novo resultado Escanteios encontrado.")
-
-# =============================
-# FUNÇÕES DE POSTER PARA RESULTADOS - TODOS OS TIPOS
-# =============================
-
-def gerar_poster_resultados_ambas_marcam(jogos: list, titulo: str = "ELITE MASTER - RESULTADOS AMBAS MARCAM") -> io.BytesIO:
-    """Gera poster profissional com resultados Ambas Marcam"""
-    return gerar_poster_resultados_generico(jogos, titulo, "ambas_marcam")
-
-def gerar_poster_resultados_cartoes(jogos: list, titulo: str = "ELITE MASTER - RESULTADOS CARTÕES") -> io.BytesIO:
-    """Gera poster profissional com resultados de Cartões"""
-    return gerar_poster_resultados_generico(jogos, titulo, "cartoes")
-
-def gerar_poster_resultados_escanteios(jogos: list, titulo: str = "ELITE MASTER - RESULTADOS ESCANTEIOS") -> io.BytesIO:
-    """Gera poster profissional com resultados de Escanteios"""
-    return gerar_poster_resultados_generico(jogos, titulo, "escanteios")
-
-def gerar_poster_resultados_generico(jogos: list, titulo: str, tipo: str) -> io.BytesIO:
-    """
-    Gera poster profissional genérico para resultados de qualquer tipo
-    """
-    # Configurações do poster
-    LARGURA = 2400
-    ALTURA_TOPO = 350
-    ALTURA_POR_JOGO = 900
-    PADDING = 80
-    
-    jogos_count = len(jogos)
-    altura_total = ALTURA_TOPO + jogos_count * ALTURA_POR_JOGO + PADDING
-
-    # Criar canvas
-    img = Image.new("RGB", (LARGURA, altura_total), color=(13, 25, 35))
-    draw = ImageDraw.Draw(img)
-
-    # Carregar fontes
-    FONTE_TITULO = criar_fonte(90)
-    FONTE_SUBTITULO = criar_fonte(65)
-    FONTE_TIMES = criar_fonte(60)
-    FONTE_PLACAR = criar_fonte(80)
-    FONTE_INFO = criar_fonte(45)
-    FONTE_ANALISE = criar_fonte(55)
-    FONTE_RESULTADO = criar_fonte(65)
-
-    # === TOPO DO POSTER ===
-    titulo_bbox = draw.textbbox((0, 0), titulo, font=FONTE_TITULO)
-    titulo_w = titulo_bbox[2] - titulo_bbox[0]
-    draw.text(((LARGURA - titulo_w) // 2, 60), titulo, font=FONTE_TITULO, fill=(255, 215, 0))
-
-    # Linha decorativa
-    draw.line([(LARGURA//4, 150), (3*LARGURA//4, 150)], fill=(255, 215, 0), width=4)
-
-    y_pos = ALTURA_TOPO
-
-    for idx, jogo in enumerate(jogos):
-        # Cores baseadas no resultado
-        if jogo['previsao_correta']:
-            cor_borda = (76, 175, 80)  # VERDE
-            cor_resultado = (76, 175, 80)
-            texto_resultado = "GREEN"
-        else:
-            cor_borda = (244, 67, 54)  # VERMELHO
-            cor_resultado = (244, 67, 54)
-            texto_resultado = "RED"
-
-        # Caixa do jogo
-        x0, y0 = PADDING, y_pos
-        x1, y1 = LARGURA - PADDING, y_pos + ALTURA_POR_JOGO - 40
-        
-        # Fundo com borda colorida
-        draw.rectangle([x0, y0, x1, y1], fill=(25, 40, 55), outline=cor_borda, width=5)
-
-        # BADGE RESULTADO (GREEN/RED)
-        badge_text = texto_resultado
-        badge_bg_color = cor_resultado
-        
-        try:
-            badge_bbox = draw.textbbox((0, 0), badge_text, font=FONTE_RESULTADO)
-            badge_w = badge_bbox[2] - badge_bbox[0] + 40
-            badge_h = 80
-            badge_x = x1 - badge_w - 20
-            badge_y = y0 + 20
-            
-            draw.rectangle([badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], 
-                          fill=badge_bg_color, outline=badge_bg_color)
-            draw.text((badge_x + 20, badge_y + 10), badge_text, font=FONTE_RESULTADO, fill=(255, 255, 255))
-        except:
-            pass
-
-        # Nome da liga
-        liga_text = jogo['liga'].upper()
-        try:
-            liga_bbox = draw.textbbox((0, 0), liga_text, font=FONTE_SUBTITULO)
-            liga_w = liga_bbox[2] - liga_bbox[0]
-            draw.text(((LARGURA - liga_w) // 2, y0 + 30), liga_text, font=FONTE_SUBTITULO, fill=(170, 190, 210))
-        except:
-            pass
-
-        # Times e placar
-        home_text = jogo['home'][:18]
-        away_text = jogo['away'][:18]
-        
-        # ESCUDOS
-        TAMANHO_ESCUDO = 180
-        TAMANHO_QUADRADO = 200
-        ESPACO_ENTRE_ESCUDOS = 600
-        
-        largura_total = 2 * TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS
-        x_inicio = (LARGURA - largura_total) // 2
-        y_escudos = y0 + 100
-
-        x_home = x_inicio
-        x_away = x_home + TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS
-
-        # Desenhar escudos
-        escudo_home = baixar_imagem_url(jogo.get('home_crest', ''))
-        escudo_away = baixar_imagem_url(jogo.get('away_crest', ''))
-        
-        def desenhar_escudo_quadrado(logo_img, x, y, tamanho_quadrado, tamanho_escudo):
-            draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(255, 255, 255), outline=(200, 200, 200), width=2)
-            if logo_img:
-                try:
-                    logo_img = logo_img.convert("RGBA")
-                    ratio = min(tamanho_escudo/logo_img.width, tamanho_escudo/logo_img.height)
-                    nova_largura = int(logo_img.width * ratio)
-                    nova_altura = int(logo_img.height * ratio)
-                    logo_img = logo_img.resize((nova_largura, nova_altura), Image.Resampling.LANCZOS)
-                    pos_x = x + (tamanho_quadrado - nova_largura) // 2
-                    pos_y = y + (tamanho_quadrado - nova_altura) // 2
-                    img.paste(logo_img, (pos_x, pos_y), logo_img)
-                except:
-                    draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(100, 100, 100))
-                    draw.text((x + 50, y + 70), "ERR", font=FONTE_INFO, fill=(255, 255, 255))
-
-        desenhar_escudo_quadrado(escudo_home, x_home, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-        desenhar_escudo_quadrado(escudo_away, x_away, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-
-        # Nomes dos times
-        try:
-            home_bbox = draw.textbbox((0, 0), home_text, font=FONTE_TIMES)
-            home_w = home_bbox[2] - home_bbox[0]
-            draw.text((x_home + (TAMANHO_QUADRADO - home_w)//2, y_escudos + TAMANHO_QUADRADO + 20),
-                     home_text, font=FONTE_TIMES, fill=(255, 255, 255))
-        except:
-            pass
-
-        try:
-            away_bbox = draw.textbbox((0, 0), away_text, font=FONTE_TIMES)
-            away_w = away_bbox[2] - away_bbox[0]
-            draw.text((x_away + (TAMANHO_QUADRADO - away_w)//2, y_escudos + TAMANHO_QUADRADO + 20),
-                     away_text, font=FONTE_TIMES, fill=(255, 255, 255))
-        except:
-            pass
-
-        # PLACAR CENTRAL
-        if tipo == "ambas_marcam":
-            placar_text = f"{jogo['home_goals']}   -   {jogo['away_goals']}"
-            resultado_real = "SIM" if jogo['ambas_marcaram'] else "NÃO"
-        elif tipo == "cartoes":
-            placar_text = f"{jogo['cartoes_total']} CARTÕES"
-            resultado_real = f"{jogo['cartoes_total']} cartões"
-        elif tipo == "escanteios":
-            placar_text = f"{jogo['escanteios_total']} ESCANTEIOS"
-            resultado_real = f"{jogo['escanteios_total']} escanteios"
-
-        try:
-            placar_bbox = draw.textbbox((0, 0), placar_text, font=FONTE_PLACAR)
-            placar_w = placar_bbox[2] - placar_bbox[0]
-            placar_x = x_home + TAMANHO_QUADRADO + (ESPACO_ENTRE_ESCUDOS - placar_w) // 2
-            draw.text((placar_x, y_escudos + 60), placar_text, font=FONTE_PLACAR, fill=(255, 255, 255))
-        except:
-            pass
-
-        # SEÇÃO DE ANÁLISE
-        y_analysis = y_escudos + TAMANHO_QUADRADO + 80
-        
-        textos_analise = [
-            f"Previsão: {jogo['previsao']}",
-            f"Real: {resultado_real}",
-            f"Confiança: {jogo['confianca_prevista']:.0f}% | Resultado: {texto_resultado}"
-        ]
-        
-        for i, text in enumerate(textos_analise):
-            try:
-                bbox = draw.textbbox((0, 0), text, font=FONTE_ANALISE)
-                w = bbox[2] - bbox[0]
-                draw.text(((LARGURA - w) // 2, y_analysis + i * 70), text, font=FONTE_ANALISE, 
-                         fill=(255, 255, 255) if i < 2 else cor_resultado)
-            except:
-                pass
-
-        y_pos += ALTURA_POR_JOGO
-
-    # Rodapé
-    rodape_text = f"Resultados oficiais • {datetime.now().strftime('%d/%m/%Y %H:%M')} • Elite Master System"
-    try:
-        rodape_bbox = draw.textbbox((0, 0), rodape_text, font=FONTE_INFO)
-        rodape_w = rodape_bbox[2] - rodape_bbox[0]
-        draw.text(((LARGURA - rodape_w) // 2, altura_total - 50), rodape_text, font=FONTE_INFO, fill=(120, 150, 180))
-    except:
-        pass
-
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG", optimize=True, quality=95)
-    buffer.seek(0)
-    
-    st.success(f"✅ Poster de {tipo} gerado com {len(jogos)} jogos")
-    return buffer
-
-# =============================
-# FUNÇÕES DE ENVIO DE RESULTADOS - TODOS OS TIPOS
-# =============================
-
-def enviar_alerta_resultados_ambas_marcam_poster(jogos_com_resultado: list):
-    """Envia alerta de resultados Ambas Marcam com poster"""
-    if not jogos_com_resultado:
-        return
-        
-    try:
-        # Agrupar por data
-        jogos_por_data = {}
-        for jogo in jogos_com_resultado:
-            data_jogo = datetime.fromisoformat(jogo["data"].replace("Z", "+00:00")).date()
-            if data_jogo not in jogos_por_data:
-                jogos_por_data[data_jogo] = []
-            jogos_por_data[data_jogo].append(jogo)
-
-        for data, jogos_data in jogos_por_data.items():
-            data_str = data.strftime("%d/%m/%Y")
-            titulo = f"ELITE MASTER - RESULTADOS AMBAS MARCAM {data_str}"
-            
-            st.info(f"🎨 Gerando poster Ambas Marcam para {data_str}...")
-            poster = gerar_poster_resultados_ambas_marcam(jogos_data, titulo=titulo)
-            
-            # Estatísticas
-            total_jogos = len(jogos_data)
-            green_count = sum(1 for j in jogos_data if j['previsao_correta'])
-            taxa_acerto = (green_count / total_jogos * 100) if total_jogos > 0 else 0
-            
-            caption = (
-                f"<b>🏁 RESULTADOS AMBAS MARCAM - {data_str}</b>\n\n"
-                f"<b>📋 TOTAL DE JOGOS: {total_jogos}</b>\n"
-                f"<b>🟢 GREEN: {green_count} jogos</b>\n"
-                f"<b>🔴 RED: {total_jogos - green_count} jogos</b>\n"
-                f"<b>🎯 TAXA DE ACERTO: {taxa_acerto:.1f}%</b>\n\n"
-                f"<b>⚽ ELITE MASTER - ANÁLISE AMBAS MARCAM COMPROVADA</b>"
-            )
-            
-            if enviar_foto_telegram(poster, caption=caption, chat_id=TELEGRAM_CHAT_ID_ALT2):
-                st.success(f"🚀 Resultados Ambas Marcam enviados para {data_str}!")
-                
-                # Registrar no histórico
-                for jogo in jogos_data:
-                    registrar_no_historico({
-                        "home": jogo["home"],
-                        "away": jogo["away"],
-                        "tendencia": jogo["previsao"],
-                        "estimativa": jogo["probabilidade_prevista"],
-                        "confianca": jogo["confianca_prevista"],
-                        "placar": f"{jogo['home_goals']}x{jogo['away_goals']}",
-                        "resultado": "🟢 GREEN" if jogo['previsao_correta'] else "🔴 RED",
-                        "previsao": jogo["previsao"],
-                        "ambas_marcaram": jogo["ambas_marcaram"]
-                    }, "ambas_marcam")
-            else:
-                st.error(f"❌ Falha ao enviar resultados Ambas Marcam")
-                
-    except Exception as e:
-        st.error(f"❌ Erro ao enviar resultados Ambas Marcam: {str(e)}")
-
-def enviar_alerta_resultados_cartoes_poster(jogos_com_resultado: list):
-    """Envia alerta de resultados Cartões com poster"""
-    if not jogos_com_resultado:
-        return
-        
-    try:
-        # Agrupar por data
-        jogos_por_data = {}
-        for jogo in jogos_com_resultado:
-            data_jogo = datetime.fromisoformat(jogo["data"].replace("Z", "+00:00")).date()
-            if data_jogo not in jogos_por_data:
-                jogos_por_data[data_jogo] = []
-            jogos_por_data[data_jogo].append(jogo)
-
-        for data, jogos_data in jogos_por_data.items():
-            data_str = data.strftime("%d/%m/%Y")
-            titulo = f"ELITE MASTER - RESULTADOS CARTÕES {data_str}"
-            
-            st.info(f"🎨 Gerando poster Cartões para {data_str}...")
-            poster = gerar_poster_resultados_cartoes(jogos_data, titulo=titulo)
-            
-            # Estatísticas
-            total_jogos = len(jogos_data)
-            green_count = sum(1 for j in jogos_data if j['previsao_correta'])
-            taxa_acerto = (green_count / total_jogos * 100) if total_jogos > 0 else 0
-            
-            caption = (
-                f"<b>🏁 RESULTADOS CARTÕES - {data_str}</b>\n\n"
-                f"<b>📋 TOTAL DE JOGOS: {total_jogos}</b>\n"
-                f"<b>🟢 GREEN: {green_count} jogos</b>\n"
-                f"<b>🔴 RED: {total_jogos - green_count} jogos</b>\n"
-                f"<b>🎯 TAXA DE ACERTO: {taxa_acerto:.1f}%</b>\n\n"
-                f"<b>🟨 ELITE MASTER - ANÁLISE DE CARTÕES COMPROVADA</b>"
-            )
-            
-            if enviar_foto_telegram(poster, caption=caption, chat_id=TELEGRAM_CHAT_ID_ALT2):
-                st.success(f"🚀 Resultados Cartões enviados para {data_str}!")
-                
-                # Registrar no histórico
-                for jogo in jogos_data:
-                    registrar_no_historico({
-                        "home": jogo["home"],
-                        "away": jogo["away"],
-                        "tendencia": jogo["previsao"],
-                        "estimativa": jogo["estimativa_prevista"],
-                        "confianca": jogo["confianca_prevista"],
-                        "placar": f"{jogo['cartoes_total']} cartões",
-                        "resultado": "🟢 GREEN" if jogo['previsao_correta'] else "🔴 RED",
-                        "cartoes_total": jogo["cartoes_total"],
-                        "limiar_cartoes": jogo["limiar_cartoes"]
-                    }, "cartoes")
-            else:
-                st.error(f"❌ Falha ao enviar resultados Cartões")
-                
-    except Exception as e:
-        st.error(f"❌ Erro ao enviar resultados Cartões: {str(e)}")
-
-def enviar_alerta_resultados_escanteios_poster(jogos_com_resultado: list):
-    """Envia alerta de resultados Escanteios com poster"""
-    if not jogos_com_resultado:
-        return
-        
-    try:
-        # Agrupar por data
-        jogos_por_data = {}
-        for jogo in jogos_com_resultado:
-            data_jogo = datetime.fromisoformat(jogo["data"].replace("Z", "+00:00")).date()
-            if data_jogo not in jogos_por_data:
-                jogos_por_data[data_jogo] = []
-            jogos_por_data[data_jogo].append(jogo)
-
-        for data, jogos_data in jogos_por_data.items():
-            data_str = data.strftime("%d/%m/%Y")
-            titulo = f"ELITE MASTER - RESULTADOS ESCANTEIOS {data_str}"
-            
-            st.info(f"🎨 Gerando poster Escanteios para {data_str}...")
-            poster = gerar_poster_resultados_escanteios(jogos_data, titulo=titulo)
-            
-            # Estatísticas
-            total_jogos = len(jogos_data)
-            green_count = sum(1 for j in jogos_data if j['previsao_correta'])
-            taxa_acerto = (green_count / total_jogos * 100) if total_jogos > 0 else 0
-            
-            caption = (
-                f"<b>🏁 RESULTADOS ESCANTEIOS - {data_str}</b>\n\n"
-                f"<b>📋 TOTAL DE JOGOS: {total_jogos}</b>\n"
-                f"<b>🟢 GREEN: {green_count} jogos</b>\n"
-                f"<b>🔴 RED: {total_jogos - green_count} jogos</b>\n"
-                f"<b>🎯 TAXA DE ACERTO: {taxa_acerto:.1f}%</b>\n\n"
-                f"<b>🔄 ELITE MASTER - ANÁLISE DE ESCANTEIOS COMPROVADA</b>"
-            )
-            
-            if enviar_foto_telegram(poster, caption=caption, chat_id=TELEGRAM_CHAT_ID_ALT2):
-                st.success(f"🚀 Resultados Escanteios enviados para {data_str}!")
-                
-                # Registrar no histórico
-                for jogo in jogos_data:
-                    registrar_no_historico({
-                        "home": jogo["home"],
-                        "away": jogo["away"],
-                        "tendencia": jogo["previsao"],
-                        "estimativa": jogo["estimativa_prevista"],
-                        "confianca": jogo["confianca_prevista"],
-                        "placar": f"{jogo['escanteios_total']} escanteios",
-                        "resultado": "🟢 GREEN" if jogo['previsao_correta'] else "🔴 RED",
-                        "escanteios_total": jogo["escanteios_total"],
-                        "limiar_escanteios": jogo["limiar_escanteios"]
-                    }, "escanteios")
-            else:
-                st.error(f"❌ Falha ao enviar resultados Escanteios")
-                
-    except Exception as e:
-        st.error(f"❌ Erro ao enviar resultados Escanteios: {str(e)}")
-
-# =============================
-# Lógica de Análise e Alertas ORIGINAL
-# =============================
-def calcular_tendencia(home: str, away: str, classificacao: dict) -> tuple[float, float, str]:
-    dados_home = classificacao.get(home, {"scored": 0, "against": 0, "played": 1})
-    dados_away = classificacao.get(away, {"scored": 0, "against": 0, "played": 1})
-    played_home = max(dados_home["played"], 1)
-    played_away = max(dados_away["played"], 1)
-
-    media_home_feitos = dados_home["scored"] / played_home
-    media_home_sofridos = dados_home["against"] / played_home
-    media_away_feitos = dados_away["scored"] / played_away
-    media_away_sofridos = dados_away["against"] / played_away
-
-    estimativa = ((media_home_feitos + media_away_sofridos) / 2 +
-                  (media_away_feitos + media_home_sofridos) / 2)
-
-    if estimativa >= 3.0:
-        tendencia = "Mais 2.5"
-        confiança = min(95, 70 + (estimativa - 3.0) * 10)
-    elif estimativa >= 2.0:
-        tendencia = "Mais 1.5"
-        confiança = min(90, 60 + (estimativa - 2.0) * 10)
-    else:
-        tendencia = "Menos 2.5"
-        confiança = min(85, 55 + (2.0 - estimativa) * 10)
-
-    return estimativa, confiança, tendencia
-
-def verificar_enviar_alerta(fixture: dict, tendencia: str, estimativa: float, confiança: float, alerta_individual: bool):
-    alertas = carregar_alertas()
-    fixture_id = str(fixture["id"])
-    if fixture_id not in alertas:
-        alertas[fixture_id] = {
-            "tendencia": tendencia,
-            "estimativa": estimativa,
-            "confiança": confiança,
-            "conferido": False
-        }
-        # Só envia alerta individual se a checkbox estiver ativada
-        if alerta_individual:
-            enviar_alerta_telegram(fixture, tendencia, estimativa, confiança)
-        salvar_alertas(alertas)
-
-# =============================
-# SISTEMA DE ALERTAS DE RESULTADOS ORIGINAL
-# =============================
-
-def verificar_resultados_finais(alerta_resultados: bool):
-    """Verifica resultados finais dos jogos e envia alertas - ATUALIZADA"""
-    alertas = carregar_alertas()
-    if not alertas:
-        st.info("ℹ️ Nenhum alerta para verificar resultados.")
-        return
-    
-    resultados_enviados = 0
-    jogos_com_resultado = []
-    
-    for fixture_id, alerta in list(alertas.items()):
-        if alerta.get("conferido", False):
-            continue
-            
-        # Buscar dados atualizados do jogo
-        try:
-            url = f"{BASE_URL_FD}/matches/{fixture_id}"
-            fixture = obter_dados_api_com_rate_limit(url)
-            
-            if not fixture:
-                continue
-                
-            status = fixture.get("status", "")
-            score = fixture.get("score", {}).get("fullTime", {})
-            home_goals = score.get("home")
-            away_goals = score.get("away")
-            
-            # Verificar se jogo terminou e tem resultado
-            if status == "FINISHED" and home_goals is not None and away_goals is not None:
-                # Obter URLs dos escudos
-                home_crest = fixture.get("homeTeam", {}).get("crest") or fixture.get("homeTeam", {}).get("logo", "")
-                away_crest = fixture.get("awayTeam", {}).get("crest") or fixture.get("awayTeam", {}).get("logo", "")
-                
-                # Preparar dados para o poster
-                jogo_resultado = {
-                    "id": fixture_id,
-                    "home": fixture["homeTeam"]["name"],
-                    "away": fixture["awayTeam"]["name"],
-                    "home_goals": home_goals,
-                    "away_goals": away_goals,
-                    "liga": fixture.get("competition", {}).get("name", "Desconhecido"),
-                    "data": fixture["utcDate"],
-                    "tendencia_prevista": alerta.get("tendencia", "Desconhecida"),
-                    "estimativa_prevista": alerta.get("estimativa", 0),
-                    "confianca_prevista": alerta.get("confiança", 0),
-                    "home_crest": home_crest,  # NOVO
-                    "away_crest": away_crest   # NOVO
-                }
-                
-                jogos_com_resultado.append(jogo_resultado)
-                alerta["conferido"] = True
-                resultados_enviados += 1
-                
-        except Exception as e:
-            st.error(f"Erro ao verificar jogo {fixture_id}: {e}")
-    
-    # Enviar alertas em lote se houver resultados E a checkbox estiver ativada
-    if jogos_com_resultado and alerta_resultados:
-        enviar_alerta_resultados_poster(jogos_com_resultado)
-        salvar_alertas(alertas)
-        st.success(f"✅ {resultados_enviados} resultados processados e alertas enviados!")
-    elif jogos_com_resultado:
-        st.info(f"ℹ️ {resultados_enviados} resultados encontrados, mas alerta de resultados desativado")
-        # Apenas marca como conferido sem enviar alerta
-        salvar_alertas(alertas)
-    else:
-        st.info("ℹ️ Nenhum novo resultado final encontrado.")
-
-# =============================
-# NOVAS FUNÇÕES PARA ALERTAS COMPOSTOS
-# =============================
-def gerar_poster_multiplos_jogos(jogos: list, titulo: str = "ELITE MASTER - ALERTAS DO DIA") -> io.BytesIO:
-    """
-    Gera poster profissional com múltiplos jogos para alertas compostos - VERSÃO COM MAIS ESPAÇO VERTICAL
-    """
-    # Configurações do poster
-    LARGURA = 2400
-    ALTURA_TOPO = 350
-    ALTURA_POR_JOGO = 900  # Aumentei para 1050 (200px a mais que o original)
-    PADDING = 60
-    
-    jogos_count = len(jogos)
-    altura_total = ALTURA_TOPO + (jogos_count * ALTURA_POR_JOGO) + PADDING
-
-    # Criar canvas
-    img = Image.new("RGB", (LARGURA, altura_total), color=(13, 25, 35))
-    draw = ImageDraw.Draw(img)
-
-    # Carregar fontes
-    FONTE_TITULO = criar_fonte(100)
-    FONTE_SUBTITULO = criar_fonte(70)
-    FONTE_TIMES = criar_fonte(65)
-    FONTE_VS = criar_fonte(60)
-    FONTE_INFO = criar_fonte(55)
-    FONTE_ANALISE = criar_fonte(60)
-    FONTE_CONFIANCA = criar_fonte(55)
-
-    # === TOPO DO POSTER ===
-    titulo_bbox = draw.textbbox((0, 0), titulo, font=FONTE_TITULO)
-    titulo_w = titulo_bbox[2] - titulo_bbox[0]
-    draw.text(((LARGURA - titulo_w) // 2, 60), titulo, font=FONTE_TITULO, fill=(255, 215, 0))
-
-    # Data atual
-    data_atual = datetime.now().strftime("%d/%m/%Y")
-    data_text = f"DATA DE ANÁLISE: {data_atual}"
-    data_bbox = draw.textbbox((0, 0), data_text, font=FONTE_SUBTITULO)
-    data_w = data_bbox[2] - data_bbox[0]
-    draw.text(((LARGURA - data_w) // 2, 160), data_text, font=FONTE_SUBTITULO, fill=(150, 200, 255))
-
-    # Linha decorativa
-    draw.line([(LARGURA//4, 240), (3*LARGURA//4, 240)], fill=(255, 215, 0), width=4)
-
-    y_pos = ALTURA_TOPO
-
-    for idx, jogo in enumerate(jogos):
-        # === CAIXA DO JOGO ===
-        x0, y0 = PADDING, y_pos
-        x1, y1 = LARGURA - PADDING, y_pos + ALTURA_POR_JOGO - 30
-        
-        # Fundo com borda
-        draw.rectangle([x0, y0, x1, y1], fill=(25, 40, 55), outline=(100, 130, 160), width=3)
-
-        # === LINHA 1: LIGA === (MAIS ESPAÇO DO TOPO)
-        liga_text = jogo['liga'].upper()
-        liga_bbox = draw.textbbox((0, 0), liga_text, font=FONTE_SUBTITULO)
-        liga_w = liga_bbox[2] - liga_bbox[0]
-        draw.text(((LARGURA - liga_w) // 2, y0 + 40), liga_text, font=FONTE_SUBTITULO, fill=(170, 190, 210))  # +50px do topo
-
-        # === LINHA 2: HORÁRIO === (MAIS ESPAÇO DA LIGA)
-        if 'hora_formatada' in jogo and 'data_formatada' in jogo:
-            hora_text = f"HORÁRIO: {jogo['hora_formatada']} BRT | DATA: {jogo['data_formatada']}"
-        else:
-            try:
-                hora_format = jogo["hora"].strftime("%H:%M") if isinstance(jogo["hora"], datetime) else str(jogo["hora"])
-                data_format = jogo["hora"].strftime("%d/%m/%Y") if isinstance(jogo["hora"], datetime) else "Data inválida"
-                hora_text = f"HORÁRIO: {hora_format} BRT | DATA: {data_format}"
-            except:
-                hora_text = "HORÁRIO: Não disponível"
-        
-        hora_bbox = draw.textbbox((0, 0), hora_text, font=FONTE_INFO)
-        hora_w = hora_bbox[2] - hora_bbox[0]
-        draw.text(((LARGURA - hora_w) // 2, y0 + 140), hora_text, font=FONTE_INFO, fill=(120, 180, 240))  # +140px do topo (90px após a liga)
-
-        # === SEÇÃO TIMES E ESCUDOS === (MAIS ESPAÇO DO HORÁRIO)
-        TAMANHO_ESCUDO = 200
-        TAMANHO_QUADRADO = 220
-        ESPACO_ENTRE_ESCUDOS = 700
-
-        # Calcular posição central para escudos - MAIS ESPAÇO DO HORÁRIO
-        largura_total_escudos = 2 * TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS
-        x_inicio_escudos = (LARGURA - largura_total_escudos) // 2
-        y_escudos = y0 + 230  # +220px do topo (80px após o horário)
-
-        x_home_escudo = x_inicio_escudos
-        x_away_escudo = x_home_escudo + TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS
-
-        # Função para desenhar escudo quadrado
-        def desenhar_escudo_quadrado_compacto(logo_img, x, y, tamanho_quadrado, tamanho_escudo):
-            # Fundo branco
-            draw.rectangle(
-                [x, y, x + tamanho_quadrado, y + tamanho_quadrado],
-                fill=(255, 255, 255),
-                outline=(200, 200, 200),
-                width=2
-            )
-
-            if logo_img is None:
-                # Placeholder
-                draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(60, 60, 60))
-                draw.text((x + 40, y + 60), "?", font=FONTE_INFO, fill=(255, 255, 255))
-                return
-
-            try:
-                logo_img = logo_img.convert("RGBA")
-                largura, altura = logo_img.size
-                
-                # Redimensionar mantendo proporção
-                ratio = min(tamanho_escudo/largura, tamanho_escudo/altura)
-                nova_largura = int(largura * ratio)
-                nova_altura = int(altura * ratio)
-                
-                logo_img = logo_img.resize((nova_largura, nova_altura), Image.Resampling.LANCZOS)
-                
-                # Calcular posição para centralizar
-                pos_x = x + (tamanho_quadrado - nova_largura) // 2
-                pos_y = y + (tamanho_quadrado - nova_altura) // 2
-
-                # Colar escudo
-                img.paste(logo_img, (pos_x, pos_y), logo_img)
-
-            except Exception as e:
-                print(f"[ERRO ESCUDO] {e}")
-                draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(100, 100, 100))
-                draw.text((x + 40, y + 60), "ERR", font=FONTE_INFO, fill=(255, 255, 255))
-
-        # Baixar escudos
-        fixture = jogo.get('fixture', {})
-        escudo_home_url = fixture.get("homeTeam", {}).get("crest") or fixture.get("homeTeam", {}).get("logo", "")
-        escudo_away_url = fixture.get("awayTeam", {}).get("crest") or fixture.get("awayTeam", {}).get("logo", "")
-
-        escudo_home = baixar_imagem_url(escudo_home_url)
-        escudo_away = baixar_imagem_url(escudo_away_url)
-
-        # Desenhar escudos
-        desenhar_escudo_quadrado_compacto(escudo_home, x_home_escudo, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-        desenhar_escudo_quadrado_compacto(escudo_away, x_away_escudo, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-
-        # === NOMES DOS TIMES === (MAIS ESPAÇO DOS ESCUDOS)
-        home_text = jogo['home'][:16]
-        away_text = jogo['away'][:16]
-        
-        home_bbox = draw.textbbox((0, 0), home_text, font=FONTE_TIMES)
-        home_w = home_bbox[2] - home_bbox[0]
-        draw.text((x_home_escudo + (TAMANHO_QUADRADO - home_w)//2, y_escudos + TAMANHO_QUADRADO + 40),  # +40px após escudos
-                 home_text, font=FONTE_TIMES, fill=(255, 255, 255))
-
-        away_bbox = draw.textbbox((0, 0), away_text, font=FONTE_TIMES)
-        away_w = away_bbox[2] - away_bbox[0]
-        draw.text((x_away_escudo + (TAMANHO_QUADRADO - away_w)//2, y_escudos + TAMANHO_QUADRADO + 40),  # +40px após escudos
-                 away_text, font=FONTE_TIMES, fill=(255, 255, 255))
-        
-        # === VS CENTRALIZADO ===
-        vs_bbox = draw.textbbox((0, 0), "VS", font=FONTE_VS)
-        vs_w = vs_bbox[2] - vs_bbox[0]
-        vs_x = x_home_escudo + TAMANHO_QUADRADO + (ESPACO_ENTRE_ESCUDOS - vs_w) // 2
-        vs_y = y_escudos + TAMANHO_QUADRADO//2 - 20
-        draw.text((vs_x, vs_y), "VS", font=FONTE_VS, fill=(255, 215, 0))
-
-        # === SEÇÃO ANÁLISE === (MAIS ESPAÇO DOS NOMES DOS TIMES)
-        y_analysis = y_escudos + TAMANHO_QUADRADO + 160  # +120px após nomes dos times
-        
-        # Dividir a largura em 3 colunas iguais
-        largura_coluna = (LARGURA - 2 * PADDING) // 3
-        x_col1 = PADDING + 20
-        x_col2 = x_col1 + largura_coluna
-        x_col3 = x_col2 + largura_coluna
-
-        textos_analise = [
-            f"TENDÊNCIA: {jogo['tendencia'].upper()}",
-            f" ESTIMATIVA: {jogo['estimativa']:.2f} GOLS", 
-            f"CONFIANÇA: {jogo['confiança']:.0f}%"
-        ]
-        
-        cores = [(255, 215, 0), (100, 200, 255), (100, 255, 100)]
-        posicoes_x = [x_col1, x_col2, x_col3]
-        
-        for i, (text, cor, x_pos) in enumerate(zip(textos_analise, cores, posicoes_x)):
-            bbox = draw.textbbox((0, 0), text, font=FONTE_ANALISE)
-            w = bbox[2] - bbox[0]
-            # Centralizar cada texto em sua coluna
-            x_centro = x_pos + (largura_coluna - w) // 2
-            draw.text((x_centro, y_analysis), text, font=FONTE_ANALISE, fill=cor)
-
-        # === INDICADOR DE FORÇA === (MAIS ESPAÇO DA ANÁLISE)
-        y_indicator = y_analysis + 100  # +100px após análise
-        
-        if jogo['confiança'] >= 80:
-            indicador_text = "🔥 ALTA CONFIABILIDADE 🔥"
-            cor_indicador = (76, 255, 80)
-        elif jogo['confiança'] >= 60:
-            indicador_text = "⚡ CONFIABILIDADE MÉDIA ⚡"
-            cor_indicador = (255, 215, 0)
-        else:
-            indicador_text = "⚠️ CONFIABILIDADE MODERADA ⚠️"
-            cor_indicador = (255, 152, 0)
-
-        ind_bbox = draw.textbbox((0, 0), indicador_text, font=FONTE_CONFIANCA)
-        ind_w = ind_bbox[2] - ind_bbox[0]
-        draw.text(((LARGURA - ind_w) // 2, y_indicator), indicador_text, font=FONTE_CONFIANCA, fill=cor_indicador)
-
-        # Linha separadora entre jogos (exceto último)
-        if idx < len(jogos) - 1:
-            draw.line([(x0 + 50, y1), (x1 - 50, y1)], fill=(100, 130, 160), width=2)
-
-        y_pos += ALTURA_POR_JOGO
-
-    # === RODAPÉ ===
-    rodape_text = f"ELITE MASTER SYSTEM • Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-    rodape_bbox = draw.textbbox((0, 0), rodape_text, font=FONTE_INFO)
-    rodape_w = rodape_bbox[2] - rodape_bbox[0]
-    draw.text(((LARGURA - rodape_w) // 2, altura_total - 50), rodape_text, font=FONTE_INFO, fill=(100, 130, 160))
-
-    # Salvar imagem
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG", optimize=True, quality=95)
-    buffer.seek(0)
-    
-    return buffer
-
-
-def enviar_alerta_composto_poster(jogos_conf: list, threshold: int):
-    """Envia alerta composto com poster para múltiplos jogos - ATUALIZADA COM SALVAMENTO"""
-    if not jogos_conf:
-        st.warning("⚠️ Nenhum jogo para gerar poster composto")
-        return False
-
-    try:
-        # Agrupar por data
-        jogos_por_data = {}
-        for jogo in jogos_conf:
-            data_jogo = jogo["hora"].date() if isinstance(jogo["hora"], datetime) else datetime.now().date()
-            if data_jogo not in jogos_por_data:
-                jogos_por_data[data_jogo] = []
-            jogos_por_data[data_jogo].append(jogo)
-
-        enviados = 0
-        for data, jogos_data in jogos_por_data.items():
-            data_str = data.strftime("%d/%m/%Y")
-            titulo = f"ELITE MASTER - ALERTAS {data_str}"
-            
-            st.info(f"🎨 Gerando poster composto para {data_str} com {len(jogos_data)} jogos...")
-            
-            # Ordenar por confiança
-            jogos_data_sorted = sorted(jogos_data, key=lambda x: x['confiança'], reverse=True)
-            
-            # Gerar poster
-            poster = gerar_poster_multiplos_jogos(jogos_data_sorted, titulo=titulo)
-            
-            # Calcular estatísticas
-            total_jogos = len(jogos_data)
-            confiança_media = sum(j['confiança'] for j in jogos_data) / total_jogos
-            jogos_alta_conf = sum(1 for j in jogos_data if j['confiança'] >= 80)
-            
-            caption = (
-                f"<b>🎯 ALERTAS DE GOLS - {data_str}</b>\n\n"
-                f"<b>📋 TOTAL DE JOGOS ANALISADOS: {total_jogos}</b>\n"
-                f"<b>🎯 CONFIANÇA MÉDIA: {confiança_media:.1f}%</b>\n"
-                f"<b>🔥 JOGOS ALTA CONFIANÇA: {jogos_alta_conf}</b>\n\n"
-                f"<b>📊 CRITÉRIOS DA ANÁLISE:</b>\n"
-                f"<b>• Limiar mínimo: {threshold}% de confiança</b>\n"
-                f"<b>• Dados estatísticos em tempo real</b>\n"
-                f"<b>• Análise preditiva avançada</b>\n\n"
-                f"<b>⚽ ELITE MASTER SYSTEM - ANÁLISE CONFIÁVEL</b>"
-            )
-            
-            st.info("📤 Enviando poster composto para o Telegram...")
-            ok = enviar_foto_telegram(poster, caption=caption, chat_id=TELEGRAM_CHAT_ID_ALT2)
-            
-            if ok:
-                # SALVAR ALERTA COMPOSTO PARA FUTURA CONFERÊNCIA - NOVO
-                alerta_id = salvar_alerta_composto_para_conferencia(jogos_data, threshold, poster_enviado=True)
-                if alerta_id:
-                    st.success(f"🚀 Poster composto enviado e salvo para conferência (24h)! ID: {alerta_id}")
-                else:
-                    st.success(f"🚀 Poster composto enviado para {data_str}!")
-                enviados += 1
-            else:
-                st.error(f"❌ Falha ao enviar poster composto para {data_str}")
-                
-        return enviados > 0
-        
-    except Exception as e:
-        st.error(f"❌ Erro crítico ao gerar/enviar poster composto: {str(e)}")
-        # Fallback para mensagem de texto
-        return enviar_alerta_composto_texto(jogos_conf, threshold)
-
-def enviar_alerta_composto_texto(jogos_conf: list, threshold: int) -> bool:
-    """Fallback para alerta composto em texto"""
-    try:
-        msg = f"🔥 Jogos ≥{threshold}% (Estilo Original):\n\n"
-        
-        for jogo in jogos_conf:
-            # CORREÇÃO: Usar dados formatados se disponíveis
-            if 'hora_formatada' in jogo and 'data_formatada' in jogo:
-                hora_text = jogo['hora_formatada']
-                data_text = jogo['data_formatada']
-            else:
-                hora_format = jogo["hora"].strftime("%H:%M") if isinstance(jogo["hora"], datetime) else str(jogo["hora"])
-                data_format = jogo["hora"].strftime("%d/%m/%Y") if isinstance(jogo["hora"], datetime) else "Data inválida"
-                hora_text = hora_format
-                data_text = data_format
-                
-            msg += (
-                f"🏟️ <b>{jogo['home']}</b> vs <b>{jogo['away']}</b>\n"
-                f"🕒 {hora_text} BRT | {data_text} | {jogo['liga']}\n"
-                f"📈 {jogo['tendencia']} | ⚽ {jogo['estimativa']:.2f} | 💯 {jogo['confiança']:.0f}%\n\n"
-            )
-        
-        msg += "<b>🔥 ELITE MASTER SYSTEM - ANÁLISE PREDITIVA</b>"
-        
-        return enviar_telegram(msg, chat_id=TELEGRAM_CHAT_ID_ALT2)
-    except Exception as e:
-        st.error(f"❌ Erro no fallback de texto: {e}")
-        return False
-
-# =============================
-# Funções de geração de imagem
-# =============================
-def gerar_poster_individual_westham(fixture: dict, tendencia: str, estimativa: float, confiança: float) -> io.BytesIO:
-    """
-    Gera poster individual no estilo West Ham para alertas individuais
-    """
-    # Configurações
-    LARGURA = 1800
-    ALTURA = 1200
-    PADDING = 80
-
-    # Criar canvas
-    img = Image.new("RGB", (LARGURA, ALTURA), color=(10, 20, 30))
-    draw = ImageDraw.Draw(img)
-
-    # Carregar fontes
-    FONTE_TITULO = criar_fonte(95)
-    FONTE_SUBTITULO = criar_fonte(60)
-    FONTE_TIMES = criar_fonte(65)
-    FONTE_VS = criar_fonte(55)
-    FONTE_INFO = criar_fonte(45)
-    FONTE_DETALHES = criar_fonte(55)
-    FONTE_ANALISE = criar_fonte(60)
-    FONTE_ALERTA = criar_fonte(90)
-
-    # Título PRINCIPAL - ALERTA
-    titulo_text = " ALERTA DE GOLS "
-    try:
-        titulo_bbox = draw.textbbox((0, 0), titulo_text, font=FONTE_ALERTA)
-        titulo_w = titulo_bbox[2] - titulo_bbox[0]
-        draw.text(((LARGURA - titulo_w) // 2, 60), titulo_text, font=FONTE_ALERTA, fill=(255, 215, 0))
-    except:
-        draw.text((LARGURA//2 - 200, 60), titulo_text, font=FONTE_ALERTA, fill=(255, 215, 0))
-
-    # Linha decorativa
-    draw.line([(LARGURA//4, 150), (3*LARGURA//4, 150)], fill=(255, 215, 0), width=4)
-
-    # Informações da partida
-    home = fixture["homeTeam"]["name"]
-    away = fixture["awayTeam"]["name"]
-    data_formatada, hora_formatada = formatar_data_iso(fixture["utcDate"])
-    competicao = fixture.get("competition", {}).get("name", "Desconhecido")
-    status = fixture.get("status", "DESCONHECIDO")
-
-    # Nome da liga
-    try:
-        liga_bbox = draw.textbbox((0, 0), competicao.upper(), font=FONTE_SUBTITULO)
-        liga_w = liga_bbox[2] - liga_bbox[0]
-        draw.text(((LARGURA - liga_w) // 2, 180), competicao.upper(), font=FONTE_SUBTITULO, fill=(200, 200, 200))
-    except:
-        draw.text((LARGURA//2 - 150, 180), competicao.upper(), font=FONTE_SUBTITULO, fill=(200, 200, 200))
-
-    # Data e hora
-    data_hora_text = f"{data_formatada} • {hora_formatada} BRT • {status}"
-    try:
-        data_bbox = draw.textbbox((0, 0), data_hora_text, font=FONTE_INFO)
-        data_w = data_bbox[2] - data_bbox[0]
-        draw.text(((LARGURA - data_w) // 2, 260), data_hora_text, font=FONTE_INFO, fill=(150, 200, 255))
-    except:
-        draw.text((LARGURA//2 - 150, 260), data_hora_text, font=FONTE_INFO, fill=(150, 200, 255))
-
-    # ESCUDOS DOS TIMES
-    TAMANHO_ESCUDO = 220
-    TAMANHO_QUADRADO = 250
-    ESPACO_ENTRE_ESCUDOS = 600
-
-    # Calcular posição central
-    largura_total = 2 * TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS
-    x_inicio = (LARGURA - largura_total) // 2
-
-    x_home = x_inicio
-    x_away = x_home + TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS
-    y_escudos = 350
-
-    # Baixar escudos
-    escudo_home_url = fixture.get("homeTeam", {}).get("crest") or fixture.get("homeTeam", {}).get("logo", "")
-    escudo_away_url = fixture.get("awayTeam", {}).get("crest") or fixture.get("awayTeam", {}).get("logo", "")
-    
-    escudo_home = baixar_imagem_url(escudo_home_url)
-    escudo_away = baixar_imagem_url(escudo_away_url)
-
-    def desenhar_escudo_quadrado(logo_img, x, y, tamanho_quadrado, tamanho_escudo):
-        # Fundo branco
-        draw.rectangle(
-            [x, y, x + tamanho_quadrado, y + tamanho_quadrado],
-            fill=(255, 255, 255),
-            outline=(255, 255, 255)
-        )
-
-        if logo_img is None:
-            # Placeholder caso falhe
-            draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(60, 60, 60))
-            draw.text((x + 60, y + 80), "SEM", font=FONTE_INFO, fill=(255, 255, 255))
-            return
-
-        try:
-            logo_img = logo_img.convert("RGBA")
-            largura, altura = logo_img.size
-            proporcao = largura / altura
-
-            # Cortar a imagem centralmente para ficar quadrada
-            if proporcao > 1:  # mais larga
-                nova_altura = altura
-                nova_largura = int(altura)
-                offset_x = (largura - nova_largura) // 2
-                offset_y = 0
-            else:  # mais alta
-                nova_largura = largura
-                nova_altura = int(largura)
-                offset_x = 0
-                offset_y = (altura - nova_altura) // 2
-
-            imagem_cortada = logo_img.crop((offset_x, offset_y, offset_x + nova_largura, offset_y + nova_altura))
-
-            # Redimensionar
-            imagem_final = imagem_cortada.resize((tamanho_escudo, tamanho_escudo), Image.Resampling.LANCZOS)
-
-            # Calcular centralização
-            pos_x = x + (tamanho_quadrado - tamanho_escudo) // 2
-            pos_y = y + (tamanho_quadrado - tamanho_escudo) // 2
-
-            # Colar escudo
-            img.paste(imagem_final, (pos_x, pos_y), imagem_final)
-
-        except Exception as e:
-            print(f"[ERRO ESCUDO] {e}")
-            draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(100, 100, 100))
-            draw.text((x + 60, y + 80), "ERR", font=FONTE_INFO, fill=(255, 255, 255))
-
-    # Desenhar escudos quadrados
-    desenhar_escudo_quadrado(escudo_home, x_home, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-    desenhar_escudo_quadrado(escudo_away, x_away, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-
-    # Nomes dos times
-    home_text = home[:20]  # Limitar tamanho
-    away_text = away[:20]
-
-    try:
-        home_bbox = draw.textbbox((0, 0), home_text, font=FONTE_TIMES)
-        home_w = home_bbox[2] - home_bbox[0]
-        draw.text((x_home + (TAMANHO_QUADRADO - home_w)//2, y_escudos + TAMANHO_QUADRADO + 40),
-                 home_text, font=FONTE_TIMES, fill=(255, 255, 255))
-    except:
-        draw.text((x_home, y_escudos + TAMANHO_QUADRADO + 40),
-                 home_text, font=FONTE_TIMES, fill=(255, 255, 255))
-
-    try:
-        away_bbox = draw.textbbox((0, 0), away_text, font=FONTE_TIMES)
-        away_w = away_bbox[2] - away_bbox[0]
-        draw.text((x_away + (TAMANHO_QUADRADO - away_w)//2, y_escudos + TAMANHO_QUADRADO + 40),
-                 away_text, font=FONTE_TIMES, fill=(255, 255, 255))
-    except:
-        draw.text((x_away, y_escudos + TAMANHO_QUADRADO + 40),
-                 away_text, font=FONTE_TIMES, fill=(255, 255, 255))
-
-    # VS centralizado
-    try:
-        vs_bbox = draw.textbbox((0, 0), "VS", font=FONTE_VS)
-        vs_w = vs_bbox[2] - vs_bbox[0]
-        vs_x = x_home + TAMANHO_QUADRADO + (ESPACO_ENTRE_ESCUDOS - vs_w) // 2
-        draw.text((vs_x, y_escudos + TAMANHO_QUADRADO//2 - 25), 
-                 "VS", font=FONTE_VS, fill=(255, 215, 0))
-    except:
-        vs_x = x_home + TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS//2 - 25
-        draw.text((vs_x, y_escudos + TAMANHO_QUADRADO//2 - 25), "VS", font=FONTE_VS, fill=(255, 215, 0))
-
-    # SEÇÃO DE ANÁLISE
-    y_analysis = y_escudos + TAMANHO_QUADRADO + 120
-    
-    # Linha separadora
-    draw.line([(PADDING + 50, y_analysis - 20), (LARGURA - PADDING - 50, y_analysis - 20)], 
-             fill=(100, 130, 160), width=3)
-
-    # Informações de análise com destaque
-    tendencia_emoji = "" if "Mais" in tendencia else "" if "Menos" in tendencia else "⚡"
-    
-    textos_analise = [
-        f"{tendencia_emoji} TENDÊNCIA: {tendencia.upper()}",
-        f" ESTIMATIVA: {estimativa:.2f} GOLS",
-        f" CONFIANÇA: {confiança:.0f}%",
-    ]
-    
-    cores = [(255, 215, 0), (100, 200, 255), (100, 255, 100)]
-    
-    for i, (text, cor) in enumerate(zip(textos_analise, cores)):
-        try:
-            bbox = draw.textbbox((0, 0), text, font=FONTE_ANALISE)
-            w = bbox[2] - bbox[0]
-            draw.text(((LARGURA - w) // 2, y_analysis + i * 85), text, font=FONTE_ANALISE, fill=cor)
-        except:
-            draw.text((PADDING + 100, y_analysis + i * 85), text, font=FONTE_ANALISE, fill=cor)
-
-    # Indicador de força da confiança
-    y_indicator = y_analysis + 220
-    if confiança >= 80:
-        indicador_text = "🔥🔥 ALTA CONFIABILIDADE 🔥🔥"
-        cor_indicador = (76, 175, 80)  # Verde
-    elif confiança >= 60:
-        indicador_text = "⚡⚡ MÉDIA CONFIABILIDADE ⚡⚡"
-        cor_indicador = (255, 193, 7)   # Amarelo
-    else:
-        indicador_text = "⚠️⚠️ CONFIABILIDADE MODERADA ⚠️⚠️"
-        cor_indicador = (255, 152, 0)   # Laranja
-
-    try:
-        ind_bbox = draw.textbbox((0, 0), indicador_text, font=FONTE_DETALHES)
-        ind_w = ind_bbox[2] - ind_bbox[0]
-        draw.text(((LARGURA - ind_w) // 2, y_indicator), indicador_text, font=FONTE_DETALHES, fill=cor_indicador)
-    except:
-        draw.text((LARGURA//2 - 200, y_indicator), indicador_text, font=FONTE_DETALHES, fill=cor_indicador)
-
-    # Rodapé
-    rodape_text = f"ELITE MASTER SYSTEM • {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-    try:
-        rodape_bbox = draw.textbbox((0, 0), rodape_text, font=FONTE_INFO)
-        rodape_w = rodape_bbox[2] - rodape_bbox[0]
-        draw.text(((LARGURA - rodape_w) // 2, ALTURA - 60), rodape_text, font=FONTE_INFO, fill=(100, 130, 160))
-    except:
-        draw.text((LARGURA//2 - 150, ALTURA - 60), rodape_text, font=FONTE_INFO, fill=(100, 130, 160))
-
-    # Salvar imagem
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG", optimize=True, quality=95)
-    buffer.seek(0)
-    
-    return buffer
-
-def enviar_alerta_telegram(fixture: dict, tendencia: str, estimativa: float, confiança: float):
-    """Envia alerta individual com poster estilo West Ham"""
-    try:
-        # Gerar poster individual
-        poster = gerar_poster_individual_westham(fixture, tendencia, estimativa, confiança)
-        
-        # Criar caption para o Telegram
-        home = fixture["homeTeam"]["name"]
-        away = fixture["awayTeam"]["name"]
-        data_formatada, hora_formatada = formatar_data_iso(fixture["utcDate"])
-        competicao = fixture.get("competition", {}).get("name", "Desconhecido")
-        
-        caption = (
-            f"<b>🎯 ALERTA DE GOLS INDIVIDUAL</b>\n\n"
-            f"<b>🏆 {competicao}</b>\n"
-            f"<b>📅 {data_formatada}</b> | <b>⏰ {hora_formatada} BRT</b>\n\n"
-            f"<b>🏠 {home}</b> vs <b>✈️ {away}</b>\n\n"
-            f"<b>📈 Tendência: {tendencia.upper()}</b>\n"
-            f"<b>⚽ Estimativa: {estimativa:.2f} gols</b>\n"
-            f"<b>🎯 Confiança: {confiança:.0f}%</b>\n\n"
-            f"<b>🔥 ELITE MASTER SYSTEM - ANÁLISE PREDITIVA</b>"
-        )
-        
-        # Enviar foto
-        if enviar_foto_telegram(poster, caption=caption):
-            st.success(f"📤 Alerta individual enviado: {home} vs {away}")
+            logging.info("✅ Sessão carregada com sucesso")
             return True
-        else:
-            st.error(f"❌ Falha ao enviar alerta individual: {home} vs {away}")
-            return False
-            
     except Exception as e:
-        st.error(f"❌ Erro ao enviar alerta individual: {str(e)}")
-        # Fallback para mensagem de texto
-        return enviar_alerta_telegram_fallback(fixture, tendencia, estimativa, confiança)
+        logging.error(f"❌ Erro ao carregar sessão: {e}")
+    return False
 
-def enviar_alerta_telegram_fallback(fixture: dict, tendencia: str, estimativa: float, confiança: float) -> bool:
-    """Fallback para alerta em texto caso o poster falhe"""
-    home = fixture["homeTeam"]["name"]
-    away = fixture["awayTeam"]["name"]
-    data_formatada, hora_formatada = formatar_data_iso(fixture["utcDate"])
-    competicao = fixture.get("competition", {}).get("name", "Desconhecido")
-    
-    msg = (
-        f"<b>🎯 ALERTA DE GOLS 🎯</b>\n\n"
-        f"<b>🏆 {competicao}</b>\n"
-        f"<b>📅 {data_formatada}</b> | <b>⏰ {hora_formatada} BRT</b>\n\n"
-        f"<b>🏠 {home}</b> vs <b>✈️ {away}</b>\n\n"
-        f"<b>📈 Tendência: {tendencia.upper()}</b>\n"
-        f"<b>⚽ Estimativa: {estimativa:.2f} gols</b>\n"
-        f"<b>🎯 Confiança: {confiança:.0f}%</b>\n\n"
-        f"<b>🔥 ELITE MASTER SYSTEM</b>"
-    )
-    
-    return enviar_telegram(msg)
-
-def gerar_poster_resultados(jogos: list, titulo: str = "ELITE MASTER - RESULTADOS OFICIAIS") -> io.BytesIO:
-    """
-    Gera poster profissional com resultados finais dos jogos
-    """
-    # Configurações do poster
-    LARGURA = 2400
-    ALTURA_TOPO = 400
-    ALTURA_POR_JOGO = 950
-    PADDING = 120
-    
-    jogos_count = len(jogos)
-    altura_total = ALTURA_TOPO + jogos_count * ALTURA_POR_JOGO + PADDING
-
-    # Criar canvas
-    img = Image.new("RGB", (LARGURA, altura_total), color=(13, 25, 35))
-    draw = ImageDraw.Draw(img)
-
-    # Carregar fontes
-    FONTE_TITULO = criar_fonte(100)
-    FONTE_SUBTITULO = criar_fonte(65)
-    FONTE_TIMES = criar_fonte(70)
-    FONTE_PLACAR = criar_fonte(100)
-    FONTE_VS = criar_fonte(70)
-    FONTE_INFO = criar_fonte(45)
-    FONTE_ANALISE = criar_fonte(75)
-    FONTE_RESULTADO = criar_fonte(70)
-
-    # Título PRINCIPAL
+def limpar_sessao():
+    """Limpa todos os dados da sessão"""
     try:
-        titulo_bbox = draw.textbbox((0, 0), titulo, font=FONTE_TITULO)
-        titulo_w = titulo_bbox[2] - titulo_bbox[0]
-        draw.text(((LARGURA - titulo_w) // 2, 80), titulo, font=FONTE_TITULO, fill=(255, 215, 0))
-    except:
-        draw.text((LARGURA//2 - 300, 80), titulo, font=FONTE_TITULO, fill=(255, 215, 0))
+        if os.path.exists(SESSION_DATA_PATH):
+            os.remove(SESSION_DATA_PATH)
+        if os.path.exists(HISTORICO_PATH):
+            os.remove(HISTORICO_PATH)
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+        logging.info("🗑️ Sessão limpa com sucesso")
+    except Exception as e:
+        logging.error(f"❌ Erro ao limpar sessão: {e}")
 
-    # Linha decorativa
-    draw.line([(LARGURA//4, 180), (3*LARGURA//4, 180)], fill=(255, 215, 0), width=4)
-
-    y_pos = ALTURA_TOPO
-
-    for idx, jogo in enumerate(jogos):
-        # Calcular se a previsão foi correta
-        total_gols = jogo['home_goals'] + jogo['away_goals']
-        previsao_correta = False
-        
-        if jogo['tendencia_prevista'] == "Mais 2.5" and total_gols > 2.5:
-            previsao_correta = True
-        elif jogo['tendencia_prevista'] == "Mais 1.5" and total_gols > 1.5:
-            previsao_correta = True
-        elif jogo['tendencia_prevista'] == "Menos 2.5" and total_gols < 2.5:
-            previsao_correta = True
-        
-        # Definir cores baseadas no resultado
-        if previsao_correta:
-            cor_borda = (76, 175, 80)  # VERDE
-            cor_resultado = (76, 175, 80)
-            texto_resultado = "GREEN"
-        else:
-            cor_borda = (244, 67, 54)  # VERMELHO
-            cor_resultado = (244, 67, 54)
-            texto_resultado = "RED"
-
-        # Caixa do jogo com borda colorida conforme resultado
-        x0, y0 = PADDING, y_pos
-        x1, y1 = LARGURA - PADDING, y_pos + ALTURA_POR_JOGO - 40
-        
-        # Fundo com borda colorida
-        draw.rectangle([x0, y0, x1, y1], fill=(25, 40, 55), outline=cor_borda, width=6)
-
-        # BADGE RESULTADO (GREEN/RED)
-        badge_text = texto_resultado
-        badge_bg_color = cor_resultado
-        badge_text_color = (255, 255, 255)
-        
-        # Calcular tamanho do badge
-        try:
-            badge_bbox = draw.textbbox((0, 0), badge_text, font=FONTE_RESULTADO)
-            badge_w = badge_bbox[2] - badge_bbox[0] + 40
-            badge_h = 90
-            badge_x = x1 - badge_w - 20
-            badge_y = y0 + 20
-            
-            # Desenhar badge
-            draw.rectangle([badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], 
-                          fill=badge_bg_color, outline=badge_bg_color)
-            draw.text((badge_x + 20, badge_y + 10), badge_text, font=FONTE_RESULTADO, fill=badge_text_color)
-        except:
-            # Fallback se der erro no cálculo
-            draw.rectangle([x1 - 180, y0 + 20, x1 - 20, y0 + 100], fill=badge_bg_color)
-            draw.text((x1 - 160, y0 + 30), badge_text, font=FONTE_RESULTADO, fill=badge_text_color)
-
-        # Nome da liga
-        liga_text = jogo['liga'].upper()
-        try:
-            liga_bbox = draw.textbbox((0, 0), liga_text, font=FONTE_SUBTITULO)
-            liga_w = liga_bbox[2] - liga_bbox[0]
-            draw.text(((LARGURA - liga_w) // 2, y0 + 40), liga_text, font=FONTE_SUBTITULO, fill=(170, 190, 210))
-        except:
-            draw.text((LARGURA//2 - 150, y0 + 40), liga_text, font=FONTE_SUBTITULO, fill=(170, 190, 210))
-
-        # Data do jogo
-        data_formatada, hora_formatada = formatar_data_iso(jogo["data"])
-        data_text = f"{data_formatada} • {hora_formatada} BRT"
-        try:
-            data_bbox = draw.textbbox((0, 0), data_text, font=FONTE_INFO)
-            data_w = data_bbox[2] - data_bbox[0]
-            draw.text(((LARGURA - data_w) // 2, y0 + 110), data_text, font=FONTE_INFO, fill=(120, 180, 240))
-        except:
-            draw.text((LARGURA//2 - 150, y0 + 110), data_text, font=FONTE_INFO, fill=(120, 180, 240))
-
-        # ESCUDOS E PLACAR - USANDO A FUNÇÃO EXISTENTE
-        TAMANHO_ESCUDO = 245
-        TAMANHO_QUADRADO = 280
-        ESPACO_ENTRE_ESCUDOS = 700
-
-        # Calcular posição central
-        largura_total = 2 * TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS 
-        x_inicio = (LARGURA - largura_total) // 2
-
-        x_home = x_inicio
-        x_placar = x_home + TAMANHO_QUADRADO + ESPACO_ENTRE_ESCUDOS//2 - 100
-        x_away = x_placar + 450
-
-        y_escudos = y0 + 180
-
-        # Nomes dos times
-        home_text = jogo['home'][:15]
-        away_text = jogo['away'][:15]
-
-        try:
-            home_bbox = draw.textbbox((0, 0), home_text, font=FONTE_TIMES)
-            home_w = home_bbox[2] - home_bbox[0]
-            draw.text((x_home + (TAMANHO_QUADRADO - home_w)//2, y_escudos + TAMANHO_QUADRADO + 20),
-                     home_text, font=FONTE_TIMES, fill=(255, 255, 255))
-        except:
-            draw.text((x_home, y_escudos + TAMANHO_QUADRADO + 20),
-                     home_text, font=FONTE_TIMES, fill=(255, 255, 255))
-
-        try:
-            away_bbox = draw.textbbox((0, 0), away_text, font=FONTE_TIMES)
-            away_w = away_bbox[2] - away_bbox[0]
-            draw.text((x_away + (TAMANHO_QUADRADO - away_w)//2, y_escudos + TAMANHO_QUADRADO + 20),
-                     away_text, font=FONTE_TIMES, fill=(255, 255, 255))
-        except:
-            draw.text((x_away, y_escudos + TAMANHO_QUADRADO + 20),
-                     away_text, font=FONTE_TIMES, fill=(255, 255, 255))
-
-        # PLACAR CENTRAL
-        placar_text = f"{jogo['home_goals']}   -   {jogo['away_goals']}"
-        try:
-            placar_bbox = draw.textbbox((0, 0), placar_text, font=FONTE_PLACAR)
-            placar_w = placar_bbox[2] - placar_bbox[0]
-            placar_x = x_placar + (200 - placar_w) // 2
-            draw.text((placar_x, y_escudos + 30), placar_text, font=FONTE_PLACAR, fill=(255, 255, 255))
-        except:
-            draw.text((x_placar, y_escudos + 30), placar_text, font=FONTE_PLACAR, fill=(255, 255, 255))
-
-        # USAR A FUNÇÃO EXISTENTE PARA DESENHAR ESCUDOS
-        def desenhar_escudo_quadrado(logo_img, x, y, tamanho_quadrado, tamanho_escudo):
-            # Fundo branco
-            draw.rectangle(
-                [x, y, x + tamanho_quadrado, y + tamanho_quadrado],
-                fill=(255, 255, 255),
-                outline=(255, 255, 255)
-            )
-
-            if logo_img is None:
-                # Placeholder caso falhe
-                draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(60, 60, 60))
-                draw.text((x + 60, y + 80), "SEM", font=FONTE_INFO, fill=(255, 255, 255))
-                return
-
-            try:
-                logo_img = logo_img.convert("RGBA")
-                largura, altura = logo_img.size
-                proporcao = largura / altura
-
-                # Cortar a imagem centralmente para ficar quadrada
-                if proporcao > 1:  # mais larga
-                    nova_altura = altura
-                    nova_largura = int(altura)
-                    offset_x = (largura - nova_largura) // 2
-                    offset_y = 0
-                else:  # mais alta
-                    nova_largura = largura
-                    nova_altura = int(largura)
-                    offset_x = 0
-                    offset_y = (altura - nova_altura) // 2
-
-                imagem_cortada = logo_img.crop((offset_x, offset_y, offset_x + nova_largura, offset_y + nova_altura))
-
-                # Redimensionar
-                imagem_final = imagem_cortada.resize((tamanho_escudo, tamanho_escudo), Image.Resampling.LANCZOS)
-
-                # Calcular centralização
-                pos_x = x + (tamanho_quadrado - tamanho_escudo) // 2
-                pos_y = y + (tamanho_quadrado - tamanho_escudo) // 2
-
-                # Colar escudo
-                img.paste(imagem_final, (pos_x, pos_y), imagem_final)
-
-            except Exception as e:
-                print(f"[ERRO ESCUDO] {e}")
-                draw.rectangle([x, y, x + tamanho_quadrado, y + tamanho_quadrado], fill=(100, 100, 100))
-                draw.text((x + 60, y + 80), "ERR", font=FONTE_INFO, fill=(255, 255, 255))
-
-        # Baixar e desenhar escudos - USANDO AS URLS SALVAS
-        escudo_home = baixar_imagem_url(jogo.get('home_crest', ''))
-        escudo_away = baixar_imagem_url(jogo.get('away_crest', ''))
-
-        # Desenhar escudos quadrados
-        desenhar_escudo_quadrado(escudo_home, x_home, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-        desenhar_escudo_quadrado(escudo_away, x_away, y_escudos, TAMANHO_QUADRADO, TAMANHO_ESCUDO)
-
-        # SEÇÃO DE ANÁLISE DO RESULTADO
-        y_analysis = y_escudos + TAMANHO_QUADRADO + 100
-        
-        # Linha separadora
-        draw.line([(x0 + 50, y_analysis - 10), (x1 - 50, y_analysis - 10)], 
-                 fill=(100, 130, 160), width=2)
-
-        # Informações de análise
-        textos_analise = [
-            f"Previsão: {jogo['tendencia_prevista']}",
-            f"Real: {total_gols} gols | Estimativa: {jogo['estimativa_prevista']:.2f}",
-            f"Confiança: {jogo['confianca_prevista']:.0f}% | Resultado: {texto_resultado}"
-        ]
-        
-        cores = [(255, 255, 255), (200, 220, 255), cor_resultado]
-        
-        for i, (text, cor) in enumerate(zip(textos_analise, cores)):
-            try:
-                bbox = draw.textbbox((0, 0), text, font=FONTE_ANALISE)
-                w = bbox[2] - bbox[0]
-                draw.text(((LARGURA - w) // 2, y_analysis + i * 90), text, font=FONTE_ANALISE, fill=cor)
-            except:
-                draw.text((PADDING + 100, y_analysis + i * 90), text, font=FONTE_ANALISE, fill=cor)
-
-        y_pos += ALTURA_POR_JOGO
-
-    # Rodapé
-    rodape_text = f"Resultados oficiais • Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')} • Elite Master System"
+# =============================
+# CONFIGURAÇÕES DE NOTIFICAÇÃO
+# =============================
+def enviar_previsao_super_simplificada(previsao):
+    """Envia notificação de previsão super simplificada"""
     try:
-        rodape_bbox = draw.textbbox((0, 0), rodape_text, font=FONTE_INFO)
-        rodape_w = rodape_bbox[2] - rodape_bbox[0]
-        draw.text(((LARGURA - rodape_w) // 2, altura_total - 60), rodape_text, font=FONTE_INFO, fill=(120, 150, 180))
-    except:
-        draw.text((LARGURA//2 - 300, altura_total - 60), rodape_text, font=FONTE_INFO, fill=(120, 150, 180))
-
-    # Salvar imagem
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG", optimize=True, quality=95)
-    buffer.seek(0)
-    
-    st.success(f"✅ Poster de resultados GERADO com {len(jogos)} jogos - Sistema RED/GREEN")
-    return buffer
-
-def enviar_alerta_resultados_poster(jogos_com_resultado: list):
-    """Envia alerta de resultados com poster para o Telegram"""
-    if not jogos_com_resultado:
-        st.warning("⚠️ Nenhum resultado para enviar")
-        return
-
-    try:
-        # Agrupar por data
-        jogos_por_data = {}
-        for jogo in jogos_com_resultado:
-            data_jogo = datetime.fromisoformat(jogo["data"].replace("Z", "+00:00")).date()
-            if data_jogo not in jogos_por_data:
-                jogos_por_data[data_jogo] = []
+        nome_estrategia = previsao['nome']
+        numeros_apostar = sorted(previsao['numeros_apostar'])
+        
+        if 'Zonas' in nome_estrategia:
+            zonas_envolvidas = previsao.get('zonas_envolvidas', [])
+            confianca = previsao.get('confianca', 'Média')
             
-            # Calcular RED/GREEN para cada jogo
-            total_gols = jogo['home_goals'] + jogo['away_goals']
-            previsao_correta = False
-            
-            if jogo['tendencia_prevista'] == "Mais 2.5" and total_gols > 2.5:
-                previsao_correta = True
-            elif jogo['tendencia_prevista'] == "Mais 1.5" and total_gols > 1.5:
-                previsao_correta = True
-            elif jogo['tendencia_prevista'] == "Menos 2.5" and total_gols < 2.5:
-                previsao_correta = True
-            
-            jogo['resultado'] = "GREEN" if previsao_correta else "RED"
-            jogos_por_data[data_jogo].append(jogo)
-
-        for data, jogos_data in jogos_por_data.items():
-            data_str = data.strftime("%d/%m/%Y")
-            titulo = f"ELITE MASTER - RESULTADOS {data_str}"
-            
-            st.info(f"🎨 Gerando poster de resultados para {data_str} com {len(jogos_data)} jogos...")
-            
-            poster = gerar_poster_resultados(jogos_data, titulo=titulo)
-            
-            # Calcular estatísticas
-            total_jogos = len(jogos_data)
-            green_count = sum(1 for j in jogos_data if j.get('resultado') == "GREEN")
-            red_count = total_jogos - green_count
-            taxa_acerto = (green_count / total_jogos * 100) if total_jogos > 0 else 0
-            
-            caption = (
-                f"<b>🏁 RESULTADOS OFICIAIS - {data_str}</b>\n\n"
-                f"<b>📋 TOTAL DE JOGOS: {total_jogos}</b>\n"
-                f"<b>🟢 GREEN: {green_count} jogos</b>\n"
-                f"<b>🔴 RED: {red_count} jogos</b>\n"
-                f"<b>🎯 TAXA DE ACERTO: {taxa_acerto:.1f}%</b>\n\n"
-                f"<b>📊 DESEMPENHO DO SISTEMA:</b>\n"
-                f"<b>• Análise Preditiva Verificada</b>\n"
-                f"<b>• Resultados em Tempo Real</b>\n"
-                f"<b>• Precisão Comprovada</b>\n\n"
-                f"<b>🔥 ELITE MASTER SYSTEM - CONFIABILIDADE COMPROVADA</b>"
-            )
-            
-            st.info("📤 Enviando resultados para o Telegram...")
-            ok = enviar_foto_telegram(poster, caption=caption, chat_id=TELEGRAM_CHAT_ID_ALT2)
-            
-            if ok:
-                st.success(f"🚀 Poster de resultados enviado para {data_str}!")
+            if len(zonas_envolvidas) > 1:
+                nucleo1 = "7" if zonas_envolvidas[0] == 'Vermelha' else "10" if zonas_envolvidas[0] == 'Azul' else "2"
+                nucleo2 = "7" if zonas_envolvidas[1] == 'Vermelha' else "10" if zonas_envolvidas[1] == 'Azul' else "2"
+                mensagem = f"🔥 NÚCLEOS {nucleo1}+{nucleo2} - CONFIANÇA {confianca.upper()}"
                 
-                # Registrar no histórico
-                for jogo in jogos_data:
-                    registrar_no_historico({
-                        "home": jogo["home"],
-                        "away": jogo["away"], 
-                        "tendencia": jogo["tendencia_prevista"],
-                        "estimativa": jogo["estimativa_prevista"],
-                        "confianca": jogo["confianca_prevista"],
-                        "placar": f"{jogo['home_goals']}x{jogo['away_goals']}",
-                        "resultado": "🟢 GREEN" if jogo.get('resultado') == "GREEN" else "🔴 RED"
-                    })
+                sistema = st.session_state.sistema
+                combinacao = tuple(sorted(zonas_envolvidas))
+                if hasattr(sistema, 'combinacoes_quentes') and combinacao in sistema.combinacoes_quentes:
+                    dados = sistema.historico_combinacoes.get(combinacao, {})
+                    eff = dados.get('eficiencia', 0)
+                    mensagem += f" 🏆 COMBO EFICIENTE ({eff:.1f}%)"
+                    
             else:
-                st.error(f"❌ Falha ao enviar poster de resultados para {data_str}")
-                
-    except Exception as e:
-        st.error(f"❌ Erro crítico ao gerar/enviar poster de resultados: {str(e)}")
-        # Fallback para mensagem de texto
-        msg = f"🏁 RESULTADOS OFICIAIS - SISTEMA RED/GREEN:\n\n"
-        for j in jogos_com_resultado[:5]:
-            total_gols = j['home_goals'] + j['away_goals']
-            resultado = "🟢 GREEN" if ((j['tendencia_prevista'] == "Mais 2.5" and total_gols > 2.5) or 
-                            (j['tendencia_prevista'] == "Mais 1.5" and total_gols > 1.5) or
-                            (j['tendencia_prevista'] == "Menos 2.5" and total_gols < 2.5)) else "🔴 RED"
-            msg += f"{resultado} {j['home']} {j['home_goals']}x{j['away_goals']} {j['away']}\n"
-        enviar_telegram(msg, chat_id=TELEGRAM_CHAT_ID_ALT2)
-
-# =============================
-# FUNÇÕES PRINCIPAIS
-# =============================
-
-def enviar_top_jogos(jogos: list, top_n: int, alerta_top_jogos: bool):
-    """Envia os top jogos para o Telegram"""
-    if not alerta_top_jogos:
-        st.info("ℹ️ Alerta de Top Jogos desativado")
-        return
-        
-    jogos_filtrados = [j for j in jogos if j["status"] not in ["FINISHED", "IN_PLAY", "POSTPONED", "SUSPENDED"]]
-    if not jogos_filtrados:
-        st.warning("⚠️ Nenhum jogo elegível para o Top Jogos (todos já iniciados ou finalizados).")
-        return
-        
-    top_jogos_sorted = sorted(jogos_filtrados, key=lambda x: x["confiança"], reverse=True)[:top_n]
-    msg = f"📢 TOP {top_n} Jogos do Dia (confiança alta)\n\n"
-    
-    for j in top_jogos_sorted:
-        # CORREÇÃO: Usar dados formatados se disponíveis
-        if 'hora_formatada' in j and 'data_formatada' in j:
-            hora_text = j['hora_formatada']
-            data_text = j['data_formatada']
-        else:
-            hora_format = j["hora"].strftime("%H:%M") if isinstance(j["hora"], datetime) else str(j["hora"])
-            data_format = j["hora"].strftime("%d/%m/%Y") if isinstance(j["hora"], datetime) else "Data inválida"
-            hora_text = hora_format
-            data_text = data_format
+                zona = previsao.get('zona', '')
+                nucleo = "7" if zona == 'Vermelha' else "10" if zona == 'Azul' else "2"
+                mensagem = f"🎯 NÚCLEO {nucleo} - CONFIANÇA {confianca.upper()}"
             
-        msg += (
-            f"🏟️ {j['home']} vs {j['away']}\n"
-            f"🕒 {hora_text} BRT | {data_text} | Liga: {j['liga']} | Status: {j['status']}\n"
-            f"📈 Tendência: {j['tendencia']} | Estimativa: {j['estimativa']:.2f} | "
-            f"💯 Confiança: {j['confiança']:.0f}%\n\n"
-        )
-        
-    if enviar_telegram(msg, TELEGRAM_CHAT_ID_ALT2, disable_web_page_preview=True):
-        st.success(f"🚀 Top {top_n} jogos enviados para o canal!")
-    else:
-        st.error("❌ Erro ao enviar top jogos para o Telegram")
-
-def atualizar_status_partidas():
-    """Atualiza o status das partidas no cache"""
-    cache_jogos = carregar_cache_jogos()
-    mudou = False
-    
-    for key in list(cache_jogos.keys()):
-        if key == "_timestamp":
-            continue
+        elif 'Machine Learning' in nome_estrategia or 'ML' in nome_estrategia:
+            zonas_envolvidas = previsao.get('zonas_envolvidas', [])
+            confianca = previsao.get('confianca', 'Média')
             
-        try:
-            liga_id, data = key.split("_", 1)
-            url = f"{BASE_URL_FD}/competitions/{liga_id}/matches?dateFrom={data}&dateTo={data}"
-            data_api = obter_dados_api_com_rate_limit(url)
-            
-            if data_api and "matches" in data_api:
-                cache_jogos[key] = data_api["matches"]
-                mudou = True
-        except Exception as e:
-            st.error(f"Erro ao atualizar liga {key}: {e}")
-            
-    if mudou:
-        salvar_cache_jogos(cache_jogos)
-        st.success("✅ Status das partidas atualizado!")
-    else:
-        st.info("ℹ️ Nenhuma atualização disponível.")
-
-def conferir_resultados():
-    """Conferir resultados dos jogos"""
-    alertas = carregar_alertas()
-    if not alertas:
-        st.info("ℹ️ Nenhum alerta para conferir.")
-        return
-        
-    st.info("🔍 Conferindo resultados...")
-    resultados_conferidos = 0
-    for fixture_id, alerta in alertas.items():
-        if not alerta.get("conferido", False):
-            alerta["conferido"] = True
-            resultados_conferidos += 1
-    
-    if resultados_conferidos > 0:
-        salvar_alertas(alertas)
-        st.success(f"✅ {resultados_conferidos} resultados conferidos!")
-    else:
-        st.info("ℹ️ Nenhum novo resultado para conferir.")
-
-def limpar_caches():
-    """Limpar caches do sistema - AGORA COM BACKUP"""
-    try:
-        arquivos_limpos = 0
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        for cache_file in [CACHE_JOGOS, CACHE_CLASSIFICACAO, CACHE_ESTATISTICAS, ALERTAS_PATH]:
-            if os.path.exists(cache_file):
-                # Fazer backup antes de limpar
-                backup_name = f"data/backup_{cache_file.replace('.json', '')}_{timestamp}.json"
-                try:
-                    with open(cache_file, 'r', encoding='utf-8') as f_src:
-                        dados = f_src.read()
-                    with open(backup_name, 'w', encoding='utf-8') as f_bak:
-                        f_bak.write(dados)
-                except:
-                    pass
-                
-                os.remove(cache_file)
-                arquivos_limpos += 1
-        
-        st.success(f"✅ {arquivos_limpos} caches limpos com sucesso! Backups criados.")
-    except Exception as e:
-        st.error(f"❌ Erro ao limpar caches: {e}")
-
-def calcular_desempenho(qtd_jogos: int = 50):
-    """Calcular desempenho das previsões"""
-    historico = carregar_historico()
-    if not historico:
-        st.warning("⚠️ Nenhum jogo conferido ainda.")
-        return
-        
-    st.info(f"📊 Calculando desempenho dos últimos {qtd_jogos} jogos...")
-    
-    historico_recente = historico[-qtd_jogos:] if len(historico) > qtd_jogos else historico
-    
-    if not historico_recente:
-        st.warning("⚠️ Histórico insuficiente para cálculo.")
-        return
-        
-    total_jogos = len(historico_recente)
-    st.success(f"✅ Desempenho calculado para {total_jogos} jogos!")
-    
-    # Métricas básicas
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total de Jogos", total_jogos)
-    with col2:
-        st.metric("Período Analisado", f"Últimos {qtd_jogos}")
-    with col3:
-        st.metric("Taxa de Confiança Média", f"{sum(h.get('confiança', 0) for h in historico_recente) / total_jogos:.1f}%")
-
-def calcular_desempenho_periodo(data_inicio, data_fim):
-    """Calcular desempenho por período"""
-    st.info(f"📊 Calculando desempenho de {data_inicio} a {data_fim}...")
-    
-    historico = carregar_historico()
-    if not historico:
-        st.warning("⚠️ Nenhum jogo conferido ainda.")
-        return
-        
-    # Filtrar histórico por período
-    historico_periodo = []
-    for registro in historico:
-        try:
-            data_registro = datetime.strptime(registro.get("data_conferencia", ""), "%Y-%m-%d %H:%M:%S").date()
-            if data_inicio <= data_registro <= data_fim:
-                historico_periodo.append(registro)
-        except:
-            continue
-            
-    if not historico_periodo:
-        st.warning(f"⚠️ Nenhum jogo encontrado no período {data_inicio} a {data_fim}.")
-        return
-        
-    total_jogos = len(historico_periodo)
-    st.success(f"✅ Desempenho do período calculado! {total_jogos} jogos analisados.")
-    
-    # Métricas do período
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Jogos no Período", total_jogos)
-    with col2:
-        st.metric("Dias Analisados", (data_fim - data_inicio).days)
-    with col3:
-        st.metric("Confiança Média", f"{sum(h.get('confiança', 0) for h in historico_periodo) / total_jogos:.1f}%")
-
-# =============================
-# FUNÇÕES DE DESEMPENHO PARA NOVAS PREVISÕES
-# =============================
-
-def calcular_desempenho_ambas_marcam(qtd_jogos: int = 50):
-    """Calcular desempenho das previsões Ambas Marcam"""
-    historico = carregar_historico(HISTORICO_AMBAS_MARCAM_PATH)
-    if not historico:
-        st.warning("⚠️ Nenhum jogo Ambas Marcam conferido ainda.")
-        return
-        
-    historico_recente = historico[-qtd_jogos:] if len(historico) > qtd_jogos else historico
-    
-    total_jogos = len(historico_recente)
-    acertos = sum(1 for h in historico_recente if "GREEN" in str(h.get("resultado", "")))
-    taxa_acerto = (acertos / total_jogos * 100) if total_jogos > 0 else 0
-    
-    st.success(f"✅ Desempenho Ambas Marcam: {acertos}/{total_jogos} acertos ({taxa_acerto:.1f}%)")
-
-def calcular_desempenho_cartoes(qtd_jogos: int = 50):
-    """Calcular desempenho das previsões de Cartões"""
-    historico = carregar_historico(HISTORICO_CARTOES_PATH)
-    if not historico:
-        st.warning("⚠️ Nenhum jogo de Cartões conferido ainda.")
-        return
-        
-    historico_recente = historico[-qtd_jogos:] if len(historico) > qtd_jogos else historico
-    
-    total_jogos = len(historico_recente)
-    acertos = sum(1 for h in historico_recente if "GREEN" in str(h.get("resultado", "")))
-    taxa_acerto = (acertos / total_jogos * 100) if total_jogos > 0 else 0
-    
-    st.success(f"✅ Desempenho Cartões: {acertos}/{total_jogos} acertos ({taxa_acerto:.1f}%)")
-
-def calcular_desempenho_escanteios(qtd_jogos: int = 50):
-    """Calcular desempenho das previsões de Escanteios"""
-    historico = carregar_historico(HISTORICO_ESCANTEIOS_PATH)
-    if not historico:
-        st.warning("⚠️ Nenhum jogo de Escanteios conferido ainda.")
-        return
-        
-    historico_recente = historico[-qtd_jogos:] if len(historico) > qtd_jogos else historico
-    
-    total_jogos = len(historico_recente)
-    acertos = sum(1 for h in historico_recente if "GREEN" in str(h.get("resultado", "")))
-    taxa_acerto = (acertos / total_jogos * 100) if total_jogos > 0 else 0
-    
-    st.success(f"✅ Desempenho Escanteios: {acertos}/{total_jogos} acertos ({taxa_acerto:.1f}%)")
-
-# =============================
-# PROCESSAMENTO PRINCIPAL ATUALIZADO - COM SELEÇÃO MÚLTIPLA
-# =============================
-
-def processar_jogos_avancado(data_selecionada, todas_ligas, ligas_selecionadas, top_n, 
-                           threshold, threshold_ambas_marcam, threshold_cartoes, threshold_escanteios,
-                           alerta_individual, alerta_poster, alerta_top_jogos,
-                           alerta_ambas_marcam, alerta_cartoes, alerta_escanteios):
-    """Processamento AVANÇADO com dados REAIS da API - ATUALIZADO PARA SELEÇÃO MÚLTIPLA"""
-    
-    hoje = data_selecionada.strftime("%Y-%m-%d")
-    
-    # DETERMINAR QUAIS LIGAS USAR - MODIFICADO PARA MÚLTIPLAS LIGAS
-    if todas_ligas:
-        ligas_busca = list(LIGA_DICT.values())
-    else:
-        ligas_busca = [LIGA_DICT[liga] for liga in ligas_selecionadas]
-
-    st.write(f"⏳ Buscando jogos com análise AVANÇADA para {data_selecionada.strftime('%d/%m/%Y')}...")
-    
-    top_jogos_gols = []
-    top_jogos_ambas_marcam = []
-    top_jogos_cartoes = []
-    top_jogos_escanteios = []
-    
-    progress_bar = st.progress(0)
-    total_ligas = len(ligas_busca)
-
-    for i, liga_id in enumerate(ligas_busca):
-        classificacao = obter_classificacao(liga_id)
-        jogos = obter_jogos(liga_id, hoje)
-
-        for match in jogos:
-            home_team = match["homeTeam"]
-            away_team = match["awayTeam"]
-            home_name = home_team["name"]
-            away_name = away_team["name"]
-            
-            # CORREÇÃO: Formatar data/hora UMA VEZ e reutilizar
-            data_formatada, hora_formatada = formatar_data_iso(match["utcDate"])
-            hora_datetime = datetime.fromisoformat(match["utcDate"].replace("Z", "+00:00")) - timedelta(hours=3)
-            
-            # PREVISÃO ORIGINAL - GOLS
-            estimativa, confiança, tendencia = calcular_tendencia(home_name, away_name, classificacao)
-            
-            # Dados para previsão original de gols - CORRIGIDO
-            jogo_data = {
-                "id": match["id"],
-                "home": home_name,
-                "away": away_name,
-                "tendencia": tendencia,
-                "estimativa": estimativa,
-                "confiança": confiança,
-                "liga": match.get("competition", {}).get("name", "Desconhecido"),
-                "hora": hora_datetime,  # CORREÇÃO: Usar datetime já calculado
-                "data_formatada": data_formatada,  # NOVO: Adicionar data formatada
-                "hora_formatada": hora_formatada,  # NOVO: Adicionar hora formatada
-                "status": match.get("status", "DESCONHECIDO"),
-                "fixture": match  # Manter fixture completa
-            }
-            
-            top_jogos_gols.append(jogo_data)
-            
-            # Enviar alertas individuais se ativado
-            if alerta_individual and confiança >= threshold:
-                verificar_enviar_alerta(match, tendencia, estimativa, confiança, alerta_individual)
-
-            # NOVAS PREVISÕES COM DADOS REAIS - CORRIGIDAS
-            # Ambas Marcam
-            if alerta_ambas_marcam:
-                prob_ambas, conf_ambas, tend_ambas = calcular_previsao_ambas_marcam_real(
-                    home_name, away_name, classificacao)
-                if conf_ambas >= threshold_ambas_marcam:
-                    verificar_enviar_alerta_ambas_marcam(match, prob_ambas, conf_ambas, tend_ambas, alerta_ambas_marcam)
-                    top_jogos_ambas_marcam.append({
-                        "home": home_name, 
-                        "away": away_name, 
-                        "probabilidade": prob_ambas,
-                        "confiança": conf_ambas, 
-                        "tendencia": tend_ambas,
-                        "liga": match.get("competition", {}).get("name", "Desconhecido"),
-                        "hora": hora_datetime,  # CORREÇÃO: Usar datetime consistente
-                        "data_formatada": data_formatada,  # NOVO
-                        "hora_formatada": hora_formatada,  # NOVO
-                        "fixture": match  # NOVO: Manter fixture para escudos
-                    })
-
-            # Cartões COM DADOS REAIS - CORRIGIDO
-            if alerta_cartoes:
-                est_cartoes, conf_cartoes, tend_cartoes = calcular_previsao_cartoes_real(
-                    home_team, away_team, liga_id)
-                if conf_cartoes >= threshold_cartoes:
-                    verificar_enviar_alerta_cartoes(match, est_cartoes, conf_cartoes, tend_cartoes, alerta_cartoes)
-                    top_jogos_cartoes.append({
-                        "home": home_name, 
-                        "away": away_name, 
-                        "estimativa": est_cartoes,
-                        "confiança": conf_cartoes, 
-                        "tendencia": tend_cartoes,
-                        "liga": match.get("competition", {}).get("name", "Desconhecido"),
-                        "hora": hora_datetime,  # CORREÇÃO
-                        "data_formatada": data_formatada,  # NOVO
-                        "hora_formatada": hora_formatada,  # NOVO
-                        "fixture": match  # NOVO
-                    })
-
-            # Escanteios COM DADOS REAIS - CORRIGIDO
-            if alerta_escanteios:
-                est_escanteios, conf_escanteios, tend_escanteios = calcular_previsao_escanteios_real(
-                    home_team, away_team, liga_id)
-                if conf_escanteios >= threshold_escanteios:
-                    verificar_enviar_alerta_escanteios(match, est_escanteios, conf_escanteios, tend_escanteios, alerta_escanteios)
-                    top_jogos_escanteios.append({
-                        "home": home_name, 
-                        "away": away_name, 
-                        "estimativa": est_escanteios,
-                        "confiança": conf_escanteios, 
-                        "tendencia": tend_escanteios,
-                        "liga": match.get("competition", {}).get("name", "Desconhecido"),
-                        "hora": hora_datetime,  # CORREÇÃO
-                        "data_formatada": data_formatada,  # NOVO
-                        "hora_formatada": hora_formatada,  # NOVO
-                        "fixture": match  # NOVO
-                    })
-
-        progress_bar.progress((i + 1) / total_ligas)
-
-    progress_bar.empty()
-
-    # ENVIO DE ALERTAS COMPOSTOS - CORRIGIDO
-    if alerta_poster:
-        # Filtrar jogos por threshold e status
-        jogos_confiaveis = [j for j in top_jogos_gols 
-                           if j["confiança"] >= threshold 
-                           and j["status"] not in ["FINISHED", "IN_PLAY", "POSTPONED", "SUSPENDED"]]
-        
-        if jogos_confiaveis:
-            st.info(f"🎨 Preparando poster composto com {len(jogos_confiaveis)} jogos...")
-            if enviar_alerta_composto_poster(jogos_confiaveis, threshold):
-                st.success("🚀 Poster composto enviado com sucesso!")
+            if len(zonas_envolvidas) > 1:
+                nucleo1 = "7" if zonas_envolvidas[0] == 'Vermelha' else "10" if zonas_envolvidas[0] == 'Azul' else "2"
+                nucleo2 = "7" if zonas_envolvidas[1] == 'Vermelha' else "10" if zonas_envolvidas[1] == 'Azul' else "2"
+                mensagem = f"🤖 NÚCLEOS {nucleo1}+{nucleo2} - CONFIANÇA {confianca.upper()}"
             else:
-                st.error("❌ Falha ao enviar poster composto")
+                zona_ml = previsao.get('zona_ml', '')
+                nucleo = "7" if zona_ml == 'Vermelha' else "10" if zona_ml == 'Azul' else "2"
+                mensagem = f"🤖 NÚCLEO {nucleo} - CONFIANÇA {confianca.upper()}"
+        
+        elif 'Triângulo' in nome_estrategia:
+            triangulo_info = previsao.get('triangulo_info', '')
+            confianca = previsao.get('confianca', 'Média')
+            gatilho = previsao.get('gatilho', '')
+            mensagem = f"🔺 TRIÂNGULO {triangulo_info} - CONFIANÇA {confianca.upper()}"
+            if gatilho:
+                mensagem += f"\n📊 {gatilho}"
+        
         else:
-            st.warning("⚠️ Nenhum jogo elegível para poster composto")
-
-    # ENVIO DE TOP JOGOS
-    enviar_top_jogos(top_jogos_gols, top_n, alerta_top_jogos)
-
-    # EXIBIR RESULTADOS NA INTERFACE
-    st.subheader("📊 Resultados da Análise Avançada")
-
-    # Abas para diferentes tipos de previsão
-    tab1, tab2, tab3, tab4 = st.tabs(["⚽ Previsão de Gols", "🔄 Ambas Marcam", "🟨 Cartões", "🔄 Escanteios"])
-
-    with tab1:
-        exibir_resultados_previsao_gols(top_jogos_gols, threshold)
-
-    with tab2:
-        exibir_resultados_ambas_marcam(top_jogos_ambas_marcam, threshold_ambas_marcam)
-
-    with tab3:
-        exibir_resultados_cartoes(top_jogos_cartoes, threshold_cartoes)
-
-    with tab4:
-        exibir_resultados_escanteios(top_jogos_escanteios, threshold_escanteios)
-
-def exibir_resultados_previsao_gols(jogos: list, threshold: int):
-    """Exibe resultados da previsão de gols"""
-    if not jogos:
-        st.info("ℹ️ Nenhum jogo encontrado para previsão de gols")
-        return
-
-    # Filtrar por confiança e status
-    jogos_filtrados = [j for j in jogos 
-                      if j["confiança"] >= threshold 
-                      and j["status"] not in ["FINISHED", "IN_PLAY", "POSTPONED", "SUSPENDED"]]
-    
-    if not jogos_filtrados:
-        st.warning(f"⚠️ Nenhum jogo com confiança ≥{threshold}% e status válido")
-        return
-
-    st.write(f"**🎯 Jogos com Confiança ≥{threshold}%**")
-
-    for jogo in sorted(jogos_filtrados, key=lambda x: x["confiança"], reverse=True):
-        # CORREÇÃO: Usar dados formatados já calculados
-        hora_display = jogo.get('hora_formatada', 'Hora inválida')
-        data_display = jogo.get('data_formatada', 'Data inválida')
+            mensagem = f"💰 {previsao['nome']} - APOSTAR AGORA"
         
-        with st.expander(f"🏟️ {jogo['home']} vs {jogo['away']} - {jogo['confiança']:.0f}%", expanded=False):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write(f"**📅 Data:** {data_display}")
-                st.write(f"**⏰ Hora:** {hora_display} BRT")
-                st.write(f"**🏆 Liga:** {jogo['liga']}")
-            with col2:
-                st.write(f"**📈 Tendência:** {jogo['tendencia']}")
-                st.write(f"**⚽ Estimativa:** {jogo['estimativa']:.2f} gols")
-                st.write(f"**🎯 Confiança:** {jogo['confiança']:.0f}%")
-            with col3:
-                st.write(f"**📊 Status:** {jogo['status']}")
-                # Barra de confiança visual
-                confiança = jogo['confiança']
-                st.progress(confiança / 100, text=f"Confiança: {confiança:.0f}%")
-
-def exibir_resultados_ambas_marcam(jogos: list, threshold: int):
-    """Exibe resultados da previsão Ambas Marcam"""
-    if not jogos:
-        st.info("ℹ️ Nenhum jogo encontrado para previsão Ambas Marcam")
-        return
-
-    st.write(f"**🔄 Jogos Ambas Marcam com Confiança ≥{threshold}%**")
-
-    for jogo in sorted(jogos, key=lambda x: x["confiança"], reverse=True):
-        # CORREÇÃO: Usar dados formatados
-        hora_display = jogo.get('hora_formatada', 'Hora inválida')
-        data_display = jogo.get('data_formatada', 'Data inválida')
+        st.toast(f"🎯 PREVISÃO CONFIRMADA", icon="🔥")
+        st.warning(f"🔔 {mensagem}")
         
-        with st.expander(f"🏟️ {jogo['home']} vs {jogo['away']} - {jogo['confiança']:.0f}%", expanded=False):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write(f"**📅 Data:** {data_display}")
-                st.write(f"**⏰ Hora:** {hora_display} BRT")
-                st.write(f"**🏆 Liga:** {jogo['liga']}")
-            with col2:
-                st.write(f"**📈 Tendência:** {jogo['tendencia']}")
-                st.write(f"**📊 Probabilidade:** {jogo['probabilidade']:.1f}%")
-                st.write(f"**🎯 Confiança:** {jogo['confiança']:.0f}%")
-            with col3:
-                # Barra de confiança visual
-                confiança = jogo['confiança']
-                st.progress(confiança / 100, text=f"Confiança: {confiança:.0f}%")
+        if 'telegram_token' in st.session_state and 'telegram_chat_id' in st.session_state:
+            if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+                enviar_alerta_numeros_simplificado(previsao)
+                enviar_telegram(f"🚨 PREVISÃO ATIVA\n{mensagem}\n💎 CONFIANÇA: {previsao.get('confianca', 'ALTA')}")
                 
-                # Indicador visual
-                if "SIM" in jogo['tendencia']:
-                    st.success("✅ ALTA PROBABILIDADE")
-                elif "PROVÁVEL" in jogo['tendencia']:
-                    st.warning("⚠️ PROBABILIDADE MÉDIA")
-                else:
-                    st.error("❌ BAIXA PROBABILIDADE")
+        salvar_sessao()
+    except Exception as e:
+        logging.error(f"Erro ao enviar previsão: {e}")
 
-def exibir_resultados_cartoes(jogos: list, threshold: int):
-    """Exibe resultados da previsão de Cartões"""
-    if not jogos:
-        st.info("ℹ️ Nenhum jogo encontrado para previsão de Cartões")
-        return
-
-    st.write(f"**🟨 Jogos com Cartões (Confiança ≥{threshold}%)**")
-
-    for jogo in sorted(jogos, key=lambda x: x["confiança"], reverse=True):
-        # CORREÇÃO: Usar dados formatados
-        hora_display = jogo.get('hora_formatada', 'Hora inválida')
-        data_display = jogo.get('data_formatada', 'Data inválida')
+def enviar_alerta_numeros_simplificado(previsao):
+    """Envia alerta alternativo super simplificado com os números para apostar"""
+    try:
+        nome_estrategia = previsao['nome']
+        numeros_apostar = sorted(previsao['numeros_apostar'])
         
-        with st.expander(f"🏟️ {jogo['home']} vs {jogo['away']} - {jogo['confiança']:.0f}%", expanded=False):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write(f"**📅 Data:** {data_display}")
-                st.write(f"**⏰ Hora:** {hora_display} BRT")
-                st.write(f"**🏆 Liga:** {jogo['liga']}")
-            with col2:
-                st.write(f"**📈 Tendência:** {jogo['tendencia']}")
-                st.write(f"**🟨 Estimativa:** {jogo['estimativa']:.1f} cartões")
-                st.write(f"**🎯 Confiança:** {jogo['confiança']:.0f}%")
-            with col3:
-                # Barra de confiança visual
-                confiança = jogo['confiança']
-                st.progress(confiança / 100, text=f"Confiança: {confiança:.0f}%")
-                
-                # Indicador de intensidade
-                if jogo['estimativa'] >= 5.5:
-                    st.error("🔴 ALTA INTENSIDADE")
-                elif jogo['estimativa'] >= 4.0:
-                    st.warning("🟡 MÉDIA INTENSIDADE")
-                else:
-                    st.info("🟢 BAIXA INTENSIDADE")
-
-def exibir_resultados_escanteios(jogos: list, threshold: int):
-    """Exibe resultados da previsão de Escanteios"""
-    if not jogos:
-        st.info("ℹ️ Nenhum jogo encontrado para previsão de Escanteios")
-        return
-
-    st.write(f"**🔄 Jogos com Escanteios (Confiança ≥{threshold}%)**")
-
-    for jogo in sorted(jogos, key=lambda x: x["confiança"], reverse=True):
-        # CORREÇÃO: Usar dados formatados
-        hora_display = jogo.get('hora_formatada', 'Hora inválida')
-        data_display = jogo.get('data_formatada', 'Data inválida')
+        metade = len(numeros_apostar) // 2
+        linha1 = " ".join(map(str, numeros_apostar[:metade]))
+        linha2 = " ".join(map(str, numeros_apostar[metade:]))
         
-        with st.expander(f"🏟️ {jogo['home']} vs {jogo['away']} - {jogo['confiança']:.0f}%", expanded=False):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write(f"**📅 Data:** {data_display}")
-                st.write(f"**⏰ Hora:** {hora_display} BRT")
-                st.write(f"**🏆 Liga:** {jogo['liga']}")
-            with col2:
-                st.write(f"**📈 Tendência:** {jogo['tendencia']}")
-                st.write(f"**🔄 Estimativa:** {jogo['estimativa']:.1f} escanteios")
-                st.write(f"**🎯 Confiança:** {jogo['confiança']:.0f}%")
-            with col3:
-                # Barra de confiança visual
-                confiança = jogo['confiança']
-                st.progress(confiança / 100, text=f"Confiança: {confiança:.0f}%")
-                
-                # Indicador de intensidade
-                if jogo['estimativa'] >= 10.5:
-                    st.error("🔴 ALTA INTENSIDADE")
-                elif jogo['estimativa'] >= 8.0:
-                    st.warning("🟡 MÉDIA INTENSIDADE")
-                else:
-                    st.info("🟢 BAIXA INTENSIDADE")
-
-# =============================
-# INTERFACE PRINCIPAL STREAMLIT - ATUALIZADA
-# =============================
-
-def main():
-    st.set_page_config(
-        page_title="ELITE MASTER - Sistema Avançado de Previsões",
-        page_icon="⚽",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-
-    # CSS personalizado
-    st.markdown("""
-        <style>
-        .main-header {
-            font-size: 3rem;
-            color: #FFD700;
-            text-align: center;
-            margin-bottom: 2rem;
-            font-weight: bold;
-            text-shadow: 2px 2px 4px #000000;
-        }
-        .sub-header {
-            font-size: 1.5rem;
-            color: #87CEEB;
-            margin-bottom: 1rem;
-            font-weight: bold;
-        }
-        .metric-card {
-            background-color: #1E2A38;
-            padding: 1rem;
-            border-radius: 10px;
-            border-left: 4px solid #FFD700;
-        }
-        .stProgress > div > div > div {
-            background-color: #FFD700;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    # Cabeçalho principal
-    st.markdown('<h1 class="main-header">⚽ ELITE MASTER SYSTEM</h1>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #CCCCCC;">Sistema Avançado de Previsões com Análise em Tempo Real</p>', unsafe_allow_html=True)
-
-    # Barra lateral
-    with st.sidebar:
-        st.image("https://via.placeholder.com/150x150/1E2A38/FFD700?text=EM", width=150)
-        st.title("🎮 Controles")
-        
-        # Data seleção
-        data_selecionada = st.date_input(
-            "📅 Data dos Jogos",
-            datetime.now(),
-            help="Selecione a data para análise"
-        )
-        
-        # Seleção de ligas - MODIFICADO PARA MÚLTIPLA SELEÇÃO
-        st.subheader("🏆 Ligas")
-        todas_ligas = st.checkbox("Todas as Ligas", value=True, help="Analisar todas as ligas disponíveis")
-        
-        if not todas_ligas:
-            ligas_selecionadas = st.multiselect(
-                "Selecione as Ligas:",
-                options=list(LIGA_DICT.keys()),
-                default=["Premier League (Inglaterra)", "Bundesliga", "Campeonato Brasileiro Série A"],
-                help="Selecione uma ou mais ligas para análise"
-            )
+        if 'Zonas' in nome_estrategia:
+            emoji = "🔥"
+        elif 'ML' in nome_estrategia:
+            emoji = "🤖"
+        elif 'Triângulo' in nome_estrategia:
+            emoji = "🔺"
         else:
-            ligas_selecionadas = list(LIGA_DICT.keys())
-
-        # Configurações de alertas
-        st.subheader("🔔 Configurações de Alertas")
-        
-        # NOVO: Thresholds por faixas de porcentagem
-        faixas_confianca = {
-            "50% a 60%": 60,
-            "61% a 70%": 70,
-            "71% a 80%": 80,
-            "81% a 90%": 90,
-            "91% a 100%": 95
-        }
-        
-        # Thresholds para diferentes tipos usando seletores de faixa
-        threshold_faixa = st.selectbox(
-            "Faixa de Confiança Mínima Gols",
-            options=list(faixas_confianca.keys()),
-            index=2,  # Padrão: 71% a 80%
-            help="Selecione a faixa de confiança mínima para alertas de gols"
-        )
-        threshold = faixas_confianca[threshold_faixa]
-        
-        threshold_ambas_marcam_faixa = st.selectbox(
-            "Faixa de Confiança Mínima Ambas Marcam",
-            options=list(faixas_confianca.keys()),
-            index=1,  # Padrão: 61% a 70%
-            help="Selecione a faixa de confiança mínima para alertas Ambas Marcam"
-        )
-        threshold_ambas_marcam = faixas_confianca[threshold_ambas_marcam_faixa]
-        
-        threshold_cartoes_faixa = st.selectbox(
-            "Faixa de Confiança Mínima Cartões",
-            options=list(faixas_confianca.keys()),
-            index=1,  # Padrão: 61% a 70%
-            help="Selecione a faixa de confiança mínima para alertas de Cartões"
-        )
-        threshold_cartoes = faixas_confianca[threshold_cartoes_faixa]
-        
-        threshold_escanteios_faixa = st.selectbox(
-            "Faixa de Confiança Mínima Escanteios",
-            options=list(faixas_confianca.keys()),
-            index=0,  # Padrão: 50% a 60%
-            help="Selecione a faixa de confiança mínima para alertas de Escanteios"
-        )
-        threshold_escanteios = faixas_confianca[threshold_escanteios_faixa]
-        
-        top_n = st.slider("Top N Jogos", 1, 20, 5, help="Número de jogos no Top Jogos")
-
-        # Ativação de alertas
-        st.subheader("🚀 Ativar Alertas")
-        alerta_individual = st.checkbox("Alertas Individuais", value=False, 
-                                      help="Enviar alertas individuais para cada jogo")
-        alerta_poster = st.checkbox("Poster Composto", value=True, 
-                                  help="Enviar poster com múltiplos jogos")
-        alerta_top_jogos = st.checkbox("Top Jogos", value=True, 
-                                     help="Enviar lista dos Top N jogos")
-        
-        # Novos tipos de alertas
-        alerta_ambas_marcam = st.checkbox("Ambas Marcam", value=True,
-                                        help="Ativar previsões Ambas Marcam")
-        alerta_cartoes = st.checkbox("Cartões", value=True,
-                                   help="Ativar previsões de Cartões")
-        alerta_escanteios = st.checkbox("Escanteios", value=True,
-                                      help="Ativar previsões de Escanteios")
-
-        # Exibir valores selecionados
-        st.markdown("---")
-        st.subheader("🎯 Valores Selecionados")
-        st.write(f"**Gols:** {threshold}% ({threshold_faixa})")
-        st.write(f"**Ambas Marcam:** {threshold_ambas_marcam}% ({threshold_ambas_marcam_faixa})")
-        st.write(f"**Cartões:** {threshold_cartoes}% ({threshold_cartoes_faixa})")
-        st.write(f"**Escanteios:** {threshold_escanteios}% ({threshold_escanteios_faixa})")
-
-        # Botões de ação
-        st.subheader("⚙️ Ações do Sistema")
-        if st.button("🔄 Atualizar Status Partidas", use_container_width=True):
-            atualizar_status_partidas()
+            emoji = "💰"
             
-        if st.button("🔍 Verificar Resultados", use_container_width=True):
-            verificar_resultados_finais_completo(True)
-            
-        if st.button("📊 Calcular Desempenho", use_container_width=True):
-            calcular_desempenho(50)
-
-        # Limpeza
-        st.subheader("🧹 Limpeza")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Limpar Caches", use_container_width=True):
-                limpar_caches()
-        with col2:
-            if st.button("Limpar Histórico", use_container_width=True):
-                limpar_historico("todos")
-
-    # Área principal
-    tab_principal, tab_desempenho, tab_historico, tab_config = st.tabs([
-        "🎯 Análise Principal", "📊 Desempenho", "📋 Histórico", "⚙️ Configurações"
-    ])
-
-    with tab_principal:
-        st.subheader("🔍 Análise de Previsões Avançadas")
+        mensagem_simplificada = f"{emoji} APOSTAR AGORA\n{linha1}\n{linha2}"
         
-        # NOVA SEÇÃO: Alertas Compostos Salvos
-        st.markdown("---")
-        st.subheader("📊 Alertas Compostos Salvos")
+        enviar_telegram(mensagem_simplificada)
+        logging.info("🔔 Alerta simplificado enviado para Telegram")
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("👀 Visualizar Alertas Compostos Salvos", use_container_width=True):
-                exibir_alertas_compostos_salvos()
-        with col2:
-            if st.button("🔍 Verificar Resultados Compostos", use_container_width=True):
-                with st.spinner("Verificando resultados de alertas compostos..."):
-                    resultados_encontrados = verificar_resultados_alertas_compostos(True)
-                    if resultados_encontrados:
-                        st.success("✅ Verificação de alertas compostos concluída!")
+    except Exception as e:
+        logging.error(f"Erro ao enviar alerta simplificado: {e}")
+
+def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada=None):
+    """Envia notificação de resultado super simplificado"""
+    try:
+        if acerto:
+            if 'Zonas' in nome_estrategia and zona_acertada:
+                if '+' in zona_acertada:
+                    zonas = zona_acertada.split('+')
+                    nucleos = []
+                    for zona in zonas:
+                        if zona == 'Vermelha':
+                            nucleos.append("7")
+                        elif zona == 'Azul':
+                            nucleos.append("10")
+                        elif zona == 'Amarela':
+                            nucleos.append("2")
+                        else:
+                            nucleos.append(zona)
+                    nucleo_str = "+".join(nucleos)
+                    mensagem = f"✅ Acerto Núcleos {nucleo_str}\n🎲 Número: {numero_real}"
+                else:
+                    if zona_acertada == 'Vermelha':
+                        nucleo = "7"
+                    elif zona_acertada == 'Azul':
+                        nucleo = "10"
+                    elif zona_acertada == 'Amarela':
+                        nucleo = "2"
                     else:
-                        st.info("ℹ️ Nenhum novo resultado em alertas compostos")
-        with col3:
-            if st.button("🐛 Debug Alertas Compostos", use_container_width=True):
-                debug_alertas_compostos()
+                        nucleo = zona_acertada
+                    mensagem = f"✅ Acerto Núcleo {nucleo}\n🎲 Número: {numero_real}"
+            elif 'ML' in nome_estrategia and zona_acertada:
+                if '+' in zona_acertada:
+                    zonas = zona_acertada.split('+')
+                    nucleos = []
+                    for zona in zonas:
+                        if zona == 'Vermelha':
+                            nucleos.append("7")
+                        elif zona == 'Azul':
+                            nucleos.append("10")
+                        elif zona == 'Amarela':
+                            nucleos.append("2")
+                        else:
+                            nucleos.append(zona)
+                    nucleo_str = "+".join(nucleos)
+                    mensagem = f"✅ Acerto Núcleos {nucleo_str}\n🎲 Número: {numero_real}"
+                else:
+                    if zona_acertada == 'Vermelha':
+                        nucleo = "7"
+                    elif zona_acertada == 'Azul':
+                        nucleo = "10"
+                    elif zona_acertada == 'Amarela':
+                        nucleo = "2"
+                    else:
+                        nucleo = zona_acertada
+                    mensagem = f"✅ Acerto Núcleo {nucleo}\n🎲 Número: {numero_real}"
+            elif 'Triângulo' in nome_estrategia:
+                mensagem = f"✅ ACERTO TRIÂNGULO!\n🎲 Número: {numero_real}"
+                if zona_acertada:
+                    mensagem += f"\n🔺 Região: {zona_acertada}"
+            else:
+                mensagem = f"✅ Acerto\n🎲 Número: {numero_real}"
+        else:
+            mensagem = f"❌ Erro\n🎲 Número: {numero_real}"
         
-        # Botão principal de análise (existente)
-        if st.button("🚀 Executar Análise Completa", type="primary", use_container_width=True):
-            with st.spinner("Executando análise avançada com dados em tempo real..."):
-                processar_jogos_avancado(
-                    data_selecionada=data_selecionada,
-                    todas_ligas=todas_ligas,
-                    ligas_selecionadas=ligas_selecionadas,
-                    top_n=top_n,
-                    threshold=threshold,
-                    threshold_ambas_marcam=threshold_ambas_marcam,
-                    threshold_cartoes=threshold_cartoes,
-                    threshold_escanteios=threshold_escanteios,
-                    alerta_individual=alerta_individual,
-                    alerta_poster=alerta_poster,
-                    alerta_top_jogos=alerta_top_jogos,
-                    alerta_ambas_marcam=alerta_ambas_marcam,
-                    alerta_cartoes=alerta_cartoes,
-                    alerta_escanteios=alerta_escanteios
-                )
+        st.toast(f"🎲 Resultado", icon="✅" if acerto else "❌")
+        st.success(f"📢 {mensagem}") if acerto else st.error(f"📢 {mensagem}")
+        
+        if 'telegram_token' in st.session_state and 'telegram_chat_id' in st.session_state:
+            if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+                enviar_telegram(f"📢 RESULTADO\n{mensagem}")
+                enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia)
+                
+        salvar_sessao()
+    except Exception as e:
+        logging.error(f"Erro ao enviar resultado: {e}")
 
-    with tab_desempenho:
-        st.subheader("📈 Métricas de Desempenho")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            if st.button("Desempenho Gols", use_container_width=True):
-                calcular_desempenho(50)
-        with col2:
-            if st.button("Desempenho Ambas Marcam", use_container_width=True):
-                calcular_desempenho_ambas_marcam(50)
-        with col3:
-            if st.button("Desempenho Cartões", use_container_width=True):
-                calcular_desempenho_cartoes(50)
-        with col4:
-            if st.button("Desempenho Escanteios", use_container_width=True):
-                calcular_desempenho_escanteios(50)
-        
-        # Seleção de período para análise
-        st.subheader("📅 Análise por Período")
-        col1, col2 = st.columns(2)
-        with col1:
-            data_inicio = st.date_input("Data Início", datetime.now() - timedelta(days=30))
-        with col2:
-            data_fim = st.date_input("Data Fim", datetime.now())
+def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia):
+    """Envia alerta de conferência super simplificado"""
+    try:
+        if acerto:
+            mensagem = f"🎉 ACERTOU! {numero_real}"
+        else:
+            mensagem = f"💥 ERROU! {numero_real}"
             
-        if st.button("Calcular Desempenho do Período", use_container_width=True):
-            calcular_desempenho_periodo(data_inicio, data_fim)
+        enviar_telegram(mensagem)
+        logging.info("🔔 Alerta de conferência enviado para Telegram")
+        
+    except Exception as e:
+        logging.error(f"Erro ao enviar alerta de conferência: {e}")
 
-    with tab_historico:
-        st.subheader("📋 Histórico de Conferências")
+def enviar_rotacao_automatica(estrategia_anterior, estrategia_nova):
+    """Envia notificação de rotação automática"""
+    try:
+        mensagem = f"🔄 ROTAÇÃO AUTOMÁTICA\n{estrategia_anterior} → {estrategia_nova}"
         
-        tipo_historico = st.selectbox(
-            "Selecione o tipo de histórico:",
-            ["gols", "ambas_marcam", "cartoes", "escanteios", "compostos"],
-            format_func=lambda x: {
-                "gols": "⚽ Previsão de Gols",
-                "ambas_marcam": "🔄 Ambas Marcam", 
-                "cartoes": "🟨 Cartões",
-                "escanteios": "🔄 Escanteios",
-                "compostos": "📊 Alertas Compostos"  # NOVO
-            }[x]
-        )
+        st.toast("🔄 Rotação Automática", icon="🔄")
+        st.warning(f"🔄 {mensagem}")
         
-        caminhos_historico = {
-            "gols": HISTORICO_PATH,
-            "ambas_marcam": HISTORICO_AMBAS_MARCAM_PATH,
-            "cartoes": HISTORICO_CARTOES_PATH,
-            "escanteios": HISTORICO_ESCANTEIOS_PATH,
-            "compostos": HISTORICO_COMPOSTOS_PATH  # NOVO
+        if 'telegram_token' in st.session_state and 'telegram_chat_id' in st.session_state:
+            if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+                enviar_telegram(f"🔄 ROTAÇÃO\n{mensagem}")
+                
+    except Exception as e:
+        logging.error(f"Erro ao enviar rotação: {e}")
+
+def enviar_rotacao_por_acertos_combinacoes(combinacao_anterior, combinacao_nova):
+    """Envia notificação de rotação por acertos em combinações"""
+    try:
+        def combo_para_nucleos(combo):
+            nucleos = []
+            for zona in combo:
+                if zona == 'Vermelha':
+                    nucleos.append("7")
+                elif zona == 'Azul':
+                    nucleos.append("10") 
+                elif zona == 'Amarela':
+                    nucleos.append("2")
+                else:
+                    nucleos.append(zona)
+            return "+".join(nucleos)
+        
+        nucleo_anterior = combo_para_nucleos(combinacao_anterior)
+        nucleo_novo = combo_para_nucleos(combinacao_nova)
+        
+        mensagem = f"🎯 ROTAÇÃO POR 3 ACERTOS SEGUIDOS\nNúcleos {nucleo_anterior} → Núcleos {nucleo_novo}\n✅ 3 acertos consecutivos - Alternando combinações"
+        
+        st.toast("🎯 Rotação por Acertos", icon="✅")
+        st.success(f"🎯 {mensagem}")
+        
+        if 'telegram_token' in st.session_state and 'telegram_chat_id' in st.session_state:
+            if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+                enviar_telegram(f"🎯 ROTAÇÃO POR ACERTOS\n{mensagem}")
+                
+    except Exception as e:
+        logging.error(f"Erro ao enviar rotação por acertos: {e}")
+
+def enviar_telegram(mensagem):
+    """Envia mensagem para o Telegram"""
+    try:
+        token = st.session_state.telegram_token
+        chat_id = st.session_state.telegram_chat_id
+        
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": mensagem,
+            "parse_mode": "HTML"
         }
         
-        historico = carregar_historico(caminhos_historico[tipo_historico])
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            logging.info("Mensagem enviada para Telegram com sucesso")
+        else:
+            logging.error(f"Erro ao enviar para Telegram: {response.status_code}")
+    except Exception as e:
+        logging.error(f"Erro na conexão com Telegram: {e}")
+
+# =============================
+# CONFIGURAÇÕES
+# =============================
+API_URL = "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremelightningroulette/latest"
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+# =============================
+# SISTEMA DE SELEÇÃO INTELIGENTE DE NÚMEROS
+# =============================
+class SistemaSelecaoInteligente:
+    def __init__(self):
+        self.roleta = RoletaInteligente()
+        
+    def selecionar_melhores_15_numeros(self, numeros_candidatos, historico, estrategia_tipo="Zonas"):
+        if len(numeros_candidatos) <= 15:
+            return numeros_candidatos
+            
+        scores = {}
+        for numero in numeros_candidatos:
+            scores[numero] = self.calcular_score_numero(numero, historico, estrategia_tipo)
+        
+        numeros_ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        melhores_15 = [num for num, score in numeros_ordenados[:15]]
+        
+        logging.info(f"🎯 Seleção Inteligente: {len(numeros_candidatos)} → 15 números")
+        return melhores_15
+    
+    def calcular_score_numero(self, numero, historico, estrategia_tipo):
+        score_total = 0
+        
+        score_frequencia = self.calcular_score_frequencia(numero, historico)
+        score_total += score_frequencia * 0.45
+        
+        score_posicao = self.calcular_score_posicao_roda(numero, historico)
+        score_total += score_posicao * 0.20
+        
+        score_vizinhos = self.calcular_score_vizinhos(numero, historico)
+        score_total += score_vizinhos * 0.25
+        
+        score_tendencia = self.calcular_score_tendencia(numero, historico)
+        score_total += score_tendencia * 0.10
+        
+        return score_total
+    
+    def calcular_score_frequencia(self, numero, historico):
+        if len(historico) < 3:
+            return 0.7
+            
+        historico_lista = list(historico)
+        
+        janela_curta = historico_lista[-8:] if len(historico_lista) >= 8 else historico_lista
+        freq_curta = sum(1 for n in janela_curta if n == numero) / len(janela_curta)
+        
+        janela_media = historico_lista[-20:] if len(historico_lista) >= 20 else historico_lista
+        freq_media = sum(1 for n in janela_media if n == numero) / len(janela_media)
+        
+        janela_longa = historico_lista[-40:] if len(historico_lista) >= 40 else historico_lista
+        freq_longa = sum(1 for n in janela_longa if n == numero) / len(janela_longa)
+        
+        score = (freq_curta * 0.7 + freq_media * 0.2 + freq_longa * 0.1)
+        return min(score * 4, 1.0)
+    
+    def calcular_score_posicao_roda(self, numero, historico):
+        if len(historico) < 3:
+            return 0.5
+            
+        ultimo_numero = historico[-1] if historico else 0
+        penultimo_numero = historico[-2] if len(historico) >= 2 else ultimo_numero
+        
+        posicao_alvo = self.roleta.get_posicao_race(numero)
+        posicao_ultimo = self.roleta.get_posicao_race(ultimo_numero)
+        posicao_penultimo = self.roleta.get_posicao_race(penultimo_numero)
+        
+        dist_ultimo = self.calcular_distancia_roda(posicao_alvo, posicao_ultimo)
+        score_dist_ultimo = max(0, 1 - (dist_ultimo / 18))
+        
+        dist_penultimo = self.calcular_distancia_roda(posicao_alvo, posicao_penultimo)
+        score_dist_penultimo = max(0, 1 - (dist_penultimo / 18))
+        
+        score_final = (score_dist_ultimo * 0.7 + score_dist_penultimo * 0.3)
+        return score_final
+    
+    def calcular_distancia_roda(self, pos1, pos2):
+        total_posicoes = 37
+        distancia_direta = abs(pos1 - pos2)
+        distancia_inversa = total_posicoes - distancia_direta
+        return min(distancia_direta, distancia_inversa)
+    
+    def calcular_score_vizinhos(self, numero, historico):
+        if len(historico) < 5:
+            return 0.5
+            
+        vizinhos = self.roleta.get_vizinhos_fisicos(numero, raio=3)
+        
+        ultimos_15 = list(historico)[-15:] if len(historico) >= 15 else list(historico)
+        count_vizinhos_recentes = sum(1 for n in ultimos_15 if n in vizinhos)
+        
+        score = min(count_vizinhos_recentes / len(ultimos_15) * 2, 1.0)
+        return score
+    
+    def calcular_score_tendencia(self, numero, historico):
+        if len(historico) < 10:
+            return 0.5
+            
+        historico_lista = list(historico)
+        
+        segmento_recente = historico_lista[-5:]
+        segmento_anterior = historico_lista[-10:-5] if len(historico_lista) >= 10 else historico_lista[:5]
+        
+        freq_recente = sum(1 for n in segmento_recente if n == numero) / len(segmento_recente)
+        freq_anterior = sum(1 for n in segmento_anterior if n == numero) / len(segmento_anterior) if segmento_anterior else 0
+        
+        if freq_anterior == 0:
+            tendencia = 1.0 if freq_recente > 0 else 0.5
+        else:
+            tendencia = min(freq_recente / freq_anterior, 2.0)
+            
+        return tendencia * 0.5
+
+    def get_analise_selecao(self, numeros_originais, numeros_selecionados, historico):
+        analise = f"🎯 ANÁLISE DA SELEÇÃO INTELIGENTE\n"
+        analise += f"📊 Redução: {len(numeros_originais)} → {len(numeros_selecionados)} números\n"
+        analise += f"🎲 Números selecionados: {sorted(numeros_selecionados)}\n"
         
         if historico:
-            st.write(f"**Total de registros:** {len(historico)}")
+            ultimos_20 = list(historico)[-20:] if len(historico) >= 20 else list(historico)
+            acertos_potenciais = sum(1 for n in ultimos_20 if n in numeros_selecionados)
+            analise += f"📈 Eficiência teórica: {acertos_potenciais}/20 ({acertos_potenciais/20*100:.1f}%)\n"
+        
+        return analise
+
+# =============================
+# CLASSE PRINCIPAL DA ROLETA
+# =============================
+class RoletaInteligente:
+    def __init__(self):
+        self.race = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
+        
+    def get_vizinhos_zona(self, numero_central, quantidade=6):
+        if numero_central not in self.race:
+            return []
+        
+        posicao = self.race.index(numero_central)
+        vizinhos = []
+        
+        for offset in range(-quantidade, 0):
+            vizinho = self.race[(posicao + offset) % len(self.race)]
+            vizinhos.append(vizinho)
+        
+        vizinhos.append(numero_central)
+        
+        for offset in range(1, quantidade + 1):
+            vizinho = self.race[(posicao + offset) % len(self.race)]
+            vizinhos.append(vizinho)
+        
+        return vizinhos
+
+    def get_posicao_race(self, numero):
+        return self.race.index(numero) if numero in self.race else -1
+
+    def get_vizinhos_fisicos(self, numero, raio=3):
+        if numero not in self.race:
+            return []
+        
+        posicao = self.race.index(numero)
+        vizinhos = []
+        
+        for offset in range(-raio, raio + 1):
+            if offset != 0:
+                vizinho = self.race[(posicao + offset) % len(self.race)]
+                vizinhos.append(vizinho)
+        
+        return vizinhos
+
+# =============================
+# NOVA: ESTRATÉGIA TRIÂNGULO REATIVO + VIZINHOS
+# =============================
+class EstrategiaTrianguloReativo:
+    def __init__(self):
+        self.roleta = RoletaInteligente()
+        self.historico = deque(maxlen=70)
+        self.nome = "Triângulo Reativo v1"
+        
+        # Mapeamento completo: número -> triângulo (região)
+        self.numero_para_triangulo = self._criar_mapeamento_triangulos()
+        
+        # Mapeamento reverso: triângulo -> números
+        self.triangulo_para_numeros = {}
+        for num, triangulo in self.numero_para_triangulo.items():
+            if triangulo not in self.triangulo_para_numeros:
+                self.triangulo_para_numeros[triangulo] = []
+            self.triangulo_para_numeros[triangulo].append(num)
+        
+        # Ordenar números de cada triângulo
+        for triangulo in self.triangulo_para_numeros:
+            self.triangulo_para_numeros[triangulo] = sorted(self.triangulo_para_numeros[triangulo])
+        
+        # Estatísticas por triângulo
+        self.stats_triangulos = {}
+        for triangulo in self.triangulo_para_numeros.keys():
+            self.stats_triangulos[triangulo] = {
+                'acertos': 0,
+                'tentativas': 0,
+                'sequencia_atual': 0,
+                'sequencia_maxima': 0,
+                'performance_media': 0,
+                'ultimo_sorteio': -1,
+                'atraso_atual': 0,
+                'max_atraso': 0,
+                'vizinhos_quentes': 0
+            }
+        
+        # Controle de entradas
+        self.historico_entradas = []  # Guarda histórico de entradas feitas
+        self.ultimo_gatilho = None
+        self.contador_giros_sem_entrada = 0
+        self.entrada_ativa = False
+        self.entrada_atual = None
+        
+        # Configurações
+        self.janela_atraso = 10  # Giros para considerar atraso
+        self.janela_vizinhos = 8  # Janela para verificar vizinhos quentes
+        self.max_vizinhos_por_numero = 2  # Vizinhos por número do triângulo
+        self.sistema_selecao = SistemaSelecaoInteligente()
+        
+        # Cache de vizinhos
+        self.cache_vizinhos = {}
+    
+    def _criar_mapeamento_triangulos(self):
+        """Cria mapeamento número -> triângulo baseado na disposição do cilindro"""
+        # Definição dos triângulos baseada na sequência do cilindro
+        # Cada triângulo = 3 números consecutivos no cilindro
+        race = self.roleta.race
+        
+        triangulos = {}
+        
+        # Criar triângulos de 3 números consecutivos
+        for i in range(0, len(race), 3):
+            if i + 2 < len(race):
+                triangulo_nome = f"T{i//3 + 1}"
+                for j in range(3):
+                    triangulos[race[i + j]] = triangulo_nome
+        
+        # Garantir que todos os números tenham um triângulo
+        # Para números que não foram mapeados (caso raro)
+        numeros_restantes = set(range(37)) - set(triangulos.keys())
+        ultimo_triangulo = f"T{len(triangulos)//3 + 1}"
+        for num in numeros_restantes:
+            triangulos[num] = ultimo_triangulo
+        
+        return triangulos
+    
+    def get_triangulo_do_numero(self, numero):
+        """Retorna o triângulo de um número"""
+        return self.numero_para_triangulo.get(numero, "Desconhecido")
+    
+    def get_numeros_do_triangulo(self, triangulo):
+        """Retorna todos os números de um triângulo"""
+        return self.triangulo_para_numeros.get(triangulo, [])
+    
+    def get_vizinhos_cilindro(self, numero, raio=2):
+        """Retorna vizinhos de um número no cilindro"""
+        if numero in self.cache_vizinhos:
+            return self.cache_vizinhos[numero]
+        
+        vizinhos = self.roleta.get_vizinhos_fisicos(numero, raio)
+        self.cache_vizinhos[numero] = vizinhos
+        return vizinhos
+    
+    def get_todos_vizinhos_do_triangulo(self, triangulo):
+        """Retorna todos os vizinhos dos números do triângulo"""
+        numeros = self.get_numeros_do_triangulo(triangulo)
+        todos_vizinhos = set()
+        
+        for num in numeros:
+            vizinhos = self.get_vizinhos_cilindro(num, self.max_vizinhos_por_numero)
+            todos_vizinhos.update(vizinhos)
+        
+        # Remover os números do próprio triângulo
+        todos_vizinhos -= set(numeros)
+        
+        return sorted(list(todos_vizinhos))
+    
+    def get_numeros_aposta(self, triangulo):
+        """Retorna números para apostar: triângulo + vizinhos"""
+        numeros_triangulo = self.get_numeros_do_triangulo(triangulo)
+        vizinhos = self.get_todos_vizinhos_do_triangulo(triangulo)
+        
+        numeros_aposta = list(set(numeros_triangulo + vizinhos))
+        
+        # Aplicar seleção inteligente se necessário
+        if len(numeros_aposta) > 15:
+            numeros_aposta = self.sistema_selecao.selecionar_melhores_15_numeros(
+                numeros_aposta, self.historico, "Triangulo"
+            )
+        
+        return sorted(numeros_aposta)
+    
+    def adicionar_numero(self, numero):
+        """Adiciona número ao histórico e atualiza estatísticas"""
+        self.historico.append(numero)
+        self.atualizar_stats_triangulos(numero)
+        
+        # Resetar entrada ativa se houve resultado
+        if self.entrada_ativa and self.entrada_atual:
+            self.entrada_ativa = False
+            self.contador_giros_sem_entrada = 0
             
-            # Filtrar últimos registros
-            qtd_registros = st.slider("Quantidade de registros para exibir:", 1, 100, 20)
-            historico_recente = historico[-qtd_registros:]
+            # Verificar acerto
+            triangulo_sorteado = self.get_triangulo_do_numero(numero)
+            if triangulo_sorteado == self.entrada_atual['triangulo']:
+                self.stats_triangulos[triangulo_sorteado]['acertos'] += 1
+                self.stats_triangulos[triangulo_sorteado]['sequencia_atual'] += 1
+                
+                # Registrar entrada com acerto
+                self.registrar_entrada(acertou=True)
+            else:
+                self.stats_triangulos[self.entrada_atual['triangulo']]['sequencia_atual'] = 0
+                self.registrar_entrada(acertou=False)
             
-            for registro in reversed(historico_recente):
-                with st.expander(f"🏟️ {registro.get('home', 'N/A')} vs {registro.get('away', 'N/A')} - {registro.get('resultado', 'N/A')}", expanded=False):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"**Data:** {registro.get('data_conferencia', 'N/A')}")
-                        st.write(f"**Tendência:** {registro.get('tendencia', 'N/A')}")
-                        st.write(f"**Estimativa:** {registro.get('estimativa', 0):.2f}")
-                    with col2:
-                        st.write(f"**Confiança:** {registro.get('confiança', 0):.1f}%")
-                        st.write(f"**Placar:** {registro.get('placar', 'N/A')}")
-                        st.write(f"**Resultado:** {registro.get('resultado', 'N/A')}")
-                    
-                    # Campos específicos por tipo
-                    if tipo_historico == "ambas_marcam":
-                        st.write(f"**Previsão:** {registro.get('previsao', 'N/A')}")
-                        st.write(f"**Ambas Marcaram:** {registro.get('ambas_marcaram', False)}")
-                    elif tipo_historico == "cartoes":
-                        st.write(f"**Cartões Total:** {registro.get('cartoes_total', 0)}")
-                        st.write(f"**Limiar:** {registro.get('limiar_cartoes', 0)}")
-                    elif tipo_historico == "escanteios":
-                        st.write(f"**Escanteios Total:** {registro.get('escanteios_total', 0)}")
-                        st.write(f"**Limiar:** {registro.get('limiar_escanteios', 0)}")
-                    elif tipo_historico == "compostos":
-                        st.write(f"**Alerta ID:** {registro.get('alerta_id', 'N/A')}")
+            self.entrada_atual = None
+        
+        if 'sistema' in st.session_state:
+            salvar_sessao()
+    
+    def atualizar_stats_triangulos(self, numero):
+        """Atualiza estatísticas dos triângulos"""
+        triangulo = self.get_triangulo_do_numero(numero)
+        
+        if triangulo in self.stats_triangulos:
+            # Atualizar atraso de outros triângulos
+            for t in self.stats_triangulos:
+                if t != triangulo:
+                    self.stats_triangulos[t]['atraso_atual'] += 1
+                    if self.stats_triangulos[t]['atraso_atual'] > self.stats_triangulos[t]['max_atraso']:
+                        self.stats_triangulos[t]['max_atraso'] = self.stats_triangulos[t]['atraso_atual']
+            
+            # Resetar atraso do triângulo sorteado
+            self.stats_triangulos[triangulo]['atraso_atual'] = 0
+            self.stats_triangulos[triangulo]['ultimo_sorteio'] = len(self.historico)
+            
+            # Atualizar performance
+            tentativas = self.stats_triangulos[triangulo]['tentativas']
+            if tentativas > 0:
+                self.stats_triangulos[triangulo]['performance_media'] = (
+                    self.stats_triangulos[triangulo]['acertos'] / tentativas * 100
+                )
+    
+    def verificar_vizinhos_quentes(self, triangulo):
+        """Verifica se vizinhos do triângulo estão aparecendo recentemente"""
+        vizinhos = self.get_todos_vizinhos_do_triangulo(triangulo)
+        
+        if len(self.historico) < self.janela_vizinhos:
+            return False
+        
+        historico_recente = list(self.historico)[-self.janela_vizinhos:]
+        count_vizinhos = sum(1 for num in historico_recente if num in vizinhos)
+        
+        # Atualizar estatística
+        self.stats_triangulos[triangulo]['vizinhos_quentes'] = count_vizinhos
+        
+        # Retorna True se pelo menos 2 vizinhos apareceram
+        return count_vizinhos >= 2
+    
+    def verificar_atraso(self, triangulo):
+        """Verifica se o triângulo está atrasado"""
+        atraso = self.stats_triangulos[triangulo]['atraso_atual']
+        return atraso >= self.janela_atraso
+    
+    def verificar_sem_acerto_recente(self, triangulo):
+        """Verifica se o triângulo não acertou recentemente"""
+        ultimo_sorteio = self.stats_triangulos[triangulo]['ultimo_sorteio']
+        
+        if ultimo_sorteio == -1:
+            return True  # Nunca saiu
+        
+        distancia = len(self.historico) - ultimo_sorteio
+        return distancia >= 5  # Pelo menos 5 giros sem acertar
+    
+    def calcular_confianca(self, triangulo):
+        """Calcula confiança da entrada"""
+        stats = self.stats_triangulos[triangulo]
+        
+        confianca_score = 0
+        fatores = []
+        
+        # Fator 1: Atraso
+        atraso = stats['atraso_atual']
+        if atraso >= 15:
+            confianca_score += 40
+            fatores.append("Alto atraso")
+        elif atraso >= 10:
+            confianca_score += 30
+            fatores.append("Atraso médio")
+        elif atraso >= 5:
+            confianca_score += 15
+            fatores.append("Pequeno atraso")
+        
+        # Fator 2: Vizinhos quentes
+        if stats['vizinhos_quentes'] >= 3:
+            confianca_score += 35
+            fatores.append("Vizinhos muito quentes")
+        elif stats['vizinhos_quentes'] >= 2:
+            confianca_score += 25
+            fatores.append("Vizinhos quentes")
+        
+        # Fator 3: Performance histórica
+        if stats['performance_media'] > 35:
+            confianca_score += 20
+            fatores.append("Alta performance")
+        elif stats['performance_media'] > 25:
+            confianca_score += 10
+            fatores.append("Boa performance")
+        
+        # Fator 4: Sem acerto recente
+        if self.verificar_sem_acerto_recente(triangulo):
+            confianca_score += 15
+            fatores.append("Sem acerto recente")
+        
+        # Classificar confiança
+        if confianca_score >= 70:
+            return "Excelente", fatores
+        elif confianca_score >= 55:
+            return "Muito Alta", fatores
+        elif confianca_score >= 40:
+            return "Alta", fatores
+        elif confianca_score >= 25:
+            return "Média", fatores
         else:
-            st.info("ℹ️ Nenhum registro no histórico selecionado.")
-
-    with tab_config:
-        st.subheader("⚙️ Configurações do Sistema")
+            return "Baixa", fatores
+    
+    def analisar_triangulo(self):
+        """Analisa e retorna previsão baseada no último número"""
+        if len(self.historico) < 5:
+            return None
         
-        st.info("""
-        **🔧 Sistema ELITE MASTER - Configurações:**
+        # Último número sorteado
+        ultimo_numero = self.historico[-1] if self.historico else None
+        if ultimo_numero is None:
+            return None
         
-        - **API Football Data:** Conectada ✓
-        - **Telegram Bot:** Configurado ✓  
-        - **Sistema de Cache:** Ativo ✓
-        - **Persistência de Dados:** Ativa ✓
-        - **Análise em Tempo Real:** Ativa ✓
+        # Triângulo do último número
+        triangulo_base = self.get_triangulo_do_numero(ultimo_numero)
         
-        **📊 Tipos de Previsão Disponíveis:**
-        1. ⚽ Previsão de Gols (Sistema Original)
-        2. 🔄 Ambas Marcam (Nova)
-        3. 🟨 Total de Cartões (Nova) 
-        4. 🔄 Total de Escanteios (Nova)
-        5. 📊 Alertas Compostos (24h) - NOVO
+        # Verificar condições para entrada
+        condicoes = []
         
-        **🎯 Características:**
-        - Dados estatísticos em tempo real
-        - Análise preditiva avançada
-        - Sistema de alertas automatizado
-        - Posters profissionais para Telegram
-        - Histórico completo com métricas
-        - Alertas compostos salvos por 24h
-        """)
+        # Condição 1: Atraso
+        if self.verificar_atraso(triangulo_base):
+            condicoes.append(f"Atraso: {self.stats_triangulos[triangulo_base]['atraso_atual']} giros")
         
-        # Status das credenciais
-        st.subheader("🔐 Status das Credenciais")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("API Football", "✅ Conectada" if API_KEY else "❌ Ausente")
-        with col2:
-            st.metric("Telegram Bot", "✅ Configurado" if TELEGRAM_TOKEN else "❌ Ausente")
-        with col3:
-            st.metric("Chat ID", "✅ Configurado" if TELEGRAM_CHAT_ID else "❌ Ausente")
+        # Condição 2: Vizinhos quentes
+        if self.verificar_vizinhos_quentes(triangulo_base):
+            condicoes.append(f"Vizinhos quentes: {self.stats_triangulos[triangulo_base]['vizinhos_quentes']}x na última janela")
         
-        # Informações de uso
-        st.subheader("📈 Estatísticas de Uso")
-        alertas_total = len(carregar_alertas())
-        historico_total = len(carregar_historico())
-        alertas_compostos = len(carregar_alertas_compostos())
+        # Condição 3: Sem acerto recente
+        if self.verificar_sem_acerto_recente(triangulo_base):
+            condicoes.append("Sem acerto recente")
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Alertas Ativos", alertas_total)
-        with col2:
-            st.metric("Alertas Compostos", alertas_compostos)
-        with col3:
-            st.metric("Registros Históricos", historico_total)
+        # Se não houver condições, esperar
+        if not condicoes:
+            self.contador_giros_sem_entrada += 1
+            return None
+        
+        # Resetar contador
+        self.contador_giros_sem_entrada = 0
+        
+        # Calcular confiança
+        confianca, fatores_confianca = self.calcular_confianca(triangulo_base)
+        
+        # Gerar números para apostar
+        numeros_aposta = self.get_numeros_aposta(triangulo_base)
+        
+        # Criar previsão
+        previsao = {
+            'nome': f'Triângulo Reativo - {triangulo_base}',
+            'numeros_apostar': numeros_aposta,
+            'gatilho': f'Triângulo {triangulo_base} | ' + ' | '.join(condicoes),
+            'confianca': confianca,
+            'triangulo_info': triangulo_base,
+            'triangulo_numeros': self.get_numeros_do_triangulo(triangulo_base),
+            'vizinhos': self.get_todos_vizinhos_do_triangulo(triangulo_base),
+            'numero_origem': ultimo_numero,
+            'condicoes': condicoes,
+            'fatores_confianca': fatores_confianca,
+            'selecao_inteligente': len(numeros_aposta) < len(self.get_numeros_do_triangulo(triangulo_base)) + len(self.get_todos_vizinhos_do_triangulo(triangulo_base))
+        }
+        
+        # Registrar entrada
+        self.entrada_ativa = True
+        self.entrada_atual = previsao
+        self.ultimo_gatilho = previsao
+        
+        # Atualizar estatísticas de tentativa
+        self.stats_triangulos[triangulo_base]['tentativas'] += 1
+        
+        return previsao
+    
+    def registrar_entrada(self, acertou=False):
+        """Registra entrada no histórico"""
+        if self.entrada_atual:
+            registro = {
+                'timestamp': len(self.historico),
+                'triangulo': self.entrada_atual['triangulo_info'],
+                'numeros_apostados': self.entrada_atual['numeros_apostar'],
+                'numero_origem': self.entrada_atual['numero_origem'],
+                'acertou': acertou,
+                'confianca': self.entrada_atual['confianca']
+            }
+            self.historico_entradas.append(registro)
+            
+            # Manter apenas últimos 50 registros
+            if len(self.historico_entradas) > 50:
+                self.historico_entradas = self.historico_entradas[-50:]
+    
+    def get_analise_detalhada(self):
+        """Retorna análise detalhada da estratégia"""
+        if len(self.historico) == 0:
+            return "🔺 Estratégia Triângulo - Aguardando dados..."
+        
+        analise = "🔺 ANÁLISE TRIÂNGULO REATIVO\n"
+        analise += "=" * 50 + "\n"
+        analise += f"📊 Histórico: {len(self.historico)} números\n"
+        analise += f"🎯 Último número: {self.historico[-1] if self.historico else 'N/A'}\n"
+        analise += f"🔄 Giro sem entrada: {self.contador_giros_sem_entrada}\n"
+        analise += "=" * 50 + "\n\n"
+        
+        # Estatísticas por triângulo
+        analise += "📊 ESTATÍSTICAS POR TRIÂNGULO:\n"
+        
+        # Ordenar triângulos por atraso (maior primeiro)
+        triangulos_ordenados = sorted(
+            self.stats_triangulos.items(),
+            key=lambda x: x[1]['atraso_atual'],
+            reverse=True
+        )
+        
+        for triangulo, stats in triangulos_ordenados[:10]:  # Mostrar top 10
+            taxa = stats['performance_media']
+            atraso = stats['atraso_atual']
+            vizinhos = stats['vizinhos_quentes']
+            
+            # Indicador visual
+            if atraso >= self.janela_atraso:
+                status = "🔴 ATRASADO"
+            elif vizinhos >= 2:
+                status = "🟢 QUENTE"
+            else:
+                status = "⚪ NORMAL"
+            
+            analise += f"📍 {triangulo}: {status}\n"
+            analise += f"   📈 Acertos: {stats['acertos']}/{stats['tentativas']} ({taxa:.1f}%)\n"
+            analise += f"   ⏰ Atraso: {atraso} giros | Vizinhos: {vizinhos}x\n"
+            analise += f"   🔢 Números: {self.get_numeros_do_triangulo(triangulo)}\n\n"
+        
+        # Últimas entradas
+        if self.historico_entradas:
+            analise += "\n📋 ÚLTIMAS ENTRADAS:\n"
+            for entrada in self.historico_entradas[-5:]:
+                resultado = "✅ ACERTOU" if entrada['acertou'] else "❌ ERROU"
+                analise += f"🎯 {entrada['triangulo']}: {resultado} (Conf: {entrada['confianca']})\n"
+        
+        # Se há entrada ativa
+        if self.entrada_ativa and self.entrada_atual:
+            analise += "\n" + "=" * 50 + "\n"
+            analise += "🎯 ENTRADA ATIVA:\n"
+            analise += f"🔺 Triângulo: {self.entrada_atual['triangulo_info']}\n"
+            analise += f"📊 Confiança: {self.entrada_atual['confianca']}\n"
+            analise += f"📋 Gatilho: {self.entrada_atual['gatilho']}\n"
+            analise += f"🔢 Números: {sorted(self.entrada_atual['numeros_apostar'])}\n"
+            if self.entrada_atual.get('selecao_inteligente', False):
+                analise += "🎯 Seleção inteligente ativa (15 números)\n"
+        
+        return analise
+    
+    def get_info_triangulos(self):
+        """Retorna informações de todos os triângulos"""
+        info = {}
+        for triangulo in self.triangulo_para_numeros.keys():
+            info[triangulo] = {
+                'numeros': self.get_numeros_do_triangulo(triangulo),
+                'quantidade': len(self.get_numeros_do_triangulo(triangulo)),
+                'vizinhos': self.get_todos_vizinhos_do_triangulo(triangulo),
+                'stats': self.stats_triangulos.get(triangulo, {})
+            }
+        return info
+    
+    def zerar_estatisticas(self):
+        """Zera todas as estatísticas"""
+        for triangulo in self.stats_triangulos:
+            self.stats_triangulos[triangulo] = {
+                'acertos': 0,
+                'tentativas': 0,
+                'sequencia_atual': 0,
+                'sequencia_maxima': 0,
+                'performance_media': 0,
+                'ultimo_sorteio': -1,
+                'atraso_atual': 0,
+                'max_atraso': 0,
+                'vizinhos_quentes': 0
+            }
+        self.historico_entradas = []
+        self.ultimo_gatilho = None
+        self.contador_giros_sem_entrada = 0
+        self.entrada_ativa = False
+        self.entrada_atual = None
+        logging.info("📊 Estatísticas do Triângulo zeradas")
 
 # =============================
-# EXECUÇÃO PRINCIPAL
+# MÓDULO DE MACHINE LEARNING (MANTIDO)
 # =============================
+class MLRoletaOtimizada:
+    def __init__(
+        self,
+        roleta_obj,
+        min_training_samples: int = 200,
+        max_history: int = 1000,
+        retrain_every_n: int = 15,
+        seed: int = 42
+    ):
+        self.roleta = roleta_obj
+        self.min_training_samples = min_training_samples
+        self.max_history = max_history
+        self.retrain_every_n = retrain_every_n
+        self.seed = seed
 
-if __name__ == "__main__":
-    main()
+        self.models = []
+        self.scaler = StandardScaler()
+        self.feature_names = []
+        self.is_trained = False
+        self.contador_treinamento = 0
+        self.meta = {}
+
+        self.window_for_features = [3, 8, 15, 30, 60, 120]
+        self.k_vizinhos = 2
+        self.numeros = list(range(37))
+        self.ensemble_size = 3
+
+    def get_neighbors(self, numero, k=None):
+        if k is None:
+            k = self.k_vizinhos
+        try:
+            race = list(self.roleta.race)
+            n = len(race)
+            idx = race.index(numero)
+            neighbors = []
+            for offset in range(-k, k+1):
+                neighbors.append(race[(idx + offset) % n])
+            return neighbors
+        except Exception:
+            return [numero]
+
+    def extrair_features(self, historico, numero_alvo=None):
+        try:
+            historico = list(historico)
+            N = len(historico)
+            
+            if N < 10:
+                return None, None
+
+            features = []
+            names = []
+
+            K_seq = 10
+            ultimos = historico[-K_seq:]
+            for i in range(K_seq):
+                val = ultimos[i] if i < len(ultimos) else -1
+                features.append(val)
+                names.append(f"ultimo_{i+1}")
+
+            for w in self.window_for_features:
+                janela = historico[-w:] if N >= w else historico[:]
+                arr = np.array(janela, dtype=float)
+                features.append(arr.mean() if len(arr) > 0 else 0.0); names.append(f"media_{w}")
+                features.append(arr.std() if len(arr) > 1 else 0.0); names.append(f"std_{w}")
+                features.append(np.median(arr) if len(arr) > 0 else 0.0); names.append(f"mediana_{w}")
+
+            counter_full = Counter(historico)
+            for w in self.window_for_features:
+                janela = historico[-w:] if N >= w else historico[:]
+                c = Counter(janela)
+                features.append(len(c) / (w if w>0 else 1)); names.append(f"diversidade_{w}")
+                top1_count = c.most_common(1)[0][1] if len(c)>0 else 0
+                features.append(top1_count / (w if w>0 else 1)); names.append(f"top1_prop_{w}")
+
+            for num in self.numeros:
+                try:
+                    rev_idx = historico[::-1].index(num)
+                    tempo = rev_idx
+                except ValueError:
+                    tempo = N + 1
+                features.append(tempo)
+                names.append(f"tempo_desde_{num}")
+
+            janela50 = historico[-50:] if N >= 50 else historico[:]
+            vermelhos = {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36}
+            pretos = set(self.numeros[1:]) - vermelhos
+            count_verm = sum(1 for x in janela50 if x in vermelhos)
+            count_pret = sum(1 for x in janela50 if x in pretos)
+            count_zero = sum(1 for x in janela50 if x == 0)
+            features.extend([count_verm/len(janela50), count_pret/len(janela50), count_zero/len(janela50)])
+            names.extend(["prop_vermelhos_50", "prop_pretos_50", "prop_zero_50"])
+
+            def duzia_of(x):
+                if x == 0: return 0
+                if 1 <= x <= 12: return 1
+                if 13 <= x <= 24: return 2
+                return 3
+            for d in [1,2,3]:
+                features.append(sum(1 for x in janela50 if duzia_of(x)==d)/len(janela50))
+                names.append(f"prop_duzia_{d}_50")
+
+            ultimo_num = historico[-1]
+            vizinhos_k = self.get_neighbors(ultimo_num, k=6)
+            count_in_vizinhos = sum(1 for x in ultimos if x in vizinhos_k) / len(ultimos)
+            features.append(count_in_vizinhos); names.append("prop_ultimos_em_vizinhos_6")
+
+            features.append(1 if N>=2 and historico[-1] == historico[-2] else 0); names.append("repetiu_ultimo")
+            features.append(1 if N>=2 and (historico[-1] % 2) == (historico[-2] % 2) else 0); names.append("repetiu_paridade")
+            features.append(1 if N>=2 and duzia_of(historico[-1]) == duzia_of(historico[-2]) else 0); names.append("repetiu_duzia")
+
+            if N >= max(self.window_for_features):
+                small = np.mean(historico[-self.window_for_features[0]:])
+                large = np.mean(historico[-self.window_for_features[-1]:])
+                features.append(small - large); names.append("delta_media_small_large")
+            else:
+                features.append(0.0); names.append("delta_media_small_large")
+
+            diffs = [abs(historico[i] - historico[i-1]) for i in range(1, len(historico))]
+            features.append(np.mean(diffs) if len(diffs)>0 else 0.0); names.append("media_transicoes")
+            features.append(np.std(diffs) if len(diffs)>1 else 0.0); names.append("std_transicoes")
+
+            self.feature_names = names
+            return features, names
+
+        except Exception as e:
+            logging.error(f"[extrair_features] Erro: {e}")
+            return None, None
+
+    def preparar_dados_treinamento(self, historico_completo):
+        historico_completo = list(historico_completo)
+        if len(historico_completo) > self.max_history:
+            historico_completo = historico_completo[-self.max_history:]
+
+        X = []
+        y = []
+        
+        start_index = max(50, len(historico_completo) // 10)
+        
+        for i in range(start_index, len(historico_completo)):
+            janela = historico_completo[:i]
+            feats, _ = self.extrair_features(janela)
+            if feats is None:
+                continue
+            X.append(feats)
+            y.append(historico_completo[i])
+        
+        if len(X) == 0:
+            return np.array([]), np.array([])
+        
+        class_counts = Counter(y)
+        if len(class_counts) < 10:
+            logging.warning(f"Pouca variedade de classes: apenas {len(class_counts)} números únicos")
+            return np.array([]), np.array([])
+        
+        return np.array(X), np.array(y)
+
+    def _build_and_train_model(self, X_train, y_train, X_val=None, y_val=None, seed=0):
+        try:
+            try:
+                from catboost import CatBoostClassifier
+                model = CatBoostClassifier(
+                    iterations=1500,
+                    learning_rate=0.05,
+                    depth=10,
+                    l2_leaf_reg=5,
+                    bagging_temperature=0.8,
+                    random_strength=1.0,
+                    loss_function='MultiClass',
+                    eval_metric='MultiClass',
+                    random_seed=seed,
+                    use_best_model=True,
+                    early_stopping_rounds=100,
+                    verbose=False
+                )
+                if X_val is not None and y_val is not None:
+                    model.fit(X_train, y_train, eval_set=(X_val, y_val), verbose=False)
+                else:
+                    model.fit(X_train, y_train, verbose=False)
+                return model, "CatBoost"
+            except ImportError:
+                raise Exception("CatBoost não disponível")
+                
+        except Exception as e:
+            logging.warning(f"CatBoost não disponível ou falha ({e}). Usando RandomForest como fallback.")
+            from sklearn.ensemble import RandomForestClassifier
+            model = RandomForestClassifier(
+                n_estimators=400,
+                max_depth=20,
+                min_samples_split=3,
+                min_samples_leaf=2,
+                random_state=seed,
+                n_jobs=-1
+            )
+            model.fit(X_train, y_train)
+            return model, "RandomForest"
+
+    def treinar_modelo(self, historico_completo, force_retrain: bool = False, balance: bool = True):
+        try:
+            if len(historico_completo) < self.min_training_samples and not force_retrain:
+                return False, f"Necessário mínimo de {self.min_training_samples} amostras. Atual: {len(historico_completo)}"
+
+            X, y = self.preparar_dados_treinamento(historico_completo)
+            if X.size == 0 or len(X) < 50:
+                return False, f"Dados insuficientes para treino: {len(X)} amostras"
+
+            X_scaled = self.scaler.fit_transform(X)
+
+            try:
+                class_counts = Counter(y)
+                min_samples_per_class = min(class_counts.values())
+                
+                can_stratify = min_samples_per_class >= 2 and len(class_counts) > 1
+                
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_scaled, y, 
+                    test_size=0.2, 
+                    random_state=self.seed, 
+                    stratify=y if can_stratify else None
+                )
+                
+                logging.info(f"Split realizado: estratificação = {can_stratify}, classes = {len(class_counts)}, min_amostras = {min_samples_per_class}")
+                
+            except Exception as e:
+                logging.warning(f"Erro no split estratificado: {e}. Usando split sem estratificação.")
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_scaled, y, test_size=0.2, random_state=self.seed
+                )
+
+            if balance and len(X_train) > 0:
+                try:
+                    df_train = pd.DataFrame(X_train, columns=[f"f{i}" for i in range(X_train.shape[1])])
+                    df_train['y'] = y_train
+                    
+                    value_counts = df_train['y'].value_counts()
+                    if len(value_counts) == 0:
+                        raise ValueError("Nenhuma classe encontrada")
+                    
+                    max_count = value_counts.max()
+                    
+                    if len(value_counts) < 2:
+                        logging.warning("Apenas uma classe disponível, pulando balanceamento")
+                        balance = False
+                    else:
+                        frames = []
+                        for cls, grp in df_train.groupby('y'):
+                            if len(grp) < max_count:
+                                if len(grp) >= 1:
+                                    min_samples = max(5, max_count // 3)
+                                    n_samples = min(max_count, min_samples)
+                                    grp_up = resample(grp, replace=True, n_samples=n_samples, random_state=self.seed)
+                                    frames.append(grp_up)
+                                else:
+                                    frames.append(grp)
+                            else:
+                                frames.append(grp)
+                        
+                        if frames:
+                            df_bal = pd.concat(frames)
+                            y_train = df_bal['y'].values
+                            X_train = df_bal.drop(columns=['y']).values
+                        else:
+                            balance = False
+                            
+                except Exception as e:
+                    logging.warning(f"Erro no balanceamento: {e}. Continuando sem balanceamento.")
+                    balance = False
+
+            models = []
+            model_names = []
+            
+            for s in [self.seed, self.seed + 7, self.seed + 13]:
+                try:
+                    model, name = self._build_and_train_model(X_train, y_train, X_val, y_val, seed=s)
+                    models.append(model)
+                    model_names.append(name)
+                except Exception as e:
+                    logging.error(f"Erro ao treinar modelo {s}: {e}")
+
+            if not models:
+                return False, "Todos os modelos falharam no treinamento"
+
+            try:
+                probs = []
+                for m in models:
+                    if hasattr(m, 'predict_proba'):
+                        probs.append(m.predict_proba(X_val))
+                    else:
+                        preds = m.predict(X_val)
+                        prob = np.zeros((len(preds), len(self.numeros)))
+                        for i, p in enumerate(preds):
+                            prob[i, p] = 1.0
+                        probs.append(prob)
+                
+                if probs:
+                    avg_prob = np.mean(probs, axis=0)
+                    y_pred = np.argmax(avg_prob, axis=1)
+                    acc = accuracy_score(y_val, y_pred)
+                else:
+                    acc = 0.0
+                    
+            except Exception as e:
+                logging.warning(f"Erro na avaliação: {e}")
+                acc = 0.0
+
+            self.models = models
+            self.is_trained = True
+            self.contador_treinamento += 1
+            self.meta['last_accuracy'] = acc
+            self.meta['trained_on'] = len(historico_completo)
+            self.meta['last_training_size'] = len(X)
+
+            try:
+                joblib.dump({'models': self.models}, ML_MODEL_PATH)
+                joblib.dump(self.scaler, SCALER_PATH)
+                joblib.dump(self.meta, META_PATH)
+                logging.info(f"Modelos salvos em disco: {ML_MODEL_PATH}")
+            except Exception as e:
+                logging.warning(f"Falha ao salvar modelos: {e}")
+
+            return True, f"Ensemble treinado ({', '.join(model_names)}) com {len(X)} amostras. Acurácia validação: {acc:.2%}"
+
+        except Exception as e:
+            logging.error(f"[treinar_modelo] Erro: {e}", exc_info=True)
+            return False, f"Erro no treinamento: {str(e)}"
+
+    def carregar_modelo(self):
+        try:
+            if os.path.exists(ML_MODEL_PATH) and os.path.exists(SCALER_PATH):
+                data = joblib.load(ML_MODEL_PATH)
+                self.models = data.get('models', [])
+                self.scaler = joblib.load(SCALER_PATH)
+                if os.path.exists(META_PATH):
+                    self.meta = joblib.load(META_PATH)
+                self.is_trained = len(self.models) > 0
+                return True
+            return False
+        except Exception as e:
+            logging.error(f"[carregar_modelo] Erro: {e}")
+            return False
+
+    def _ensemble_predict_proba(self, X_scaled):
+        if not self.models:
+            return np.ones((len(X_scaled), len(self.numeros))) / len(self.numeros)
+
+        probs = []
+        for m in self.models:
+            if hasattr(m, 'predict_proba'):
+                probs.append(m.predict_proba(X_scaled))
+            else:
+                preds = m.predict(X_scaled)
+                prob = np.zeros((len(preds), len(self.numeros)))
+                for i, p in enumerate(preds):
+                    prob[i, p] = 1.0
+                probs.append(prob)
+        return np.mean(probs, axis=0)
+
+    def prever_proximo_numero(self, historico, top_k: int = 25):
+        if not self.is_trained:
+            return None, "Modelo não treinado"
+
+        feats, _ = self.extrair_features(historico)
+        if feats is None:
+            return None, "Features insuficientes"
+
+        Xs = np.array([feats])
+        Xs_scaled = self.scaler.transform(Xs)
+        try:
+            probs = self._ensemble_predict_proba(Xs_scaled)[0]
+            top_idx = np.argsort(probs)[-top_k:][::-1]
+            top = [(int(idx), float(probs[idx])) for idx in top_idx]
+            return top, "Previsão ML realizada"
+        except Exception as e:
+            return None, f"Erro na previsão: {str(e)}"
+
+    def prever_blocos_vizinhos(self, historico, k_neighbors: int = 2, top_blocks: int = 5):
+        pred, msg = self.prever_proximo_numero(historico, top_k=37)
+        if pred is None:
+            return None, msg
+        prob = {num: p for num, p in pred}
+        blocks = []
+        for num in range(37):
+            neigh = self.get_neighbors(num, k=k_neighbors)
+            agg_prob = sum(prob.get(n, 0.0) for n in neigh)
+            blocks.append((num, tuple(neigh), agg_prob))
+        blocks_sorted = sorted(blocks, key=lambda x: x[2], reverse=True)[:top_blocks]
+        formatted = [{"central": b[0], "vizinhos": list(b[1]), "prob": float(b[2])} for b in blocks_sorted]
+        return formatted, "Previsão de blocos realizada"
+
+    def registrar_resultado(self, historico, previsao_top, resultado_real):
+        try:
+            hit = resultado_real in [p for p,_ in previsao_top] if isinstance(previsao_top[0], tuple) else resultado_real in previsao_top
+            log_entry = {
+                'prev_top': previsao_top,
+                'resultado': resultado_real,
+                'hit': bool(hit)
+            }
+            self.meta.setdefault('history_feedback', []).append(log_entry)
+            recent = self.meta['history_feedback'][-10:]
+            hits = sum(1 for r in recent if r['hit'])
+            if len(recent) >= 5 and hits / len(recent) < 0.25:
+                logging.info("[feedback] Baixa performance detectada — forçando retreinamento incremental")
+                self.treinar_modelo(historico, force_retrain=True, balance=True)
+            return True
+        except Exception as e:
+            logging.error(f"[registrar_resultado] Erro: {e}")
+            return False
+
+    def verificar_treinamento_automatico(self, historico_completo):
+        try:
+            n = len(historico_completo)
+            if n >= self.min_training_samples:
+                if n % self.retrain_every_n == 0:
+                    return self.treinar_modelo(historico_completo)
+            return False, "Aguardando próximo ciclo de treinamento"
+        except Exception as e:
+            return False, f"Erro ao verificar retrain: {e}"
+
+    def resumo_meta(self):
+        return {
+            "is_trained": self.is_trained,
+            "contador_treinamento": self.contador_treinamento,
+            "meta": self.meta
+        }
+
+# =============================
+# ESTRATÉGIA DAS ZONAS (MANTIDA - RESUMIDA)
+# =============================
+class EstrategiaZonasOtimizada:
+    def __init__(self):
+        self.roleta = RoletaInteligente()
+        self.historico = deque(maxlen=70)
+        self.nome = "Zonas Ultra Otimizada v6"
+        
+        self.zonas = {
+            'Vermelha': 7,
+            'Azul': 10,  
+            'Amarela': 2
+        }
+        
+        self.quantidade_zonas = {
+            'Vermelha': 6,
+            'Azul': 6,
+            'Amarela': 6
+        }
+        
+        self.stats_zonas = {zona: {
+            'acertos': 0, 
+            'tentativas': 0, 
+            'sequencia_atual': 0,
+            'sequencia_maxima': 0,
+            'performance_media': 0
+        } for zona in self.zonas.keys()}
+        
+        self.numeros_zonas = {}
+        for nome, central in self.zonas.items():
+            qtd = self.quantidade_zonas.get(nome, 6)
+            self.numeros_zonas[nome] = self.roleta.get_vizinhos_zona(central, qtd)
+
+        self.janelas_analise = {
+            'curto_prazo': 12,
+            'medio_prazo': 24,  
+            'longo_prazo': 48,
+            'performance': 100
+        }
+        
+        self.threshold_base = 22
+        
+        self.sistema_selecao = SistemaSelecaoInteligente()
+
+    def adicionar_numero(self, numero):
+        self.historico.append(numero)
+        resultado = self.atualizar_stats(numero)
+        if 'sistema' in st.session_state:
+            salvar_sessao()
+        return resultado
+
+    def atualizar_stats(self, ultimo_numero):
+        acertou_zona = None
+        for zona, numeros in self.numeros_zonas.items():
+            if ultimo_numero in numeros:
+                self.stats_zonas[zona]['acertos'] += 1
+                self.stats_zonas[zona]['sequencia_atual'] += 1
+                if self.stats_zonas[zona]['sequencia_atual'] > self.stats_zonas[zona]['sequencia_maxima']:
+                    self.stats_zonas[zona]['sequencia_maxima'] = self.stats_zonas[zona]['sequencia_atual']
+                acertou_zona = zona
+            else:
+                self.stats_zonas[zona]['sequencia_atual'] = 0
+            self.stats_zonas[zona]['tentativas'] += 1
+            
+            if self.stats_zonas[zona]['tentativas'] > 0:
+                self.stats_zonas[zona]['performance_media'] = (
+                    self.stats_zonas[zona]['acertos'] / self.stats_zonas[zona]['tentativas'] * 100
+                )
+        
+        return acertou_zona
+
+    def get_threshold_dinamico(self, zona):
+        if zona not in self.stats_zonas:
+            return 20
+        
+        perf = self.stats_zonas[zona]['performance_media']
+        sequencia = self.stats_zonas[zona]['sequencia_atual']
+        
+        if perf > 35 and sequencia >= 1:  
+            return 18
+        elif perf > 30:
+            return 20
+        elif perf > 25:
+            return 22
+        elif perf < 15:
+            return 28
+        else:
+            return 24
+
+    def get_zona_mais_quente(self):
+        if len(self.historico) < 10:
+            return None
+            
+        zonas_score = {}
+        total_numeros = len(self.historico)
+        
+        for zona in self.zonas.keys():
+            score = 0
+            
+            freq_geral = sum(1 for n in self.historico if n in self.numeros_zonas[zona])
+            percentual_geral = freq_geral / total_numeros
+            score += percentual_geral * 25
+            
+            ultimos_curto = list(self.historico)[-self.janelas_analise['curto_prazo']:] if total_numeros >= self.janelas_analise['curto_prazo'] else list(self.historico)
+            freq_curto = sum(1 for n in ultimos_curto if n in self.numeros_zonas[zona])
+            percentual_curto = freq_curto / len(ultimos_curto)
+            score += percentual_curto * 35
+            
+            if self.stats_zonas[zona]['tentativas'] > 10:
+                taxa_acerto = self.stats_zonas[zona]['performance_media']
+                if taxa_acerto > 40: 
+                    score += 30
+                elif taxa_acerto > 35:
+                    score += 25
+                elif taxa_acerto > 30:
+                    score += 20
+                elif taxa_acerto > 25:
+                    score += 15
+                else:
+                    score += 10
+            else:
+                score += 10
+            
+            sequencia = self.stats_zonas[zona]['sequencia_atual']
+            if sequencia >= 2:
+                score += min(sequencia * 3, 12)
+            
+            zonas_score[zona] = score
+        
+        zona_vencedora = max(zonas_score, key=zonas_score.get) if zonas_score else None
+        
+        if zona_vencedora:
+            threshold = self.get_threshold_dinamico(zona_vencedora)
+            
+            if self.stats_zonas[zona_vencedora]['sequencia_atual'] >= 2:
+                threshold -= 2
+            
+            return zona_vencedora if zonas_score[zona_vencedora] >= threshold else None
+        
+        return None
+
+    def get_zonas_rankeadas(self):
+        if len(self.historico) < 10:
+            return None
+            
+        zonas_score = {}
+        
+        for zona in self.zonas.keys():
+            score = self.get_zona_score(zona)
+            zonas_score[zona] = score
+        
+        zonas_rankeadas = sorted(zonas_score.items(), key=lambda x: x[1], reverse=True)
+        return zonas_rankeadas
+
+    def analisar_zonas_com_inversao(self):
+        if len(self.historico) < 10:
+            return None
+            
+        zonas_rankeadas = self.get_zonas_rankeadas()
+        if not zonas_rankeadas:
+            return None
+        
+        zona_primaria, score_primario = zonas_rankeadas[0]
+        
+        threshold_base = 22
+        
+        if score_primario < threshold_base:
+            return None
+        
+        sistema = st.session_state.sistema
+        combinacao_recomendada = sistema.get_combinacao_recomendada()
+        
+        if combinacao_recomendada and zona_primaria in combinacao_recomendada:
+            zona_secundaria = [z for z in combinacao_recomendada if z != zona_primaria][0]
+            
+            zonas_secundarias_disponiveis = [z for z, s in zonas_rankeadas if z == zona_secundaria]
+            if zonas_secundarias_disponiveis:
+                return self.criar_previsao_dupla(zona_primaria, zona_secundaria, "RECOMENDADA")
+        
+        if len(zonas_rankeadas) > 1:
+            for i in range(1, min(3, len(zonas_rankeadas))):
+                zona_secundaria, score_secundario = zonas_rankeadas[i]
+                combinacao_teste = tuple(sorted([zona_primaria, zona_secundaria]))
+                
+                if sistema.deve_evitar_combinacao(combinacao_teste):
+                    continue
+                
+                threshold_secundario = threshold_base - 4
+                
+                if score_secundario >= threshold_secundario:
+                    return self.criar_previsao_dupla(zona_primaria, zona_secundaria, "RANQUEADA")
+        
+        return self.criar_previsao_unica(zona_primaria)
+
+    def criar_previsao_dupla(self, zona_primaria, zona_secundaria, tipo):
+        numeros_primarios = self.numeros_zonas[zona_primaria]
+        numeros_secundarios = self.numeros_zonas[zona_secundaria]
+        
+        numeros_combinados = list(set(numeros_primarios + numeros_secundarios))
+        
+        if len(numeros_combinados) > 15:
+            numeros_combinados = self.sistema_selecao.selecionar_melhores_15_numeros(
+                numeros_combinados, self.historico, "Zonas"
+            )
+        
+        sistema = st.session_state.sistema
+        combinacao = tuple(sorted([zona_primaria, zona_secundaria]))
+        dados_combinacao = sistema.historico_combinacoes.get(combinacao, {})
+        eficiencia = dados_combinacao.get('eficiencia', 0)
+        total = dados_combinacao.get('total', 0)
+        
+        info_eficiencia = ""
+        if total > 0:
+            info_eficiencia = f" | Eff: {eficiencia:.1f}% ({dados_combinacao.get('acertos', 0)}/{total})"
+        
+        gatilho = f'Zona {zona_primaria} + {zona_secundaria} - {tipo}{info_eficiencia}'
+        
+        return {
+            'nome': f'Zonas Duplas - {zona_primaria} + {zona_secundaria}',
+            'numeros_apostar': numeros_combinados,
+            'gatilho': gatilho,
+            'confianca': self.calcular_confianca_ultra(zona_primaria),
+            'zona': f'{zona_primaria}+{zona_secundaria}',
+            'zonas_envolvidas': [zona_primaria, zona_secundaria],
+            'tipo': 'dupla',
+            'selecao_inteligente': True
+        }
+
+    def criar_previsao_unica(self, zona_primaria):
+        numeros_apostar = self.numeros_zonas[zona_primaria]
+        
+        if len(numeros_apostar) > 15:
+            numeros_apostar = self.sistema_selecao.selecionar_melhores_15_numeros(
+                numeros_apostar, self.historico, "Zonas"
+            )
+        
+        return {
+            'nome': f'Zona {zona_primaria}',
+            'numeros_apostar': numeros_apostar,
+            'gatilho': f'Zona {zona_primaria} - Única',
+            'confianca': self.calcular_confianca_ultra(zona_primaria),
+            'zona': zona_primaria,
+            'zonas_envolvidas': [zona_primaria],
+            'tipo': 'unica',
+            'selecao_inteligente': len(numeros_apostar) < len(self.numeros_zonas[zona_primaria])
+        }
+
+    def analisar_zonas(self):
+        return self.analisar_zonas_com_inversao()
+
+    def calcular_confianca_ultra(self, zona):
+        if len(self.historico) < 8:
+            return 'Média'
+            
+        fatores = []
+        pesos = []
+        
+        perf_historica = self.stats_zonas[zona]['performance_media']
+        if perf_historica > 45: 
+            fatores.append(4)
+            pesos.append(5)
+        elif perf_historica > 35: 
+            fatores.append(3)
+            pesos.append(4)
+        elif perf_historica > 25: 
+            fatores.append(2)
+            pesos.append(4)
+        else: 
+            fatores.append(1)
+            pesos.append(3)
+        
+        historico_curto = list(self.historico)[-self.janelas_analise['curto_prazo']:] 
+        freq_curto = sum(1 for n in historico_curto if n in self.numeros_zonas[zona])
+        perc_curto = (freq_curto / len(historico_curto)) * 100
+        
+        if perc_curto > 60:
+            fatores.append(4)
+        elif perc_curto > 45: 
+            fatores.append(3)
+        elif perc_curto > 30: 
+            fatores.append(2)
+        else: 
+            fatores.append(1)
+        pesos.append(4)
+        
+        sequencia = self.stats_zonas[zona]['sequencia_atual']
+        if sequencia >= 3: 
+            fatores.append(4)
+            pesos.append(3)
+        elif sequencia >= 2: 
+            fatores.append(3)
+            pesos.append(3)
+        else: 
+            fatores.append(1)
+            pesos.append(2)
+        
+        if len(self.historico) >= 10:
+            ultimos_5 = list(self.historico)[-5:]
+            anteriores_5 = list(self.historico)[-10:-5]
+            
+            freq_ultimos = sum(1 for n in ultimos_5 if n in self.numeros_zonas[zona])
+            freq_anteriores = sum(1 for n in anteriores_5 if n in self.numeros_zonas[zona]) if anteriores_5 else 0
+            
+            if freq_ultimos > freq_anteriores: 
+                fatores.append(3)
+                pesos.append(2)
+            elif freq_ultimos == freq_anteriores: 
+                fatores.append(2)
+                pesos.append(2)
+            else: 
+                fatores.append(1)
+                pesos.append(2)
+        
+        total_pontos = sum(f * p for f, p in zip(fatores, pesos))
+        total_pesos = sum(pesos)
+        score_confianca = total_pontos / total_pesos
+        
+        if score_confianca >= 2.8: 
+            return 'Excelente'
+        elif score_confianca >= 2.4: 
+            return 'Muito Alta'
+        elif score_confianca >= 2.0: 
+            return 'Alta'
+        elif score_confianca >= 1.6: 
+            return 'Média'
+        else: 
+            return 'Baixa'
+
+    def get_zona_score(self, zona):
+        if len(self.historico) < 10:
+            return 0
+            
+        score = 0
+        total_numeros = len(self.historico)
+        
+        freq_geral = sum(1 for n in self.historico if n in self.numeros_zonas[zona])
+        percentual_geral = freq_geral / total_numeros
+        score += percentual_geral * 25
+        
+        for janela_nome, tamanho in self.janelas_analise.items():
+            if janela_nome != 'performance':
+                historico_janela = list(self.historico)[-tamanho:] if total_numeros >= tamanho else list(self.historico)
+                freq_janela = sum(1 for n in historico_janela if n in self.numeros_zonas[zona])
+                percentual_janela = freq_janela / len(historico_janela)
+                peso = 35 if janela_nome == 'curto_prazo' else 15
+                score += percentual_janela * peso
+        
+        if self.stats_zonas[zona]['tentativas'] > 10:
+            taxa_acerto = self.stats_zonas[zona]['performance_media']
+            if taxa_acerto > 40: score += 30
+            elif taxa_acerto > 35: score += 25
+            elif taxa_acerto > 30: score += 20
+            elif taxa_acerto > 25: score += 15
+            else: score += 10
+        else:
+            score += 10
+        
+        sequencia = self.stats_zonas[zona]['sequencia_atual']
+        if sequencia >= 2:
+            score += min(sequencia * 3, 12)
+            
+        return score
+
+    def get_info_zonas(self):
+        info = {}
+        for zona, numeros in self.numeros_zonas.items():
+            info[zona] = {
+                'numeros': sorted(numeros),
+                'quantidade': len(numeros),
+                'central': self.zonas[zona],
+                'descricao': f"6 antes + 6 depois do {self.zonas[zona]}"
+            }
+        return info
+
+    def get_analise_detalhada(self):
+        if len(self.historico) == 0:
+            return "Aguardando dados..."
+        
+        analise = "🎯 ANÁLISE ULTRA OTIMIZADA - ZONAS v6\n"
+        analise += "=" * 55 + "\n"
+        analise += "🔧 CONFIGURAÇÃO: 6 antes + 6 depois (13 números/zona)\n"
+        analise += f"📊 JANELAS: Curto({self.janelas_analise['curto_prazo']}) Médio({self.janelas_analise['medio_prazo']}) Longo({self.janelas_analise['longo_prazo']})\n"
+        analise += "=" * 55 + "\n"
+        
+        analise += "📊 PERFORMANCE AVANÇADA:\n"
+        for zona in self.zonas.keys():
+            tentativas = self.stats_zonas[zona]['tentativas']
+            acertos = self.stats_zonas[zona]['acertos']
+            taxa = self.stats_zonas[zona]['performance_media']
+            sequencia = self.stats_zonas[zona]['sequencia_atual']
+            seq_maxima = self.stats_zonas[zona]['sequencia_maxima']
+            threshold = self.get_threshold_dinamico(zona)
+            
+            analise += f"📍 {zona}: {acertos}/{tentativas} → {taxa:.1f}% | Seq: {sequencia} | Máx: {seq_maxima} | Thr: {threshold}\n"
+        
+        analise += "\n📈 FREQUÊNCIA MULTI-JANELAS:\n"
+        for zona in self.zonas.keys():
+            freq_total = sum(1 for n in self.historico if isinstance(n, (int, float)) and n in self.numeros_zonas[zona])
+            perc_total = (freq_total / len(self.historico)) * 100
+            
+            freq_curto = sum(1 for n in list(self.historico)[-self.janelas_analise['curto_prazo']:] if n in self.numeros_zonas[zona])
+            perc_curto = (freq_curto / min(self.janelas_analise['curto_prazo'], len(self.historico))) * 100
+            
+            score = self.get_zona_score(zona)
+            qtd_numeros = len(self.numeros_zonas[zona])
+            analise += f"📍 {zona}: Total:{freq_total}/{len(self.historico)}({perc_total:.1f}%) | Curto:{freq_curto}/{self.janelas_analise['curto_prazo']}({perc_curto:.1f}%) | Score: {score:.1f}\n"
+        
+        analise += "\n📊 TENDÊNCIAS AVANÇADAS:\n"
+        if len(self.historico) >= 10:
+            for zona in self.zonas.keys():
+                ultimos_5 = list(self.historico)[-5:]
+                anteriores_5 = list(self.historico)[-10:-5]
+                
+                freq_ultimos = sum(1 for n in ultimos_5 if n in self.numeros_zonas[zona])
+                freq_anteriores = sum(1 for n in anteriores_5 if n in self.numeros_zonas[zona]) if anteriores_5 else 0
+                
+                tendencia = "↗️" if freq_ultimos > freq_anteriores else "↘️" if freq_ultimos < freq_anteriores else "➡️"
+                variacao = freq_ultimos - freq_anteriores
+                analise += f"📍 {zona}: {freq_ultimos}/5 vs {freq_anteriores}/5 {tendencia} (Δ: {variacao:+d})\n"
+        
+        zona_recomendada = self.get_zona_mais_quente()
+        if zona_recomendada:
+            analise += f"\n💡 RECOMENDAÇÃO ULTRA: Zona {zona_recomendada}\n"
+            analise += f"🎯 Números: {sorted(self.numeros_zonas[zona_recomendada])}\n"
+            analise += f"📈 Confiança: {self.calcular_confianca_ultra(zona_recomendada)}\n"
+            analise += f"🔥 Score: {self.get_zona_score(zona_recomendada):.1f}\n"
+            analise += f"🎯 Threshold: {self.get_threshold_dinamico(zona_recomendada)}\n"
+            analise += f"🔢 Quantidade: {len(self.numeros_zonas[zona_recomendada])} números\n"
+            analise += f"📊 Performance: {self.stats_zonas[zona_recomendada]['performance_media']:.1f}%\n"
+            
+            perf = self.stats_zonas[zona_recomendada]['performance_media']
+            if perf > 35:
+                analise += f"💎 ESTRATÉGIA: Zona de ALTA performance - Aposta forte recomendada!\n"
+            elif perf > 25:
+                analise += f"🎯 ESTRATÉGIA: Zona de performance sólida - Aposta moderada\n"
+            else:
+                analise += f"⚡ ESTRATÉGIA: Zona em desenvolvimento - Aposta conservadora\n"
+        else:
+            analise += "\n⚠️  AGUARDAR: Nenhuma zona com confiança suficiente\n"
+            analise += f"📋 Histórico atual: {len(self.historico)} números\n"
+            analise += f"🎯 Threshold base: {self.threshold_base}+ | Performance >25%\n"
+        
+        return analise
+
+    def get_analise_atual(self):
+        return self.get_analise_detalhada()
+
+    def zerar_estatisticas(self):
+        for zona in self.stats_zonas.keys():
+            self.stats_zonas[zona] = {
+                'acertos': 0, 
+                'tentativas': 0, 
+                'sequencia_atual': 0,
+                'sequencia_maxima': 0,
+                'performance_media': 0
+            }
+        logging.info("📊 Estatísticas das Zonas zeradas")
+
+# =============================
+# ESTRATÉGIA MIDAS (MANTIDA)
+# =============================
+class EstrategiaMidas:
+    def __init__(self):
+        self.roleta = RoletaInteligente()
+        self.historico = deque(maxlen=15)
+        self.terminais = {
+            '0': [0, 10, 20, 30], '1': [1, 11, 21, 31], '2': [2, 12, 22, 32],
+            '3': [3, 13, 23, 33], '4': [4, 14, 24, 34], '5': [5, 15, 25, 35],
+            '6': [6, 16, 26, 36], '7': [7, 17, 27], '8': [8, 18, 28], '9': [9, 19, 29]
+        }
+
+    def adicionar_numero(self, numero):
+        self.historico.append(numero)
+        if 'sistema' in st.session_state:
+            salvar_sessao()
+
+    def analisar_midas(self):
+        if len(self.historico) < 5:
+            return None
+            
+        ultimo_numero = self.historico[-1]
+        historico_recente = self.historico[-5:]
+
+        if ultimo_numero in [0, 10, 20, 30]:
+            count_zero = sum(1 for n in historico_recente if n in [0, 10, 20, 30])
+            if count_zero >= 1:
+                return {
+                    'nome': 'Padrão do Zero',
+                    'numeros_apostar': [0, 10, 20, 30],
+                    'gatilho': f'Terminal 0 ativado ({count_zero}x)',
+                    'confianca': 'Média'
+                }
+
+        if ultimo_numero in [7, 17, 27]:
+            count_sete = sum(1 for n in historico_recente if n in [7, 17, 27])
+            if count_sete >= 1:
+                return {
+                    'nome': 'Padrão do Sete',
+                    'numeros_apostar': [7, 17, 27],
+                    'gatilho': f'Terminal 7 ativado ({count_sete}x)',
+                    'confianca': 'Média'
+                }
+
+        if ultimo_numero in [5, 15, 25, 35]:
+            count_cinco = sum(1 for n in historico_recente if n in [5, 15, 25, 35])
+            if count_cinco >= 1:
+                return {
+                    'nome': 'Padrão do Cinco',
+                    'numeros_apostar': [5, 15, 25, 35],
+                    'gatilho': f'Terminal 5 ativado ({count_cinco}x)',
+                    'confianca': 'Média'
+                }
+
+        return None
+
+# =============================
+# ESTRATÉGIA ML (MANTIDA - RESUMIDA)
+# =============================
+class EstrategiaML:
+    def __init__(self):
+        self.roleta = RoletaInteligente()
+        self.ml = MLRoletaOtimizada(self.roleta)
+        self.historico = deque(maxlen=30)
+        self.nome = "Machine Learning (CatBoost)"
+        self.ml.carregar_modelo()
+        self.contador_sorteios = 0
+        
+        self.zonas_ml = {
+            'Vermelha': 7,
+            'Azul': 10,  
+            'Amarela': 2
+        }
+        
+        self.quantidade_zonas_ml = {
+            'Vermelha': 6,
+            'Azul': 6,
+            'Amarela': 6
+        }
+        
+        self.numeros_zonas_ml = {}
+        for nome, central in self.zonas_ml.items():
+            qtd = self.quantidade_zonas_ml.get(nome, 6)
+            self.numeros_zonas_ml[nome] = self.roleta.get_vizinhos_zona(central, qtd)
+
+        self.sequencias_padroes = {
+            'sequencias_ativas': {},
+            'historico_sequencias': [],
+            'padroes_detectados': []
+        }
+        
+        self.adicionar_metricas_padroes()
+        
+        self.sistema_selecao = SistemaSelecaoInteligente()
+
+    def adicionar_metricas_padroes(self):
+        self.metricas_padroes = {
+            'padroes_detectados_total': 0,
+            'padroes_acertados': 0,
+            'padroes_errados': 0,
+            'eficiencia_por_tipo': {},
+            'historico_validacao': []
+        }
+
+    def adicionar_numero(self, numero):
+        self.historico.append(numero)
+        self.contador_sorteios += 1
+        
+        if len(self.historico) > 1:
+            numero_anterior = list(self.historico)[-2]
+            self.validar_padrao_acerto(numero, self.get_previsao_atual())
+        
+        self.analisar_padroes_sequenciais(numero)
+        
+        if self.contador_sorteios >= 15:
+            self.contador_sorteios = 0
+            self.treinar_automatico()
+            
+        if 'sistema' in st.session_state:
+            salvar_sessao()
+
+    def get_previsao_atual(self):
+        try:
+            resultado = self.analisar_ml()
+            return resultado
+        except:
+            return None
+
+    def validar_padrao_acerto(self, numero_sorteado, previsao_ml):
+        zona_sorteada = None
+        for zona, numeros in self.numeros_zonas_ml.items():
+            if numero_sorteado in numeros:
+                zona_sorteada = zona
+                break
+        
+        if not zona_sorteada:
+            return
+        
+        padroes_recentes = [p for p in self.sequencias_padroes['padroes_detectados'] 
+                           if len(self.historico) - p['detectado_em'] <= 3]
+        
+        for padrao in padroes_recentes:
+            self.metricas_padroes['padroes_detectados_total'] += 1
+            
+            if padrao['zona'] == zona_sorteada:
+                self.metricas_padroes['padroes_acertados'] += 1
+                tipo = padrao['tipo']
+                if tipo not in self.metricas_padroes['eficiencia_por_tipo']:
+                    self.metricas_padroes['eficiencia_por_tipo'][tipo] = {'acertos': 0, 'total': 0}
+                self.metricas_padroes['eficiencia_por_tipo'][tipo]['acertos'] += 1
+                self.metricas_padroes['eficiencia_por_tipo'][tipo]['total'] += 1
+            else:
+                self.metricas_padroes['padroes_errados'] += 1
+                tipo = padrao['tipo']
+                if tipo in self.metricas_padroes['eficiencia_por_tipo']:
+                    self.metricas_padroes['eficiencia_por_tipo'][tipo]['total'] += 1
+
+    def analisar_padroes_sequenciais(self, numero):
+        if len(self.historico) < 5:
+            return
+            
+        historico_recente = list(self.historico)[-8:]
+        
+        zona_atual = None
+        for zona, numeros in self.numeros_zonas_ml.items():
+            if numero in numeros:
+                zona_atual = zona
+                break
+        
+        if not zona_atual:
+            return
+        
+        self.atualizar_sequencias_ativas(zona_atual, historico_recente)
+        self.otimizar_deteccao_padroes(historico_recente)
+        self.limpar_padroes_antigos()
+
+    def otimizar_deteccao_padroes(self, historico_recente):
+        if len(historico_recente) < 5:
+            return
+        
+        zonas_recentes = []
+        for num in historico_recente:
+            zona_num = None
+            for zona, numeros in self.numeros_zonas_ml.items():
+                if num in numeros:
+                    zona_num = zona
+                    break
+            zonas_recentes.append(zona_num)
+        
+        for i in range(len(zonas_recentes) - 3):
+            janela = zonas_recentes[i:i+4]
+            if (janela[0] and janela[1] and janela[2] and janela[3] and
+                janela[0] == janela[1] == janela[2] == janela[3]):
+                
+                self.registrar_padrao_sequencia_forte(janela[0], i)
+
+        for i in range(len(zonas_recentes) - 3):
+            janela = zonas_recentes[i:i+4]
+            if (janela[0] and janela[1] and janela[3] and
+                janela[0] == janela[1] == janela[3] and
+                janela[2] != janela[0]):
+                
+                self.registrar_padrao_retorno_imediato(janela[0], i)
+
+        for i in range(len(zonas_recentes) - 5):
+            janela = zonas_recentes[i:i+6]
+            if (janela[0] and janela[1] and janela[2] and janela[4] and janela[5] and
+                janela[0] == janela[1] == janela[2] == janela[4] == janela[5] and
+                janela[3] != janela[0]):
+                
+                self.registrar_padrao_sequencia_interrompida(janela[0], i)
+
+        for i in range(len(zonas_recentes) - 4):
+            janela = zonas_recentes[i:i+5]
+            if (janela[0] and janela[1] and janela[3] and janela[4] and
+                janela[0] == janela[1] == janela[3] == janela[4] and
+                janela[2] != janela[0]):
+                
+                self.registrar_padrao_retorno_rapido(janela[0], i)
+
+    def registrar_padrao_sequencia_forte(self, zona, posicao):
+        padrao = {
+            'tipo': 'sequencia_forte_4',
+            'zona': zona,
+            'padrao': 'AAAA',
+            'forca': 0.95,
+            'duracao': 4,
+            'detectado_em': len(self.historico) - 1,
+            'posicao_historico': posicao
+        }
+        
+        if not self.padrao_recente_similar(padrao, janela=8):
+            self.sequencias_padroes['padroes_detectados'].append(padrao)
+            logging.info(f"🎯 PADRÃO FORTE 4x: {zona} - {padrao['padrao']}")
+
+    def registrar_padrao_retorno_imediato(self, zona, posicao):
+        padrao = {
+            'tipo': 'retorno_imediato',
+            'zona': zona,
+            'padrao': 'AA_B_A',
+            'forca': 0.80,
+            'duracao': 4,
+            'detectado_em': len(self.historico) - 1,
+            'posicao_historico': posicao
+        }
+        
+        if not self.padrao_recente_similar(padrao, janela=10):
+            self.sequencias_padroes['padroes_detectados'].append(padrao)
+            logging.info(f"🎯 PADRÃO RÁPIDO: {zona} - {padrao['padrao']}")
+
+    def registrar_padrao_sequencia_interrompida(self, zona, posicao):
+        padrao = {
+            'tipo': 'sequencia_interrompida_forte',
+            'zona': zona,
+            'padrao': 'AAA_B_AA',
+            'forca': 0.85,
+            'duracao': 6,
+            'detectado_em': len(self.historico) - 1,
+            'posicao_historico': posicao
+        }
+        
+        if not self.padrao_recente_similar(padrao):
+            self.sequencias_padroes['padroes_detectados'].append(padrao)
+            logging.info(f"🎯 PADRÃO FORTE: {zona} - {padrao['padrao']}")
+
+    def registrar_padrao_retorno_rapido(self, zona, posicao):
+        padrao = {
+            'tipo': 'retorno_rapido',
+            'zona': zona,
+            'padrao': 'AA_B_AA',
+            'forca': 0.75,
+            'duracao': 5,
+            'detectado_em': len(self.historico) - 1,
+            'posicao_historico': posicao
+        }
+        
+        if not self.padrao_recente_similar(padrao):
+            self.sequencias_padroes['padroes_detectados'].append(padrao)
+            logging.info(f"🎯 PADRÃO RÁPIDO: {zona} - {padrao['padrao']}")
+
+    def padrao_recente_similar(self, novo_padrao, janela=12):
+        for padrao in self.sequencias_padroes['padroes_detectados'][-10:]:
+            if (padrao['zona'] == novo_padrao['zona'] and 
+                padrao['tipo'] == novo_padrao['tipo'] and
+                len(self.historico) - padrao['detectado_em'] < janela):
+                return True
+        return False
+
+    def limpar_padroes_antigos(self, limite=20):
+        padroes_validos = []
+        for padrao in self.sequencias_padroes['padroes_detectados']:
+            if len(self.historico) - padrao['detectado_em'] <= limite:
+                padroes_validos.append(padrao)
+        self.sequencias_padroes['padroes_detectados'] = padroes_validos
+
+    def atualizar_sequencias_ativas(self, zona_atual, historico_recente):
+        if zona_atual in self.sequencias_padroes['sequencias_ativas']:
+            sequencia = self.sequencias_padroes['sequencias_ativas'][zona_atual]
+            sequencia['contagem'] += 1
+            sequencia['ultimo_numero'] = historico_recente[-1]
+        else:
+            self.sequencias_padroes['sequencias_ativas'][zona_atual] = {
+                'contagem': 1,
+                'inicio': len(self.historico) - 1,
+                'ultimo_numero': historico_recente[-1],
+                'quebras': 0
+            }
+        
+        zonas_ativas = list(self.sequencias_padroes['sequencias_ativas'].keys())
+        for zona in zonas_ativas:
+            if zona != zona_atual:
+                self.sequencias_padroes['sequencias_ativas'][zona]['quebras'] += 1
+                
+                if self.sequencias_padroes['sequencias_ativas'][zona]['quebras'] >= 3:
+                    sequencia_final = self.sequencias_padroes['sequencias_ativas'][zona]
+                    if sequencia_final['contagem'] >= 3:
+                        self.sequencias_padroes['historico_sequencias'].append({
+                            'zona': zona,
+                            'tamanho': sequencia_final['contagem'],
+                            'finalizado_em': len(self.historico) - 1
+                        })
+                    del self.sequencias_padroes['sequencias_ativas'][zona]
+
+    def aplicar_padroes_na_previsao(self, distribuicao_zonas):
+        if not self.sequencias_padroes['padroes_detectados']:
+            return distribuicao_zonas
+        
+        distribuicao_ajustada = distribuicao_zonas.copy()
+        
+        padroes_recentes = [p for p in self.sequencias_padroes['padroes_detectados'] 
+                           if len(self.historico) - p['detectado_em'] <= 15]
+        
+        for padrao in padroes_recentes:
+            zona = padrao['zona']
+            forca = padrao['forca']
+            
+            if zona in distribuicao_ajustada:
+                aumento = max(1, int(distribuicao_ajustada[zona] * forca * 0.3))
+                distribuicao_ajustada[zona] += aumento
+                logging.info(f"🎯 Aplicando padrão {padrao['tipo']} à zona {zona}: +{aumento}")
+        
+        return distribuicao_ajustada
+
+    def calcular_confianca_com_padroes(self, distribuicao, zona_alvo):
+        confianca_base = self.calcular_confianca_zona_ml({
+            'contagem': distribuicao[zona_alvo],
+            'total_zonas': 25
+        })
+        
+        padroes_recentes = [p for p in self.sequencias_padroes['padroes_detectados'] 
+                           if p['zona'] == zona_alvo and 
+                           len(self.historico) - p['detectado_em'] <= 15]
+        
+        bonus_confianca = len(padroes_recentes) * 0.15
+        confianca_final = min(1.0, self.confianca_para_valor(confianca_base) + bonus_confianca)
+        
+        return self.valor_para_confianca(confianca_final)
+
+    def confianca_para_valor(self, confianca_texto):
+        mapa_confianca = {
+            'Muito Baixa': 0.3,
+            'Baixa': 0.5,
+            'Média': 0.65,
+            'Alta': 0.8,
+            'Muito Alta': 0.9
+        }
+        return mapa_confianca.get(confianca_texto, 0.5)
+
+    def valor_para_confianca(self, valor):
+        if valor >= 0.85: return 'Muito Alta'
+        elif valor >= 0.7: return 'Alta'
+        elif valor >= 0.6: return 'Média'
+        elif valor >= 0.45: return 'Baixa'
+        else: return 'Muito Baixa'
+
+    def analisar_distribuicao_zonas_rankeadas(self, top_25_numeros):
+        contagem_zonas = {}
+        
+        for zona, numeros in self.numeros_zonas_ml.items():
+            count = sum(1 for num in top_25_numeros if num in numeros)
+            contagem_zonas[zona] = count
+        
+        if not contagem_zonas:
+            return None
+            
+        zonas_rankeadas = sorted(contagem_zonas.items(), key=lambda x: x[1], reverse=True)
+        return zonas_rankeadas
+
+    def analisar_ml_com_inversao(self):
+        if len(self.historico) < 10:
+            return None
+
+        if not self.ml.is_trained:
+            return None
+
+        historico_numeros = self.extrair_numeros_historico()
+
+        if len(historico_numeros) < 10:
+            return None
+
+        previsao_ml, msg_ml = self.ml.prever_proximo_numero(historico_numeros, top_k=25)
+        
+        if previsao_ml:
+            top_25_numeros = [num for num, prob in previsao_ml[:25]]
+            
+            distribuicao_zonas = self.analisar_distribuicao_zonas_rankeadas(top_25_numeros)
+            
+            if not distribuicao_zonas:
+                return None
+                
+            distribuicao_dict = dict(distribuicao_zonas)
+            distribuicao_ajustada = self.aplicar_padroes_na_previsao(distribuicao_dict)
+            
+            zonas_rankeadas_ajustadas = sorted(distribuicao_ajustada.items(), key=lambda x: x[1], reverse=True)
+            
+            zona_primaria, contagem_primaria = zonas_rankeadas_ajustadas[0]
+            
+            if contagem_primaria < 7:
+                return None
+            
+            zona_secundaria = None
+            contagem_secundaria = 0
+            
+            if len(zonas_rankeadas_ajustadas) > 1:
+                zona_secundaria, contagem_secundaria = zonas_rankeadas_ajustadas[1]
+                
+                if contagem_secundaria >= 5:
+                    numeros_primarios = self.numeros_zonas_ml[zona_primaria]
+                    numeros_secundarios = self.numeros_zonas_ml[zona_secundaria]
+                    
+                    numeros_combinados = list(set(numeros_primarios + numeros_secundarios))
+                    
+                    if len(numeros_combinados) > 15:
+                        numeros_combinados = self.sistema_selecao.selecionar_melhores_15_numeros(
+                            numeros_combinados, self.historico, "ML"
+                        )
+                    
+                    confianca = self.calcular_confianca_com_padroes(distribuicao_ajustada, zona_primaria)
+                    
+                    padroes_aplicados = [p for p in self.sequencias_padroes['padroes_detectados'] 
+                                       if p['zona'] in [zona_primaria, zona_secundaria] and 
+                                       len(self.historico) - p['detectado_em'] <= 15]
+                    
+                    gatilho_extra = ""
+                    if padroes_aplicados:
+                        gatilho_extra = f" | Padrões: {len(padroes_aplicados)}"
+                    
+                    contagem_original_primaria = distribuicao_dict[zona_primaria]
+                    contagem_original_secundaria = distribuicao_dict.get(zona_secundaria, 0)
+                    
+                    gatilho = f'ML CatBoost - Zona {zona_primaria} ({contagem_original_primaria}→{contagem_primaria}/25) + Zona {zona_secundaria} ({contagem_original_secundaria}→{contagem_secundaria}/25) | SEL: {len(numeros_combinados)} números{gatilho_extra}'
+                    
+                    return {
+                        'nome': 'Machine Learning - CatBoost (Duplo)',
+                        'numeros_apostar': numeros_combinados,
+                        'gatilho': gatilho,
+                        'confianca': confianca,
+                        'previsao_ml': previsao_ml,
+                        'zona_ml': f'{zona_primaria}+{zona_secundaria}',
+                        'distribuicao': distribuicao_ajustada,
+                        'padroes_aplicados': len(padroes_aplicados),
+                        'zonas_envolvidas': [zona_primaria, zona_secundaria],
+                        'tipo': 'dupla',
+                        'selecao_inteligente': True
+                    }
+            
+            numeros_zona = self.numeros_zonas_ml[zona_primaria]
+            
+            if len(numeros_zona) > 15:
+                numeros_zona = self.sistema_selecao.selecionar_melhores_15_numeros(
+                    numeros_zona, self.historico, "ML"
+                )
+            
+            contagem_original = distribuicao_dict[zona_primaria]
+            contagem_ajustada = contagem_primaria
+            
+            confianca = self.calcular_confianca_com_padroes(distribuicao_ajustada, zona_primaria)
+            
+            padroes_aplicados = [p for p in self.sequencias_padroes['padroes_detectados'] 
+                               if p['zona'] == zona_primaria and 
+                               len(self.historico) - p['detectado_em'] <= 15]
+            
+            gatilho_extra = ""
+            if padroes_aplicados:
+                gatilho_extra = f" | Padrões: {len(padroes_aplicados)}"
+            
+            return {
+                'nome': 'Machine Learning - CatBoost',
+                'numeros_apostar': numeros_zona,
+                'gatilho': f'ML CatBoost - Zona {zona_primaria} ({contagem_original}→{contagem_ajustada}/25) | SEL: {len(numeros_zona)} números{gatilho_extra}',
+                'confianca': confianca,
+                'previsao_ml': previsao_ml,
+                'zona_ml': zona_primaria,
+                'distribuicao': distribuicao_ajustada,
+                'padroes_aplicados': len(padroes_aplicados),
+                'zonas_envolvidas': [zona_primaria],
+                'tipo': 'unica',
+                'selecao_inteligente': len(numeros_zona) < len(self.numeros_zonas_ml[zona_primaria])
+            }
+        
+        return None
+
+    def analisar_ml(self):
+        return self.analisar_ml_com_inversao()
+
+    def treinar_automatico(self):
+        historico_numeros = self.extrair_numeros_historico()
+        
+        if len(historico_numeros) >= self.ml.min_training_samples:
+            try:
+                success, message = self.ml.treinar_modelo(historico_numeros)
+                if success:
+                    logging.info(f"✅ Treinamento automático ML: {message}")
+                else:
+                    logging.warning(f"⚠️ Treinamento automático falhou: {message}")
+            except Exception as e:
+                logging.error(f"❌ Erro no treinamento automático: {e}")
+
+    def extrair_numeros_historico(self):
+        historico_numeros = []
+        for item in list(self.historico):
+            if isinstance(item, dict) and 'number' in item:
+                historico_numeros.append(item['number'])
+            elif isinstance(item, (int, float)):
+                historico_numeros.append(int(item))
+        return historico_numeros
+
+    def analisar_distribuicao_zonas(self, top_25_numeros):
+        contagem_zonas = {}
+        
+        for zona, numeros in self.numeros_zonas_ml.items():
+            count = sum(1 for num in top_25_numeros if num in numeros)
+            contagem_zonas[zona] = count
+        
+        return contagem_zonas if contagem_zonas else None
+
+    def calcular_confianca_zona_ml(self, distribuicao):
+        contagem = distribuicao['contagem']
+        total = distribuicao['total_zonas']
+        percentual = (contagem / total) * 100
+        
+        if percentual >= 50:
+            return 'Muito Alta'
+        elif percentual >= 40:
+            return 'Alta'
+        elif percentual >= 30:
+            return 'Média'
+        elif percentual >= 25:
+            return 'Baixa'
+        else:
+            return 'Muito Baixa'
+
+    def treinar_modelo_ml(self, historico_completo=None):
+        if historico_completo is not None:
+            historico_numeros = historico_completo
+        else:
+            historico_numeros = self.extrair_numeros_historico()
+        
+        if len(historico_numeros) >= self.ml.min_training_samples:
+            success, message = self.ml.treinar_modelo(historico_numeros)
+            return success, message
+        else:
+            return False, f"Histórico insuficiente: {len(historico_numeros)}/{self.ml.min_training_samples} números"
+
+    def get_analise_ml(self):
+        if not self.ml.is_trained:
+            return "🤖 ML: Modelo não treinado"
+        
+        if len(self.historico) < 10:
+            return "🤖 ML: Aguardando mais dados para análise"
+        
+        historico_numeros = self.extrair_numeros_historico()
+        previsao_ml, msg = self.ml.prever_proximo_numero(historico_numeros, top_k=25)
+        
+        if previsao_ml:
+            if self.ml.models:
+                primeiro_modelo = self.ml.models[0]
+                modelo_tipo = "CatBoost" if hasattr(primeiro_modelo, 'iterations') else "RandomForest"
+            else:
+                modelo_tipo = "Não treinado"
+            
+            analise = f"🤖 ANÁLISE ML - {modelo_tipo.upper()} (TOP 25):\n"
+            analise += f"🔄 Treinamentos realizados: {self.ml.contador_treinamento}\n"
+            analise += f"📊 Próximo treinamento: {15 - self.contador_sorteios} sorteios\n"
+            analise += f"📈 Ensemble: {len(self.ml.models)} modelos\n"
+            
+            padroes_recentes = [p for p in self.sequencias_padroes['padroes_detectados'] 
+                              if len(self.historico) - p['detectado_em'] <= 20]
+            
+            if padroes_recentes:
+                analise += f"🔍 Padrões ativos: {len(padroes_recentes)}\n"
+                for padrao in padroes_recentes[-3:]:
+                    idade = len(self.historico) - padrao['detectado_em']
+                    analise += f"   📈 {padrao['zona']}: {padrao['tipo']} (há {idade} jogos)\n"
+            
+            analise += "🎯 Previsões (Top 10):\n"
+            for i, (num, prob) in enumerate(previsao_ml[:10]):
+                analise += f"  {i+1}. Número {num}: {prob:.2%}\n"
+            
+            top_25_numeros = [num for num, prob in previsao_ml[:25]]
+            distribuicao = self.analisar_distribuicao_zonas(top_25_numeros)
+            
+            if distribuicao:
+                distribuicao_ajustada = self.aplicar_padroes_na_previsao(distribuicao)
+                
+                analise += f"\n🎯 DISTRIBUIÇÃO POR ZONAS (25 números):\n"
+                for zona, count in distribuicao_ajustada.items():
+                    count_original = distribuicao[zona]
+                    ajuste = count - count_original
+                    simbolo_ajuste = f" (+{ajuste})" if ajuste > 0 else ""
+                    analise += f"  📍 {zona}: {count_original}→{count}/25{simbolo_ajuste}\n"
+                
+                zona_vencedora = max(distribuicao_ajustada, key=distribuicao_ajustada.get)
+                analise += f"\n💡 ZONA RECOMENDADA: {zona_vencedora}\n"
+                analise += f"🎯 Confiança: {self.calcular_confianca_com_padroes(distribuicao_ajustada, zona_vencedora)}\n"
+                analise += f"🔢 Números da zona: {sorted(self.numeros_zonas_ml[zona_vencedora])}\n"
+                analise += f"📈 Percentual: {(distribuicao_ajustada[zona_vencedora]/25)*100:.1f}%\n"
+            else:
+                analise += "\n⚠️  Nenhuma zona com predominância suficiente (mínimo 7 números)\n"
+            
+            return analise
+        else:
+            return "🤖 ML: Erro na previsão"
+
+    def get_estatisticas_padroes(self):
+        if not hasattr(self, 'metricas_padroes'):
+            return "📊 Métricas de padrões: Não disponível"
+        
+        total = self.metricas_padroes['padroes_detectados_total']
+        if total == 0:
+            return "📊 Métricas de padrões: Nenhum padrão validado ainda"
+        
+        acertos = self.metricas_padroes['padroes_acertados']
+        eficiencia = (acertos / total) * 100 if total > 0 else 0
+        
+        estatisticas = f"📊 EFICIÊNCIA DOS PADRÕES:\n"
+        estatisticas += f"✅ Padrões que acertaram: {acertos}/{total} ({eficiencia:.1f}%)\n"
+        
+        for tipo, dados in self.metricas_padroes['eficiencia_por_tipo'].items():
+            if dados['total'] > 0:
+                eff_tipo = (dados['acertos'] / dados['total']) * 100
+                estatisticas += f"   🎯 {tipo}: {dados['acertos']}/{dados['total']} ({eff_tipo:.1f}%)\n"
+        
+        padroes_ativos = [p for p in self.sequencias_padroes['padroes_detectados'] 
+                         if len(self.historico) - p['detectado_em'] <= 10]
+        
+        estatisticas += f"🔍 Padrões ativos: {len(padroes_ativos)}\n"
+        for padrao in padroes_ativos[-3:]:
+            idade = len(self.historico) - padrao['detectado_em']
+            estatisticas += f"   📈 {padrao['zona']}: {padrao['tipo']} (há {idade} jogos)\n"
+        
+        return estatisticas
+
+    def get_info_zonas_ml(self):
+        info = {}
+        for zona, numeros in self.numeros_zonas_ml.items():
+            info[zona] = {
+                'numeros': sorted(numeros),
+                'quantidade': len(numeros),
+                'central': self.zonas_ml[zona],
+                'descricao': f"6 antes + 6 depois do {self.zonas_ml[zona]}"
+            }
+        return info
+
+    def zerar_padroes(self):
+        self.sequencias_padroes = {
+            'sequencias_ativas': {},
+            'historico_sequencias': [],
+            'padroes_detectados': []
+        }
+        self.metricas_padroes = {
+            'padroes_detectados_total': 0,
+            'padroes_acertados': 0,
+            'padroes_errados': 0,
+            'eficiencia_por_tipo': {},
+            'historico_validacao': []
+        }
+        logging.info("🔄 Padrões sequenciais e métricas zerados")
+
+# =============================
+# SISTEMA DE GESTÃO ATUALIZADO COM TRIÂNGULO
+# =============================
+class SistemaRoletaCompleto:
+    def __init__(self):
+        self.estrategia_zonas = EstrategiaZonasOtimizada()
+        self.estrategia_midas = EstrategiaMidas()
+        self.estrategia_ml = EstrategiaML()
+        self.estrategia_triangulo = EstrategiaTrianguloReativo()  # NOVA
+        self.previsao_ativa = None
+        self.historico_desempenho = []
+        self.acertos = 0
+        self.erros = 0
+        self.estrategias_contador = {}
+        self.estrategia_selecionada = "Zonas"
+        self.contador_sorteios_global = 0
+        
+        self.sequencia_erros = 0
+        self.ultima_estrategia_erro = ""
+        
+        self.sequencia_acertos = 0
+        self.ultima_combinacao_acerto = []
+        self.historico_combinacoes_acerto = []
+        
+        self.historico_combinacoes = {}
+        self.combinacoes_quentes = []
+        self.combinacoes_frias = []
+        
+        self.todas_combinacoes_zonas = [
+            ['Vermelha', 'Azul'],
+            ['Vermelha', 'Amarela'], 
+            ['Azul', 'Amarela']
+        ]
+
+    def set_estrategia(self, estrategia):
+        self.estrategia_selecionada = estrategia
+        salvar_sessao()
+
+    def treinar_modelo_ml(self, historico_completo=None):
+        return self.estrategia_ml.treinar_modelo_ml(historico_completo)
+
+    def atualizar_desempenho_combinacao(self, zonas_envolvidas, acerto):
+        if len(zonas_envolvidas) > 1:
+            combinacao = tuple(sorted(zonas_envolvidas))
+            
+            if combinacao not in self.historico_combinacoes:
+                self.historico_combinacoes[combinacao] = {
+                    'acertos': 0, 
+                    'total': 0, 
+                    'eficiencia': 0.0,
+                    'ultimo_jogo': len(self.historico_desempenho),
+                    'sequencia_acertos': 0,
+                    'sequencia_erros': 0
+                }
+            
+            dados = self.historico_combinacoes[combinacao]
+            dados['total'] += 1
+            dados['ultimo_jogo'] = len(self.historico_desempenho)
+            
+            if acerto:
+                dados['acertos'] += 1
+                dados['sequencia_acertos'] += 1
+                dados['sequencia_erros'] = 0
+                
+                if combinacao not in self.ultima_combinacao_acerto:
+                    self.ultima_combinacao_acerto.append(combinacao)
+                    if len(self.ultima_combinacao_acerto) > 3:
+                        self.ultima_combinacao_acerto.pop(0)
+                
+                self.historico_combinacoes_acerto.append(combinacao)
+                if len(self.historico_combinacoes_acerto) > 10:
+                    self.historico_combinacoes_acerto.pop(0)
+                    
+            else:
+                dados['sequencia_erros'] += 1
+                dados['sequencia_acertos'] = 0
+            
+            if dados['total'] > 0:
+                dados['eficiencia'] = (dados['acertos'] / dados['total']) * 100
+            
+            self.atualizar_combinacoes_quentes_frias()
+    
+    def atualizar_combinacoes_quentes_frias(self):
+        self.combinacoes_quentes = []
+        self.combinacoes_frias = []
+        
+        combinacoes_ativas = {k: v for k, v in self.historico_combinacoes.items() 
+                             if v['total'] >= 2}
+        
+        for combinacao, dados in combinacoes_ativas.items():
+            eficiencia = dados['eficiencia']
+            total_jogos = dados['total']
+            sequencia_acertos = dados['sequencia_acertos']
+            
+            if (eficiencia >= 50 or 
+                (eficiencia >= 40 and total_jogos >= 3) or
+                sequencia_acertos >= 2):
+                self.combinacoes_quentes.append(combinacao)
+            
+            elif (eficiencia < 25 and total_jogos >= 3) or dados['sequencia_erros'] >= 2:
+                self.combinacoes_frias.append(combinacao)
+    
+    def get_combinacao_recomendada(self):
+        if not self.combinacoes_quentes:
+            return None
+        
+        combinacoes_com_sequencia = [
+            (combo, dados) for combo, dados in self.historico_combinacoes.items()
+            if combo in self.combinacoes_quentes and dados['sequencia_acertos'] >= 1
+        ]
+        
+        if combinacoes_com_sequencia:
+            combinacoes_com_sequencia.sort(key=lambda x: x[1]['sequencia_acertos'], reverse=True)
+            return combinacoes_com_sequencia[0][0]
+        
+        combinacoes_eficientes = [
+            (combo, dados) for combo, dados in self.historico_combinacoes.items()
+            if combo in self.combinacoes_quentes
+        ]
+        
+        if combinacoes_eficientes:
+            combinacoes_eficientes.sort(key=lambda x: x[1]['eficiencia'], reverse=True)
+            return combinacoes_eficientes[0][0]
+        
+        return None
+
+    def get_combinacoes_alternativas(self, combinacao_evitar):
+        combinacoes_disponiveis = []
+        
+        for combo in self.todas_combinacoes_zonas:
+            combo_tuple = tuple(sorted(combo))
+            
+            if combo_tuple in self.ultima_combinacao_acerto:
+                continue
+                
+            if combo_tuple in self.combinacoes_frias:
+                continue
+                
+            dados_combo = self.historico_combinacoes.get(combo_tuple, {})
+            eficiencia = dados_combo.get('eficiencia', 0)
+            total = dados_combo.get('total', 0)
+            
+            if total == 0 or eficiencia >= 30:
+                combinacoes_disponiveis.append(combo_tuple)
+        
+        if not combinacoes_disponiveis:
+            for combo in self.todas_combinacoes_zonas:
+                combo_tuple = tuple(sorted(combo))
+                if combo_tuple not in self.ultima_combinacao_acerto:
+                    combinacoes_disponiveis.append(combo_tuple)
+        
+        return combinacoes_disponiveis
+
+    def deve_evitar_combinacao(self, combinacao):
+        if combinacao in self.combinacoes_frias:
+            return True
+        
+        dados = self.historico_combinacoes.get(combinacao, {})
+        if dados and dados.get('total', 0) >= 3 and dados.get('eficiencia', 0) < 20:
+            return True
+            
+        return False
+
+    def calcular_performance_estrategias(self):
+        performance = {}
+        historico_recente = self.historico_desempenho[-10:] if len(self.historico_desempenho) >= 10 else self.historico_desempenho
+        
+        for resultado in historico_recente:
+            estrategia = resultado['estrategia']
+            if estrategia not in performance:
+                performance[estrategia] = {'acertos': 0, 'total': 0}
+            
+            performance[estrategia]['total'] += 1
+            if resultado['acerto']:
+                performance[estrategia]['acertos'] += 1
+        
+        for estrategia, dados in performance.items():
+            if dados['total'] > 0:
+                performance[estrategia] = (dados['acertos'] / dados['total']) * 100
+            else:
+                performance[estrategia] = 0
+        
+        return performance
+
+    def rotacionar_estrategia_automaticamente(self, acerto, nome_estrategia, zonas_envolvidas):
+        self.atualizar_desempenho_combinacao(zonas_envolvidas, acerto)
+        
+        if acerto:
+            self.sequencia_acertos += 1
+            self.sequencia_erros = 0
+            
+            if self.sequencia_acertos >= 3 and len(zonas_envolvidas) > 1:
+                combinacao_atual = tuple(sorted(zonas_envolvidas))
+                logging.info(f"🎯 3 ACERTOS SEGUIDOS detectados na combinação {combinacao_atual} - Rotacionando para combinações alternativas")
+                return self.aplicar_rotacao_por_acertos_combinacoes(combinacao_atual)
+            
+            return False
+        
+        else:
+            self.sequencia_erros += 1
+            self.sequencia_acertos = 0
+            self.ultima_estrategia_erro = nome_estrategia
+            
+            if len(zonas_envolvidas) > 1:
+                combinacao = tuple(sorted(zonas_envolvidas))
+                
+                if combinacao in self.combinacoes_frias and self.sequencia_erros >= 1:
+                    logging.info(f"🚫 Combinação fria detectada: {combinacao} - Rotacionando")
+                    return self.aplicar_rotacao_inteligente()
+            
+            if self.sequencia_erros >= 2:
+                return self.aplicar_rotacao_inteligente()
+                
+            return False
+
+    def aplicar_rotacao_por_acertos_combinacoes(self, combinacao_atual):
+        combinacoes_alternativas = self.get_combinacoes_alternativas(combinacao_atual)
+        
+        if not combinacoes_alternativas:
+            logging.info("⚠️ Nenhuma combinação alternativa disponível - mantendo atual")
+            return False
+        
+        combinacao_escolhida = self.escolher_melhor_combinacao_alternativa(combinacoes_alternativas)
+        
+        if not combinacao_escolhida:
+            logging.info("⚠️ Não foi possível escolher uma combinação alternativa")
+            return False
+        
+        success = self.aplicar_combinacao_na_estrategia(combinacao_escolhida)
+        
+        if success:
+            self.sequencia_acertos = 0
+            self.ultima_combinacao_acerto = []
+            
+            enviar_rotacao_por_acertos_combinacoes(combinacao_atual, combinacao_escolhida)
+            logging.info(f"🔄 ROTAÇÃO POR ACERTOS: {combinacao_atual} → {combinacao_escolhida}")
+            return True
+        
+        return False
+
+    def escolher_melhor_combinacao_alternativa(self, combinacoes):
+        if not combinacoes:
+            return None
+        
+        combinacoes_com_dados = []
+        combinacoes_sem_dados = []
+        
+        for combo in combinacoes:
+            dados = self.historico_combinacoes.get(combo, {})
+            if dados and dados.get('total', 0) > 0:
+                combinacoes_com_dados.append((combo, dados))
+            else:
+                combinacoes_sem_dados.append(combo)
+        
+        if combinacoes_com_dados:
+            combinacoes_com_dados.sort(key=lambda x: x[1].get('eficiencia', 0), reverse=True)
+            melhor_combo = combinacoes_com_dados[0][0]
+            
+            eficiencia = combinacoes_com_dados[0][1].get('eficiencia', 0)
+            if eficiencia >= 25:
+                return melhor_combo
+        
+        if combinacoes_sem_dados:
+            return combinacoes_sem_dados[0]
+        
+        return combinacoes[0] if combinacoes else None
+
+    def aplicar_combinacao_na_estrategia(self, combinacao):
+        try:
+            zonas_list = list(combinacao)
+            
+            previsao_forcada = self.estrategia_zonas.criar_previsao_dupla(
+                zonas_list[0], 
+                zonas_list[1], 
+                "ROTAÇÃO-3-ACERTOS"
+            )
+            
+            if previsao_forcada:
+                self.previsao_ativa = previsao_forcada
+                self.estrategia_selecionada = "Zonas"
+                return True
+                
+        except Exception as e:
+            logging.error(f"❌ Erro ao aplicar combinação {combinacao}: {e}")
+        
+        return False
+
+    def aplicar_rotacao_inteligente(self):
+        estrategia_atual = self.estrategia_selecionada
+        
+        if self.combinacoes_quentes and estrategia_atual == "Zonas":
+            logging.info(f"🎯 MANTENDO ZONAS - {len(self.combinacoes_quentes)} combinações quentes")
+            self.sequencia_erros = 0
+            return False
+        
+        if estrategia_atual == "Zonas":
+            nova_estrategia = "ML"
+        else:
+            nova_estrategia = "Zonas"
+        
+        self.estrategia_selecionada = nova_estrategia
+        self.sequencia_erros = 0
+        
+        enviar_rotacao_automatica(estrategia_atual, nova_estrategia)
+        logging.info(f"🔄 ROTAÇÃO: {estrategia_atual} → {nova_estrategia}")
+        return True
+
+    def processar_novo_numero(self, numero):
+        if isinstance(numero, dict) and 'number' in numero:
+            numero_real = numero['number']
+        else:
+            numero_real = numero
+            
+        self.contador_sorteios_global += 1
+            
+        if self.previsao_ativa:
+            acerto = False
+            zonas_acertadas = []
+            nome_estrategia = self.previsao_ativa['nome']
+            
+            # Verificar acerto baseado no tipo de estratégia
+            if 'Triângulo' in nome_estrategia:
+                triangulo_previsao = self.previsao_ativa.get('triangulo_info')
+                triangulo_sorteado = self.estrategia_triangulo.get_triangulo_do_numero(numero_real)
+                acerto = triangulo_previsao == triangulo_sorteado
+                if acerto:
+                    zonas_acertadas = [triangulo_sorteado]
+            else:
+                zonas_envolvidas = self.previsao_ativa.get('zonas_envolvidas', [])
+                if not zonas_envolvidas:
+                    acerto = numero_real in self.previsao_ativa['numeros_apostar']
+                    if acerto:
+                        if 'Zonas' in nome_estrategia:
+                            for zona, numeros in self.estrategia_zonas.numeros_zonas.items():
+                                if numero_real in numeros:
+                                    zonas_acertadas.append(zona)
+                                    break
+                        elif 'ML' in nome_estrategia:
+                            for zona, numeros in self.estrategia_ml.numeros_zonas_ml.items():
+                                if numero_real in numeros:
+                                    zonas_acertadas.append(zona)
+                                    break
+                else:
+                    for zona in zonas_envolvidas:
+                        if 'Zonas' in nome_estrategia:
+                            numeros_zona = self.estrategia_zonas.numeros_zonas[zona]
+                        elif 'ML' in nome_estrategia:
+                            numeros_zona = self.estrategia_ml.numeros_zonas_ml[zona]
+                        else:
+                            continue
+                        
+                        if numero_real in numeros_zona:
+                            acerto = True
+                            zonas_acertadas.append(zona)
+            
+            self.atualizar_desempenho_combinacao(self.previsao_ativa.get('zonas_envolvidas', []), acerto)
+            
+            rotacionou = self.rotacionar_estrategia_automaticamente(acerto, nome_estrategia, self.previsao_ativa.get('zonas_envolvidas', []))
+            
+            if nome_estrategia not in self.estrategias_contador:
+                self.estrategias_contador[nome_estrategia] = {'acertos': 0, 'total': 0}
+            
+            self.estrategias_contador[nome_estrategia]['total'] += 1
+            if acerto:
+                self.estrategias_contador[nome_estrategia]['acertos'] += 1
+                self.acertos += 1
+            else:
+                self.erros += 1
+            
+            zona_acertada_str = "+".join(zonas_acertadas) if zonas_acertadas else None
+            enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada_str)
+            
+            self.historico_desempenho.append({
+                'numero': numero_real,
+                'acerto': acerto,
+                'estrategia': nome_estrategia,
+                'previsao': self.previsao_ativa['numeros_apostar'],
+                'rotacionou': rotacionou,
+                'zona_acertada': zona_acertada_str,
+                'zonas_envolvidas': self.previsao_ativa.get('zonas_envolvidas', []),
+                'tipo_aposta': self.previsao_ativa.get('tipo', 'unica'),
+                'sequencia_acertos': self.sequencia_acertos,
+                'sequencia_erros': self.sequencia_erros,
+                'ultima_combinacao_acerto': self.ultima_combinacao_acerto.copy()
+            })
+            
+            self.previsao_ativa = None
+        
+        self.estrategia_zonas.adicionar_numero(numero_real)
+        self.estrategia_midas.adicionar_numero(numero_real)
+        self.estrategia_ml.adicionar_numero(numero_real)
+        self.estrategia_triangulo.adicionar_numero(numero_real)
+        
+        nova_estrategia = None
+        
+        if self.estrategia_selecionada == "Zonas":
+            nova_estrategia = self.estrategia_zonas.analisar_zonas()
+        elif self.estrategia_selecionada == "Midas":
+            nova_estrategia = self.estrategia_midas.analisar_midas()
+        elif self.estrategia_selecionada == "ML":
+            nova_estrategia = self.estrategia_ml.analisar_ml()
+        elif self.estrategia_selecionada == "Triângulo":
+            nova_estrategia = self.estrategia_triangulo.analisar_triangulo()
+        
+        if nova_estrategia:
+            self.previsao_ativa = nova_estrategia
+            enviar_previsao_super_simplificada(nova_estrategia)
+
+    def zerar_estatisticas_desempenho(self):
+        self.acertos = 0
+        self.erros = 0
+        self.estrategias_contador = {}
+        self.historico_desempenho = []
+        self.contador_sorteios_global = 0
+        self.sequencia_erros = 0
+        self.ultima_estrategia_erro = ""
+        self.sequencia_acertos = 0
+        self.ultima_combinacao_acerto = []
+        self.historico_combinacoes_acerto = []
+        self.historico_combinacoes = {}
+        self.combinacoes_quentes = []
+        self.combinacoes_frias = []
+        
+        self.estrategia_zonas.zerar_estatisticas()
+        self.estrategia_triangulo.zerar_estatisticas()
+        
+        logging.info("📊 Todas as estatísticas de desempenho foram zeradas")
+        salvar_sessao()
+
+    def reset_recente_estatisticas(self):
+        if len(self.historico_desempenho) > 10:
+            self.historico_desempenho = self.historico_desempenho[-10:]
+            self.acertos = sum(1 for resultado in self.historico_desempenho if resultado['acerto'])
+            self.erros = len(self.historico_desempenho) - self.acertos
+            
+            self.estrategias_contador = {}
+            for resultado in self.historico_desempenho:
+                estrategia = resultado['estrategia']
+                if estrategia not in self.estrategias_contador:
+                    self.estrategias_contador[estrategia] = {'acertos': 0, 'total': 0}
+                
+                self.estrategias_contador[estrategia]['total'] += 1
+                if resultado['acerto']:
+                    self.estrategias_contador[estrategia]['acertos'] += 1
+            
+            ultimos_resultados = self.historico_desempenho[-5:]
+            self.sequencia_erros = 0
+            self.sequencia_acertos = 0
+            
+            for resultado in reversed(ultimos_resultados):
+                if resultado['acerto']:
+                    self.sequencia_acertos += 1
+                else:
+                    break
+                    
+            for resultado in reversed(ultimos_resultados):
+                if not resultado['acerto']:
+                    self.sequencia_erros += 1
+                else:
+                    break
+            
+            logging.info("🔄 Estatísticas recentes resetadas (mantidos últimos 10 resultados)")
+        else:
+            logging.info("ℹ️  Histórico muito pequeno para reset recente")
+        
+        salvar_sessao()
+
+    def get_status_rotacao(self):
+        return {
+            'estrategia_atual': self.estrategia_selecionada,
+            'sequencia_erros': self.sequencia_erros,
+            'sequencia_acertos': self.sequencia_acertos,
+            'ultima_estrategia_erro': self.ultima_estrategia_erro,
+            'ultimas_combinacoes_acerto': self.ultima_combinacao_acerto,
+            'proxima_rotacao_erros': max(0, 2 - self.sequencia_erros),
+            'proxima_rotacao_acertos': max(0, 3 - self.sequencia_acertos),
+            'combinacoes_quentes': len(self.combinacoes_quentes),
+            'combinacoes_frias': len(self.combinacoes_frias)
+        }
+
+# =============================
+# FUNÇÕES AUXILIARES
+# =============================
+def tocar_som_moeda():
+    st.markdown("""<audio autoplay><source src="" type="audio/mp3"></audio>""", unsafe_allow_html=True)
+
+def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
+    try:
+        with open(caminho, "w") as f:
+            json.dump(historico, f, indent=2)
+    except Exception as e:
+        logging.error(f"Erro ao salvar histórico: {e}")
+
+def fetch_latest_result():
+    try:
+        response = requests.get(API_URL, headers=HEADERS, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        game_data = data.get("data", {})
+        result = game_data.get("result", {})
+        outcome = result.get("outcome", {})
+        number = outcome.get("number")
+        timestamp = game_data.get("startedAt")
+        return {"number": number, "timestamp": timestamp}
+    except Exception as e:
+        logging.error(f"Erro ao buscar resultado: {e}")
+        return None
+
+def mostrar_combinacoes_dinamicas():
+    sistema = st.session_state.sistema
+    
+    if hasattr(sistema, 'combinacoes_quentes') and sistema.combinacoes_quentes:
+        st.sidebar.subheader("🔥 Combinações Quentes")
+        for combo in sistema.combinacoes_quentes:
+            dados = sistema.historico_combinacoes.get(combo, {})
+            eff = dados.get('eficiencia', 0)
+            total = dados.get('total', 0)
+            seq = dados.get('sequencia_acertos', 0)
+            st.sidebar.write(f"🎯 {combo[0]}+{combo[1]}: {eff:.1f}% ({seq}✓)")
+    
+    if hasattr(sistema, 'combinacoes_frias') and sistema.combinacoes_frias:
+        st.sidebar.subheader("❌ Combinações Frias")
+        for combo in sistema.combinacoes_frias:
+            dados = sistema.historico_combinacoes.get(combo, {})
+            eff = dados.get('eficiencia', 0)
+            total = dados.get('total', 0)
+            st.sidebar.write(f"🚫 {combo[0]}+{combo[1]}: {eff:.1f}%")
+
+# =============================
+# APLICAÇÃO STREAMLIT ATUALIZADA
+# =============================
+st.set_page_config(page_title="IA Roleta — Multi-Estratégias", layout="centered")
+st.title("🎯 IA Roleta — Sistema Multi-Estratégias")
+
+# Inicialização com persistência
+if "sistema" not in st.session_state:
+    st.session_state.sistema = SistemaRoletaCompleto()
+
+sessao_carregada = carregar_sessao()
+
+if "historico" not in st.session_state:
+    if not sessao_carregada and os.path.exists(HISTORICO_PATH):
+        try:
+            with open(HISTORICO_PATH, "r") as f:
+                st.session_state.historico = json.load(f)
+        except:
+            st.session_state.historico = []
+    elif not sessao_carregada:
+        st.session_state.historico = []
+
+if "telegram_token" not in st.session_state and not sessao_carregada:
+    st.session_state.telegram_token = ""
+if "telegram_chat_id" not in st.session_state and not sessao_carregada:
+    st.session_state.telegram_chat_id = ""
+
+# Sidebar - Configurações Avançadas
+st.sidebar.title("⚙️ Configurações")
+
+mostrar_combinacoes_dinamicas()
+
+# Gerenciamento de Sessão
+with st.sidebar.expander("💾 Gerenciamento de Sessão", expanded=False):
+    st.write("**Persistência de Dados**")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("💾 Salvar Sessão", use_container_width=True):
+            salvar_sessao()
+            st.success("✅ Sessão salva!")
+            
+    with col2:
+        if st.button("🔄 Carregar Sessão", use_container_width=True):
+            if carregar_sessao():
+                st.success("✅ Sessão carregada!")
+                st.rerun()
+            else:
+                st.error("❌ Nenhuma sessão salva encontrada")
+    
+    st.write("---")
+    
+    st.write("**📊 Gerenciar Estatísticas**")
+    
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        if st.button("🔄 Reset Recente", help="Mantém apenas os últimos 10 resultados", use_container_width=True):
+            st.session_state.sistema.reset_recente_estatisticas()
+            st.success("✅ Estatísticas recentes resetadas!")
+            st.rerun()
+            
+    with col4:
+        if st.button("🗑️ Zerar Tudo", type="secondary", help="Zera TODAS as estatísticas", use_container_width=True):
+            if st.checkbox("Confirmar zerar TODAS as estatísticas"):
+                st.session_state.sistema.zerar_estatisticas_desempenho()
+                st.error("🗑️ Todas as estatísticas foram zeradas!")
+                st.rerun()
+    
+    st.write("---")
+    
+    if st.button("🗑️ Limpar TODOS os Dados", type="secondary", use_container_width=True):
+        if st.checkbox("Confirmar limpeza total de todos os dados"):
+            limpar_sessao()
+            st.error("🗑️ Todos os dados foram limpos!")
+            st.stop()
+
+# Configurações do Telegram
+with st.sidebar.expander("🔔 Configurações do Telegram", expanded=False):
+    st.write("Configure as notificações do Telegram")
+    
+    telegram_token = st.text_input(
+        "Bot Token do Telegram:",
+        value=st.session_state.telegram_token,
+        type="password",
+        help="Obtenha com @BotFather no Telegram"
+    )
+    
+    telegram_chat_id = st.text_input(
+        "Chat ID do Telegram:",
+        value=st.session_state.telegram_chat_id,
+        help="Obtenha com @userinfobot no Telegram"
+    )
+    
+    if st.button("Salvar Configurações Telegram"):
+        st.session_state.telegram_token = telegram_token
+        st.session_state.telegram_chat_id = telegram_chat_id
+        salvar_sessao()
+        st.success("✅ Configurações do Telegram salvas!")
+        
+    if st.button("Testar Conexão Telegram"):
+        if telegram_token and telegram_chat_id:
+            try:
+                enviar_telegram("🔔 Teste de conexão - IA Roleta funcionando!")
+                st.success("✅ Mensagem de teste enviada para Telegram!")
+            except Exception as e:
+                st.error(f"❌ Erro ao enviar mensagem: {e}")
+        else:
+            st.error("❌ Preencha token e chat ID primeiro")
+
+# Configurações dos Alertas Alternativos
+with st.sidebar.expander("🔔 Alertas Alternativos", expanded=False):
+    st.write("**Alertas Simplificados do Telegram**")
+    
+    st.info("""
+    **📱 Alertas Ativados:**
+    - 🔔 **Alerta de Aposta:** Números em 2 linhas
+    - 📢 **Alerta de Resultado:** Confirmação simples
+    - 🎯 **Previsão Detalhada:** Mensagem completa
+    """)
+    
+    alertas_alternativos = st.checkbox(
+        "Ativar Alertas Simplificados", 
+        value=True,
+        help="Envia alertas super simples junto com os detalhados"
+    )
+    
+    if not alertas_alternativos:
+        st.warning("⚠️ Alertas simplificados desativados")
+    
+    if st.button("Testar Alertas Simplificados"):
+        if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+            previsao_teste = {
+                'nome': 'Zonas Teste',
+                'numeros_apostar': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+                'zonas_envolvidas': ['Vermelha']
+            }
+            
+            try:
+                enviar_alerta_numeros_simplificado(previsao_teste)
+                st.success("✅ Alerta simplificado de teste enviado!")
+            except Exception as e:
+                st.error(f"❌ Erro: {e}")
+        else:
+            st.error("❌ Configure o Telegram primeiro")
+
+# Seleção de Estratégia (agora com Triângulo)
+estrategia = st.sidebar.selectbox(
+    "🎯 Selecione a Estratégia:",
+    ["Zonas", "Midas", "ML", "Triângulo"],
+    key="estrategia_selecionada"
+)
+
+# Aplicar estratégia selecionada
+if estrategia != st.session_state.sistema.estrategia_selecionada:
+    st.session_state.sistema.set_estrategia(estrategia)
+    st.toast(f"🔄 Estratégia alterada para: {estrategia}")
+
+# Status da Rotação Automática
+with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
+    status_rotacao = st.session_state.sistema.get_status_rotacao()
+    
+    st.write("**Sistema de Rotação:**")
+    st.write(f"🎯 **Estratégia Atual:** {status_rotacao['estrategia_atual']}")
+    st.write(f"✅ **Acertos Seguidos:** {status_rotacao['sequencia_acertos']}/3")
+    st.write(f"❌ **Erros Seguidos:** {status_rotacao['sequencia_erros']}/2")
+    st.write(f"🔥 **Combinações Quentes:** {status_rotacao['combinacoes_quentes']}")
+    st.write(f"❄️ **Combinações Frias:** {status_rotacao['combinacoes_frias']}")
+    
+    if status_rotacao['ultimas_combinacoes_acerto']:
+        st.write(f"📊 **Últimas Combinações que Acertaram:**")
+        for combo in status_rotacao['ultimas_combinacoes_acerto']:
+            nucleos = []
+            for zona in combo:
+                if zona == 'Vermelha': nucleos.append("7")
+                elif zona == 'Azul': nucleos.append("10")
+                elif zona == 'Amarela': nucleos.append("2")
+                else: nucleos.append(zona)
+            st.write(f"   • {'+'.join(nucleos)}")
+    
+    st.write("---")
+    st.write("**🎯 Regras de Rotação:**")
+    st.write("• ✅ **3 Acertos Seguidos na MESMA combinação:** Rota para OUTRAS combinações")
+    st.write("• ❌ **2 Erros Seguidos:** Rotação entre Zonas ↔ ML")
+    st.write("• 🔺 **Estratégia Triângulo:** Gatilho baseado em atraso + vizinhos quentes")
+    
+    if st.button("🔄 Forçar Rotação", use_container_width=True):
+        estrategia_atual = st.session_state.sistema.estrategia_selecionada
+        if estrategia_atual == "Zonas":
+            nova_estrategia = "ML"
+        elif estrategia_atual == "ML":
+            nova_estrategia = "Triângulo"
+        elif estrategia_atual == "Triângulo":
+            nova_estrategia = "Zonas"
+        else:
+            nova_estrategia = "Zonas"
+        
+        st.session_state.sistema.estrategia_selecionada = nova_estrategia
+        st.session_state.sistema.sequencia_erros = 0
+        st.session_state.sistema.sequencia_acertos = 0
+        st.success(f"🔄 Rotação forçada: {estrategia_atual} → {nova_estrategia}")
+        st.rerun()
+
+# Treinamento ML
+with st.sidebar.expander("🧠 Treinamento ML", expanded=False):
+    numeros_disponiveis = 0
+    numeros_lista = []
+    
+    for item in st.session_state.historico:
+        if isinstance(item, dict) and 'number' in item and item['number'] is not None:
+            numeros_disponiveis += 1
+            numeros_lista.append(item['number'])
+        elif isinstance(item, (int, float)) and item is not None:
+            numeros_disponiveis += 1
+            numeros_lista.append(int(item))
+            
+    st.write(f"📊 **Números disponíveis:** {numeros_disponiveis}")
+    st.write(f"🎯 **Mínimo necessário:** 200 números")
+    st.write(f"🔄 **Treinamento automático:** A cada 15 sorteios")
+    st.write(f"🤖 **Modelo:** CatBoost (mais preciso)")
+    st.write(f"🎯 **Ensemble:** 3 modelos")
+    
+    if numeros_disponiveis > 0:
+        numeros_unicos = len(set(numeros_lista))
+        st.write(f"🎲 **Números únicos:** {numeros_unicos}/37")
+        
+        if numeros_unicos < 10:
+            st.warning(f"⚠️ **Pouca variedade:** Necessário pelo menos 10 números diferentes")
+        else:
+            st.success(f"✅ **Variedade adequada:** {numeros_unicos} números diferentes")
+    
+    st.write(f"✅ **Status:** {'Dados suficientes' if numeros_disponiveis >= 200 else 'Coletando dados...'}")
+    
+    if numeros_disponiveis >= 200:
+        st.success("✨ **Pronto para treinar!**")
+        
+        if st.button("🚀 Treinar Modelo ML", type="primary", use_container_width=True):
+            with st.spinner("Treinando modelo ML com CatBoost... Isso pode levar alguns segundos"):
+                try:
+                    success, message = st.session_state.sistema.treinar_modelo_ml(numeros_lista)
+                    if success:
+                        st.success(f"✅ {message}")
+                        st.balloons()
+                    else:
+                        st.error(f"❌ {message}")
+                except Exception as e:
+                    st.error(f"💥 Erro no treinamento: {str(e)}")
+    
+    else:
+        st.warning(f"📥 Colete mais {200 - numeros_disponiveis} números para treinar o ML")
+        
+    st.write("---")
+    st.write("**Status do ML:**")
+    if st.session_state.sistema.estrategia_ml.ml.is_trained:
+        if st.session_state.sistema.estrategia_ml.ml.models:
+            primeiro_modelo = st.session_state.sistema.estrategia_ml.ml.models[0]
+            modelo_tipo = "CatBoost" if hasattr(primeiro_modelo, 'iterations') else "RandomForest"
+        else:
+            modelo_tipo = "Não treinado"
+            
+        st.success(f"✅ Modelo {modelo_tipo} treinado ({st.session_state.sistema.estrategia_ml.ml.contador_treinamento} vezes)")
+        if 'last_accuracy' in st.session_state.sistema.estrategia_ml.ml.meta:
+            acc = st.session_state.sistema.estrategia_ml.ml.meta['last_accuracy']
+            st.info(f"📊 Última acurácia: {acc:.2%}")
+        st.info(f"🔄 Próximo treinamento automático em: {15 - st.session_state.sistema.estrategia_ml.contador_sorteios} sorteios")
+        st.info(f"🎯 Ensemble: {len(st.session_state.sistema.estrategia_ml.ml.models)} modelos ativos")
+    else:
+        st.info("🤖 ML aguardando treinamento")
+
+# Estatísticas de Padrões ML
+with st.sidebar.expander("🔍 Estatísticas de Padrões ML", expanded=False):
+    if st.session_state.sistema.estrategia_selecionada == "ML":
+        estatisticas_padroes = st.session_state.sistema.estrategia_ml.get_estatisticas_padroes()
+        st.text(estatisticas_padroes)
+        
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            if st.button("🔄 Zerar Padrões", use_container_width=True):
+                st.session_state.sistema.estrategia_ml.zerar_padroes()
+                st.success("✅ Padrões zerados!")
+                st.rerun()
+                
+        with col_p2:
+            if st.button("📊 Atualizar Métricas", use_container_width=True):
+                st.rerun()
+    else:
+        st.info("🔍 Ative a estratégia ML para ver estatísticas de padrões")
+
+# Informações sobre as Estratégias
+with st.sidebar.expander("📊 Informações das Estratégias"):
+    if estrategia == "Zonas":
+        info_zonas = st.session_state.sistema.estrategia_zonas.get_info_zonas()
+        st.write("**🎯 Estratégia Zonas v6:**")
+        st.write("**CONFIGURAÇÃO:** 6 antes + 6 depois (13 números/zona)")
+        for zona, dados in info_zonas.items():
+            st.write(f"**Zona {zona}** (Núcleo: {dados['central']})")
+            st.write(f"Números: {', '.join(map(str, dados['numeros']))}")
+            st.write(f"Total: {dados['quantidade']} números")
+            st.write("---")
+    
+    elif estrategia == "Midas":
+        st.write("**🎯 Estratégia Midas:**")
+        st.write("Padrões baseados em terminais:")
+        st.write("- **Terminal 0**: 0, 10, 20, 30")
+        st.write("- **Terminal 7**: 7, 17, 27") 
+        st.write("- **Terminal 5**: 5, 15, 25, 35")
+        st.write("---")
+    
+    elif estrategia == "ML":
+        st.write("**🤖 Estratégia Machine Learning:**")
+        st.write("- **Modelo**: CatBoost + Ensemble")
+        st.write("- **Amostras mínimas**: 200")
+        st.write("- **Treinamento**: A cada 15 sorteios")
+        st.write("- **Zonas**: 6 antes + 6 depois (13 números/zona)")
+        
+        info_zonas_ml = st.session_state.sistema.estrategia_ml.get_info_zonas_ml()
+        for zona, dados in info_zonas_ml.items():
+            st.write(f"**Zona {zona}** (Núcleo: {dados['central']})")
+            st.write(f"Números: {', '.join(map(str, dados['numeros']))}")
+            st.write("---")
+    
+    elif estrategia == "Triângulo":
+        st.write("**🔺 Estratégia Triângulo Reativo:**")
+        st.write("**Como funciona:**")
+        st.write("1. Cada número pertence a um triângulo (3 números consecutivos no cilindro)")
+        st.write("2. Último número sorteado define o triângulo base")
+        st.write("3. Gatilho: Atraso do triângulo OU vizinhos quentes")
+        st.write("4. Aposta: Triângulo + 2 vizinhos de cada número (~12-15 números)")
+        st.write("5. Confirmação: Não acertou recentemente")
+        st.write("---")
+        st.write("**Vantagens:**")
+        st.write("- 🔄 Dinâmica (reativa ao momento)")
+        st.write("- 🎯 Filtros inteligentes (evita entradas ruins)")
+        st.write("- 📊 Baseada em estatísticas reais")
+        
+        info_triangulos = st.session_state.sistema.estrategia_triangulo.get_info_triangulos()
+        st.write("---")
+        st.write("**Exemplo de Triângulos (Top 5):**")
+        for i, (triangulo, dados) in enumerate(list(info_triangulos.items())[:5]):
+            st.write(f"**{triangulo}:** {dados['numeros']}")
+
+# Análise detalhada
+with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=False):
+    if estrategia == "Zonas":
+        analise = st.session_state.sistema.estrategia_zonas.get_analise_detalhada()
+    elif estrategia == "ML":
+        analise = st.session_state.sistema.estrategia_ml.get_analise_ml()
+    elif estrategia == "Triângulo":
+        analise = st.session_state.sistema.estrategia_triangulo.get_analise_detalhada()
+    else:
+        analise = "🎯 Estratégia Midas ativa\nAnalisando padrões de terminais..."
+    
+    st.text(analise)
+
+# Entrada manual
+st.subheader("✍️ Inserir Sorteios")
+entrada = st.text_input("Digite números (0-36) separados por espaço:")
+if st.button("Adicionar") and entrada:
+    try:
+        nums = [int(n) for n in entrada.split() if n.isdigit() and 0 <= int(n) <= 36]
+        for n in nums:
+            item = {"number": n, "timestamp": f"manual_{len(st.session_state.historico)}"}
+            st.session_state.historico.append(item)
+            st.session_state.sistema.processar_novo_numero(n)
+        salvar_resultado_em_arquivo(st.session_state.historico)
+        salvar_sessao()
+        st.success(f"{len(nums)} números adicionados!")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erro: {e}")
+
+# Atualização automática
+st_autorefresh(interval=3000, key="refresh")
+
+# Buscar resultado da API
+resultado = fetch_latest_result()
+if st.session_state.historico:
+    ultimo_ts = st.session_state.historico[-1].get("timestamp") if st.session_state.historico else None
+else:
+    ultimo_ts = None
+
+if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo_ts:
+    numero_atual = resultado.get("number")
+    if numero_atual is not None:
+        st.session_state.historico.append(resultado)
+        st.session_state.sistema.processar_novo_numero(resultado)
+        salvar_resultado_em_arquivo(st.session_state.historico)
+        salvar_sessao()
+
+# Interface principal
+st.subheader("🔁 Últimos Números")
+if st.session_state.historico:
+    ultimos_10 = st.session_state.historico[-10:]
+    numeros_str = " ".join(str(item['number'] if isinstance(item, dict) else item) for item in ultimos_10)
+    st.write(numeros_str)
+else:
+    st.write("Nenhum número registrado")
+
+# Status da Rotação na Interface Principal
+status_rotacao = st.session_state.sistema.get_status_rotacao()
+col_status1, col_status2, col_status3, col_status4 = st.columns(4)
+with col_status1:
+    st.metric("🎯 Estratégia Atual", status_rotacao['estrategia_atual'])
+with col_status2:
+    st.metric("✅ Acertos Seguidos", f"{status_rotacao['sequencia_acertos']}/3")
+with col_status3:
+    st.metric("❌ Erros Seguidos", f"{status_rotacao['sequencia_erros']}/2")
+with col_status4:
+    st.metric("🔄 Próxima Rotação", f"A:{status_rotacao['proxima_rotacao_acertos']} E:{status_rotacao['proxima_rotacao_erros']}")
+
+st.subheader("🎯 Previsão Ativa")
+sistema = st.session_state.sistema
+
+if sistema.previsao_ativa:
+    previsao = sistema.previsao_ativa
+    st.success(f"**{previsao['nome']}**")
+    
+    if previsao.get('selecao_inteligente', False):
+        st.success("🎯 **SELEÇÃO INTELIGENTE ATIVA** - 15 melhores números selecionados")
+        st.info("📊 **Critérios:** Frequência + Posição + Vizinhança + Tendência")
+    
+    if 'Triângulo' in previsao['nome']:
+        st.write(f"**🔺 Triângulo:** {previsao['triangulo_info']}")
+        st.write(f"**📋 Gatilho:** {previsao['gatilho']}")
+        st.write(f"**📊 Confiança:** {previsao['confianca']}")
+        
+        if previsao.get('fatores_confianca'):
+            st.write(f"**📈 Fatores de Confiança:** {', '.join(previsao['fatores_confianca'])}")
+        
+        st.write(f"**🎯 Números do Triângulo:** {previsao['triangulo_numeros']}")
+        st.write(f"**🔍 Vizinhos:** {previsao['vizinhos']}")
+        st.write(f"**🔢 Número de origem:** {previsao['numero_origem']}")
+        
+    elif 'Zonas' in previsao['nome']:
+        zonas_envolvidas = previsao.get('zonas_envolvidas', [])
+        if len(zonas_envolvidas) > 1:
+            zona1 = zonas_envolvidas[0]
+            zona2 = zonas_envolvidas[1]
+            
+            nucleo1 = "7" if zona1 == 'Vermelha' else "10" if zona1 == 'Azul' else "2"
+            nucleo2 = "7" if zona2 == 'Vermelha' else "10" if zona2 == 'Azul' else "2"
+            
+            st.write(f"**📍 Núcleos Combinados:** {nucleo1} + {nucleo2}")
+            
+            combinacao = tuple(sorted([zona1, zona2]))
+            dados_combinacao = sistema.historico_combinacoes.get(combinacao, {})
+            if dados_combinacao:
+                eff = dados_combinacao.get('eficiencia', 0)
+                total = dados_combinacao.get('total', 0)
+                st.info(f"🏆 **Eficiência da Combinação:** {eff:.1f}% ({dados_combinacao.get('acertos', 0)}/{total})")
+            
+            st.info("🔄 **ESTRATÉGIA DUPLA:** Investindo nas 2 melhores zonas")
+        else:
+            zona = previsao.get('zona', '')
+            if zona == 'Vermelha':
+                nucleo = "7"
+            elif zona == 'Azul':
+                nucleo = "10"
+            elif zona == 'Amarela':
+                nucleo = "2"
+            else:
+                nucleo = zona
+            st.write(f"**📍 Núcleo:** {nucleo}")
+            
+    elif 'ML' in previsao['nome']:
+        zonas_envolvidas = previsao.get('zonas_envolvidas', [])
+        if len(zonas_envolvidas) > 1:
+            zona1 = zonas_envolvidas[0]
+            zona2 = zonas_envolvidas[1]
+            
+            nucleo1 = "7" if zona1 == 'Vermelha' else "10" if zona1 == 'Azul' else "2"
+            nucleo2 = "7" if zona2 == 'Vermelha' else "10" if zona2 == 'Azul' else "2"
+            
+            st.write(f"**🤖 Núcleos Combinados:** {nucleo1} + {nucleo2}")
+            st.info("🔄 **ESTRATÉGIA DUPLA:** Investindo nas 2 melhores zonas")
+        else:
+            zona_ml = previsao.get('zona_ml', '')
+            if zona_ml == 'Vermelha':
+                nucleo = "7"
+            elif zona_ml == 'Azul':
+                nucleo = "10"
+            elif zona_ml == 'Amarela':
+                nucleo = "2"
+            else:
+                nucleo = zona_ml
+            st.write(f"**🤖 Núcleo:** {nucleo}")
+    
+    st.write(f"**🔢 Números para apostar ({len(previsao['numeros_apostar'])}):**")
+    st.write(", ".join(map(str, sorted(previsao['numeros_apostar']))))
+    
+    if 'ML' in previsao['nome'] and previsao.get('padroes_aplicados', 0) > 0:
+        st.info(f"🔍 **Padrões aplicados:** {previsao['padroes_aplicados']} padrões sequenciais detectados")
+    
+    tipo_aposta = previsao.get('tipo', 'unica')
+    if tipo_aposta == 'dupla':
+        st.success("🎯 **APOSTA DUPLA:** Maior cobertura com 2 zonas combinadas")
+    else:
+        st.info("🎯 **APOSTA SIMPLES:** Foco em uma zona principal")
+    
+    st.info("⏳ Aguardando próximo sorteio para conferência...")
+else:
+    st.info(f"🎲 Analisando padrões ({estrategia})...")
+
+# Desempenho
+st.subheader("📈 Desempenho")
+
+total = sistema.acertos + sistema.erros
+taxa = (sistema.acertos / total * 100) if total > 0 else 0.0
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("🟢 Acertos", sistema.acertos)
+col2.metric("🔴 Erros", sistema.erros)
+col3.metric("📊 Total", total)
+col4.metric("✅ Taxa", f"{taxa:.1f}%")
+
+# Botões de gerenciamento de estatísticas na seção de desempenho
+st.write("**Gerenciar Estatísticas:**")
+col5, col6 = st.columns(2)
+
+with col5:
+    if st.button("🔄 Reset Recente", help="Mantém apenas os últimos 10 resultados", use_container_width=True):
+        st.session_state.sistema.reset_recente_estatisticas()
+        st.success("✅ Estatísticas recentes resetadas!")
+        st.rerun()
+
+with col6:
+    if st.button("🗑️ Zerar Tudo", type="secondary", help="Zera TODAS as estatísticas", use_container_width=True):
+        if st.checkbox("Confirmar zerar TODAS as estatísticas"):
+            st.session_state.sistema.zerar_estatisticas_desempenho()
+            st.error("🗑️ Todas as estatísticas foram zeradas!")
+            st.rerun()
+
+# Análise detalhada por estratégia
+if sistema.estrategias_contador:
+    st.write("**📊 Performance por Estratégia:**")
+    for nome, dados in sistema.estrategias_contador.items():
+        if isinstance(dados, dict) and 'total' in dados and dados['total'] > 0:
+            taxa_estrategia = (dados['acertos'] / dados['total'] * 100)
+            cor = "🟢" if taxa_estrategia >= 50 else "🟡" if taxa_estrategia >= 30 else "🔴"
+            st.write(f"{cor} {nome}: {dados['acertos']}/{dados['total']} ({taxa_estrategia:.1f}%)")
+        else:
+            st.write(f"⚠️ {nome}: Dados de performance não disponíveis")
+
+# Últimas conferências
+if sistema.historico_desempenho:
+    st.write("**🔍 Últimas 5 Conferências:**")
+    for i, resultado in enumerate(sistema.historico_desempenho[-5:]):
+        emoji = "🎉" if resultado['acerto'] else "❌"
+        rotacao_emoji = " 🔄" if resultado.get('rotacionou', False) else ""
+        zona_info = ""
+        if resultado['acerto'] and resultado.get('zona_acertada'):
+            if '+' in resultado['zona_acertada']:
+                zonas = resultado['zona_acertada'].split('+')
+                nucleos = []
+                for zona in zonas:
+                    if zona == 'Vermelha':
+                        nucleos.append("7")
+                    elif zona == 'Azul':
+                        nucleos.append("10")
+                    elif zona == 'Amarela':
+                        nucleos.append("2")
+                    else:
+                        nucleos.append(zona)
+                nucleo_str = "+".join(nucleos)
+                zona_info = f" (Núcleos {nucleo_str})"
+            else:
+                if resultado['zona_acertada'] == 'Vermelha':
+                    nucleo = "7"
+                elif resultado['zona_acertada'] == 'Azul':
+                    nucleo = "10"
+                elif resultado['zona_acertada'] == 'Amarela':
+                    nucleo = "2"
+                else:
+                    nucleo = resultado['zona_acertada']
+                zona_info = f" (Núcleo {nucleo})"
+                
+        tipo_aposta_info = ""
+        if resultado.get('tipo_aposta') == 'dupla':
+            tipo_aposta_info = " [DUPLA]"
+        
+        st.write(f"{emoji}{rotacao_emoji} {resultado['estrategia']}{tipo_aposta_info}: Número {resultado['numero']}{zona_info}")
+
+# Download histórico
+if os.path.exists(HISTORICO_PATH):
+    with open(HISTORICO_PATH, "r") as f:
+        conteudo = f.read()
+    st.download_button("📥 Baixar histórico", data=conteudo, file_name="historico_roleta.json")
+
+# Salvar sessão
+salvar_sessao()
