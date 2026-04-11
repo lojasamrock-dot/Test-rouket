@@ -15,6 +15,31 @@ import pickle
 SESSION_DATA_PATH = "session_data_triangulo_mesa.pkl"
 HISTORICO_PATH = "historico_triangulo_mesa.json"
 
+def import streamlit as st
+import json
+import os
+import requests
+import logging
+import numpy as np
+from collections import deque, Counter
+import joblib
+from streamlit_autorefresh import st_autorefresh
+import pickle
+
+# =============================
+# CONFIGURAÇÕES DE PERSISTÊNCIA
+# =============================
+SESSION_DATA_PATH = "session_data_triangulo_mesa.pkl"
+HISTORICO_PATH = "historico_triangulo_mesa.json"
+
+# =============================
+# WHEEL EUROPEIA REAL (para estratégia PRO)
+# =============================
+WHEEL_EUROPEIA = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6,
+                  27, 13, 36, 11, 30, 8, 23, 10, 5, 24,
+                  16, 33, 1, 20, 14, 31, 9, 22, 18, 29,
+                  7, 28, 12, 35, 3, 26]
+
 def salvar_sessao():
     """Salva todos os dados da sessão em arquivo"""
     try:
@@ -38,7 +63,8 @@ def salvar_sessao():
             'triangulo_padroes': st.session_state.sistema.estrategia_triangulo.padroes_detectados,
             'triangulo_max_triangulos': st.session_state.sistema.estrategia_triangulo.max_triangulos_por_aposta,
             'triangulo_erros_por_triangulo': st.session_state.sistema.estrategia_triangulo.erros_por_triangulo,
-            'triangulo_ultimo_erro': st.session_state.sistema.estrategia_triangulo.ultimo_erro
+            'triangulo_ultimo_erro': st.session_state.sistema.estrategia_triangulo.ultimo_erro,
+            'cluster_historico': list(st.session_state.sistema.estrategia_cluster.historico)
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -115,6 +141,9 @@ def carregar_sessao():
                 st.session_state.sistema.estrategia_triangulo.erros_por_triangulo = session_data.get('triangulo_erros_por_triangulo', {})
                 st.session_state.sistema.estrategia_triangulo.ultimo_erro = session_data.get('triangulo_ultimo_erro', None)
                 
+                cluster_historico = session_data.get('cluster_historico', [])
+                st.session_state.sistema.estrategia_cluster.historico = deque(cluster_historico, maxlen=50)
+                
                 if 'triangulo_max_triangulos' in session_data:
                     st.session_state.sistema.estrategia_triangulo.max_triangulos_por_aposta = session_data['triangulo_max_triangulos']
             
@@ -144,14 +173,21 @@ def limpar_sessao():
 def enviar_previsao_super_simplificada(previsao):
     """Envia notificação de previsão super simplificada"""
     try:
-        triangulos_info = previsao.get('triangulos', [])
+        nome = previsao.get('nome', 'Estratégia')
+        numeros_apostar = sorted(previsao['numeros_apostar'])
         confianca = previsao.get('confianca_geral', 'Média')
         
-        if len(triangulos_info) == 1:
-            mensagem = f"🔺 TRIÂNGULO {triangulos_info[0]} - CONFIANÇA {confianca.upper()}"
+        if 'Triângulo' in nome:
+            triangulos_info = previsao.get('triangulos', [])
+            if len(triangulos_info) == 1:
+                mensagem = f"🔺 TRIÂNGULO {triangulos_info[0]} - CONFIANÇA {confianca.upper()}"
+            else:
+                triangulos_str = ", ".join(triangulos_info)
+                mensagem = f"🔺 TRIÂNGULOS [{triangulos_str}] - {len(triangulos_info)} ativos - CONFIANÇA {confianca.upper()}"
+        elif 'Cluster' in nome or 'PRO' in nome:
+            mensagem = f"🎡 CLUSTER+WHEEL - CONFIANÇA {confianca.upper()}"
         else:
-            triangulos_str = ", ".join(triangulos_info)
-            mensagem = f"🔺 TRIÂNGULOS [{triangulos_str}] - {len(triangulos_info)} ativos - CONFIANÇA {confianca.upper()}"
+            mensagem = f"💰 {nome} - CONFIANÇA {confianca.upper()}"
         
         if previsao.get('gatilho'):
             mensagem += f"\n📊 {previsao['gatilho']}"
@@ -176,8 +212,16 @@ def enviar_alerta_numeros_simplificado(previsao):
         metade = len(numeros_apostar) // 2
         linha1 = " ".join(map(str, numeros_apostar[:metade]))
         linha2 = " ".join(map(str, numeros_apostar[metade:]))
+        
+        nome = previsao.get('nome', 'Estratégia')
+        if 'Triângulo' in nome:
+            emoji = "🔺"
+        elif 'Cluster' in nome or 'PRO' in nome:
+            emoji = "🎡"
+        else:
+            emoji = "💰"
             
-        mensagem_simplificada = f"🔺 APOSTAR AGORA\n{linha1}\n{linha2}"
+        mensagem_simplificada = f"{emoji} APOSTAR AGORA\n{linha1}\n{linha2}"
         
         enviar_telegram(mensagem_simplificada)
         logging.info("🔔 Alerta simplificado enviado para Telegram")
@@ -189,9 +233,14 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
     """Envia notificação de resultado super simplificado"""
     try:
         if acerto:
-            mensagem = f"✅ ACERTO TRIÂNGULO!\n🎲 Número: {numero_real}"
-            if zona_acertada:
-                mensagem += f"\n🔺 Triângulo: {zona_acertada}"
+            if 'Triângulo' in nome_estrategia:
+                mensagem = f"✅ ACERTO TRIÂNGULO!\n🎲 Número: {numero_real}"
+                if zona_acertada:
+                    mensagem += f"\n🔺 Triângulo: {zona_acertada}"
+            elif 'Cluster' in nome_estrategia or 'PRO' in nome_estrategia:
+                mensagem = f"✅ ACERTO CLUSTER+WHEEL!\n🎲 Número: {numero_real}"
+            else:
+                mensagem = f"✅ Acerto\n🎲 Número: {numero_real}"
         else:
             mensagem = f"❌ Erro\n🎲 Número: {numero_real}"
         
@@ -256,12 +305,9 @@ class SistemaSelecaoInteligente:
         self.mesa_layout = self._criar_layout_mesa()
         
     def _criar_layout_mesa(self):
-        """Cria o layout da mesa para referência de vizinhança"""
-        # Coluna 1: números que terminam com 1,4,7,0 (mas 0 é especial)
         col1 = [1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34]
         col2 = [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35]
         col3 = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36]
-        
         return {'col1': col1, 'col2': col2, 'col3': col3}
     
     def selecionar_melhores_15_numeros(self, numeros_candidatos, historico):
@@ -314,11 +360,9 @@ class SistemaSelecaoInteligente:
         return min(score * 4, 1.0)
     
     def calcular_score_posicao_mesa(self, numero, historico):
-        """Calcula score baseado na posição na mesa"""
         if len(historico) < 3:
             return 0.5
         
-        # Verifica se o número está em uma coluna quente
         if numero == 0:
             return 0.5
             
@@ -329,7 +373,6 @@ class SistemaSelecaoInteligente:
         else:
             coluna = 'col3'
         
-        # Conta frequência da coluna nos últimos 10 giros
         ultimos_10 = list(historico)[-10:]
         count_coluna = 0
         for n in ultimos_10:
@@ -342,7 +385,6 @@ class SistemaSelecaoInteligente:
         if len(historico) < 5:
             return 0.5
             
-        # Vizinhos na mesa (acima, abaixo, laterais)
         vizinhos = self.get_vizinhos_mesa(numero)
         
         ultimos_15 = list(historico)[-15:] if len(historico) >= 15 else list(historico)
@@ -352,29 +394,20 @@ class SistemaSelecaoInteligente:
         return score
     
     def get_vizinhos_mesa(self, numero):
-        """Retorna vizinhos na mesa (acima, abaixo, esquerda, direita)"""
         if numero == 0:
             return [1, 2, 3]
         
-        # Encontra a linha e coluna do número
         linha = (numero - 1) // 3 if numero > 0 else 0
         coluna = (numero - 1) % 3 if numero > 0 else 0
         
         vizinhos = []
         
-        # Acima
         if linha > 0:
             vizinhos.append(linha * 3 + coluna + 1)
-        
-        # Abaixo
         if linha < 11:
             vizinhos.append((linha + 1) * 3 + coluna + 1)
-        
-        # Esquerda
         if coluna > 0:
             vizinhos.append(linha * 3 + coluna)
-        
-        # Direita
         if coluna < 2:
             vizinhos.append(linha * 3 + coluna + 2)
         
@@ -400,18 +433,16 @@ class SistemaSelecaoInteligente:
         return tendencia * 0.5
 
 # =============================
-# CLASSE PRINCIPAL DA ROLETA (APENAS PARA VIZINHOS NA MESA)
+# CLASSE PRINCIPAL DA ROLETA
 # =============================
 class RoletaInteligente:
     def __init__(self):
-        # Layout da mesa para referência
         self.col1 = [1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34]
         self.col2 = [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35]
         self.col3 = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36]
         self.zero = 0
         
     def get_vizinhos_mesa(self, numero, raio=1):
-        """Retorna vizinhos na mesa (acima, abaixo, esquerda, direita)"""
         if numero == 0:
             return [1, 2, 3]
         
@@ -420,19 +451,157 @@ class RoletaInteligente:
         
         vizinhos = []
         
-        # Vizinhos na mesma linha
         if coluna > 0:
             vizinhos.append(linha * 3 + coluna)
         if coluna < 2:
             vizinhos.append(linha * 3 + coluna + 2)
-        
-        # Vizinhos acima e abaixo
         if linha > 0:
             vizinhos.append((linha - 1) * 3 + coluna + 1)
         if linha < 11:
             vizinhos.append((linha + 1) * 3 + coluna + 1)
         
         return vizinhos
+
+# =============================
+# ESTRATÉGIA PRO (CLUSTER + WHEEL)
+# =============================
+class EstrategiaClusterWheel:
+    def __init__(self):
+        self.historico = deque(maxlen=50)
+        self.nome = "Cluster + Wheel PRO"
+        self.entrada_ativa = False
+        self.entrada_atual = None
+        self.ultimo_gatilho = None
+
+    def detectar_cluster(self):
+        """Detecta formação de cluster nos últimos números"""
+        if len(self.historico) < 6:
+            return False, 0
+        
+        ultimos = list(self.historico)[-6:]
+        repeticoes = len(ultimos) - len(set(ultimos))
+        
+        # Verifica também números consecutivos na wheel
+        consecutivos = 0
+        for i in range(len(ultimos) - 1):
+            if ultimos[i] in WHEEL_EUROPEIA and ultimos[i+1] in WHEEL_EUROPEIA:
+                idx1 = WHEEL_EUROPEIA.index(ultimos[i])
+                idx2 = WHEEL_EUROPEIA.index(ultimos[i+1])
+                if abs(idx1 - idx2) <= 2 or abs(idx1 - idx2) >= len(WHEEL_EUROPEIA) - 2:
+                    consecutivos += 1
+        
+        return repeticoes >= 2 or consecutivos >= 2, repeticoes
+
+    def get_vizinhos_wheel(self, numero, raio=2):
+        """Retorna vizinhos na roda europeia (física)"""
+        if numero not in WHEEL_EUROPEIA:
+            return []
+        
+        idx = WHEEL_EUROPEIA.index(numero)
+        vizinhos = []
+        
+        for i in range(-raio, raio + 1):
+            vizinhos.append(WHEEL_EUROPEIA[(idx + i) % len(WHEEL_EUROPEIA)])
+        
+        return list(set(vizinhos))
+
+    def analisar_previsao(self):
+        """Analisa e retorna previsão baseada em cluster + wheel"""
+        if len(self.historico) < 8:
+            return None
+        
+        cluster_ativo, repeticoes = self.detectar_cluster()
+        
+        if not cluster_ativo:
+            return None
+        
+        ultimo = self.historico[-1]
+        numeros = set()
+        
+        # Base: vizinhos na wheel com raio 2
+        numeros.update(self.get_vizinhos_wheel(ultimo, raio=2))
+        
+        motivo = f"Cluster ativo ({repeticoes} repetições)"
+        
+        # Se tem repetição, aumenta o raio
+        if repeticoes >= 2:
+            numeros.update(self.get_vizinhos_wheel(ultimo, raio=3))
+            motivo += " + Repetição forte"
+        elif len(self.historico) >= 2 and self.historico[-1] == self.historico[-2]:
+            numeros.update(self.get_vizinhos_wheel(ultimo, raio=3))
+            motivo += " + Repetição"
+        
+        # Adiciona vizinhos da mesa também (combinação poderosa)
+        if repeticoes >= 2:
+            mesa_vizinhos = self.get_vizinhos_mesa(ultimo)
+            numeros.update(mesa_vizinhos)
+            motivo += " + Mesa"
+        
+        numeros = sorted(numeros)
+        
+        # Limita a 12 números (mais foco)
+        if len(numeros) > 12:
+            numeros = numeros[:12]
+        
+        # Calcula confiança
+        if len(numeros) <= 8:
+            confianca = "Excelente"
+        elif len(numeros) <= 10:
+            confianca = "Muito Alta"
+        elif len(numeros) <= 12:
+            confianca = "Alta"
+        else:
+            confianca = "Média"
+        
+        previsao = {
+            'nome': self.nome,
+            'numeros_apostar': numeros,
+            'gatilho': f"🎡 {motivo} | Números: {numeros[:5]}...",
+            'confianca_geral': confianca,
+            'triangulos': [],
+            'total_numeros': len(numeros)
+        }
+        
+        self.entrada_ativa = True
+        self.entrada_atual = previsao
+        self.ultimo_gatilho = previsao
+        
+        return previsao
+
+    def get_vizinhos_mesa(self, numero):
+        """Retorna vizinhos na mesa"""
+        if numero == 0:
+            return [1, 2, 3]
+        
+        linha = (numero - 1) // 3
+        coluna = (numero - 1) % 3
+        
+        vizinhos = []
+        
+        if coluna > 0:
+            vizinhos.append(linha * 3 + coluna)
+        if coluna < 2:
+            vizinhos.append(linha * 3 + coluna + 2)
+        if linha > 0:
+            vizinhos.append((linha - 1) * 3 + coluna + 1)
+        if linha < 11:
+            vizinhos.append((linha + 1) * 3 + coluna + 1)
+        
+        return vizinhos
+
+    def adicionar_numero(self, numero):
+        self.historico.append(numero)
+        
+        if self.entrada_ativa and self.entrada_atual:
+            self.entrada_ativa = False
+            self.entrada_atual = None
+
+    def zerar_estatisticas(self):
+        self.historico.clear()
+        self.entrada_ativa = False
+        self.entrada_atual = None
+        self.ultimo_gatilho = None
+        logging.info("📊 Estatísticas do Cluster+Wheel zeradas")
 
 # =============================
 # ESTRATÉGIA TRIÂNGULO GEOMÉTRICO DA MESA v10
@@ -443,10 +612,8 @@ class EstrategiaTrianguloGeometrico:
         self.historico = deque(maxlen=50)
         self.nome = "Triângulo Geométrico Mesa v10"
         
-        # Mapeamento: cada número pertence a triângulos geométricos na mesa
         self.numero_para_triangulos = self._criar_triangulos_mesa()
         
-        # Mapeamento reverso: triângulo -> lista de números
         self.triangulo_para_numeros = {}
         for num, triangulos in self.numero_para_triangulos.items():
             for triangulo_key in triangulos:
@@ -455,11 +622,9 @@ class EstrategiaTrianguloGeometrico:
                 if num not in self.triangulo_para_numeros[triangulo_key]:
                     self.triangulo_para_numeros[triangulo_key].append(num)
         
-        # Ordenar números de cada triângulo
         for triangulo in self.triangulo_para_numeros:
             self.triangulo_para_numeros[triangulo] = sorted(self.triangulo_para_numeros[triangulo])
         
-        # Estatísticas
         self.stats_triangulos = {}
         for triangulo in self.triangulo_para_numeros.keys():
             self.stats_triangulos[triangulo] = {
@@ -469,13 +634,11 @@ class EstrategiaTrianguloGeometrico:
                 'erros_consecutivos': 0, 'atraso': 0
             }
         
-        # Controle
         self.historico_entradas = []
         self.ultimo_gatilho = None
         self.entrada_ativa = False
         self.entrada_atual = None
         
-        # Configurações
         self.max_triangulos_por_aposta = 2
         self.limite_erros_consecutivos = 3
         self.limite_atraso_para_considerar = 8
@@ -483,38 +646,24 @@ class EstrategiaTrianguloGeometrico:
         self.sistema_selecao = SistemaSelecaoInteligente()
         self.cache_vizinhos = {}
         
-        # Rastreamento
         self.sequencia_triangulos = deque(maxlen=10)
         self.padroes_detectados = []
     
     def _criar_triangulos_mesa(self):
-        """
-        Cria triângulos geométricos baseados na disposição dos números na MESA.
-        Cada triângulo é formado por 3 números que formam um triângulo visual na mesa.
-        
-        Tipos de triângulos na mesa:
-        1. Triângulo retângulo (ex: 1,2,4)
-        2. Triângulo invertido (ex: 4,5,2)
-        3. Triângulo grande (ex: 1,3,7)
-        """
         triangulos = {}
         
-        # Função auxiliar para adicionar triângulo
         def add_triangulo(num, vertices):
             if num not in triangulos:
                 triangulos[num] = []
             triangulos[num].append(f"T_{'_'.join(map(str, sorted(vertices)))}")
         
-        # Triângulos por toda a mesa
         for linha in range(12):
             for coluna in range(3):
                 num_base = linha * 3 + coluna + 1
                 if num_base > 36:
                     continue
                 
-                # Triângulo para baixo (vértice superior, base inferior)
                 if linha < 11:
-                    # Triângulo retângulo para baixo
                     if coluna < 2:
                         num_dir = linha * 3 + coluna + 2
                         num_baixo = (linha + 1) * 3 + coluna + 1
@@ -522,7 +671,6 @@ class EstrategiaTrianguloGeometrico:
                         add_triangulo(num_dir, [num_base, num_dir, num_baixo])
                         add_triangulo(num_baixo, [num_base, num_dir, num_baixo])
                     
-                    # Triângulo retângulo para baixo (esquerda)
                     if coluna > 0:
                         num_esq = linha * 3 + coluna
                         num_baixo = (linha + 1) * 3 + coluna + 1
@@ -530,9 +678,7 @@ class EstrategiaTrianguloGeometrico:
                         add_triangulo(num_esq, [num_base, num_esq, num_baixo])
                         add_triangulo(num_baixo, [num_base, num_esq, num_baixo])
                 
-                # Triângulo para cima (vértice inferior, base superior)
                 if linha > 0:
-                    # Triângulo retângulo para cima
                     if coluna < 2:
                         num_dir = linha * 3 + coluna + 2
                         num_cima = (linha - 1) * 3 + coluna + 1
@@ -540,7 +686,6 @@ class EstrategiaTrianguloGeometrico:
                         add_triangulo(num_dir, [num_base, num_dir, num_cima])
                         add_triangulo(num_cima, [num_base, num_dir, num_cima])
                     
-                    # Triângulo retângulo para cima (esquerda)
                     if coluna > 0:
                         num_esq = linha * 3 + coluna
                         num_cima = (linha - 1) * 3 + coluna + 1
@@ -548,7 +693,6 @@ class EstrategiaTrianguloGeometrico:
                         add_triangulo(num_esq, [num_base, num_esq, num_cima])
                         add_triangulo(num_cima, [num_base, num_esq, num_cima])
         
-        # Triângulos especiais com o zero
         zero_triangulos = [
             [0, 1, 2], [0, 1, 3], [0, 2, 3],
             [0, 1, 4], [0, 2, 5], [0, 3, 6]
@@ -565,15 +709,12 @@ class EstrategiaTrianguloGeometrico:
         return triangulos
     
     def get_triangulos_do_numero(self, numero):
-        """Retorna todos os triângulos que contêm o número"""
         return self.numero_para_triangulos.get(numero, [])
     
     def get_numeros_do_triangulo(self, triangulo_key):
-        """Retorna os 3 números do triângulo"""
         return self.triangulo_para_numeros.get(triangulo_key, [])
     
     def get_vizinhos_mesa_completos(self, numero):
-        """Retorna vizinhos na mesa (acima, abaixo, esquerda, direita)"""
         if numero in self.cache_vizinhos:
             return self.cache_vizinhos[numero]
         
@@ -582,7 +723,6 @@ class EstrategiaTrianguloGeometrico:
         return vizinhos
     
     def get_numeros_aposta(self, triangulos_keys):
-        """Gera números para aposta: 3 números do triângulo + vizinhos na mesa de cada"""
         todos_numeros = set()
         
         for triangulo_key in triangulos_keys:
@@ -604,7 +744,6 @@ class EstrategiaTrianguloGeometrico:
         return numeros_aposta
     
     def atualizar_atraso(self, triangulos_sorteado):
-        """Atualiza o atraso de todos os triângulos"""
         for t in self.stats_triangulos:
             if t == triangulos_sorteado:
                 self.stats_triangulos[t]['atraso'] = 0
@@ -616,7 +755,6 @@ class EstrategiaTrianguloGeometrico:
         
         self.historico.append(numero)
         
-        # Atualiza estatísticas para todos os triângulos que contêm o número
         for triangulo_key in triangulos_do_numero:
             self.sequencia_triangulos.append(triangulo_key)
             self.atualizar_atraso(triangulo_key)
@@ -625,7 +763,6 @@ class EstrategiaTrianguloGeometrico:
                 self.stats_triangulos[triangulo_key]['ultimos_10'].append(numero)
                 self.stats_triangulos[triangulo_key]['ultimo_sorteio'] = len(self.historico)
         
-        # Verifica repetição
         if len(self.sequencia_triangulos) >= 2:
             ultimo = self.sequencia_triangulos[-1]
             penultimo = self.sequencia_triangulos[-2]
@@ -643,7 +780,6 @@ class EstrategiaTrianguloGeometrico:
             
             triangulos_apostados = self.entrada_atual.get('triangulos', [])
             
-            # Verifica se algum triângulo apostado acertou
             acertou = False
             triangulo_acertado = None
             for t_apostado in triangulos_apostados:
@@ -789,7 +925,7 @@ class EstrategiaTrianguloGeometrico:
         gatilho = f"🎯 MESA GEOMÉTRICA: {' + '.join(detalhes)} | {qtd_numeros} números"
         
         previsao = {
-            'nome': f'Triângulo Geométrico Mesa v10 ({len(triangulos_selecionados)} ativos)',
+            'nome': self.nome,
             'numeros_apostar': numeros_aposta,
             'gatilho': gatilho,
             'confianca_geral': confianca,
@@ -827,12 +963,7 @@ class EstrategiaTrianguloGeometrico:
         analise += "=" * 55 + "\n"
         analise += f"📊 Histórico: {len(self.historico)} números\n"
         analise += f"🎯 Último número: {self.historico[-1]}\n"
-        analise += f"🎲 Estratégia: TRIÂNGULOS GEOMÉTRICOS NA MESA\n"
         analise += "=" * 55 + "\n\n"
-        
-        analise += "📐 DEFINIÇÃO DOS TRIÂNGULOS:\n"
-        analise += "Cada triângulo é formado por 3 números que formam um triângulo visual na mesa.\n"
-        analise += "Exemplo: 1,2,4 formam um triângulo retângulo.\n\n"
         
         analise += "🔥 TRIÂNGULOS QUENTES (ACERTANDO):\n"
         for triangulo, peso, motivo in self.get_triangulos_quentes()[:5]:
@@ -895,20 +1026,21 @@ class EstrategiaTrianguloGeometrico:
         self.entrada_ativa = False
         self.entrada_atual = None
         self.cache_vizinhos.clear()
-        logging.info("📊 Estatísticas zeradas")
+        logging.info("📊 Estatísticas do Triângulo zeradas")
 
 # =============================
-# SISTEMA DE GESTÃO
+# SISTEMA DE GESTÃO COM MÚLTIPLAS ESTRATÉGIAS
 # =============================
 class SistemaRoletaCompleto:
     def __init__(self):
         self.estrategia_triangulo = EstrategiaTrianguloGeometrico()
+        self.estrategia_cluster = EstrategiaClusterWheel()
         self.previsao_ativa = None
         self.historico_desempenho = []
         self.acertos = 0
         self.erros = 0
         self.estrategias_contador = {}
-        self.estrategia_selecionada = "Triângulo"
+        self.estrategia_selecionada = "Auto (PRO)"
         self.contador_sorteios_global = 0
         
         self.sequencia_erros = 0
@@ -932,15 +1064,21 @@ class SistemaRoletaCompleto:
             zonas_acertadas = []
             nome_estrategia = self.previsao_ativa['nome']
             
-            triangulos_previsao = self.previsao_ativa.get('triangulos', [])
-            triangulos_do_numero = self.estrategia_triangulo.get_triangulos_do_numero(numero_real)
-            
-            # Verifica se algum triângulo apostado está entre os triângulos do número
-            for t_apostado in triangulos_previsao:
-                if t_apostado in triangulos_do_numero:
+            if 'Triângulo' in nome_estrategia:
+                triangulos_previsao = self.previsao_ativa.get('triangulos', [])
+                triangulos_do_numero = self.estrategia_triangulo.get_triangulos_do_numero(numero_real)
+                
+                for t_apostado in triangulos_previsao:
+                    if t_apostado in triangulos_do_numero:
+                        acerto = True
+                        zonas_acertadas = [t_apostado]
+                        break
+            else:
+                # Estratégia Cluster+Wheel
+                numeros_apostados = self.previsao_ativa.get('numeros_apostar', [])
+                if numero_real in numeros_apostados:
                     acerto = True
-                    zonas_acertadas = [t_apostado]
-                    break
+                    zonas_acertadas = ['Cluster+Wheel']
             
             if nome_estrategia not in self.estrategias_contador:
                 self.estrategias_contador[nome_estrategia] = {'acertos': 0, 'total': 0}
@@ -976,8 +1114,21 @@ class SistemaRoletaCompleto:
             self.previsao_ativa = None
         
         self.estrategia_triangulo.adicionar_numero(numero_real)
+        self.estrategia_cluster.adicionar_numero(numero_real)
         
-        nova_previsao = self.estrategia_triangulo.analisar_previsao()
+        # Gera previsões de ambas estratégias
+        previsao_triangulo = self.estrategia_triangulo.analisar_previsao()
+        previsao_cluster = self.estrategia_cluster.analisar_previsao()
+        
+        nova_previsao = None
+        
+        # Seleciona com base na estratégia escolhida
+        if self.estrategia_selecionada == "Triângulo":
+            nova_previsao = previsao_triangulo
+        elif self.estrategia_selecionada == "Cluster + Wheel PRO":
+            nova_previsao = previsao_cluster
+        else:  # Auto (PRO) - prioriza Cluster
+            nova_previsao = previsao_cluster or previsao_triangulo
         
         if nova_previsao:
             self.previsao_ativa = nova_previsao
@@ -994,6 +1145,7 @@ class SistemaRoletaCompleto:
         self.sequencia_acertos = 0
         
         self.estrategia_triangulo.zerar_estatisticas()
+        self.estrategia_cluster.zerar_estatisticas()
         
         logging.info("📊 Todas as estatísticas foram zeradas")
         salvar_sessao()
@@ -1072,8 +1224,8 @@ def fetch_latest_result():
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🔺 Triângulo Geométrico Mesa - Roleta", layout="centered")
-st.title("🔺 Estratégia Triângulo Geométrico da Mesa v10")
+st.set_page_config(page_title="🔺 Sistema Híbrido - Roleta", layout="centered")
+st.title("🎯 Sistema Híbrido: Triângulo + Cluster+Wheel PRO")
 
 # Inicialização
 if "sistema" not in st.session_state:
@@ -1099,12 +1251,26 @@ if "telegram_chat_id" not in st.session_state and not sessao_carregada:
 # Sidebar
 st.sidebar.title("⚙️ Configurações")
 
-with st.sidebar.expander("🔺 Configurações v10", expanded=True):
-    st.write("**Estratégia Triângulo Geométrico da Mesa v10**")
-    st.write("**Definição:** Triângulos formados por 3 números que formam um triângulo visual na mesa")
-    st.write("**Exemplo:** 1,2,4 formam um triângulo retângulo")
-    st.write("**Vizinhos:** Acima, abaixo, esquerda, direita na mesa")
+with st.sidebar.expander("🎯 Seleção de Estratégia", expanded=True):
+    estrategia = st.selectbox(
+        "Escolha a estratégia:",
+        ["Auto (PRO)", "Triângulo", "Cluster + Wheel PRO"],
+        index=0 if st.session_state.sistema.estrategia_selecionada == "Auto (PRO)" else (1 if st.session_state.sistema.estrategia_selecionada == "Triângulo" else 2),
+        help="Auto: prioriza Cluster+Wheel, fallback para Triângulo"
+    )
     
+    if estrategia != st.session_state.sistema.estrategia_selecionada:
+        st.session_state.sistema.set_estrategia(estrategia)
+        st.success(f"✅ Estratégia alterada para: {estrategia}")
+        st.rerun()
+    
+    st.write("---")
+    st.write("**📊 Descrição das estratégias:**")
+    st.write("🔺 **Triângulo**: Baseado em triângulos geométricos na mesa")
+    st.write("🎡 **Cluster+Wheel PRO**: Baseado em cluster de repetições + vizinhos na roda física")
+    st.write("🤖 **Auto (PRO)**: Prioriza Cluster+Wheel, fallback para Triângulo")
+
+with st.sidebar.expander("🔺 Configurações Triângulo", expanded=False):
     max_triangulos = st.slider(
         "Máximo de triângulos por aposta:",
         min_value=1, max_value=3, 
@@ -1112,16 +1278,8 @@ with st.sidebar.expander("🔺 Configurações v10", expanded=True):
         help="Quantos triângulos serão apostados"
     )
     
-    limite_erros = st.slider(
-        "Limite de erros consecutivos para excluir:",
-        min_value=2, max_value=5, 
-        value=st.session_state.sistema.estrategia_triangulo.limite_erros_consecutivos,
-        help="Após este número de erros, o triângulo é temporariamente excluído"
-    )
-    
-    if st.button("Aplicar"):
+    if st.button("Aplicar Triângulo"):
         st.session_state.sistema.estrategia_triangulo.max_triangulos_por_aposta = max_triangulos
-        st.session_state.sistema.estrategia_triangulo.limite_erros_consecutivos = limite_erros
         salvar_sessao()
         st.success("✅ Aplicado!")
 
@@ -1176,31 +1334,46 @@ with st.sidebar.expander("🔔 Telegram", expanded=False):
     if st.button("Testar"):
         if telegram_token and telegram_chat_id:
             try:
-                enviar_telegram("🔔 Triângulo Geométrico Mesa v10 funcionando!")
+                enviar_telegram("🔔 Sistema Híbrido funcionando!")
                 st.success("✅ Enviado!")
             except Exception as e:
                 st.error(f"Erro: {e}")
 
-with st.sidebar.expander("📊 Sobre v10", expanded=False):
-    st.write("**🔺 Triângulo Geométrico da Mesa v10**")
-    st.write("**Nova definição de triângulo:**")
-    st.write("Baseado na disposição geométrica dos números na MESA da roleta")
+with st.sidebar.expander("📊 Sobre o Sistema", expanded=False):
+    st.write("**🎯 Sistema Híbrido de Estratégias**")
+    st.write("**Estratégias disponíveis:**")
     st.write("")
-    st.write("**Exemplos de triângulos:**")
-    st.write("- 1,2,4 formam triângulo retângulo")
-    st.write("- 4,5,2 formam triângulo invertido")
-    st.write("- 1,3,7 formam triângulo grande")
-    st.write("- 0,1,2 formam triângulo com zero")
+    st.write("**🔺 Triângulo Geométrico v10**")
+    st.write("- Baseado em triângulos visuais na mesa")
+    st.write("- Cada número pertence a múltiplos triângulos")
+    st.write("- Aposta: 3 vértices + vizinhos na mesa")
     st.write("")
-    st.write("**Lógica:**")
-    st.write("1. 🔥 TRIÂNGULOS QUENTES (estão acertando)")
-    st.write("2. ❄️ TRIÂNGULOS FRIOS (atrasados/errando)")
-    st.write("3. 🔁 PADRÕES (tripla repetição/alternância)")
-    st.write("4. 📍 Vizinhos na mesa (acima/abaixo/esquerda/direita)")
-    st.write("5. 🎯 Máximo 15 números por aposta")
+    st.write("**🎡 Cluster + Wheel PRO**")
+    st.write("- Detecta cluster de repetições")
+    st.write("- Usa a roda física europeia real")
+    st.write("- Aposta: vizinhos na wheel + mesa")
+    st.write("- Limite: máximo 12 números por aposta")
+    st.write("")
+    st.write("**🤖 Auto (PRO)**")
+    st.write("- Prioriza Cluster+Wheel (mais preciso)")
+    st.write("- Fallback para Triângulo")
 
-with st.sidebar.expander("🔍 Análise", expanded=False):
-    analise = st.session_state.sistema.estrategia_triangulo.get_analise_detalhada()
+# Análise da estratégia atual
+with st.sidebar.expander("🔍 Análise Atual", expanded=False):
+    if st.session_state.sistema.estrategia_selecionada == "Triângulo":
+        analise = st.session_state.sistema.estrategia_triangulo.get_analise_detalhada()
+    elif st.session_state.sistema.estrategia_selecionada == "Cluster + Wheel PRO":
+        analise = "🎡 ESTRATÉGIA CLUSTER+WHEEL PRO\n"
+        analise += "=" * 40 + "\n"
+        analise += f"📊 Histórico: {len(st.session_state.sistema.estrategia_cluster.historico)} números\n"
+        if len(st.session_state.sistema.estrategia_cluster.historico) > 0:
+            analise += f"🎯 Último número: {st.session_state.sistema.estrategia_cluster.historico[-1]}\n"
+        analise += "🎲 Aguardando cluster para ativar...\n"
+    else:
+        analise = "🤖 MODO AUTO (PRO)\n"
+        analise += "=" * 40 + "\n"
+        analise += "Prioriza Cluster+Wheel, fallback para Triângulo\n"
+    
     st.text(analise)
 
 # Interface Principal
@@ -1247,7 +1420,7 @@ else:
 status = st.session_state.sistema.get_status_rotacao()
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("🎯 Estratégia", status['estrategia_atual'])
+    st.metric("🎯 Estratégia Ativa", status['estrategia_atual'])
 with col2:
     st.metric("✅ Acertos Seguidos", status['sequencia_acertos'])
 with col3:
@@ -1261,14 +1434,18 @@ if sistema.previsao_ativa:
     st.success(f"**{previsao['nome']}**")
     
     triangulos_ativos = previsao.get('triangulos', [])
-    motivos = previsao.get('motivos', [])
     
-    st.write(f"**🔺 Triângulos ({len(triangulos_ativos)}):**")
-    for i, t in enumerate(triangulos_ativos):
-        motivo = motivos[i] if i < len(motivos) else ''
-        numeros_tri = sistema.estrategia_triangulo.get_numeros_do_triangulo(t)
-        st.write(f"   🔺 **{t}** - {motivo}")
-        st.write(f"      📍 Vértices: {numeros_tri}")
+    if triangulos_ativos:
+        st.write(f"**🔺 Triângulos ({len(triangulos_ativos)}):**")
+        for i, t in enumerate(triangulos_ativos):
+            motivo = previsao.get('motivos', [''])[i] if i < len(previsao.get('motivos', [])) else ''
+            numeros_tri = sistema.estrategia_triangulo.get_numeros_do_triangulo(t) if 'Triângulo' in previsao['nome'] else []
+            st.write(f"   🔺 **{t}** - {motivo}")
+            if numeros_tri:
+                st.write(f"      📍 Vértices: {numeros_tri}")
+    else:
+        st.write("🎡 **Estratégia baseada em Wheel (vizinhos da roda física)**")
+        st.write("🎯 **Cluster ativo + Repetição detectada**")
     
     st.write(f"**📊 Confiança:** {previsao.get('confianca_geral', 'Média')}")
     st.write(f"**📋 Gatilho:** {previsao['gatilho']}")
@@ -1280,7 +1457,12 @@ if sistema.previsao_ativa:
     
     st.info("⏳ Aguardando próximo sorteio...")
 else:
-    st.info("🔺 Aguardando análise geométrica dos triângulos na mesa...")
+    if estrategia == "Cluster + Wheel PRO":
+        st.info("🎡 Aguardando formação de cluster para ativar estratégia...")
+    elif estrategia == "Triângulo":
+        st.info("🔺 Aguardando análise geométrica dos triângulos...")
+    else:
+        st.info("🤖 Aguardando ativação de alguma estratégia (prioridade para Cluster)...")
 
 st.subheader("📈 Desempenho")
 total = sistema.acertos + sistema.erros
@@ -1292,16 +1474,33 @@ col2.metric("🔴 Erros", sistema.erros)
 col3.metric("📊 Total", total)
 col4.metric("✅ Taxa", f"{taxa:.1f}%")
 
+# Performance por estratégia
+if sistema.estrategias_contador:
+    st.write("**📊 Performance por Estratégia:**")
+    for nome, dados in sistema.estrategias_contador.items():
+        if dados['total'] > 0:
+            taxa_estr = (dados['acertos'] / dados['total']) * 100
+            if 'Triângulo' in nome:
+                emoji = "🔺"
+            elif 'Cluster' in nome:
+                emoji = "🎡"
+            else:
+                emoji = "💰"
+            st.write(f"{emoji} {nome}: {dados['acertos']}/{dados['total']} ({taxa_estr:.1f}%)")
+
 if sistema.historico_desempenho:
     st.write("**🔍 Últimas 5 Conferências:**")
     for resultado in sistema.historico_desempenho[-5:]:
         emoji = "🎉" if resultado['acerto'] else "❌"
-        triangulos_str = ", ".join(resultado['zonas_envolvidas']) if resultado['zonas_envolvidas'] else "N/A"
-        st.write(f"{emoji} {resultado['estrategia']}: Número {resultado['numero']} | Triângulos: {triangulos_str}")
+        if 'Triângulo' in resultado['estrategia']:
+            triangulos_str = ", ".join(resultado['zonas_envolvidas']) if resultado['zonas_envolvidas'] else "N/A"
+            st.write(f"{emoji} {resultado['estrategia']}: Número {resultado['numero']} | Triângulos: {triangulos_str}")
+        else:
+            st.write(f"{emoji} {resultado['estrategia']}: Número {resultado['numero']}")
 
 if os.path.exists(HISTORICO_PATH):
     with open(HISTORICO_PATH, "r") as f:
         conteudo = f.read()
-    st.download_button("📥 Baixar histórico", data=conteudo, file_name="historico_triangulo_mesa.json")
+    st.download_button("📥 Baixar histórico", data=conteudo, file_name="historico_hibrido.json")
 
 salvar_sessao()
