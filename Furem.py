@@ -85,22 +85,29 @@ def carregar_sessao():
                 
                 triangulo_stats = session_data.get('triangulo_stats', {})
                 
+                # Garantir que todos os triângulos tenham TODAS as chaves necessárias
                 for triangulo in st.session_state.sistema.estrategia_triangulo.triangulo_para_numeros.keys():
                     if triangulo not in triangulo_stats:
                         triangulo_stats[triangulo] = {
                             'acertos': 0, 'tentativas': 0,
-                            'ultimo_sorteio': -1, 'ultimos_10': [],
+                            'ultimo_sorteio': -1, 'ultimos_10': deque(maxlen=10),
                             'repeticoes': 0, 'sequencia_atual': 0,
                             'erros_consecutivos': 0, 'atraso': 0
                         }
-                    elif 'erros_consecutivos' not in triangulo_stats[triangulo]:
-                        triangulo_stats[triangulo]['erros_consecutivos'] = 0
-                    elif 'atraso' not in triangulo_stats[triangulo]:
-                        triangulo_stats[triangulo]['atraso'] = 0
-                    elif 'ultimos_10' not in triangulo_stats[triangulo]:
-                        triangulo_stats[triangulo]['ultimos_10'] = []
-                    elif isinstance(triangulo_stats[triangulo]['ultimos_10'], list):
-                        triangulo_stats[triangulo]['ultimos_10'] = deque(triangulo_stats[triangulo]['ultimos_10'], maxlen=10)
+                    else:
+                        # Verifica e adiciona cada chave faltante
+                        if 'repeticoes' not in triangulo_stats[triangulo]:
+                            triangulo_stats[triangulo]['repeticoes'] = 0
+                        if 'sequencia_atual' not in triangulo_stats[triangulo]:
+                            triangulo_stats[triangulo]['sequencia_atual'] = 0
+                        if 'erros_consecutivos' not in triangulo_stats[triangulo]:
+                            triangulo_stats[triangulo]['erros_consecutivos'] = 0
+                        if 'atraso' not in triangulo_stats[triangulo]:
+                            triangulo_stats[triangulo]['atraso'] = 0
+                        if 'ultimos_10' not in triangulo_stats[triangulo]:
+                            triangulo_stats[triangulo]['ultimos_10'] = deque(maxlen=10)
+                        elif isinstance(triangulo_stats[triangulo]['ultimos_10'], list):
+                            triangulo_stats[triangulo]['ultimos_10'] = deque(triangulo_stats[triangulo]['ultimos_10'], maxlen=10)
                 
                 st.session_state.sistema.estrategia_triangulo.stats_triangulos = triangulo_stats
                 st.session_state.sistema.estrategia_triangulo.historico_entradas = session_data.get('triangulo_historico_entradas', [])
@@ -445,8 +452,8 @@ class EstrategiaTrianguloDinamico:
         
         # CONFIGURAÇÕES DINÂMICAS
         self.max_triangulos_por_aposta = 2
-        self.limite_erros_consecutivos = 3  # Após 3 erros, exclui temporariamente
-        self.limite_atraso_para_considerar = 8  # Atraso mínimo para considerar
+        self.limite_erros_consecutivos = 3
+        self.limite_atraso_para_considerar = 8
         
         self.sistema_selecao = SistemaSelecaoInteligente()
         self.cache_vizinhos = {}
@@ -479,7 +486,6 @@ class EstrategiaTrianguloDinamico:
         return self.triangulo_para_numeros.get(triangulo, [])
     
     def get_vizinhos_completos(self, numero):
-        """Retorna 2 vizinhos anteriores e 2 posteriores"""
         if numero in self.cache_vizinhos:
             return self.cache_vizinhos[numero]
         
@@ -488,7 +494,6 @@ class EstrategiaTrianguloDinamico:
         return vizinhos
     
     def get_numeros_aposta(self, triangulos):
-        """Gera números para aposta com vizinhos completos"""
         todos_numeros = set()
         
         for triangulo in triangulos:
@@ -510,7 +515,6 @@ class EstrategiaTrianguloDinamico:
         return numeros_aposta
     
     def atualizar_atraso(self, triangulo_sorteado):
-        """Atualiza o atraso de todos os triângulos"""
         for t in self.stats_triangulos:
             if t == triangulo_sorteado:
                 self.stats_triangulos[t]['atraso'] = 0
@@ -527,7 +531,6 @@ class EstrategiaTrianguloDinamico:
             self.stats_triangulos[triangulo]['ultimos_10'].append(numero)
             self.stats_triangulos[triangulo]['ultimo_sorteio'] = len(self.historico)
         
-        # Verifica repetição
         if len(self.sequencia_triangulos) >= 2:
             ultimo = self.sequencia_triangulos[-1]
             penultimo = self.sequencia_triangulos[-2]
@@ -557,7 +560,6 @@ class EstrategiaTrianguloDinamico:
                     self.stats_triangulos[t]['tentativas'] += 1
                     self.stats_triangulos[t]['erros_consecutivos'] += 1
                     
-                    # Registra erro por triângulo
                     if t not in self.erros_por_triangulo:
                         self.erros_por_triangulo[t] = 0
                     self.erros_por_triangulo[t] += 1
@@ -571,11 +573,9 @@ class EstrategiaTrianguloDinamico:
             salvar_sessao()
     
     def detectar_padroes(self):
-        """Detecta padrões de repetição na sequência de triângulos"""
         if len(self.sequencia_triangulos) < 3:
             return
         
-        # Padrão: mesmo triângulo repetido 3x seguidas
         if (self.sequencia_triangulos[-1] == self.sequencia_triangulos[-2] and
             self.sequencia_triangulos[-2] == self.sequencia_triangulos[-3]):
             self.padroes_detectados.append({
@@ -584,7 +584,6 @@ class EstrategiaTrianguloDinamico:
                 'forca': 0.9
             })
         
-        # Padrão: alternância entre 2 triângulos
         elif len(self.sequencia_triangulos) >= 4:
             ultimos_4 = list(self.sequencia_triangulos)[-4:]
             if ultimos_4[0] == ultimos_4[2] and ultimos_4[1] == ultimos_4[3]:
@@ -598,47 +597,39 @@ class EstrategiaTrianguloDinamico:
             self.padroes_detectados = self.padroes_detectados[-10:]
     
     def get_triangulos_quentes(self):
-        """Retorna triângulos que estão ACERTANDO (quentes)"""
         quentes = []
         
         for triangulo, stats in self.stats_triangulos.items():
-            # Critério 1: Está em sequência de acertos
-            if stats['sequencia_atual'] >= 1:
-                quentes.append((triangulo, 70 + stats['sequencia_atual'] * 10, '🔥 SEQUÊNCIA'))
-            
-            # Critério 2: Repetiu recentemente
-            elif stats['repeticoes'] >= 1:
+            if stats.get('sequencia_atual', 0) >= 1:
+                quentes.append((triangulo, 70 + stats.get('sequencia_atual', 0) * 10, '🔥 SEQUÊNCIA'))
+            elif stats.get('repeticoes', 0) >= 1:
                 quentes.append((triangulo, 60, '🔁 REPETIÇÃO'))
-            
-            # Critério 3: Tem boa taxa de acerto histórica
-            elif stats['tentativas'] > 0:
-                taxa = (stats['acertos'] / stats['tentativas']) * 100
+            elif stats.get('tentativas', 0) > 0:
+                taxa = (stats.get('acertos', 0) / stats.get('tentativas', 1)) * 100
                 if taxa > 30:
                     quentes.append((triangulo, 40 + taxa * 0.5, '📈 PERFORMANCE'))
         
         return sorted(quentes, key=lambda x: x[1], reverse=True)
     
     def get_triangulos_frios(self):
-        """Retorna triângulos que estão ERRANDO (frios/atrasados)"""
         frios = []
         
         for triangulo, stats in self.stats_triangulos.items():
-            # Critério 1: Muitos erros consecutivos
-            if stats['erros_consecutivos'] >= self.limite_erros_consecutivos:
-                frios.append((triangulo, stats['erros_consecutivos'] * 5, '❌ ERROS CONSECUTIVOS'))
+            erros_cons = stats.get('erros_consecutivos', 0)
+            atraso = stats.get('atraso', 0)
+            acertos = stats.get('acertos', 0)
+            tentativas = stats.get('tentativas', 0)
             
-            # Critério 2: Atraso significativo
-            elif stats['atraso'] >= self.limite_atraso_para_considerar:
-                frios.append((triangulo, stats['atraso'] * 2, '⏰ ATRASADO'))
-            
-            # Critério 3: Nunca acertou (zero acertos)
-            elif stats['acertos'] == 0 and stats['tentativas'] >= 3:
+            if erros_cons >= self.limite_erros_consecutivos:
+                frios.append((triangulo, erros_cons * 5, '❌ ERROS CONSECUTIVOS'))
+            elif atraso >= self.limite_atraso_para_considerar:
+                frios.append((triangulo, atraso * 2, '⏰ ATRASADO'))
+            elif acertos == 0 and tentativas >= 3:
                 frios.append((triangulo, 30, '🆕 NUNCA ACERTOU'))
         
         return sorted(frios, key=lambda x: x[1], reverse=True)
     
     def get_triangulos_por_padrao(self):
-        """Retorna triângulos baseados em padrões detectados"""
         resultado = []
         
         for padrao in self.padroes_detectados[-3:]:
@@ -651,23 +642,18 @@ class EstrategiaTrianguloDinamico:
         return resultado
     
     def analisar_previsao(self):
-        """Análise dinâmica considerando ACERTOS e ERROS"""
         if len(self.historico) < 10:
             return None
         
         triangulos_candidatos = []
         
-        # Fonte 1: Triângulos QUENTES (estão acertando)
         for triangulo, peso, motivo in self.get_triangulos_quentes()[:3]:
             triangulos_candidatos.append((triangulo, peso, motivo))
         
-        # Fonte 2: Triângulos FRIOS (estão errando/atrasados)
         for triangulo, peso, motivo in self.get_triangulos_frios()[:2]:
-            # Evita duplicatas
             if triangulo not in [t for t, _, _ in triangulos_candidatos]:
                 triangulos_candidatos.append((triangulo, peso, motivo))
         
-        # Fonte 3: Padrões detectados
         for triangulo, peso, motivo in self.get_triangulos_por_padrao():
             if triangulo not in [t for t, _, _ in triangulos_candidatos]:
                 triangulos_candidatos.append((triangulo, peso, motivo))
@@ -675,7 +661,6 @@ class EstrategiaTrianguloDinamico:
         if not triangulos_candidatos:
             return None
         
-        # Ordena por peso e seleciona
         triangulos_candidatos.sort(key=lambda x: x[1], reverse=True)
         triangulos_selecionados = []
         motivos_selecionados = []
@@ -686,7 +671,6 @@ class EstrategiaTrianguloDinamico:
         
         numeros_aposta = self.get_numeros_aposta(triangulos_selecionados)
         
-        # Calcula confiança baseada no peso
         maior_peso = triangulos_candidatos[0][1]
         if maior_peso >= 75:
             confianca = "Excelente"
@@ -699,11 +683,9 @@ class EstrategiaTrianguloDinamico:
         else:
             confianca = "Baixa"
         
-        # Gatilho descritivo
         detalhes = []
         for i, t in enumerate(triangulos_selecionados):
-            stats = self.stats_triangulos[t]
-            motivo = motivos_selecionados[i]
+            motivo = motivos_selecionados[i] if i < len(motivos_selecionados) else ''
             detalhes.append(f"{t}({motivo})")
         
         qtd_numeros = len(numeros_aposta)
@@ -754,12 +736,12 @@ class EstrategiaTrianguloDinamico:
         analise += "🔥 TRIÂNGULOS QUENTES (ACERTANDO):\n"
         for triangulo, peso, motivo in self.get_triangulos_quentes()[:5]:
             stats = self.stats_triangulos[triangulo]
-            analise += f"   🔥 {triangulo}: {motivo} (peso {peso:.0f}) | Acertos: {stats['acertos']}/{stats['tentativas']}\n"
+            analise += f"   🔥 {triangulo}: {motivo} (peso {peso:.0f}) | Acertos: {stats.get('acertos', 0)}/{stats.get('tentativas', 0)}\n"
         
         analise += "\n❄️ TRIÂNGULOS FRIOS (ERRANDO/ATRASADOS):\n"
         for triangulo, peso, motivo in self.get_triangulos_frios()[:5]:
             stats = self.stats_triangulos[triangulo]
-            analise += f"   ❄️ {triangulo}: {motivo} (peso {peso:.0f}) | Atraso: {stats['atraso']} | Erros: {stats['erros_consecutivos']}\n"
+            analise += f"   ❄️ {triangulo}: {motivo} (peso {peso:.0f}) | Atraso: {stats.get('atraso', 0)} | Erros: {stats.get('erros_consecutivos', 0)}\n"
         
         if self.padroes_detectados:
             analise += "\n📊 PADRÕES DETECTADOS:\n"
