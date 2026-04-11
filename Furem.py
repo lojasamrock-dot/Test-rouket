@@ -15,23 +15,6 @@ import pickle
 SESSION_DATA_PATH = "session_data_triangulo_mesa.pkl"
 HISTORICO_PATH = "historico_triangulo_mesa.json"
 
-def import streamlit as st
-import json
-import os
-import requests
-import logging
-import numpy as np
-from collections import deque, Counter
-import joblib
-from streamlit_autorefresh import st_autorefresh
-import pickle
-
-# =============================
-# CONFIGURAÇÕES DE PERSISTÊNCIA
-# =============================
-SESSION_DATA_PATH = "session_data_triangulo_mesa.pkl"
-HISTORICO_PATH = "historico_triangulo_mesa.json"
-
 # =============================
 # WHEEL EUROPEIA REAL (para estratégia PRO)
 # =============================
