@@ -83,7 +83,6 @@ def carregar_sessao():
                 
                 triangulo_stats = session_data.get('triangulo_stats', {})
                 
-                # Garantir estrutura completa
                 for triangulo in st.session_state.sistema.estrategia_triangulo.triangulo_para_numeros.keys():
                     if triangulo not in triangulo_stats:
                         triangulo_stats[triangulo] = {
@@ -242,8 +241,8 @@ class SistemaSelecaoInteligente:
     def __init__(self):
         self.roleta = RoletaInteligente()
         
-    def selecionar_melhores_12_numeros(self, numeros_candidatos, historico):
-        if len(numeros_candidatos) <= 12:
+    def selecionar_melhores_15_numeros(self, numeros_candidatos, historico):
+        if len(numeros_candidatos) <= 15:
             return numeros_candidatos
             
         scores = {}
@@ -251,10 +250,10 @@ class SistemaSelecaoInteligente:
             scores[numero] = self.calcular_score_numero(numero, historico)
         
         numeros_ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        melhores_12 = [num for num, score in numeros_ordenados[:12]]
+        melhores_15 = [num for num, score in numeros_ordenados[:15]]
         
-        logging.info(f"🎯 Seleção Inteligente: {len(numeros_candidatos)} → 12 números")
-        return melhores_12
+        logging.info(f"🎯 Seleção Inteligente: {len(numeros_candidatos)} → 15 números")
+        return melhores_15
     
     def calcular_score_numero(self, numero, historico):
         score_total = 0
@@ -377,28 +376,34 @@ class RoletaInteligente:
     def get_posicao_race(self, numero):
         return self.race.index(numero) if numero in self.race else -1
 
-    def get_vizinhos_fisicos(self, numero, raio=3):
+    def get_vizinhos_fisicos(self, numero, raio=2):
+        """Retorna vizinhos físicos no cilindro (anterior e posterior)"""
         if numero not in self.race:
             return []
         
         posicao = self.race.index(numero)
         vizinhos = []
         
-        for offset in range(-raio, raio + 1):
-            if offset != 0:
-                vizinho = self.race[(posicao + offset) % len(self.race)]
-                vizinhos.append(vizinho)
+        # Vizinhos anteriores (2 anteriores)
+        for offset in range(-raio, 0):
+            vizinho = self.race[(posicao + offset) % len(self.race)]
+            vizinhos.append(vizinho)
+        
+        # Vizinhos posteriores (2 posteriores)
+        for offset in range(1, raio + 1):
+            vizinho = self.race[(posicao + offset) % len(self.race)]
+            vizinhos.append(vizinho)
         
         return vizinhos
 
 # =============================
-# ESTRATÉGIA TRIÂNGULO REPETIÇÃO v6
+# ESTRATÉGIA TRIÂNGULO REPETIÇÃO v7 (COM VIZINHOS COMPLETOS)
 # =============================
 class EstrategiaTrianguloRepeticao:
     def __init__(self):
         self.roleta = RoletaInteligente()
         self.historico = deque(maxlen=50)
-        self.nome = "Triângulo Repetição v6"
+        self.nome = "Triângulo Repetição v7"
         
         # Mapeamentos
         self.numero_para_triangulo = self._criar_mapeamento_triangulos()
@@ -460,30 +465,36 @@ class EstrategiaTrianguloRepeticao:
     def get_numeros_do_triangulo(self, triangulo):
         return self.triangulo_para_numeros.get(triangulo, [])
     
-    def get_vizinhos_cilindro(self, numero, raio=2):
+    def get_vizinhos_completos(self, numero):
+        """Retorna 2 vizinhos anteriores e 2 posteriores de um número no cilindro"""
         if numero in self.cache_vizinhos:
             return self.cache_vizinhos[numero]
         
-        vizinhos = self.roleta.get_vizinhos_fisicos(numero, raio)
+        vizinhos = self.roleta.get_vizinhos_fisicos(numero, raio=2)
         self.cache_vizinhos[numero] = vizinhos
         return vizinhos
     
     def get_numeros_aposta(self, triangulos):
+        """Gera números para aposta: cada número do triângulo + 2 anteriores + 2 posteriores"""
         todos_numeros = set()
         
         for triangulo in triangulos:
             numeros_triangulo = self.get_numeros_do_triangulo(triangulo)
-            todos_numeros.update(numeros_triangulo)
             
-            # Adiciona vizinhos APENAS do último número (não de todos)
             for num in numeros_triangulo:
-                vizinhos = self.get_vizinhos_cilindro(num, 1)
-                todos_numeros.update(vizinhos[:2])
+                # Adiciona o número do triângulo
+                todos_numeros.add(num)
+                
+                # Adiciona 2 vizinhos anteriores e 2 posteriores
+                vizinhos = self.get_vizinhos_completos(num)
+                for vizinho in vizinhos:
+                    todos_numeros.add(vizinho)
         
         numeros_aposta = sorted(list(todos_numeros))
         
-        if len(numeros_aposta) > 12:
-            numeros_aposta = self.sistema_selecao.selecionar_melhores_12_numeros(
+        # Limita a 15 números no máximo
+        if len(numeros_aposta) > 15:
+            numeros_aposta = self.sistema_selecao.selecionar_melhores_15_numeros(
                 numeros_aposta, self.historico
             )
         
@@ -635,15 +646,17 @@ class EstrategiaTrianguloRepeticao:
             else:
                 detalhes.append(t)
         
-        gatilho = f"🎯 REPETIÇÃO: {' + '.join(detalhes)} | {len(self.historico)} jogos"
+        # Mostra quantos números foram gerados
+        qtd_numeros = len(numeros_aposta)
+        gatilho = f"🎯 REPETIÇÃO: {' + '.join(detalhes)} | {qtd_numeros} números | {len(self.historico)} jogos"
         
         previsao = {
-            'nome': f'Triângulo Repetição ({len(triangulos_selecionados)} ativos)',
+            'nome': f'Triângulo Repetição v7 ({len(triangulos_selecionados)} ativos)',
             'numeros_apostar': numeros_aposta,
             'gatilho': gatilho,
             'confianca_geral': confianca,
             'triangulos': triangulos_selecionados,
-            'total_numeros': len(numeros_aposta)
+            'total_numeros': qtd_numeros
         }
         
         self.entrada_ativa = True
@@ -670,11 +683,11 @@ class EstrategiaTrianguloRepeticao:
         if len(self.historico) == 0:
             return "🔺 Aguardando dados..."
         
-        analise = "🔺 ANÁLISE TRIÂNGULO REPETIÇÃO v6\n"
+        analise = "🔺 ANÁLISE TRIÂNGULO REPETIÇÃO v7\n"
         analise += "=" * 55 + "\n"
         analise += f"📊 Histórico: {len(self.historico)} números\n"
         analise += f"🎯 Último número: {self.historico[-1]}\n"
-        analise += f"🎲 Estratégia: REPETIÇÃO e PADRÃO\n"
+        analise += f"🎲 Estratégia: REPETIÇÃO + VIZINHOS COMPLETOS (2+2)\n"
         analise += "=" * 55 + "\n\n"
         
         analise += "📊 TRIÂNGULOS COM REPETIÇÃO:\n"
@@ -691,7 +704,7 @@ class EstrategiaTrianguloRepeticao:
                 icone = "📈"
             
             analise += f"{icone} {triangulo}: Peso {peso:.0f} | Seq: {seq}x | Acertos: {stats['acertos']}/{stats['tentativas']}\n"
-            analise += f"   🔢 Números: {self.get_numeros_do_triangulo(triangulo)}\n\n"
+            analise += f"   🔢 Números do triângulo: {self.get_numeros_do_triangulo(triangulo)}\n\n"
         
         if self.padroes_detectados:
             analise += "📊 PADRÕES DETECTADOS:\n"
@@ -707,7 +720,7 @@ class EstrategiaTrianguloRepeticao:
             for t in self.entrada_atual['triangulos']:
                 analise += f"   🔺 {t}\n"
             analise += f"📊 Confiança: {self.entrada_atual['confianca_geral']}\n"
-            analise += f"🔢 Números: {self.entrada_atual['numeros_apostar'][:10]}...\n"
+            analise += f"🔢 Total de números: {self.entrada_atual['total_numeros']}\n"
         
         return analise
     
@@ -733,6 +746,7 @@ class EstrategiaTrianguloRepeticao:
         self.padroes_detectados = []
         self.entrada_ativa = False
         self.entrada_atual = None
+        self.cache_vizinhos.clear()
         logging.info("📊 Estatísticas zeradas")
 
 # =============================
@@ -906,8 +920,8 @@ def fetch_latest_result():
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🔺 Triângulo Repetição - Roleta", layout="centered")
-st.title("🔺 Estratégia Triângulo Repetição v6")
+st.set_page_config(page_title="🔺 Triângulo Repetição v7 - Roleta", layout="centered")
+st.title("🔺 Estratégia Triângulo Repetição v7")
 
 # Inicialização
 if "sistema" not in st.session_state:
@@ -933,8 +947,10 @@ if "telegram_chat_id" not in st.session_state and not sessao_carregada:
 # Sidebar
 st.sidebar.title("⚙️ Configurações")
 
-with st.sidebar.expander("🔺 Configurações", expanded=True):
-    st.write("**Estratégia Triângulo Repetição v6**")
+with st.sidebar.expander("🔺 Configurações v7", expanded=True):
+    st.write("**Estratégia Triângulo Repetição v7**")
+    st.write("**Vizinhos:** 2 anteriores + 2 posteriores por número")
+    st.write("**Máximo:** 15 números por aposta")
     
     max_triangulos = st.slider(
         "Máximo de triângulos por aposta:",
@@ -999,18 +1015,20 @@ with st.sidebar.expander("🔔 Telegram", expanded=False):
     if st.button("Testar"):
         if telegram_token and telegram_chat_id:
             try:
-                enviar_telegram("🔔 Triângulo Repetição v6 funcionando!")
+                enviar_telegram("🔔 Triângulo Repetição v7 funcionando!")
                 st.success("✅ Enviado!")
             except Exception as e:
                 st.error(f"Erro: {e}")
 
-with st.sidebar.expander("📊 Sobre", expanded=False):
-    st.write("**🔺 Triângulo Repetição v6**")
+with st.sidebar.expander("📊 Sobre v7", expanded=False):
+    st.write("**🔺 Triângulo Repetição v7**")
     st.write("**Lógica:**")
     st.write("1. 🔥 Aposta em triângulos que estão REPETINDO")
-    st.write("2. 🔁 Detecta TRIPLAS repetições")
-    st.write("3. 🔄 Detecta padrões de ALTERNÂNCIA")
-    st.write("4. 🎯 Foco no que ACABOU de acontecer")
+    st.write("2. 📍 Cada número do triângulo + 2 vizinhos anteriores")
+    st.write("3. 📍 Cada número do triângulo + 2 vizinhos posteriores")
+    st.write("4. 🎯 Total de ~15 números por triângulo")
+    st.write("5. 🔁 Detecta TRIPLAS repetições")
+    st.write("6. 🔄 Detecta padrões de ALTERNÂNCIA")
 
 with st.sidebar.expander("🔍 Análise", expanded=False):
     analise = st.session_state.sistema.estrategia_triangulo.get_analise_detalhada()
@@ -1083,10 +1101,10 @@ if sistema.previsao_ativa:
     
     st.write(f"**🔢 Números ({len(previsao['numeros_apostar'])}):**")
     numeros = sorted(previsao['numeros_apostar'])
-    for i in range(0, len(numeros), 6):
-        st.write(" ".join(map(str, numeros[i:i+6])))
+    for i in range(0, len(numeros), 5):
+        st.write(" ".join(map(str, numeros[i:i+5])))
     
-    st.info("⏳ Aguardando...")
+    st.info("⏳ Aguardando próximo sorteio...")
 else:
     st.info("🔺 Aguardando padrões de repetição...")
 
@@ -1101,11 +1119,11 @@ col3.metric("📊 Total", total)
 col4.metric("✅ Taxa", f"{taxa:.1f}%")
 
 if sistema.historico_desempenho:
-    st.write("**🔍 Últimas 5:**")
+    st.write("**🔍 Últimas 5 Conferências:**")
     for resultado in sistema.historico_desempenho[-5:]:
         emoji = "🎉" if resultado['acerto'] else "❌"
         triangulos_str = ", ".join(resultado['zonas_envolvidas']) if resultado['zonas_envolvidas'] else "N/A"
-        st.write(f"{emoji} Número {resultado['numero']} | Triângulos: {triangulos_str}")
+        st.write(f"{emoji} {resultado['estrategia']}: Número {resultado['numero']} | Triângulos: {triangulos_str}")
 
 if os.path.exists(HISTORICO_PATH):
     with open(HISTORICO_PATH, "r") as f:
