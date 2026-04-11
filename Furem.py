@@ -83,7 +83,23 @@ def carregar_sessao():
                 
                 triangulo_historico = session_data.get('triangulo_historico', [])
                 st.session_state.sistema.estrategia_triangulo.historico = deque(triangulo_historico, maxlen=70)
-                st.session_state.sistema.estrategia_triangulo.stats_triangulos = session_data.get('triangulo_stats', {})
+                
+                # Carregar stats e garantir que todos os triângulos tenham a chave 'acertos_ultimos_10'
+                triangulo_stats = session_data.get('triangulo_stats', {})
+                
+                # Garantir que todos os triângulos tenham a estrutura completa
+                for triangulo in st.session_state.sistema.estrategia_triangulo.triangulo_para_numeros.keys():
+                    if triangulo not in triangulo_stats:
+                        triangulo_stats[triangulo] = {
+                            'acertos': 0, 'tentativas': 0, 'sequencia_atual': 0,
+                            'sequencia_maxima': 0, 'performance_media': 0,
+                            'ultimo_sorteio': -1, 'atraso_atual': 0, 'max_atraso': 0,
+                            'vizinhos_quentes': 0, 'acertos_ultimos_10': 0
+                        }
+                    elif 'acertos_ultimos_10' not in triangulo_stats[triangulo]:
+                        triangulo_stats[triangulo]['acertos_ultimos_10'] = 0
+                
+                st.session_state.sistema.estrategia_triangulo.stats_triangulos = triangulo_stats
                 st.session_state.sistema.estrategia_triangulo.historico_entradas = session_data.get('triangulo_historico_entradas', [])
                 st.session_state.sistema.estrategia_triangulo.ultimo_gatilho = session_data.get('triangulo_ultimo_gatilho', None)
                 st.session_state.sistema.estrategia_triangulo.historico_multi = deque(session_data.get('triangulo_historico_multi', []), maxlen=50)
@@ -406,7 +422,7 @@ class EstrategiaTrianguloAssertivo:
         for triangulo in self.triangulo_para_numeros:
             self.triangulo_para_numeros[triangulo] = sorted(self.triangulo_para_numeros[triangulo])
         
-        # Estatísticas por triângulo
+        # Estatísticas por triângulo - com todos os campos necessários
         self.stats_triangulos = {}
         for triangulo in self.triangulo_para_numeros.keys():
             self.stats_triangulos[triangulo] = {
@@ -520,14 +536,14 @@ class EstrategiaTrianguloAssertivo:
                 self.stats_triangulos[triangulo_sorteado]['acertos'] += 1
                 self.stats_triangulos[triangulo_sorteado]['sequencia_atual'] += 1
                 self.stats_triangulos[triangulo_sorteado]['acertos_ultimos_10'] = min(
-                    self.stats_triangulos[triangulo_sorteado]['acertos_ultimos_10'] + 1, 10
+                    self.stats_triangulos[triangulo_sorteado].get('acertos_ultimos_10', 0) + 1, 10
                 )
                 self.registrar_entrada(acertou=True, triangulo_acertado=triangulo_sorteado)
             else:
                 for t in triangulos_apostados:
                     self.stats_triangulos[t]['sequencia_atual'] = 0
                     self.stats_triangulos[t]['acertos_ultimos_10'] = max(
-                        self.stats_triangulos[t]['acertos_ultimos_10'] - 1, 0
+                        self.stats_triangulos[t].get('acertos_ultimos_10', 0) - 1, 0
                     )
                 self.registrar_entrada(acertou=False)
             
@@ -581,7 +597,7 @@ class EstrategiaTrianguloAssertivo:
         return distancia >= 8
     
     def calcular_tendencia(self, triangulo):
-        acertos_recentes = self.stats_triangulos[triangulo]['acertos_ultimos_10']
+        acertos_recentes = self.stats_triangulos[triangulo].get('acertos_ultimos_10', 0)
         
         if acertos_recentes >= 3:
             return 80
