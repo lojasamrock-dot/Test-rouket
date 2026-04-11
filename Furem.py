@@ -37,7 +37,9 @@ def salvar_sessao():
             'triangulo_historico_multi': list(st.session_state.sistema.estrategia_triangulo.historico_multi),
             'triangulo_ultimos_triangulos_apostados': st.session_state.sistema.estrategia_triangulo.ultimos_triangulos_apostados,
             'triangulo_max_triangulos': st.session_state.sistema.estrategia_triangulo.max_triangulos_por_aposta,
-            'triangulo_confianca_minima': st.session_state.sistema.estrategia_triangulo.confianca_minima_aposta
+            'triangulo_confianca_minima': st.session_state.sistema.estrategia_triangulo.confianca_minima_aposta,
+            'triangulo_min_vizinhos': st.session_state.sistema.estrategia_triangulo.min_vizinhos_quentes,
+            'triangulo_janela_atraso': st.session_state.sistema.estrategia_triangulo.janela_atraso
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -57,7 +59,7 @@ def carregar_sessao():
                 session_data = pickle.load(f)
             
             if not isinstance(session_data, dict):
-                logging.error("❌ Dados de sessão corrompidos - não é um dicionário")
+                logging.error("❌ Dados de sessão corrompidos")
                 return False
                 
             chaves_essenciais = ['historico', 'sistema_acertos', 'sistema_erros']
@@ -91,6 +93,10 @@ def carregar_sessao():
                     st.session_state.sistema.estrategia_triangulo.max_triangulos_por_aposta = session_data['triangulo_max_triangulos']
                 if 'triangulo_confianca_minima' in session_data:
                     st.session_state.sistema.estrategia_triangulo.confianca_minima_aposta = session_data['triangulo_confianca_minima']
+                if 'triangulo_min_vizinhos' in session_data:
+                    st.session_state.sistema.estrategia_triangulo.min_vizinhos_quentes = session_data['triangulo_min_vizinhos']
+                if 'triangulo_janela_atraso' in session_data:
+                    st.session_state.sistema.estrategia_triangulo.janela_atraso = session_data['triangulo_janela_atraso']
             
             logging.info("✅ Sessão carregada com sucesso")
             return True
@@ -118,9 +124,6 @@ def limpar_sessao():
 def enviar_previsao_super_simplificada(previsao):
     """Envia notificação de previsão super simplificada"""
     try:
-        nome_estrategia = previsao['nome']
-        numeros_apostar = sorted(previsao['numeros_apostar'])
-        
         triangulos_info = previsao.get('triangulos', [])
         confianca = previsao.get('confianca_geral', 'Média')
         
@@ -139,7 +142,7 @@ def enviar_previsao_super_simplificada(previsao):
         if 'telegram_token' in st.session_state and 'telegram_chat_id' in st.session_state:
             if st.session_state.telegram_token and st.session_state.telegram_chat_id:
                 enviar_alerta_numeros_simplificado(previsao)
-                enviar_telegram(f"🚨 PREVISÃO ATIVA\n{mensagem}\n💎 CONFIANÇA: {previsao.get('confianca_geral', 'ALTA')}")
+                enviar_telegram(f"🚨 PREVISÃO ATIVA\n{mensagem}")
                 
         salvar_sessao()
     except Exception as e:
@@ -233,7 +236,7 @@ class SistemaSelecaoInteligente:
         self.roleta = RoletaInteligente()
         
     def selecionar_melhores_15_numeros(self, numeros_candidatos, historico):
-        if len(numeros_candidatos) <= 15:
+        if len(numeros_candidatos) <= 12:
             return numeros_candidatos
             
         scores = {}
@@ -241,10 +244,10 @@ class SistemaSelecaoInteligente:
             scores[numero] = self.calcular_score_numero(numero, historico)
         
         numeros_ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        melhores_15 = [num for num, score in numeros_ordenados[:15]]
+        melhores_12 = [num for num, score in numeros_ordenados[:12]]
         
-        logging.info(f"🎯 Seleção Inteligente: {len(numeros_candidatos)} → 15 números")
-        return melhores_15
+        logging.info(f"🎯 Seleção Inteligente: {len(numeros_candidatos)} → 12 números")
+        return melhores_12
     
     def calcular_score_numero(self, numero, historico):
         score_total = 0
@@ -382,25 +385,24 @@ class RoletaInteligente:
         return vizinhos
 
 # =============================
-# ESTRATÉGIA TRIÂNGULO MÚLTIPLO
+# ESTRATÉGIA TRIÂNGULO ASSERTIVO v3
 # =============================
-class EstrategiaTrianguloMultiplo:
+class EstrategiaTrianguloAssertivo:
     def __init__(self):
         self.roleta = RoletaInteligente()
         self.historico = deque(maxlen=70)
-        self.nome = "Triângulo Múltiplo v2"
+        self.nome = "Triângulo Assertivo v3"
         
-        # Mapeamento completo: número -> triângulo
+        # Mapeamento número -> triângulo
         self.numero_para_triangulo = self._criar_mapeamento_triangulos()
         
-        # Mapeamento reverso: triângulo -> números
+        # Mapeamento reverso
         self.triangulo_para_numeros = {}
         for num, triangulo in self.numero_para_triangulo.items():
             if triangulo not in self.triangulo_para_numeros:
                 self.triangulo_para_numeros[triangulo] = []
             self.triangulo_para_numeros[triangulo].append(num)
         
-        # Ordenar números de cada triângulo
         for triangulo in self.triangulo_para_numeros:
             self.triangulo_para_numeros[triangulo] = sorted(self.triangulo_para_numeros[triangulo])
         
@@ -408,52 +410,50 @@ class EstrategiaTrianguloMultiplo:
         self.stats_triangulos = {}
         for triangulo in self.triangulo_para_numeros.keys():
             self.stats_triangulos[triangulo] = {
-                'acertos': 0,
-                'tentativas': 0,
-                'sequencia_atual': 0,
-                'sequencia_maxima': 0,
-                'performance_media': 0,
-                'ultimo_sorteio': -1,
-                'atraso_atual': 0,
-                'max_atraso': 0,
-                'vizinhos_quentes': 0
+                'acertos': 0, 'tentativas': 0, 'sequencia_atual': 0,
+                'sequencia_maxima': 0, 'performance_media': 0,
+                'ultimo_sorteio': -1, 'atraso_atual': 0, 'max_atraso': 0,
+                'vizinhos_quentes': 0, 'acertos_ultimos_10': 0
             }
         
         # Controle de entradas
         self.historico_entradas = []
+        self.historico_multi = deque(maxlen=50)
+        self.ultimos_triangulos_apostados = []
         self.ultimo_gatilho = None
         self.contador_giros_sem_entrada = 0
         self.entrada_ativa = False
         self.entrada_atual = None
         
-        # Configurações multi-triângulo
-        self.historico_multi = deque(maxlen=50)
-        self.ultimos_triangulos_apostados = []
+        # CONFIGURAÇÕES MAIS RÍGIDAS
+        self.janela_atraso = 15
+        self.janela_vizinhos = 10
+        self.min_vizinhos_quentes = 3
+        self.max_vizinhos_por_numero = 3
+        self.max_triangulos_por_aposta = 2
+        self.confianca_minima_aposta = "Alta"
         
-        # Configurações ajustáveis
-        self.janela_atraso = 10
-        self.janela_vizinhos = 8
-        self.max_vizinhos_por_numero = 2
-        self.max_triangulos_por_aposta = 3
-        self.confianca_minima_aposta = "Média"
+        # Pesos dos fatores
+        self.pesos = {
+            'vizinhos': 40,
+            'atraso': 25,
+            'performance': 20,
+            'tendencia': 15
+        }
         
         self.sistema_selecao = SistemaSelecaoInteligente()
         self.cache_vizinhos = {}
     
     def _criar_mapeamento_triangulos(self):
-        """Cria mapeamento número -> triângulo baseado na disposição do cilindro"""
         race = self.roleta.race
-        
         triangulos = {}
         
-        # Criar triângulos de 3 números consecutivos
         for i in range(0, len(race), 3):
             if i + 2 < len(race):
                 triangulo_nome = f"T{i//3 + 1}"
                 for j in range(3):
                     triangulos[race[i + j]] = triangulo_nome
         
-        # Para números que não foram mapeados
         numeros_restantes = set(range(37)) - set(triangulos.keys())
         ultimo_triangulo = f"T{len(triangulos)//3 + 1}"
         for num in numeros_restantes:
@@ -467,7 +467,7 @@ class EstrategiaTrianguloMultiplo:
     def get_numeros_do_triangulo(self, triangulo):
         return self.triangulo_para_numeros.get(triangulo, [])
     
-    def get_vizinhos_cilindro(self, numero, raio=2):
+    def get_vizinhos_cilindro(self, numero, raio=3):
         if numero in self.cache_vizinhos:
             return self.cache_vizinhos[numero]
         
@@ -497,10 +497,10 @@ class EstrategiaTrianguloMultiplo:
         
         numeros_aposta = sorted(list(todos_numeros))
         
-        if len(numeros_aposta) > 15:
+        if len(numeros_aposta) > 12:
             numeros_aposta = self.sistema_selecao.selecionar_melhores_15_numeros(
                 numeros_aposta, self.historico
-            )
+            )[:12]
         
         return numeros_aposta
     
@@ -519,10 +519,16 @@ class EstrategiaTrianguloMultiplo:
             if acertou:
                 self.stats_triangulos[triangulo_sorteado]['acertos'] += 1
                 self.stats_triangulos[triangulo_sorteado]['sequencia_atual'] += 1
+                self.stats_triangulos[triangulo_sorteado]['acertos_ultimos_10'] = min(
+                    self.stats_triangulos[triangulo_sorteado]['acertos_ultimos_10'] + 1, 10
+                )
                 self.registrar_entrada(acertou=True, triangulo_acertado=triangulo_sorteado)
             else:
                 for t in triangulos_apostados:
                     self.stats_triangulos[t]['sequencia_atual'] = 0
+                    self.stats_triangulos[t]['acertos_ultimos_10'] = max(
+                        self.stats_triangulos[t]['acertos_ultimos_10'] - 1, 0
+                    )
                 self.registrar_entrada(acertou=False)
             
             self.entrada_atual = None
@@ -553,17 +559,17 @@ class EstrategiaTrianguloMultiplo:
         vizinhos = self.get_todos_vizinhos_do_triangulo(triangulo)
         
         if len(self.historico) < self.janela_vizinhos:
-            return False
+            return False, 0
         
         historico_recente = list(self.historico)[-self.janela_vizinhos:]
         count_vizinhos = sum(1 for num in historico_recente if num in vizinhos)
         
         self.stats_triangulos[triangulo]['vizinhos_quentes'] = count_vizinhos
-        return count_vizinhos >= 2
+        return count_vizinhos >= self.min_vizinhos_quentes, count_vizinhos
     
     def verificar_atraso(self, triangulo):
         atraso = self.stats_triangulos[triangulo]['atraso_atual']
-        return atraso >= self.janela_atraso
+        return atraso >= self.janela_atraso, atraso
     
     def verificar_sem_acerto_recente(self, triangulo):
         ultimo_sorteio = self.stats_triangulos[triangulo]['ultimo_sorteio']
@@ -572,36 +578,62 @@ class EstrategiaTrianguloMultiplo:
             return True
         
         distancia = len(self.historico) - ultimo_sorteio
-        return distancia >= 5
+        return distancia >= 8
+    
+    def calcular_tendencia(self, triangulo):
+        acertos_recentes = self.stats_triangulos[triangulo]['acertos_ultimos_10']
+        
+        if acertos_recentes >= 3:
+            return 80
+        elif acertos_recentes >= 2:
+            return 60
+        elif acertos_recentes >= 1:
+            return 40
+        else:
+            return 20
     
     def calcular_score_triangulo(self, triangulo):
         stats = self.stats_triangulos[triangulo]
         score = 0
         
-        # Fator 1: Atraso (0-40 pontos)
-        atraso = stats['atraso_atual']
-        score += min(atraso * 2, 40)
+        # Vizinhos quentes (40%)
+        tem_vizinhos, count_vizinhos = self.verificar_vizinhos_quentes(triangulo)
+        if tem_vizinhos:
+            score += min(count_vizinhos * 13, 40)
         
-        # Fator 2: Vizinhos quentes (0-30 pontos)
-        score += min(stats['vizinhos_quentes'] * 10, 30)
+        # Atraso (25%)
+        tem_atraso, atraso = self.verificar_atraso(triangulo)
+        if tem_atraso:
+            score += min(atraso * 1.5, 25)
         
-        # Fator 3: Performance histórica (0-20 pontos)
-        score += stats['performance_media'] * 0.5
-        
-        # Fator 4: Bônus por não ter acertado recentemente (0-10)
-        if self.verificar_sem_acerto_recente(triangulo):
+        # Performance histórica (20%)
+        perf = stats['performance_media']
+        if perf > 35:
+            score += 20
+        elif perf > 30:
+            score += 15
+        elif perf > 25:
             score += 10
+        elif perf > 20:
+            score += 5
+        
+        # Tendência (15%)
+        score += self.calcular_tendencia(triangulo) * 0.15
+        
+        # Bônus sem acerto recente
+        if self.verificar_sem_acerto_recente(triangulo):
+            score += 5
         
         return min(score, 100)
     
     def calcular_confianca_por_score(self, score):
-        if score >= 70:
+        if score >= 75:
             return "Excelente"
-        elif score >= 55:
+        elif score >= 60:
             return "Muito Alta"
-        elif score >= 40:
+        elif score >= 50:
             return "Alta"
-        elif score >= 25:
+        elif score >= 35:
             return "Média"
         else:
             return "Baixa"
@@ -617,19 +649,38 @@ class EstrategiaTrianguloMultiplo:
         return niveis.get(confianca_texto, 0)
     
     def analisar_triangulos_multi(self):
-        if len(self.historico) < 5:
+        if len(self.historico) < 10:
             return None
         
-        # Calcular score para todos os triângulos
         scores = {}
+        condicoes_fortes = {}
+        
         for triangulo in self.triangulo_para_numeros.keys():
             score = self.calcular_score_triangulo(triangulo)
             scores[triangulo] = score
+            
+            tem_vizinhos, count_vizinhos = self.verificar_vizinhos_quentes(triangulo)
+            tem_atraso, atraso = self.verificar_atraso(triangulo)
+            
+            condicoes_fortes[triangulo] = {
+                'vizinhos': tem_vizinhos,
+                'vizinhos_count': count_vizinhos,
+                'atraso': tem_atraso,
+                'atraso_valor': atraso
+            }
         
-        # Ordenar por score
-        triangulos_ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        # Só considera triângulos com VIZINHOS QUENTES (condição obrigatória)
+        triangulos_com_vizinhos = [
+            (t, scores[t]) for t in scores 
+            if condicoes_fortes[t]['vizinhos']
+        ]
         
-        # Selecionar triângulos com base na confiança mínima
+        if not triangulos_com_vizinhos:
+            self.contador_giros_sem_entrada += 1
+            return None
+        
+        triangulos_ordenados = sorted(triangulos_com_vizinhos, key=lambda x: x[1], reverse=True)
+        
         triangulos_selecionados = []
         niveis_confianca = []
         
@@ -638,18 +689,12 @@ class EstrategiaTrianguloMultiplo:
             nivel = self.get_nivel_confianca_numero(confianca)
             nivel_minimo = self.get_nivel_confianca_numero(self.confianca_minima_aposta)
             
-            # Evitar repetir triângulos apostados recentemente
-            if triangulo in self.ultimos_triangulos_apostados[-3:]:
+            if triangulo in self.ultimos_triangulos_apostados[-4:]:
                 continue
             
             if nivel >= nivel_minimo and len(triangulos_selecionados) < self.max_triangulos_por_aposta:
                 triangulos_selecionados.append(triangulo)
                 niveis_confianca.append(confianca)
-        
-        # Se nenhum triângulo atingiu a confiança mínima, pega o top 1
-        if not triangulos_selecionados and triangulos_ordenados:
-            triangulos_selecionados = [triangulos_ordenados[0][0]]
-            niveis_confianca = [self.calcular_confianca_por_score(triangulos_ordenados[0][1])]
         
         if not triangulos_selecionados:
             self.contador_giros_sem_entrada += 1
@@ -657,10 +702,8 @@ class EstrategiaTrianguloMultiplo:
         
         self.contador_giros_sem_entrada = 0
         
-        # Gerar números para apostar
         numeros_aposta = self.get_numeros_aposta_para_triangulos(triangulos_selecionados)
         
-        # Calcular confiança geral
         niveis_valores = [self.get_nivel_confianca_numero(c) for c in niveis_confianca]
         nivel_medio = sum(niveis_valores) / len(niveis_valores)
         
@@ -670,28 +713,24 @@ class EstrategiaTrianguloMultiplo:
             confianca_geral = "Muito Alta"
         elif nivel_medio >= 1.5:
             confianca_geral = "Alta"
-        elif nivel_medio >= 0.5:
-            confianca_geral = "Média"
         else:
-            confianca_geral = "Baixa"
+            confianca_geral = "Média"
         
-        # Construir gatilho descritivo
         detalhes_triangulos = []
         for t in triangulos_selecionados:
             score_t = scores[t]
-            atraso = self.stats_triangulos[t]['atraso_atual']
-            vizinhos = self.stats_triangulos[t]['vizinhos_quentes']
-            detalhes_triangulos.append(f"{t}(S:{score_t:.0f}|A:{atraso}|V:{vizinhos})")
+            vizinhos_count = condicoes_fortes[t]['vizinhos_count']
+            atraso_valor = condicoes_fortes[t]['atraso_valor']
+            detalhes_triangulos.append(f"{t}({score_t:.0f}pts|V:{vizinhos_count}|A:{atraso_valor})")
         
-        gatilho = f"Múltiplos: {' + '.join(triangulos_selecionados)} | {', '.join(detalhes_triangulos)}"
+        gatilho = f"🔥 {len(triangulos_selecionados)} triângulos com VIZINHOS QUENTES: {' + '.join(triangulos_selecionados)} | {', '.join(detalhes_triangulos)}"
         
-        # Atualizar lista de últimos triângulos apostados
         self.ultimos_triangulos_apostados.extend(triangulos_selecionados)
-        if len(self.ultimos_triangulos_apostados) > 10:
-            self.ultimos_triangulos_apostados = self.ultimos_triangulos_apostados[-10:]
+        if len(self.ultimos_triangulos_apostados) > 12:
+            self.ultimos_triangulos_apostados = self.ultimos_triangulos_apostados[-12:]
         
         previsao = {
-            'nome': f'Triângulo Múltiplo ({len(triangulos_selecionados)} ativos)',
+            'nome': f'Triângulo Assertivo ({len(triangulos_selecionados)} ativos)',
             'numeros_apostar': numeros_aposta,
             'gatilho': gatilho,
             'confianca_geral': confianca_geral,
@@ -699,7 +738,7 @@ class EstrategiaTrianguloMultiplo:
             'scores': {t: scores[t] for t in triangulos_selecionados},
             'confiancas': dict(zip(triangulos_selecionados, niveis_confianca)),
             'total_numeros': len(numeros_aposta),
-            'selecao_inteligente': len(numeros_aposta) < 15
+            'selecao_inteligente': len(numeros_aposta) < 12
         }
         
         self.entrada_ativa = True
@@ -729,28 +768,30 @@ class EstrategiaTrianguloMultiplo:
     
     def get_analise_detalhada(self):
         if len(self.historico) == 0:
-            return "🔺 Estratégia Triângulo Múltiplo - Aguardando dados..."
+            return "🔺 Aguardando dados..."
         
-        analise = "🔺 ANÁLISE TRIÂNGULO MÚLTIPLO v2\n"
+        analise = "🔺 ANÁLISE TRIÂNGULO ASSERTIVO v3\n"
         analise += "=" * 55 + "\n"
         analise += f"📊 Histórico: {len(self.historico)} números\n"
-        analise += f"🎯 Último número: {self.historico[-1] if self.historico else 'N/A'}\n"
-        analise += f"🎲 Máx triângulos por aposta: {self.max_triangulos_por_aposta}\n"
+        analise += f"🎯 Último número: {self.historico[-1]}\n"
+        analise += f"🎲 Máx triângulos: {self.max_triangulos_por_aposta}\n"
         analise += f"📈 Confiança mínima: {self.confianca_minima_aposta}\n"
-        analise += f"🔄 Giro sem entrada: {self.contador_giros_sem_entrada}\n"
+        analise += f"🔥 Condição obrigatória: VIZINHOS QUENTES (≥{self.min_vizinhos_quentes}x)\n"
         analise += "=" * 55 + "\n\n"
         
-        scores_atuais = {}
+        analise += "📊 RANKING (só com vizinhos quentes):\n"
+        
+        tem_algum_com_vizinhos = False
         for triangulo in self.triangulo_para_numeros.keys():
-            scores_atuais[triangulo] = self.calcular_score_triangulo(triangulo)
-        
-        triangulos_ordenados = sorted(scores_atuais.items(), key=lambda x: x[1], reverse=True)
-        
-        analise += "📊 RANKING DE TRIÂNGULOS (Score 0-100):\n"
-        
-        for triangulo, score in triangulos_ordenados[:10]:
-            stats = self.stats_triangulos[triangulo]
+            tem_vizinhos, count_vizinhos = self.verificar_vizinhos_quentes(triangulo)
+            
+            if not tem_vizinhos:
+                continue
+            
+            tem_algum_com_vizinhos = True
+            score = self.calcular_score_triangulo(triangulo)
             confianca = self.calcular_confianca_por_score(score)
+            stats = self.stats_triangulos[triangulo]
             
             if confianca == "Excelente":
                 icone = "💎"
@@ -758,40 +799,25 @@ class EstrategiaTrianguloMultiplo:
                 icone = "🔥"
             elif confianca == "Alta":
                 icone = "📈"
-            elif confianca == "Média":
-                icone = "⚪"
             else:
-                icone = "❄️"
+                icone = "⚪"
             
-            atraso = stats['atraso_atual']
-            vizinhos = stats['vizinhos_quentes']
-            perf = stats['performance_media']
-            
-            analise += f"{icone} {triangulo}: Score {score:.0f} ({confianca})\n"
-            analise += f"   📍 Atraso: {atraso} | Vizinhos: {vizinhos}x | Perf: {perf:.1f}%\n"
+            analise += f"{icone} {triangulo}: {confianca} ({score:.0f}pts)\n"
+            analise += f"   📍 Vizinhos: {count_vizinhos}x | Atraso: {stats['atraso_atual']} | Perf: {stats['performance_media']:.0f}%\n"
             analise += f"   🔢 Números: {self.get_numeros_do_triangulo(triangulo)}\n\n"
         
+        if not tem_algum_com_vizinhos:
+            analise += "⚠️ NENHUM triângulo com vizinhos quentes! Aguardando...\n"
+        
         if self.entrada_ativa and self.entrada_atual:
-            triangulos_ativos = self.entrada_atual.get('triangulos', [])
             analise += "\n" + "=" * 55 + "\n"
-            analise += "🎯 ENTRADA ATIVA (MÚLTIPLA):\n"
-            for t in triangulos_ativos:
+            analise += "🎯 ENTRADA ATIVA:\n"
+            for t in self.entrada_atual['triangulos']:
                 conf = self.entrada_atual['confiancas'].get(t, 'N/A')
                 score = self.entrada_atual['scores'].get(t, 0)
-                analise += f"   🔺 {t}: Confiança {conf} (Score {score:.0f})\n"
+                analise += f"   🔺 {t}: {conf} ({score:.0f}pts)\n"
             analise += f"📊 Confiança Geral: {self.entrada_atual['confianca_geral']}\n"
             analise += f"🔢 Total de números: {len(self.entrada_atual['numeros_apostar'])}\n"
-            if self.entrada_atual.get('selecao_inteligente', False):
-                analise += "🎯 Seleção inteligente ativa (≤15 números)\n"
-        
-        if self.historico_multi:
-            analise += "\n📋 ÚLTIMAS ENTRADAS MÚLTIPLAS:\n"
-            for entrada in list(self.historico_multi)[-5:]:
-                resultado = "✅ ACERTOU" if entrada['acertou'] else "❌ ERROU"
-                triangulos_str = ", ".join(entrada['triangulos'])
-                if entrada['acertou'] and entrada.get('triangulo_acertado'):
-                    resultado += f" ({entrada['triangulo_acertado']})"
-                analise += f"🎯 [{triangulos_str}]: {resultado} (Conf: {entrada['confianca_geral']})\n"
         
         return analise
     
@@ -809,15 +835,10 @@ class EstrategiaTrianguloMultiplo:
     def zerar_estatisticas(self):
         for triangulo in self.stats_triangulos:
             self.stats_triangulos[triangulo] = {
-                'acertos': 0,
-                'tentativas': 0,
-                'sequencia_atual': 0,
-                'sequencia_maxima': 0,
-                'performance_media': 0,
-                'ultimo_sorteio': -1,
-                'atraso_atual': 0,
-                'max_atraso': 0,
-                'vizinhos_quentes': 0
+                'acertos': 0, 'tentativas': 0, 'sequencia_atual': 0,
+                'sequencia_maxima': 0, 'performance_media': 0,
+                'ultimo_sorteio': -1, 'atraso_atual': 0, 'max_atraso': 0,
+                'vizinhos_quentes': 0, 'acertos_ultimos_10': 0
             }
         self.historico_entradas = []
         self.historico_multi = []
@@ -826,14 +847,14 @@ class EstrategiaTrianguloMultiplo:
         self.entrada_ativa = False
         self.entrada_atual = None
         self.ultimos_triangulos_apostados = []
-        logging.info("📊 Estatísticas do Triângulo Múltiplo zeradas")
+        logging.info("📊 Estatísticas zeradas")
 
 # =============================
 # SISTEMA DE GESTÃO (APENAS TRIÂNGULO)
 # =============================
 class SistemaRoletaCompleto:
     def __init__(self):
-        self.estrategia_triangulo = EstrategiaTrianguloMultiplo()
+        self.estrategia_triangulo = EstrategiaTrianguloAssertivo()
         self.previsao_ativa = None
         self.historico_desempenho = []
         self.acertos = 0
@@ -999,8 +1020,8 @@ def fetch_latest_result():
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🔺 Triângulo Múltiplo - Roleta", layout="centered")
-st.title("🔺 Estratégia Triângulo Múltiplo")
+st.set_page_config(page_title="🔺 Triângulo Assertivo - Roleta", layout="centered")
+st.title("🔺 Estratégia Triângulo Assertivo v3")
 
 # Inicialização
 if "sistema" not in st.session_state:
@@ -1026,30 +1047,47 @@ if "telegram_chat_id" not in st.session_state and not sessao_carregada:
 # Sidebar
 st.sidebar.title("⚙️ Configurações")
 
-# Configurações do Triângulo
-with st.sidebar.expander("🔺 Configurações Triângulo Múltiplo", expanded=True):
-    st.write("**Configurações da Estratégia:**")
+# Configurações do Triângulo Assertivo
+with st.sidebar.expander("🔺 Configurações", expanded=True):
+    st.write("**Configurações da Estratégia Assertiva:**")
     
     max_triangulos = st.slider(
         "Máximo de triângulos por aposta:",
-        min_value=1, max_value=5, value=st.session_state.sistema.estrategia_triangulo.max_triangulos_por_aposta,
-        help="Quantos triângulos podem ser apostados simultaneamente"
+        min_value=1, max_value=3, 
+        value=st.session_state.sistema.estrategia_triangulo.max_triangulos_por_aposta,
+        help="Quantos triângulos podem ser apostados simultaneamente (recomendado: 1-2)"
     )
     
     confianca_minima = st.select_slider(
         "Confiança mínima para apostar:",
-        options=["Baixa", "Média", "Alta", "Muito Alta", "Excelente"],
+        options=["Média", "Alta", "Muito Alta", "Excelente"],
         value=st.session_state.sistema.estrategia_triangulo.confianca_minima_aposta,
         help="Apenas triângulos com confiança igual ou superior serão considerados"
+    )
+    
+    min_vizinhos = st.slider(
+        "Mínimo de vizinhos quentes necessários:",
+        min_value=2, max_value=5, 
+        value=st.session_state.sistema.estrategia_triangulo.min_vizinhos_quentes,
+        help="Quantos vizinhos precisam aparecer na janela recente para considerar o triângulo"
+    )
+    
+    janela_atraso = st.slider(
+        "Atraso mínimo para considerar (giros):",
+        min_value=10, max_value=25, 
+        value=st.session_state.sistema.estrategia_triangulo.janela_atraso,
+        help="Quantos giros sem sair para considerar atraso significativo"
     )
     
     if st.button("Aplicar Configurações"):
         st.session_state.sistema.estrategia_triangulo.max_triangulos_por_aposta = max_triangulos
         st.session_state.sistema.estrategia_triangulo.confianca_minima_aposta = confianca_minima
+        st.session_state.sistema.estrategia_triangulo.min_vizinhos_quentes = min_vizinhos
+        st.session_state.sistema.estrategia_triangulo.janela_atraso = janela_atraso
         salvar_sessao()
         st.success(f"✅ Configurações aplicadas!")
 
-# Gerenciamento de Sessão
+# Gerenciamento
 with st.sidebar.expander("💾 Gerenciamento", expanded=False):
     col1, col2 = st.columns(2)
     
@@ -1113,7 +1151,7 @@ with st.sidebar.expander("🔔 Telegram", expanded=False):
     if st.button("Testar"):
         if telegram_token and telegram_chat_id:
             try:
-                enviar_telegram("🔔 Teste - Triângulo Múltiplo funcionando!")
+                enviar_telegram("🔔 Teste - Triângulo Assertivo funcionando!")
                 st.success("✅ Enviado!")
             except Exception as e:
                 st.error(f"Erro: {e}")
@@ -1121,25 +1159,26 @@ with st.sidebar.expander("🔔 Telegram", expanded=False):
             st.error("Configure token e chat ID")
 
 # Informações
-with st.sidebar.expander("📊 Informações", expanded=False):
-    st.write("**🔺 Estratégia Triângulo Múltiplo v2:**")
-    st.write("**Como funciona:**")
-    st.write("1. Cada número pertence a um triângulo (3 números consecutivos)")
-    st.write("2. Calcula SCORE para cada triângulo:")
-    st.write("   - Atraso (40%): tempo sem sair")
-    st.write("   - Vizinhos quentes (30%): frequência de vizinhos")
-    st.write("   - Performance (20%): taxa de acertos")
-    st.write("   - Bônus (10%): sem acerto recente")
-    st.write("3. Seleciona TOP N triângulos com confiança ≥ mínima")
-    st.write("4. Aposta na UNIÃO dos triângulos + vizinhos")
-    st.write("5. **Máximo de 3 triângulos por aposta**")
+with st.sidebar.expander("📊 Sobre a Estratégia", expanded=False):
+    st.write("**🔺 Triângulo Assertivo v3**")
+    st.write("**Regras:**")
+    st.write("1. ✅ **CONDIÇÃO OBRIGATÓRIA:** Vizinhos quentes (≥3)")
+    st.write("2. 🎯 Máximo 2 triângulos por aposta")
+    st.write("3. 📈 Confiança mínima: ALTA")
+    st.write("4. 🔢 Máximo 12 números por aposta")
+    st.write("---")
+    st.write("**Cálculo do Score:**")
+    st.write("- Vizinhos quentes: 40%")
+    st.write("- Atraso: 25%")
+    st.write("- Performance: 20%")
+    st.write("- Tendência: 15%")
     st.write("---")
     st.write("**Níveis de Confiança:**")
-    st.write("- 💎 Excelente (≥70 pts)")
-    st.write("- 🔥 Muito Alta (55-69 pts)")
-    st.write("- 📈 Alta (40-54 pts)")
-    st.write("- ⚪ Média (25-39 pts)")
-    st.write("- ❄️ Baixa (<25 pts)")
+    st.write("- 💎 Excelente (≥75 pts)")
+    st.write("- 🔥 Muito Alta (60-74 pts)")
+    st.write("- 📈 Alta (50-59 pts)")
+    st.write("- ⚪ Média (35-49 pts)")
+    st.write("- ❄️ Baixa (<35 pts)")
 
 # Análise detalhada
 with st.sidebar.expander("🔍 Análise Detalhada", expanded=False):
@@ -1209,7 +1248,7 @@ if sistema.previsao_ativa:
     st.success(f"**{previsao['nome']}**")
     
     if previsao.get('selecao_inteligente', False):
-        st.success("🎯 **SELEÇÃO INTELIGENTE ATIVA** - 15 melhores números")
+        st.success("🎯 **SELEÇÃO INTELIGENTE ATIVA** - 12 melhores números")
     
     triangulos_ativos = previsao.get('triangulos', [])
     confiancas = previsao.get('confiancas', {})
@@ -1238,14 +1277,13 @@ if sistema.previsao_ativa:
     
     st.write(f"**🔢 Números para apostar ({len(previsao['numeros_apostar'])}):**")
     
-    # Mostrar números em grupos de 5 para melhor visualização
     numeros = sorted(previsao['numeros_apostar'])
-    for i in range(0, len(numeros), 5):
-        st.write(" ".join(map(str, numeros[i:i+5])))
+    for i in range(0, len(numeros), 6):
+        st.write(" ".join(map(str, numeros[i:i+6])))
     
     st.info("⏳ Aguardando próximo sorteio...")
 else:
-    st.info(f"🔺 Analisando padrões dos triângulos...")
+    st.info(f"🔺 Aguardando condições ideais (vizinhos quentes)...")
 
 # Desempenho
 st.subheader("📈 Desempenho")
