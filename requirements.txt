@@ -13,7 +13,7 @@ catboost
 plotly
 beautifulsoup4
 reportlab
-tensorflow
+#tensorflow
 psutil
 flask
 fastapi
