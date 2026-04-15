@@ -138,35 +138,24 @@ def limpar_sessao():
         logging.error(f"❌ Erro ao limpar sessão: {e}")
 
 # =============================
-# NOVA CLASSE: FILTRO ALTO/BAIXO
+# CLASSE: FILTRO ALTO/BAIXO
 # =============================
 class FiltroAltoBaixo:
-    """
-    Filtra os números apostados para apenas ALTO (19-36) ou BAIXO (1-18)
-    baseado na tendência do histórico recente.
-    """
-    
     def __init__(self):
-        self.numeros_baixos = list(range(1, 19))  # 1 a 18
-        self.numeros_altos = list(range(19, 37))   # 19 a 36
-        self.janela_tendencia = 12  # Últimos 12 números para análise
+        self.numeros_baixos = list(range(1, 19))
+        self.numeros_altos = list(range(19, 37))
+        self.janela_tendencia = 12
         
     def analisar_tendencia(self, historico):
-        """
-        Analisa se a tendência atual é ALTO ou BAIXO.
-        Retorna: 'alto', 'baixo', ou None (indeciso)
-        """
         if len(historico) < 8:
             return None
             
         historico_lista = list(historico)
         ultimos_numeros = historico_lista[-self.janela_tendencia:] if len(historico_lista) >= self.janela_tendencia else historico_lista
         
-        # Contar altos e baixos
         count_altos = sum(1 for n in ultimos_numeros if n in self.numeros_altos)
         count_baixos = sum(1 for n in ultimos_numeros if n in self.numeros_baixos)
         
-        # Calcular proporção
         total = len(ultimos_numeros)
         if total == 0:
             return None
@@ -174,7 +163,6 @@ class FiltroAltoBaixo:
         prop_altos = count_altos / total
         prop_baixos = count_baixos / total
         
-        # Tendência dos últimos 5 vs anteriores 5
         if len(historico_lista) >= 10:
             ultimos_5 = historico_lista[-5:]
             anteriores_5 = historico_lista[-10:-5]
@@ -182,7 +170,6 @@ class FiltroAltoBaixo:
             altos_ultimos = sum(1 for n in ultimos_5 if n in self.numeros_altos)
             altos_anteriores = sum(1 for n in anteriores_5 if n in self.numeros_altos)
             
-            # Tendência de crescimento ou queda
             if altos_ultimos > altos_anteriores:
                 tendencia_alto = True
             elif altos_ultimos < altos_anteriores:
@@ -192,22 +179,17 @@ class FiltroAltoBaixo:
         else:
             tendencia_alto = None
         
-        # Decisão com base nos critérios
-        # Se mais de 60% altos nos últimos números, tendência ALTO
         if prop_altos >= 0.6:
             return 'alto'
-        # Se mais de 60% baixos nos últimos números, tendência BAIXO
         elif prop_baixos >= 0.6:
             return 'baixo'
         
-        # Verificar sequência atual
         sequencia_atual = self._get_sequencia_atual(historico_lista)
         if sequencia_atual == 'alto' and prop_altos >= 0.5:
             return 'alto'
         elif sequencia_atual == 'baixo' and prop_baixos >= 0.5:
             return 'baixo'
             
-        # Se houver tendência clara nos últimos 5
         if tendencia_alto is not None:
             if tendencia_alto and prop_altos >= 0.5:
                 return 'alto'
@@ -217,7 +199,6 @@ class FiltroAltoBaixo:
         return None
     
     def _get_sequencia_atual(self, historico_lista):
-        """Verifica a sequência atual de altos/baixos"""
         if len(historico_lista) < 3:
             return None
             
@@ -230,7 +211,6 @@ class FiltroAltoBaixo:
             else:
                 sequencia.append(None)
         
-        # Contar sequência do último
         if len(sequencia) > 0 and sequencia[0] is not None:
             count = 1
             for i in range(1, len(sequencia)):
@@ -244,38 +224,28 @@ class FiltroAltoBaixo:
         return None
     
     def filtrar_por_tendencia(self, numeros_apostar, historico, max_numeros=6):
-        """
-        Filtra os números apostados baseado na tendência.
-        Retorna no máximo 'max_numeros' números.
-        """
         if not numeros_apostar:
             return [], None
             
         tendencia = self.analisar_tendencia(historico)
         
         if tendencia is None:
-            # Sem tendência clara, retorna os primeiros max_numeros
             return numeros_apostar[:max_numeros], None
         
-        # Filtrar números conforme a tendência
         if tendencia == 'alto':
             numeros_filtrados = [n for n in numeros_apostar if n in self.numeros_altos]
-        else:  # 'baixo'
+        else:
             numeros_filtrados = [n for n in numeros_apostar if n in self.numeros_baixos]
         
-        # Se não houver números na faixa escolhida, retorna os primeiros max_numeros
         if not numeros_filtrados:
             return numeros_apostar[:max_numeros], tendencia
         
-        # Limitar ao máximo
         if len(numeros_filtrados) > max_numeros:
-            # Aqui poderíamos aplicar uma sub-seleção baseada em scores
             numeros_filtrados = numeros_filtrados[:max_numeros]
         
         return numeros_filtrados, tendencia
     
     def get_info_tendencia(self, historico):
-        """Retorna informações detalhadas sobre a tendência"""
         if len(historico) < 8:
             return "Aguardando mais dados para definir tendência..."
             
@@ -310,20 +280,18 @@ class FiltroAltoBaixo:
         elif tendencia == 'baixo':
             info += f"🎯 RECOMENDAÇÃO: APOSTAR em NÚMEROS BAIXOS (1-18)\n"
         else:
-            info += f"⚠️ RECOMENDAÇÃO: Sem tendência clara - manter estratégia original\n"
+            info += f"⚠️ RECOMENDAÇÃO: Sem tendência clara\n"
             
         return info
 
 # =============================
-# CONFIGURAÇÕES DE NOTIFICAÇÃO - COM FILTRO ALTO/BAIXO
+# CONFIGURAÇÕES DE NOTIFICAÇÃO
 # =============================
 def enviar_previsao_super_simplificada(previsao):
-    """Envia notificação de previsão super simplificada com filtro alto/baixo"""
     try:
         nome_estrategia = previsao['nome']
         numeros_apostar = sorted(previsao['numeros_apostar'])
         tendencia = previsao.get('tendencia_alto_baixo', None)
-        numeros_originais = previsao.get('numeros_originais_qtd', len(numeros_apostar))
         
         if 'Zonas' in nome_estrategia:
             zonas_envolvidas = previsao.get('zonas_envolvidas', [])
@@ -353,7 +321,6 @@ def enviar_previsao_super_simplificada(previsao):
                 mensagem = f"🤖 Núcleos {nucleo1} + {nucleo2}"
             else:
                 zona_ml = previsao.get('zona_ml', '')
-                numeros_apostar = previsao.get('numeros_apostar', [])
                 if 2 in numeros_apostar:
                     mensagem = "🤖 Zona 2"
                 elif 7 in numeros_apostar:
@@ -372,7 +339,6 @@ def enviar_previsao_super_simplificada(previsao):
         else:
             mensagem = f"💰 {previsao['nome']}"
         
-        # Adicionar informação do filtro alto/baixo
         if tendencia:
             if tendencia == 'alto':
                 mensagem += f" 🔴 (ALTOS)"
@@ -392,25 +358,21 @@ def enviar_previsao_super_simplificada(previsao):
         logging.error(f"Erro ao enviar previsão: {e}")
 
 def enviar_alerta_numeros_simplificado(previsao):
-    """Envia alerta alternativo super simplificado com os números para apostar (já filtrados)"""
     try:
-        nome_estrategia = previsao['nome']
         numeros_apostar = sorted(previsao['numeros_apostar'])
         tendencia = previsao.get('tendencia_alto_baixo', None)
         
-        # Formatar números em duas linhas
         metade = len(numeros_apostar) // 2
         linha1 = " ".join(map(str, numeros_apostar[:metade]))
         linha2 = " ".join(map(str, numeros_apostar[metade:]))
         
-        if 'Zonas' in nome_estrategia:
+        if 'Zonas' in previsao['nome']:
             emoji = "📍"
-        elif 'ML' in nome_estrategia:
+        elif 'ML' in previsao['nome']:
             emoji = "🤖"
         else:
             emoji = "💰"
         
-        # Adicionar indicador de tendência
         if tendencia == 'alto':
             indicador = " 🔴"
         elif tendencia == 'baixo':
@@ -426,8 +388,7 @@ def enviar_alerta_numeros_simplificado(previsao):
     except Exception as e:
         logging.error(f"Erro ao enviar alerta simplificado: {e}")
 
-def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada=None):
-    """Envia notificação de resultado super simplificado"""
+def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada=None, numeros_apostados=None):
     try:
         if acerto:
             if 'Zonas' in nome_estrategia and zona_acertada:
@@ -498,7 +459,6 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
         logging.error(f"Erro ao enviar resultado: {e}")
 
 def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia):
-    """Envia alerta de conferência super simplificado"""
     try:
         if acerto:
             mensagem = f"🎉 ACERTOU! {numero_real}"
@@ -512,7 +472,6 @@ def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia)
         logging.error(f"Erro ao enviar alerta de conferência: {e}")
 
 def enviar_rotacao_automatica(estrategia_anterior, estrategia_nova):
-    """Envia notificação de rotação automática"""
     try:
         mensagem = f"🔄 ROTAÇÃO AUTOMÁTICA\n{estrategia_anterior} → {estrategia_nova}"
         
@@ -527,7 +486,6 @@ def enviar_rotacao_automatica(estrategia_anterior, estrategia_nova):
         logging.error(f"Erro ao enviar rotação: {e}")
 
 def enviar_telegram(mensagem):
-    """Envia mensagem para o Telegram"""
     try:
         token = st.session_state.telegram_token
         chat_id = st.session_state.telegram_chat_id
@@ -679,7 +637,7 @@ class SistemaSelecaoInteligente:
         return analise
 
 # =============================
-# CLASSE PRINCIPAL DA ROLETA ATUALIZADA
+# CLASSE PRINCIPAL DA ROLETA
 # =============================
 class RoletaInteligente:
     def __init__(self):
@@ -722,7 +680,7 @@ class RoletaInteligente:
         return vizinhos
 
 # =============================
-# MÓDULO DE MACHINE LEARNING ATUALIZADO COM CATBOOST - OTIMIZADO
+# MÓDULO DE MACHINE LEARNING
 # =============================
 class MLRoletaOtimizada:
     def __init__(
@@ -1150,7 +1108,7 @@ class MLRoletaOtimizada:
         }
 
 # =============================
-# ESTRATÉGIA DAS ZONAS ATUALIZADA - COM FILTRO ALTO/BAIXO
+# ESTRATÉGIA DAS ZONAS COM FILTRO ALTO/BAIXO
 # =============================
 class EstrategiaZonasOtimizada:
     def __init__(self):
@@ -1193,8 +1151,6 @@ class EstrategiaZonasOtimizada:
         self.threshold_base = 28
         
         self.sistema_selecao = SistemaSelecaoInteligente()
-        
-        # NOVO: Filtro alto/baixo
         self.filtro_alto_baixo = FiltroAltoBaixo()
 
     def adicionar_numero(self, numero):
@@ -1334,7 +1290,6 @@ class EstrategiaZonasOtimizada:
                         numeros_combinados, self.historico, "Zonas"
                     )
                 
-                # APLICAR FILTRO ALTO/BAIXO
                 numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
                     numeros_combinados, self.historico, max_numeros=6
                 )
@@ -1369,7 +1324,6 @@ class EstrategiaZonasOtimizada:
                 numeros_apostar, self.historico, "Zonas"
             )
         
-        # APLICAR FILTRO ALTO/BAIXO
         numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
             numeros_apostar, self.historico, max_numeros=6
         )
@@ -1552,7 +1506,6 @@ class EstrategiaZonasOtimizada:
             score = self.get_zona_score(zona)
             analise += f"📍 {zona}: Total:{freq_total}/{len(self.historico)}({perc_total:.1f}%) | Curto:{freq_curto}/{self.janelas_analise['curto_prazo']}({perc_curto:.1f}%) | Score: {score:.1f}\n"
         
-        # Adicionar análise alto/baixo
         analise += "\n" + self.filtro_alto_baixo.get_info_tendencia(self.historico) + "\n"
         
         analise += "\n📊 TENDÊNCIAS AVANÇADAS:\n"
@@ -1599,7 +1552,7 @@ class EstrategiaZonasOtimizada:
         logging.info("📊 Estatísticas das Zonas zeradas")
 
 # =============================
-# ESTRATÉGIA MIDAS (MANTIDA)
+# ESTRATÉGIA MIDAS
 # =============================
 class EstrategiaMidas:
     def __init__(self):
@@ -1672,7 +1625,7 @@ class EstrategiaMidas:
         return None
 
 # =============================
-# ESTRATÉGIA ML ATUALIZADA COM FILTRO ALTO/BAIXO
+# ESTRATÉGIA ML COM FILTRO ALTO/BAIXO
 # =============================
 class EstrategiaML:
     def __init__(self):
@@ -1707,10 +1660,7 @@ class EstrategiaML:
         }
         
         self.adicionar_metricas_padroes()
-        
         self.sistema_selecao = SistemaSelecaoInteligente()
-        
-        # NOVO: Filtro alto/baixo
         self.filtro_alto_baixo = FiltroAltoBaixo()
 
     def adicionar_metricas_padroes(self):
@@ -1727,7 +1677,6 @@ class EstrategiaML:
         self.contador_sorteios += 1
         
         if len(self.historico) > 1:
-            numero_anterior = list(self.historico)[-2]
             self.validar_padrao_acerto(numero, self.get_previsao_atual())
         
         self.analisar_padroes_sequenciais(numero)
@@ -2010,7 +1959,6 @@ class EstrategiaML:
                             numeros_combinados, self.historico, "ML"
                         )
                     
-                    # APLICAR FILTRO ALTO/BAIXO
                     numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
                         numeros_combinados, self.historico, max_numeros=6
                     )
@@ -2056,7 +2004,6 @@ class EstrategiaML:
                     numeros_zona, self.historico, "ML"
                 )
             
-            # APLICAR FILTRO ALTO/BAIXO
             numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
                 numeros_zona, self.historico, max_numeros=6
             )
@@ -2212,7 +2159,6 @@ class EstrategiaML:
             else:
                 analise += "\n⚠️  Nenhuma zona com predominância suficiente (mínimo 7 números)\n"
             
-            # Adicionar análise alto/baixo
             analise += "\n" + self.filtro_alto_baixo.get_info_tendencia(self.historico)
             
             return analise
@@ -2275,7 +2221,7 @@ class EstrategiaML:
         logging.info("🔄 Padrões sequenciais e métricas zerados")
 
 # =============================
-# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA
+# SISTEMA DE GESTÃO COM ROTAÇÃO AUTOMÁTICA
 # =============================
 class SistemaRoletaCompleto:
     def __init__(self):
@@ -2337,36 +2283,25 @@ class SistemaRoletaCompleto:
         self.contador_sorteios_global += 1
             
         if self.previsao_ativa:
-            acerto = False
+            # CORREÇÃO: Verifica acerto APENAS nos números efetivamente apostados
+            numeros_apostados = self.previsao_ativa.get('numeros_apostar', [])
+            acerto = numero_real in numeros_apostados
+            
             zonas_acertadas = []
             nome_estrategia = self.previsao_ativa['nome']
             
-            zonas_envolvidas = self.previsao_ativa.get('zonas_envolvidas', [])
-            if not zonas_envolvidas:
-                acerto = numero_real in self.previsao_ativa['numeros_apostar']
-                if acerto:
-                    if 'Zonas' in nome_estrategia:
-                        for zona, numeros in self.estrategia_zonas.numeros_zonas.items():
-                            if numero_real in numeros:
-                                zonas_acertadas.append(zona)
-                                break
-                    elif 'ML' in nome_estrategia:
-                        for zona, numeros in self.estrategia_ml.numeros_zonas_ml.items():
-                            if numero_real in numeros:
-                                zonas_acertadas.append(zona)
-                                break
-            else:
-                for zona in zonas_envolvidas:
-                    if 'Zonas' in nome_estrategia:
-                        numeros_zona = self.estrategia_zonas.numeros_zonas[zona]
-                    elif 'ML' in nome_estrategia:
-                        numeros_zona = self.estrategia_ml.numeros_zonas_ml[zona]
-                    else:
-                        continue
-                    
-                    if numero_real in numeros_zona:
-                        acerto = True
-                        zonas_acertadas.append(zona)
+            if acerto:
+                # Descobrir qual zona acertou (para exibição)
+                if 'Zonas' in nome_estrategia:
+                    for zona, numeros in self.estrategia_zonas.numeros_zonas.items():
+                        if numero_real in numeros:
+                            zonas_acertadas.append(zona)
+                            break
+                elif 'ML' in nome_estrategia:
+                    for zona, numeros in self.estrategia_ml.numeros_zonas_ml.items():
+                        if numero_real in numeros:
+                            zonas_acertadas.append(zona)
+                            break
             
             rotacionou = self.rotacionar_estrategia_automaticamente(acerto, nome_estrategia)
             
@@ -2381,16 +2316,16 @@ class SistemaRoletaCompleto:
                 self.erros += 1
             
             zona_acertada_str = "+".join(zonas_acertadas) if zonas_acertadas else None
-            enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada_str)
+            enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada_str, numeros_apostados)
             
             self.historico_desempenho.append({
                 'numero': numero_real,
                 'acerto': acerto,
                 'estrategia': nome_estrategia,
-                'previsao': self.previsao_ativa['numeros_apostar'],
+                'previsao': numeros_apostados,
                 'rotacionou': rotacionou,
                 'zona_acertada': zona_acertada_str,
-                'zonas_envolvidas': zonas_envolvidas,
+                'zonas_envolvidas': self.previsao_ativa.get('zonas_envolvidas', []),
                 'tipo_aposta': self.previsao_ativa.get('tipo', 'unica')
             })
             
@@ -2495,7 +2430,7 @@ def fetch_latest_result():
         return None
 
 # =============================
-# APLICAÇÃO STREAMLIT ATUALIZADA
+# APLICAÇÃO STREAMLIT
 # =============================
 st.set_page_config(page_title="IA Roleta — Multi-Estratégias", layout="centered")
 st.title("🎯 IA Roleta — Sistema Multi-Estratégias")
@@ -2520,7 +2455,7 @@ if "telegram_token" not in st.session_state and not sessao_carregada:
 if "telegram_chat_id" not in st.session_state and not sessao_carregada:
     st.session_state.telegram_chat_id = ""
 
-# Sidebar - Configurações Avançadas
+# Sidebar - Configurações
 st.sidebar.title("⚙️ Configurações")
 
 with st.sidebar.expander("💾 Gerenciamento de Sessão", expanded=False):
