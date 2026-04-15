@@ -138,150 +138,159 @@ def limpar_sessao():
         logging.error(f"❌ Erro ao limpar sessão: {e}")
 
 # =============================
-# CLASSE: FILTRO ALTO/BAIXO
+# NOVA CLASSE: SELEÇÃO DOS 6 MELHORES NÚMEROS
 # =============================
-class FiltroAltoBaixo:
+class SelecaoMelhores6:
+    """
+    Seleciona os 6 melhores números dos 15 da seleção inteligente
+    baseado em score composto, sem filtrar por alto/baixo.
+    """
+    
     def __init__(self):
-        self.numeros_baixos = list(range(1, 19))
-        self.numeros_altos = list(range(19, 37))
-        self.janela_tendencia = 12
+        self.roleta = RoletaInteligente()
         
-    def analisar_tendencia(self, historico):
-        if len(historico) < 8:
-            return None
-            
-        historico_lista = list(historico)
-        ultimos_numeros = historico_lista[-self.janela_tendencia:] if len(historico_lista) >= self.janela_tendencia else historico_lista
+    def selecionar_melhores_6(self, numeros_15, historico):
+        """
+        Seleciona os 6 melhores números dos 15 com base em score reforçado.
+        """
+        if not numeros_15:
+            return []
         
-        count_altos = sum(1 for n in ultimos_numeros if n in self.numeros_altos)
-        count_baixos = sum(1 for n in ultimos_numeros if n in self.numeros_baixos)
+        if len(numeros_15) <= 6:
+            return numeros_15
         
-        total = len(ultimos_numeros)
-        if total == 0:
-            return None
-            
-        prop_altos = count_altos / total
-        prop_baixos = count_baixos / total
+        scores = {}
+        for numero in numeros_15:
+            scores[numero] = self.calcular_score_refinado(numero, historico)
         
-        if len(historico_lista) >= 10:
-            ultimos_5 = historico_lista[-5:]
-            anteriores_5 = historico_lista[-10:-5]
-            
-            altos_ultimos = sum(1 for n in ultimos_5 if n in self.numeros_altos)
-            altos_anteriores = sum(1 for n in anteriores_5 if n in self.numeros_altos)
-            
-            if altos_ultimos > altos_anteriores:
-                tendencia_alto = True
-            elif altos_ultimos < altos_anteriores:
-                tendencia_alto = False
-            else:
-                tendencia_alto = None
-        else:
-            tendencia_alto = None
+        # Ordenar por score e pegar os 6 melhores
+        numeros_ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        melhores_6 = [num for num, score in numeros_ordenados[:6]]
         
-        if prop_altos >= 0.6:
-            return 'alto'
-        elif prop_baixos >= 0.6:
-            return 'baixo'
-        
-        sequencia_atual = self._get_sequencia_atual(historico_lista)
-        if sequencia_atual == 'alto' and prop_altos >= 0.5:
-            return 'alto'
-        elif sequencia_atual == 'baixo' and prop_baixos >= 0.5:
-            return 'baixo'
-            
-        if tendencia_alto is not None:
-            if tendencia_alto and prop_altos >= 0.5:
-                return 'alto'
-            elif not tendencia_alto and prop_baixos >= 0.5:
-                return 'baixo'
-        
-        return None
+        logging.info(f"🎯 Seleção dos 6 melhores: {len(numeros_15)} → {melhores_6}")
+        return melhores_6
     
-    def _get_sequencia_atual(self, historico_lista):
+    def calcular_score_refinado(self, numero, historico):
+        """
+        Calcula score composto com pesos ajustados para números mais recentes.
+        """
+        if len(historico) < 10:
+            return 0.5
+        
+        score_total = 0
+        historico_lista = list(historico)
+        
+        # 1. Frequência recente (40% - maior peso)
+        freq_recente = self._frequencia_recente(numero, historico_lista)
+        score_total += freq_recente * 0.40
+        
+        # 2. Posição na roda (20%)
+        score_posicao = self._score_posicao_roda(numero, historico_lista)
+        score_total += score_posicao * 0.20
+        
+        # 3. Vizinhança (20%)
+        score_vizinhos = self._score_vizinhos(numero, historico_lista)
+        score_total += score_vizinhos * 0.20
+        
+        # 4. Tendência temporal (20%)
+        score_tendencia = self._score_tendencia(numero, historico_lista)
+        score_total += score_tendencia * 0.20
+        
+        return score_total
+    
+    def _frequencia_recente(self, numero, historico_lista):
+        """Frequência ponderada: mais peso para números recentes"""
+        if len(historico_lista) < 10:
+            return 0.5
+        
+        # Janelas com pesos diferentes
+        ultimos_5 = historico_lista[-5:] if len(historico_lista) >= 5 else historico_lista
+        ultimos_10 = historico_lista[-10:] if len(historico_lista) >= 10 else historico_lista
+        ultimos_20 = historico_lista[-20:] if len(historico_lista) >= 20 else historico_lista
+        
+        freq_5 = sum(1 for n in ultimos_5 if n == numero) / len(ultimos_5) if ultimos_5 else 0
+        freq_10 = sum(1 for n in ultimos_10 if n == numero) / len(ultimos_10) if ultimos_10 else 0
+        freq_20 = sum(1 for n in ultimos_20 if n == numero) / len(ultimos_20) if ultimos_20 else 0
+        
+        # Peso maior para janela curta (recente)
+        score = (freq_5 * 0.6 + freq_10 * 0.3 + freq_20 * 0.1)
+        
+        # Bônus se apareceu nos últimos 3 números
+        if len(historico_lista) >= 3 and numero in historico_lista[-3:]:
+            score += 0.2
+            
+        return min(score, 1.0)
+    
+    def _score_posicao_roda(self, numero, historico_lista):
+        """Score baseado na distância dos últimos números na roda"""
         if len(historico_lista) < 3:
-            return None
+            return 0.5
             
-        sequencia = []
-        for num in reversed(historico_lista[-10:]):
-            if num in self.numeros_altos:
-                sequencia.append('alto')
-            elif num in self.numeros_baixos:
-                sequencia.append('baixo')
-            else:
-                sequencia.append(None)
+        ultimo = historico_lista[-1]
+        penultimo = historico_lista[-2] if len(historico_lista) >= 2 else ultimo
         
-        if len(sequencia) > 0 and sequencia[0] is not None:
-            count = 1
-            for i in range(1, len(sequencia)):
-                if sequencia[i] == sequencia[0]:
-                    count += 1
-                else:
-                    break
-            if count >= 3:
-                return sequencia[0]
+        pos_alvo = self.roleta.get_posicao_race(numero)
+        pos_ultimo = self.roleta.get_posicao_race(ultimo)
+        pos_penultimo = self.roleta.get_posicao_race(penultimo)
         
-        return None
+        dist_ultimo = self._distancia_roda(pos_alvo, pos_ultimo)
+        dist_penultimo = self._distancia_roda(pos_alvo, pos_penultimo)
+        
+        score_ultimo = max(0, 1 - (dist_ultimo / 18))
+        score_penultimo = max(0, 1 - (dist_penultimo / 18))
+        
+        return (score_ultimo * 0.7 + score_penultimo * 0.3)
     
-    def filtrar_por_tendencia(self, numeros_apostar, historico, max_numeros=6):
-        if not numeros_apostar:
-            return [], None
-            
-        tendencia = self.analisar_tendencia(historico)
-        
-        if tendencia is None:
-            return numeros_apostar[:max_numeros], None
-        
-        if tendencia == 'alto':
-            numeros_filtrados = [n for n in numeros_apostar if n in self.numeros_altos]
-        else:
-            numeros_filtrados = [n for n in numeros_apostar if n in self.numeros_baixos]
-        
-        if not numeros_filtrados:
-            return numeros_apostar[:max_numeros], tendencia
-        
-        if len(numeros_filtrados) > max_numeros:
-            numeros_filtrados = numeros_filtrados[:max_numeros]
-        
-        return numeros_filtrados, tendencia
+    def _distancia_roda(self, pos1, pos2):
+        """Distância mínima na roda"""
+        total = 37
+        direta = abs(pos1 - pos2)
+        inversa = total - direta
+        return min(direta, inversa)
     
-    def get_info_tendencia(self, historico):
-        if len(historico) < 8:
-            return "Aguardando mais dados para definir tendência..."
+    def _score_vizinhos(self, numero, historico_lista):
+        """Score baseado em vizinhos físicos"""
+        if len(historico_lista) < 10:
+            return 0.5
             
-        historico_lista = list(historico)
-        ultimos_12 = historico_lista[-12:] if len(historico_lista) >= 12 else historico_lista
+        vizinhos = self.roleta.get_vizinhos_fisicos(numero, raio=3)
+        ultimos_10 = historico_lista[-10:]
         
-        count_altos = sum(1 for n in ultimos_12 if n in self.numeros_altos)
-        count_baixos = sum(1 for n in ultimos_12 if n in self.numeros_baixos)
-        total = len(ultimos_12)
+        count = sum(1 for n in ultimos_10 if n in vizinhos)
+        score = count / len(ultimos_10) * 2
         
-        info = f"📊 ANÁLISE ALTO/BAIXO (últimos {total} números):\n"
-        info += f"🔴 NÚMEROS ALTOS (19-36): {count_altos} ({count_altos/total*100:.1f}%)\n"
-        info += f"🔵 NÚMEROS BAIXOS (1-18): {count_baixos} ({count_baixos/total*100:.1f}%)\n"
-        
-        if len(historico_lista) >= 10:
-            ultimos_5 = historico_lista[-5:]
-            anteriores_5 = historico_lista[-10:-5]
+        return min(score, 1.0)
+    
+    def _score_tendencia(self, numero, historico_lista):
+        """Score baseado em tendência de aparição"""
+        if len(historico_lista) < 15:
+            return 0.5
             
-            altos_ultimos = sum(1 for n in ultimos_5 if n in self.numeros_altos)
-            altos_anteriores = sum(1 for n in anteriores_5 if n in self.numeros_altos)
-            
-            if altos_ultimos > altos_anteriores:
-                info += f"📈 TENDÊNCIA: ↗️ CRESCIMENTO DE ALTOS\n"
-            elif altos_ultimos < altos_anteriores:
-                info += f"📉 TENDÊNCIA: ↘️ QUEDA DE ALTOS\n"
-            else:
-                info += f"➡️ TENDÊNCIA: ESTÁVEL\n"
+        # Dividir histórico em duas metades
+        meio = len(historico_lista) // 2
+        primeira_metade = historico_lista[:meio]
+        segunda_metade = historico_lista[meio:]
         
-        tendencia = self.analisar_tendencia(historico)
-        if tendencia == 'alto':
-            info += f"🎯 RECOMENDAÇÃO: APOSTAR em NÚMEROS ALTOS (19-36)\n"
-        elif tendencia == 'baixo':
-            info += f"🎯 RECOMENDAÇÃO: APOSTAR em NÚMEROS BAIXOS (1-18)\n"
-        else:
-            info += f"⚠️ RECOMENDAÇÃO: Sem tendência clara\n"
-            
+        freq_primeira = sum(1 for n in primeira_metade if n == numero) / len(primeira_metade) if primeira_metade else 0
+        freq_segunda = sum(1 for n in segunda_metade if n == numero) / len(segunda_metade) if segunda_metade else 0
+        
+        if freq_primeira == 0:
+            return 0.8 if freq_segunda > 0 else 0.5
+        
+        tendencia = freq_segunda / freq_primeira
+        return min(tendencia, 1.0)
+    
+    def get_info_selecao(self, numeros_15, numeros_6, historico):
+        """Retorna informação sobre a seleção"""
+        info = f"🎯 SELEÇÃO DOS 6 MELHORES\n"
+        info += f"📊 Origem: {len(numeros_15)} números da seleção inteligente\n"
+        info += f"🔢 Selecionados: {sorted(numeros_6)}\n"
+        
+        if historico:
+            ultimos_10 = list(historico)[-10:] if len(historico) >= 10 else list(historico)
+            acertos_potenciais = sum(1 for n in ultimos_10 if n in numeros_6)
+            info += f"📈 Eficiência teórica: {acertos_potenciais}/10 ({acertos_potenciais*10:.1f}%)\n"
+        
         return info
 
 # =============================
@@ -291,7 +300,6 @@ def enviar_previsao_super_simplificada(previsao):
     try:
         nome_estrategia = previsao['nome']
         numeros_apostar = sorted(previsao['numeros_apostar'])
-        tendencia = previsao.get('tendencia_alto_baixo', None)
         
         if 'Zonas' in nome_estrategia:
             zonas_envolvidas = previsao.get('zonas_envolvidas', [])
@@ -339,12 +347,6 @@ def enviar_previsao_super_simplificada(previsao):
         else:
             mensagem = f"💰 {previsao['nome']}"
         
-        if tendencia:
-            if tendencia == 'alto':
-                mensagem += f" 🔴 (ALTOS)"
-            elif tendencia == 'baixo':
-                mensagem += f" 🔵 (BAIXOS)"
-        
         st.toast(f"🎯 Nova Previsão", icon="🔥")
         st.warning(f"🔔 {mensagem}")
         
@@ -360,7 +362,6 @@ def enviar_previsao_super_simplificada(previsao):
 def enviar_alerta_numeros_simplificado(previsao):
     try:
         numeros_apostar = sorted(previsao['numeros_apostar'])
-        tendencia = previsao.get('tendencia_alto_baixo', None)
         
         metade = len(numeros_apostar) // 2
         linha1 = " ".join(map(str, numeros_apostar[:metade]))
@@ -372,15 +373,8 @@ def enviar_alerta_numeros_simplificado(previsao):
             emoji = "🤖"
         else:
             emoji = "💰"
-        
-        if tendencia == 'alto':
-            indicador = " 🔴"
-        elif tendencia == 'baixo':
-            indicador = " 🔵"
-        else:
-            indicador = ""
             
-        mensagem_simplificada = f"{emoji}{indicador} APOSTAR AGORA\n{linha1}\n{linha2}"
+        mensagem_simplificada = f"{emoji} APOSTAR AGORA\n{linha1}\n{linha2}"
         
         enviar_telegram(mensagem_simplificada)
         logging.info("🔔 Alerta simplificado enviado para Telegram")
@@ -1108,7 +1102,7 @@ class MLRoletaOtimizada:
         }
 
 # =============================
-# ESTRATÉGIA DAS ZONAS COM FILTRO ALTO/BAIXO
+# ESTRATÉGIA DAS ZONAS COM SELEÇÃO DOS 6 MELHORES
 # =============================
 class EstrategiaZonasOtimizada:
     def __init__(self):
@@ -1151,7 +1145,8 @@ class EstrategiaZonasOtimizada:
         self.threshold_base = 28
         
         self.sistema_selecao = SistemaSelecaoInteligente()
-        self.filtro_alto_baixo = FiltroAltoBaixo()
+        # NOVA: Seleção dos 6 melhores (substitui o filtro alto/baixo)
+        self.selecao_melhores_6 = SelecaoMelhores6()
 
     def adicionar_numero(self, numero):
         self.historico.append(numero)
@@ -1290,17 +1285,15 @@ class EstrategiaZonasOtimizada:
                         numeros_combinados, self.historico, "Zonas"
                     )
                 
-                numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
-                    numeros_combinados, self.historico, max_numeros=6
+                # NOVA: Seleciona os 6 melhores sem filtro de tendência
+                numeros_filtrados = self.selecao_melhores_6.selecionar_melhores_6(
+                    numeros_combinados, self.historico
                 )
                 
                 confianca_primaria = self.calcular_confianca_ultra(zona_primaria)
                 confianca_secundaria = self.calcular_confianca_ultra(zona_secundaria)
                 
                 gatilho = f'Zona {zona_primaria} (Score: {score_primario:.1f}) + Zona {zona_secundaria} (Score: {score_secundario:.1f}) | Perf: {self.stats_zonas[zona_primaria]["performance_media"]:.1f}%'
-                
-                if tendencia:
-                    gatilho += f' | {tendencia.upper()}S'
                 gatilho += f' | FINAL: {len(numeros_filtrados)} números'
                 
                 return {
@@ -1312,7 +1305,6 @@ class EstrategiaZonasOtimizada:
                     'zonas_envolvidas': [zona_primaria, zona_secundaria],
                     'tipo': 'dupla',
                     'selecao_inteligente': True,
-                    'tendencia_alto_baixo': tendencia,
                     'numeros_originais_qtd': numeros_originais_qtd
                 }
         
@@ -1324,17 +1316,15 @@ class EstrategiaZonasOtimizada:
                 numeros_apostar, self.historico, "Zonas"
             )
         
-        numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
-            numeros_apostar, self.historico, max_numeros=6
+        # NOVA: Seleciona os 6 melhores sem filtro de tendência
+        numeros_filtrados = self.selecao_melhores_6.selecionar_melhores_6(
+            numeros_apostar, self.historico
         )
         
         confianca = self.calcular_confianca_ultra(zona_primaria)
         score = self.get_zona_score(zona_primaria)
         
         gatilho = f'Zona {zona_primaria} - Score: {score:.1f} | Perf: {self.stats_zonas[zona_primaria]["performance_media"]:.1f}% | Thr: {self.get_threshold_dinamico(zona_primaria)}'
-        
-        if tendencia:
-            gatilho += f' | {tendencia.upper()}S'
         gatilho += f' | FINAL: {len(numeros_filtrados)} números'
         
         return {
@@ -1346,7 +1336,6 @@ class EstrategiaZonasOtimizada:
             'zonas_envolvidas': [zona_primaria],
             'tipo': 'unica',
             'selecao_inteligente': len(numeros_apostar) < len(self.numeros_zonas[zona_primaria]),
-            'tendencia_alto_baixo': tendencia,
             'numeros_originais_qtd': numeros_originais_qtd
         }
 
@@ -1506,8 +1495,6 @@ class EstrategiaZonasOtimizada:
             score = self.get_zona_score(zona)
             analise += f"📍 {zona}: Total:{freq_total}/{len(self.historico)}({perc_total:.1f}%) | Curto:{freq_curto}/{self.janelas_analise['curto_prazo']}({perc_curto:.1f}%) | Score: {score:.1f}\n"
         
-        analise += "\n" + self.filtro_alto_baixo.get_info_tendencia(self.historico) + "\n"
-        
         analise += "\n📊 TENDÊNCIAS AVANÇADAS:\n"
         if len(self.historico) >= 10:
             for zona in self.zonas.keys():
@@ -1552,7 +1539,7 @@ class EstrategiaZonasOtimizada:
         logging.info("📊 Estatísticas das Zonas zeradas")
 
 # =============================
-# ESTRATÉGIA MIDAS
+# ESTRATÉGIA MIDAS (MANTIDA)
 # =============================
 class EstrategiaMidas:
     def __init__(self):
@@ -1563,7 +1550,7 @@ class EstrategiaMidas:
             '3': [3, 13, 23, 33], '4': [4, 14, 24, 34], '5': [5, 15, 25, 35],
             '6': [6, 16, 26, 36], '7': [7, 17, 27], '8': [8, 18, 28], '9': [9, 19, 29]
         }
-        self.filtro_alto_baixo = FiltroAltoBaixo()
+        self.selecao_melhores_6 = SelecaoMelhores6()
 
     def adicionar_numero(self, numero):
         self.historico.append(numero)
@@ -1581,51 +1568,48 @@ class EstrategiaMidas:
             count_zero = sum(1 for n in historico_recente if n in [0, 10, 20, 30])
             if count_zero >= 1:
                 numeros_base = [0, 10, 20, 30]
-                numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
-                    numeros_base, self.historico, max_numeros=4
+                numeros_filtrados = self.selecao_melhores_6.selecionar_melhores_6(
+                    numeros_base, self.historico
                 )
                 return {
                     'nome': 'Padrão do Zero',
                     'numeros_apostar': numeros_filtrados,
                     'gatilho': f'Terminal 0 ativado ({count_zero}x)',
-                    'confianca': 'Média',
-                    'tendencia_alto_baixo': tendencia
+                    'confianca': 'Média'
                 }
 
         if ultimo_numero in [7, 17, 27]:
             count_sete = sum(1 for n in historico_recente if n in [7, 17, 27])
             if count_sete >= 1:
                 numeros_base = [7, 17, 27]
-                numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
-                    numeros_base, self.historico, max_numeros=3
+                numeros_filtrados = self.selecao_melhores_6.selecionar_melhores_6(
+                    numeros_base, self.historico
                 )
                 return {
                     'nome': 'Padrão do Sete',
                     'numeros_apostar': numeros_filtrados,
                     'gatilho': f'Terminal 7 ativado ({count_sete}x)',
-                    'confianca': 'Média',
-                    'tendencia_alto_baixo': tendencia
+                    'confianca': 'Média'
                 }
 
         if ultimo_numero in [5, 15, 25, 35]:
             count_cinco = sum(1 for n in historico_recente if n in [5, 15, 25, 35])
             if count_cinco >= 1:
                 numeros_base = [5, 15, 25, 35]
-                numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
-                    numeros_base, self.historico, max_numeros=4
+                numeros_filtrados = self.selecao_melhores_6.selecionar_melhores_6(
+                    numeros_base, self.historico
                 )
                 return {
                     'nome': 'Padrão do Cinco',
                     'numeros_apostar': numeros_filtrados,
                     'gatilho': f'Terminal 5 ativado ({count_cinco}x)',
-                    'confianca': 'Média',
-                    'tendencia_alto_baixo': tendencia
+                    'confianca': 'Média'
                 }
 
         return None
 
 # =============================
-# ESTRATÉGIA ML COM FILTRO ALTO/BAIXO
+# ESTRATÉGIA ML COM SELEÇÃO DOS 6 MELHORES
 # =============================
 class EstrategiaML:
     def __init__(self):
@@ -1661,7 +1645,7 @@ class EstrategiaML:
         
         self.adicionar_metricas_padroes()
         self.sistema_selecao = SistemaSelecaoInteligente()
-        self.filtro_alto_baixo = FiltroAltoBaixo()
+        self.selecao_melhores_6 = SelecaoMelhores6()
 
     def adicionar_metricas_padroes(self):
         self.metricas_padroes = {
@@ -1959,8 +1943,9 @@ class EstrategiaML:
                             numeros_combinados, self.historico, "ML"
                         )
                     
-                    numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
-                        numeros_combinados, self.historico, max_numeros=6
+                    # NOVA: Seleciona os 6 melhores
+                    numeros_filtrados = self.selecao_melhores_6.selecionar_melhores_6(
+                        numeros_combinados, self.historico
                     )
                     
                     confianca = self.calcular_confianca_com_padroes(distribuicao_ajustada, zona_primaria)
@@ -1972,8 +1957,6 @@ class EstrategiaML:
                     gatilho_extra = ""
                     if padroes_aplicados:
                         gatilho_extra = f" | Padrões: {len(padroes_aplicados)}"
-                    if tendencia:
-                        gatilho_extra += f" | {tendencia.upper()}S"
                     
                     contagem_original_primaria = distribuicao_dict[zona_primaria]
                     contagem_original_secundaria = distribuicao_dict.get(zona_secundaria, 0)
@@ -1992,7 +1975,6 @@ class EstrategiaML:
                         'zonas_envolvidas': [zona_primaria, zona_secundaria],
                         'tipo': 'dupla',
                         'selecao_inteligente': True,
-                        'tendencia_alto_baixo': tendencia,
                         'numeros_originais_qtd': numeros_originais_qtd
                     }
             
@@ -2004,8 +1986,9 @@ class EstrategiaML:
                     numeros_zona, self.historico, "ML"
                 )
             
-            numeros_filtrados, tendencia = self.filtro_alto_baixo.filtrar_por_tendencia(
-                numeros_zona, self.historico, max_numeros=6
+            # NOVA: Seleciona os 6 melhores
+            numeros_filtrados = self.selecao_melhores_6.selecionar_melhores_6(
+                numeros_zona, self.historico
             )
             
             contagem_original = distribuicao_dict[zona_primaria]
@@ -2020,8 +2003,6 @@ class EstrategiaML:
             gatilho_extra = ""
             if padroes_aplicados:
                 gatilho_extra = f" | Padrões: {len(padroes_aplicados)}"
-            if tendencia:
-                gatilho_extra += f" | {tendencia.upper()}S"
             
             return {
                 'nome': 'Machine Learning - CatBoost',
@@ -2035,7 +2016,6 @@ class EstrategiaML:
                 'zonas_envolvidas': [zona_primaria],
                 'tipo': 'unica',
                 'selecao_inteligente': len(numeros_zona) < len(self.numeros_zonas_ml[zona_primaria]),
-                'tendencia_alto_baixo': tendencia,
                 'numeros_originais_qtd': numeros_originais_qtd
             }
         
@@ -2159,8 +2139,6 @@ class EstrategiaML:
             else:
                 analise += "\n⚠️  Nenhuma zona com predominância suficiente (mínimo 7 números)\n"
             
-            analise += "\n" + self.filtro_alto_baixo.get_info_tendencia(self.historico)
-            
             return analise
         else:
             return "🤖 ML: Erro na previsão"
@@ -2283,7 +2261,7 @@ class SistemaRoletaCompleto:
         self.contador_sorteios_global += 1
             
         if self.previsao_ativa:
-            # CORREÇÃO: Verifica acerto APENAS nos números efetivamente apostados
+            # Verifica acerto APENAS nos números efetivamente apostados
             numeros_apostados = self.previsao_ativa.get('numeros_apostar', [])
             acerto = numero_real in numeros_apostados
             
@@ -2291,7 +2269,6 @@ class SistemaRoletaCompleto:
             nome_estrategia = self.previsao_ativa['nome']
             
             if acerto:
-                # Descobrir qual zona acertou (para exibição)
                 if 'Zonas' in nome_estrategia:
                     for zona, numeros in self.estrategia_zonas.numeros_zonas.items():
                         if numero_real in numeros:
@@ -2704,7 +2681,7 @@ with st.sidebar.expander("📊 Informações das Estratégias"):
         st.write("- 📈 Threshold dinâmico por performance")
         st.write("- 🔄 **INVERSÃO AUTOMÁTICA:** Combina as 2 melhores zonas quando possível")
         st.write("- 🎯 **SELEÇÃO INTELIGENTE:** Máximo 15 números selecionados automaticamente")
-        st.write("- 🎯 **FILTRO ALTO/BAIXO:** Reduz para máximo 6 números na tendência predominante")
+        st.write("- 🎯 **SELEÇÃO DOS 6 MELHORES:** Reduz para 6 números baseado em score")
         for zona, dados in info_zonas.items():
             st.write(f"**Zona {zona}** (Núcleo: {dados['central']})")
             st.write(f"Descrição: {dados['descricao']}")
@@ -2718,7 +2695,6 @@ with st.sidebar.expander("📊 Informações das Estratégias"):
         st.write("- **Terminal 0**: 0, 10, 20, 30")
         st.write("- **Terminal 7**: 7, 17, 27") 
         st.write("- **Terminal 5**: 5, 15, 25, 35")
-        st.write("- 🎯 **FILTRO ALTO/BAIXO:** Reduz para máximo 4 números na tendência predominante")
         st.write("---")
     
     elif estrategia == "ML":
@@ -2734,7 +2710,7 @@ with st.sidebar.expander("📊 Informações das Estratégias"):
         st.write("- **Saída**: Zona com maior concentração")
         st.write("- 🔄 **INVERSÃO AUTOMÁTICA:** Combina as 2 melhores zonas quando possível")
         st.write("- 🎯 **SELEÇÃO INTELIGENTE:** Máximo 15 números selecionados automaticamente")
-        st.write("- 🎯 **FILTRO ALTO/BAIXO:** Reduz para máximo 6 números na tendência predominante")
+        st.write("- 🎯 **SELEÇÃO DOS 6 MELHORES:** Reduz para 6 números baseado em score")
         
         info_zonas_ml = st.session_state.sistema.estrategia_ml.get_info_zonas_ml()
         for zona, dados in info_zonas_ml.items():
@@ -2813,13 +2789,6 @@ if sistema.previsao_ativa:
     if previsao.get('selecao_inteligente', False):
         st.success("🎯 **SELEÇÃO INTELIGENTE ATIVA** - 15 melhores números selecionados")
         st.info("📊 **Critérios:** Frequência + Posição + Vizinhança + Tendência")
-    
-    tendencia = previsao.get('tendencia_alto_baixo', None)
-    if tendencia:
-        if tendencia == 'alto':
-            st.info("🔴 **FILTRO ATIVO:** Apostando apenas em NÚMEROS ALTOS (19-36)")
-        else:
-            st.info("🔵 **FILTRO ATIVO:** Apostando apenas em NÚMEROS BAIXOS (1-18)")
     
     numeros_originais = previsao.get('numeros_originais_qtd', len(previsao['numeros_apostar']))
     if numeros_originais > len(previsao['numeros_apostar']):
