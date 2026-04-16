@@ -138,7 +138,7 @@ def limpar_sessao():
         logging.error(f"❌ Erro ao limpar sessão: {e}")
 
 # =============================
-# NOVA CLASSE: FILTRO ALTO/BAIXO (ALTERADO PARA 12 NÚMEROS)
+# FILTRO ALTO/BAIXO - CORRIGIDO (12 NÚMEROS, MAIS SENSÍVEL)
 # =============================
 class FiltroAltoBaixo:
     """
@@ -147,15 +147,15 @@ class FiltroAltoBaixo:
     Saída: MÁXIMO 12 NÚMEROS
     """
     
-    def __init__(self, max_numeros=12):  # ALTERADO: 6 → 12
+    def __init__(self, max_numeros=12):
         self.numeros_baixos = list(range(1, 19))
         self.numeros_altos = list(range(19, 37))
         self.janela_tendencia = 12
         self.max_numeros = max_numeros
         
     def analisar_tendencia(self, historico):
-        """Analisa se a tendência atual é ALTO ou BAIXO"""
-        if len(historico) < 8:
+        """Analisa se a tendência atual é ALTO ou BAIXO - CORRIGIDO para ser mais sensível"""
+        if len(historico) < 6:
             return None
             
         historico_lista = list(historico)
@@ -171,37 +171,28 @@ class FiltroAltoBaixo:
         prop_altos = count_altos / total
         prop_baixos = count_baixos / total
         
-        if len(historico_lista) >= 10:
-            ultimos_5 = historico_lista[-5:]
-            anteriores_5 = historico_lista[-10:-5]
-            
-            altos_ultimos = sum(1 for n in ultimos_5 if n in self.numeros_altos)
-            altos_anteriores = sum(1 for n in anteriores_5 if n in self.numeros_altos)
-            
-            if altos_ultimos > altos_anteriores:
-                tendencia_alto = True
-            elif altos_ultimos < altos_anteriores:
-                tendencia_alto = False
-            else:
-                tendencia_alto = None
-        else:
-            tendencia_alto = None
-        
-        if prop_altos >= 0.55:
+        # CORREÇÃO: Threshold mais baixo para detectar tendência (45% em vez de 55%)
+        if prop_altos >= 0.45:
             return 'alto'
-        elif prop_baixos >= 0.55:
+        elif prop_baixos >= 0.45:
             return 'baixo'
         
+        # Verificar sequência atual
         sequencia_atual = self._get_sequencia_atual(historico_lista)
-        if sequencia_atual == 'alto' and prop_altos >= 0.5:
+        if sequencia_atual == 'alto':
             return 'alto'
-        elif sequencia_atual == 'baixo' and prop_baixos >= 0.5:
+        elif sequencia_atual == 'baixo':
             return 'baixo'
+        
+        # Verificar últimos 5 números
+        if len(historico_lista) >= 5:
+            ultimos_5 = historico_lista[-5:]
+            altos_5 = sum(1 for n in ultimos_5 if n in self.numeros_altos)
+            baixos_5 = sum(1 for n in ultimos_5 if n in self.numeros_baixos)
             
-        if tendencia_alto is not None:
-            if tendencia_alto and prop_altos >= 0.5:
+            if altos_5 >= 3:
                 return 'alto'
-            elif not tendencia_alto and prop_baixos >= 0.5:
+            elif baixos_5 >= 3:
                 return 'baixo'
         
         return None
@@ -236,12 +227,14 @@ class FiltroAltoBaixo:
         """
         Filtra os números apostados baseado na tendência.
         Retorna no máximo 'max_numeros' números.
+        CORREÇÃO: Se não houver números na faixa, retorna todos (sem filtro)
         """
         if not numeros_apostar:
             return [], None
             
         tendencia = self.analisar_tendencia(historico)
         
+        # Se não há tendência clara, retorna todos os números (limitado a max_numeros)
         if tendencia is None:
             return numeros_apostar[:self.max_numeros], None
         
@@ -250,9 +243,19 @@ class FiltroAltoBaixo:
         else:
             numeros_filtrados = [n for n in numeros_apostar if n in self.numeros_baixos]
         
+        # CORREÇÃO: Se não houver números na faixa escolhida, mantém todos
         if not numeros_filtrados:
             return numeros_apostar[:self.max_numeros], tendencia
         
+        # Se houver menos que o mínimo desejado, mantém todos da faixa
+        if len(numeros_filtrados) < 4 and len(numeros_apostar) >= 4:
+            # Tenta incluir mais números da mesma faixa
+            if tendencia == 'alto':
+                numeros_filtrados = [n for n in numeros_apostar if n in self.numeros_altos]
+            else:
+                numeros_filtrados = [n for n in numeros_apostar if n in self.numeros_baixos]
+        
+        # Limitar ao máximo
         if len(numeros_filtrados) > self.max_numeros:
             numeros_filtrados = numeros_filtrados[:self.max_numeros]
         
@@ -260,7 +263,7 @@ class FiltroAltoBaixo:
     
     def get_info_tendencia(self, historico):
         """Retorna informações detalhadas sobre a tendência"""
-        if len(historico) < 8:
+        if len(historico) < 6:
             return "Aguardando mais dados para definir tendência..."
             
         historico_lista = list(historico)
@@ -294,7 +297,7 @@ class FiltroAltoBaixo:
         elif tendencia == 'baixo':
             info += f"🎯 RECOMENDAÇÃO: APOSTAR em NÚMEROS BAIXOS (1-18) - MÁXIMO {self.max_numeros} NÚMEROS\n"
         else:
-            info += f"⚠️ RECOMENDAÇÃO: Sem tendência clara - manter estratégia original\n"
+            info += f"⚠️ RECOMENDAÇÃO: Sem tendência clara - mantendo todos os números\n"
             
         return info
 
@@ -660,7 +663,7 @@ class SistemaSelecaoInteligente:
         return analise
 
 # =============================
-# CLASSE PRINCIPAL DA ROLETA ATUALIZADA
+# CLASSE PRINCIPAL DA ROLETA
 # =============================
 class RoletaInteligente:
     def __init__(self):
@@ -1131,7 +1134,7 @@ class MLRoletaOtimizada:
         }
 
 # =============================
-# ESTRATÉGIA DAS ZONAS ATUALIZADA - COM FILTRO ALTO/BAIXO (12 NÚMEROS)
+# ESTRATÉGIA DAS ZONAS ATUALIZADA
 # =============================
 class EstrategiaZonasOtimizada:
     def __init__(self):
@@ -1175,7 +1178,7 @@ class EstrategiaZonasOtimizada:
         
         self.sistema_selecao = SistemaSelecaoInteligente()
         
-        # FILTRO ALTO/BAIXO - ALTERADO PARA 12 NÚMEROS
+        # FILTRO ALTO/BAIXO - 12 NÚMEROS
         self.filtro_alto_baixo = FiltroAltoBaixo(max_numeros=12)
 
     def adicionar_numero(self, numero):
@@ -1331,7 +1334,7 @@ class EstrategiaZonasOtimizada:
                 
                 return {
                     'nome': f'Zonas Duplas - {zona_primaria} + {zona_secundaria}',
-                    'numeros_apostar': numeros_filtrados,  # <-- NÚMEROS EFETIVAMENTE APOSTADOS
+                    'numeros_apostar': numeros_filtrados,
                     'gatilho': gatilho,
                     'confianca': f'{confianca_primaria}+{confianca_secundaria}',
                     'zona': f'{zona_primaria}+{zona_secundaria}',
@@ -1366,7 +1369,7 @@ class EstrategiaZonasOtimizada:
         
         return {
             'nome': f'Zona {zona_primaria}',
-            'numeros_apostar': numeros_filtrados,  # <-- NÚMEROS EFETIVAMENTE APOSTADOS
+            'numeros_apostar': numeros_filtrados,
             'gatilho': gatilho,
             'confianca': confianca,
             'zona': zona_primaria,
@@ -1579,7 +1582,7 @@ class EstrategiaZonasOtimizada:
         logging.info("📊 Estatísticas das Zonas zeradas")
 
 # =============================
-# ESTRATÉGIA MIDAS (MANTIDA COM FILTRO 12 NÚMEROS)
+# ESTRATÉGIA MIDAS (MANTIDA)
 # =============================
 class EstrategiaMidas:
     def __init__(self):
@@ -1652,7 +1655,7 @@ class EstrategiaMidas:
         return None
 
 # =============================
-# ESTRATÉGIA ML ATUALIZADA COM FILTRO ALTO/BAIXO (12 NÚMEROS)
+# ESTRATÉGIA ML ATUALIZADA
 # =============================
 class EstrategiaML:
     def __init__(self):
@@ -1690,7 +1693,7 @@ class EstrategiaML:
         
         self.sistema_selecao = SistemaSelecaoInteligente()
         
-        # FILTRO ALTO/BAIXO - ALTERADO PARA 12 NÚMEROS
+        # FILTRO ALTO/BAIXO - 12 NÚMEROS
         self.filtro_alto_baixo = FiltroAltoBaixo(max_numeros=12)
 
     def adicionar_metricas_padroes(self):
@@ -2014,7 +2017,7 @@ class EstrategiaML:
                     
                     return {
                         'nome': 'Machine Learning - CatBoost (Duplo)',
-                        'numeros_apostar': numeros_filtrados,  # <-- NÚMEROS EFETIVAMENTE APOSTADOS
+                        'numeros_apostar': numeros_filtrados,
                         'gatilho': gatilho,
                         'confianca': confianca,
                         'previsao_ml': previsao_ml,
@@ -2058,7 +2061,7 @@ class EstrategiaML:
             
             return {
                 'nome': 'Machine Learning - CatBoost',
-                'numeros_apostar': numeros_filtrados,  # <-- NÚMEROS EFETIVAMENTE APOSTADOS
+                'numeros_apostar': numeros_filtrados,
                 'gatilho': f'ML CatBoost - Zona {zona_primaria} ({contagem_original}→{contagem_ajustada}/25) | FINAL: {len(numeros_filtrados)} números{gatilho_extra}',
                 'confianca': confianca,
                 'previsao_ml': previsao_ml,
@@ -2254,7 +2257,7 @@ class EstrategiaML:
         logging.info("🔄 Padrões sequenciais e métricas zerados")
 
 # =============================
-# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA
+# SISTEMA DE GESTÃO ATUALIZADO
 # =============================
 class SistemaRoletaCompleto:
     def __init__(self):
@@ -2357,7 +2360,7 @@ class SistemaRoletaCompleto:
                 'numero': numero_real,
                 'acerto': acerto,
                 'estrategia': nome_estrategia,
-                'previsao': numeros_apostados,  # Registra os números efetivamente apostados
+                'previsao': numeros_apostados,
                 'rotacionou': rotacionou,
                 'zona_acertada': zona_acertada_str,
                 'tipo_aposta': self.previsao_ativa.get('tipo', 'unica')
@@ -2464,7 +2467,7 @@ def fetch_latest_result():
         return None
 
 # =============================
-# APLICAÇÃO STREAMLIT ATUALIZADA
+# APLICAÇÃO STREAMLIT
 # =============================
 st.set_page_config(page_title="IA Roleta — Multi-Estratégias", layout="centered")
 st.title("🎯 IA Roleta — Sistema Multi-Estratégias")
