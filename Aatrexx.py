@@ -139,35 +139,13 @@ def limpar_sessao():
         logging.error(f"❌ Erro ao limpar sessão: {e}")
 
 # =============================
-# FUNÇÃO PARA IDENTIFICAR NÚMEROS RAIO (LIGHTNING ROULETTE)
-# =============================
-def is_lightning_number(numero):
-    """
-    Verifica se um número é considerado "raio" no Lightning Roulette.
-    Em cada rodada, números aleatórios são multiplicados (1-5 números recebem multiplicadores).
-    Como a API não fornece diretamente, vamos considerar que TODOS os números podem ser raio
-    e vamos marcar alguns aleatoriamente para simular (ou baseado em padrões reais).
-    """
-    # Na versão real, você deve capturar o campo "lightningNumbers" da API
-    # Exemplo: lightning_numbers = data.get('lightningNumbers', [])
-    # return numero in lightning_numbers
-    
-    # Por enquanto, vamos usar uma lógica de exemplo: números que terminam com 7 ou 3 são raio
-    # Isso é APENAS para demonstração. Na prática, você deve usar os dados reais da API
-    return str(numero).endswith('7') or str(numero).endswith('3')
-
-# Versão melhorada para capturar da API real
-def is_lightning_number_from_api(numero, lightning_numbers):
-    """Verifica se o número está na lista de números com multiplicador"""
-    return numero in lightning_numbers if lightning_numbers else False
-
-# =============================
 # FUNÇÃO PARA FORMATAR NÚMERO COM ESTILO DE RAIO
 # =============================
-def format_number_with_lightning(numero, is_lightning):
+def format_number_with_lightning(numero, is_lightning, multiplier=None):
     """Retorna HTML formatado para o número com estilo diferenciado se for raio"""
     if is_lightning:
-        return f'<span style="background: linear-gradient(135deg, #FFD700, #FFA500); color: #000; font-weight: bold; padding: 4px 8px; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px #FFD700;">⚡{numero}⚡</span>'
+        multiplier_text = f" x{multiplier}" if multiplier else ""
+        return f'<span style="background: linear-gradient(135deg, #FFD700, #FFA500); color: #000; font-weight: bold; padding: 4px 8px; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px #FFD700;" title="Número Raio!{multiplier_text}">⚡{numero}⚡</span>'
     else:
         return f'<span style="background: #2c3e50; color: white; padding: 4px 8px; border-radius: 50%; display: inline-block;">{numero}</span>'
 
@@ -264,11 +242,11 @@ def enviar_alerta_numeros_simplificado(previsao):
     except Exception as e:
         logging.error(f"Erro ao enviar alerta simplificado: {e}")
 
-def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada=None, is_lightning=False):
+def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada=None, is_lightning=False, multiplier=None):
     """Envia notificação de resultado super simplificado com info de raio"""
     try:
         raio_emoji = "⚡ " if is_lightning else ""
-        raio_texto = " (RAIO!)" if is_lightning else ""
+        raio_texto = f" (RAIO! x{multiplier})" if is_lightning and multiplier else " (RAIO!)" if is_lightning else ""
         
         if acerto:
             if 'Zonas' in nome_estrategia and zona_acertada:
@@ -327,7 +305,7 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
             mensagem = f"{raio_emoji}❌ Erro\n🎲 Número: {numero_real}{raio_texto}"
         
         if is_lightning:
-            st.toast(f"⚡⚡⚡ NÚMERO RAIO! ⚡⚡⚡", icon="⚡")
+            st.toast(f"⚡⚡⚡ NÚMERO RAIO! x{multiplier} ⚡⚡⚡" if multiplier else "⚡⚡⚡ NÚMERO RAIO! ⚡⚡⚡", icon="⚡")
         
         st.toast(f"🎲 Resultado", icon="✅" if acerto else "❌")
         
@@ -345,20 +323,21 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
         if 'telegram_token' in st.session_state and 'telegram_chat_id' in st.session_state:
             if st.session_state.telegram_token and st.session_state.telegram_chat_id:
                 enviar_telegram(f"📢 RESULTADO\n{mensagem}")
-                enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia, is_lightning)
+                enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia, is_lightning, multiplier)
                 
         salvar_sessao()
     except Exception as e:
         logging.error(f"Erro ao enviar resultado: {e}")
 
-def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia, is_lightning=False):
+def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia, is_lightning=False, multiplier=None):
     """Envia alerta de conferência super simplificado com info de raio"""
     try:
         raio_emoji = "⚡" if is_lightning else ""
+        raio_texto = f" x{multiplier}" if is_lightning and multiplier else ""
         if acerto:
-            mensagem = f"🎉 ACERTOU! {numero_real}{raio_emoji}"
+            mensagem = f"🎉 ACERTOU! {numero_real}{raio_emoji}{raio_texto}"
         else:
-            mensagem = f"💥 ERROU! {numero_real}{raio_emoji}"
+            mensagem = f"💥 ERROU! {numero_real}{raio_emoji}{raio_texto}"
             
         enviar_telegram(mensagem)
         logging.info("🔔 Alerta de conferência enviado para Telegram")
@@ -2127,7 +2106,7 @@ class SistemaRoletaCompleto:
                 return True
             return False
 
-    def processar_novo_numero(self, numero, is_lightning=False):
+    def processar_novo_numero(self, numero, is_lightning=False, multiplier=None):
         if isinstance(numero, dict) and 'number' in numero:
             numero_real = numero['number']
         else:
@@ -2167,7 +2146,7 @@ class SistemaRoletaCompleto:
                 self.erros += 1
             
             zona_acertada_str = "+".join(zonas_acertadas) if zonas_acertadas else None
-            enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada_str, is_lightning)
+            enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada_str, is_lightning, multiplier)
             
             self.historico_desempenho.append({
                 'numero': numero_real,
@@ -2177,7 +2156,8 @@ class SistemaRoletaCompleto:
                 'rotacionou': rotacionou,
                 'zona_acertada': zona_acertada_str,
                 'tipo_aposta': self.previsao_ativa.get('tipo', 'unica'),
-                'is_lightning': is_lightning
+                'is_lightning': is_lightning,
+                'multiplier': multiplier
             })
             
             self.previsao_ativa = None
@@ -2266,44 +2246,44 @@ def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
         logging.error(f"Erro ao salvar histórico: {e}")
 
 def fetch_latest_result():
-    """Busca o último resultado da API com informações de raio"""
+    """Busca o último resultado da API com informações de raio baseado na estrutura real"""
     try:
         response = requests.get(API_URL, headers=HEADERS, timeout=5)
         response.raise_for_status()
         data = response.json()
+        
+        # Extrai os dados conforme a estrutura real da API
         game_data = data.get("data", {})
         result = game_data.get("result", {})
         outcome = result.get("outcome", {})
         number = outcome.get("number")
         timestamp = game_data.get("startedAt")
         
-        # Tenta capturar os números que receberam multiplicadores (raio)
-        # Em Lightning Roulette, alguns números têm multiplicadores
-        # A estrutura pode variar, vamos tentar alguns campos comuns
-        lightning_numbers = []
+        # Captura os números com multiplicador (raios) - ESTRUTURA CORRETA
+        lucky_numbers_list = result.get("luckyNumbersList", [])
+        lightning_multiplier = result.get("lightningMultiplier", 100)
         
-        # Tenta diferentes formas que a API pode retornar os números com multiplicador
-        if 'lightningNumbers' in game_data:
-            lightning_numbers = game_data.get('lightningNumbers', [])
-        elif 'luckyNumbers' in game_data:
-            lightning_numbers = game_data.get('luckyNumbers', [])
-        elif 'multipliers' in game_data:
-            # Se tiver multiplicadores, pega os números que têm multiplicador > 1
-            multipliers = game_data.get('multipliers', {})
-            lightning_numbers = [num for num, mult in multipliers.items() if mult > 1]
-        elif 'lightning' in game_data:
-            lightning_data = game_data.get('lightning', {})
-            if 'numbers' in lightning_data:
-                lightning_numbers = lightning_data.get('numbers', [])
+        # Cria um dicionário de números raio com seus multiplicadores
+        lightning_dict = {}
+        for item in lucky_numbers_list:
+            num = item.get("number")
+            multiplier = item.get("roundedMultiplier", lightning_multiplier)
+            if num is not None:
+                lightning_dict[num] = multiplier
         
-        # Converte para inteiros se necessário
-        lightning_numbers = [int(n) for n in lightning_numbers if str(n).isdigit()]
+        # Verifica se o número sorteado é raio
+        is_lightning = number in lightning_dict if number is not None else False
+        multiplier = lightning_dict.get(number) if is_lightning else None
+        
+        logging.info(f"🔔 Número {number} sorteado - Raio: {is_lightning}, Multiplicador: {multiplier}")
         
         return {
-            "number": number, 
+            "number": number,
             "timestamp": timestamp,
-            "lightning_numbers": lightning_numbers,
-            "is_lightning": number in lightning_numbers if number is not None else False
+            "lightning_numbers": list(lightning_dict.keys()),
+            "lightning_multipliers": lightning_dict,
+            "is_lightning": is_lightning,
+            "multiplier": multiplier
         }
     except Exception as e:
         logging.error(f"Erro ao buscar resultado: {e}")
@@ -2658,9 +2638,21 @@ else:
 if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo_ts:
     numero_atual = resultado.get("number")
     if numero_atual is not None:
-        st.session_state.historico.append(resultado)
-        # Passa a informação se é raio para o processamento
-        st.session_state.sistema.processar_novo_numero(resultado, resultado.get('is_lightning', False))
+        # Adiciona todas as informações ao histórico
+        resultado_completo = {
+            "number": numero_atual,
+            "timestamp": resultado["timestamp"],
+            "is_lightning": resultado["is_lightning"],
+            "multiplier": resultado["multiplier"],
+            "lightning_numbers": resultado["lightning_numbers"]
+        }
+        st.session_state.historico.append(resultado_completo)
+        # Passa a informação se é raio e o multiplicador para o processamento
+        st.session_state.sistema.processar_novo_numero(
+            resultado_completo, 
+            resultado["is_lightning"], 
+            resultado["multiplier"]
+        )
         salvar_resultado_em_arquivo(st.session_state.historico)
         salvar_sessao()
 
@@ -2674,12 +2666,8 @@ if st.session_state.historico:
         if isinstance(item, dict):
             num = item.get('number')
             is_lightning = item.get('is_lightning', False)
-            
-            # Tenta identificar se é raio de outras formas
-            if not is_lightning and 'lightning_numbers' in item:
-                is_lightning = num in item.get('lightning_numbers', [])
-                
-            numeros_html.append(format_number_with_lightning(num, is_lightning))
+            multiplier = item.get('multiplier')
+            numeros_html.append(format_number_with_lightning(num, is_lightning, multiplier))
         else:
             numeros_html.append(format_number_with_lightning(item, False))
     
@@ -2690,6 +2678,14 @@ if st.session_state.historico:
                          if isinstance(item, dict) and item.get('is_lightning', False))
     if lightning_count > 0:
         st.info(f"⚡ Últimos 50 sorteios: {lightning_count} números raio ({lightning_count/50*100:.1f}%)")
+    
+    # Mostrar últimos números raio com multiplicadores
+    ultimos_raios = [item for item in st.session_state.historico[-20:] 
+                    if isinstance(item, dict) and item.get('is_lightning', False)]
+    if ultimos_raios:
+        st.write("**⚡ Últimos números raio:**")
+        raios_text = ", ".join([f"{item['number']} (x{item.get('multiplier', 100)})" for item in ultimos_raios[-5:]])
+        st.write(raios_text)
 else:
     st.write("Nenhum número registrado")
 
@@ -2725,7 +2721,7 @@ if sistema.previsao_ativa:
             nucleo1 = "7" if zona1 == 'Vermelha' else "10" if zona1 == 'Azul' else "2"
             nucleo2 = "7" if zona2 == 'Vermelha' else "10" if zona2 == 'Azul' else "2"
             st.write(f"**📍 Núcleos Combinados:** {nucleo1} + {nucleo2}")
-            st.info("🔄 **ESTRATÉGIA DUPLA:** Investindo nas 2 melhores zonas")
+            st.info("🔄 **ESTRATÉGIA DUPLA:** Maior cobertura com 2 zonas")
         else:
             zona = previsao.get('zona', '')
             if zona == 'Vermelha':
@@ -2746,7 +2742,7 @@ if sistema.previsao_ativa:
             nucleo1 = "7" if zona1 == 'Vermelha' else "10" if zona1 == 'Azul' else "2"
             nucleo2 = "7" if zona2 == 'Vermelha' else "10" if zona2 == 'Azul' else "2"
             st.write(f"**🤖 Núcleos Combinados:** {nucleo1} + {nucleo2}")
-            st.info("🔄 **ESTRATÉGIA DUPLA:** Investindo nas 2 melhores zonas")
+            st.info("🔄 **ESTRATÉGIA DUPLA:** Maior cobertura com 2 zonas")
         else:
             zona_ml = previsao.get('zona_ml', '')
             if zona_ml == 'Vermelha':
@@ -2818,6 +2814,7 @@ if sistema.historico_desempenho:
         emoji = "🎉" if resultado['acerto'] else "❌"
         rotacao_emoji = " 🔄" if resultado.get('rotacionou', False) else ""
         raio_emoji = "⚡" if resultado.get('is_lightning', False) else ""
+        raio_mult = f" x{resultado.get('multiplier', 100)}" if resultado.get('is_lightning', False) else ""
         zona_info = ""
         if resultado['acerto'] and resultado.get('zona_acertada'):
             if '+' in resultado['zona_acertada']:
@@ -2849,7 +2846,7 @@ if sistema.historico_desempenho:
         if resultado.get('tipo_aposta') == 'dupla':
             tipo_aposta_info = " [DUPLA]"
         
-        st.write(f"{emoji}{raio_emoji}{rotacao_emoji} {resultado['estrategia']}{tipo_aposta_info}: Número {resultado['numero']}{zona_info}")
+        st.write(f"{emoji}{raio_emoji}{rotacao_emoji} {resultado['estrategia']}{tipo_aposta_info}: Número {resultado['numero']}{raio_mult}{zona_info}")
 
 if os.path.exists(HISTORICO_PATH):
     with open(HISTORICO_PATH, "r") as f:
