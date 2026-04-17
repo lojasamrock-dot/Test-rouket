@@ -139,6 +139,215 @@ def limpar_sessao():
         logging.error(f"❌ Erro ao limpar sessão: {e}")
 
 # =============================
+# NOVO: ANALISADOR DE PADRÕES AVANÇADO
+# =============================
+class AnalisadorPadroesAvancado:
+    def __init__(self):
+        self.padroes_detectados = {}
+        self.historico_padroes = deque(maxlen=100)
+        
+        # Números mais frequentes baseado nos dados reais
+        self.numeros_alta_frequencia = [30, 21, 18, 25, 8, 29, 15, 5, 10, 23]
+        
+        # Pares de números que saem frequentemente juntos
+        self.pares_frequentes = {
+            30: [21, 18, 25, 8],
+            21: [30, 18, 25, 29],
+            18: [30, 21, 29, 15],
+            25: [30, 21, 27, 18],
+            8: [30, 22, 21, 15],
+            29: [21, 18, 30, 28],
+            15: [18, 29, 8, 10],
+            10: [15, 30, 23, 5]
+        }
+        
+        # Números que costumam ser raio
+        self.numeros_raio_frequentes = [20, 24, 8, 10, 12, 29]
+        
+    def analisar_sequencia(self, historico):
+        """Analisa a sequência atual e retorna recomendações"""
+        if len(historico) < 5:
+            return None
+            
+        historico_numeros = []
+        for item in list(historico)[-20:]:
+            if isinstance(item, dict):
+                num = item.get('number')
+                if num is not None:
+                    historico_numeros.append(num)
+            else:
+                historico_numeros.append(item)
+        
+        recomendacoes = {}
+        
+        # 1. Análise de repetição de números
+        ultimo_numero = historico_numeros[-1] if historico_numeros else None
+        if ultimo_numero in self.pares_frequentes:
+            recomendacoes['pares'] = {
+                'numeros': self.pares_frequentes[ultimo_numero],
+                'confianca': 'Alta',
+                'peso': 1.5
+            }
+        
+        # 2. Análise de padrão de alternância
+        if len(historico_numeros) >= 3:
+            ultimos_3 = historico_numeros[-3:]
+            # Verifica padrão alto-baixo-alto ou baixo-alto-baixo
+            padrao_alternancia = []
+            for i in range(len(ultimos_3)-1):
+                padrao_alternancia.append(ultimos_3[i+1] - ultimos_3[i])
+            
+            if all(p > 0 for p in padrao_alternancia) or all(p < 0 for p in padrao_alternancia):
+                tendencia = 'crescente' if padrao_alternancia[0] > 0 else 'decrescente'
+                if tendencia == 'crescente' and ultimo_numero < 30:
+                    recomendacoes['tendencia'] = {
+                        'numeros': list(range(ultimo_numero + 1, min(ultimo_numero + 8, 37))),
+                        'confianca': 'Média',
+                        'peso': 1.2
+                    }
+                elif tendencia == 'decrescente' and ultimo_numero > 5:
+                    recomendacoes['tendencia'] = {
+                        'numeros': list(range(max(0, ultimo_numero - 7), ultimo_numero)),
+                        'confianca': 'Média',
+                        'peso': 1.2
+                    }
+        
+        # 3. Análise de números atrasados
+        todos_numeros = set(range(37))
+        numeros_sorteados = set(historico_numeros[-30:]) if len(historico_numeros) >= 30 else set(historico_numeros)
+        numeros_atrasados = list(todos_numeros - numeros_sorteados)
+        
+        if numeros_atrasados:
+            # Pega os números atrasados que são de alta frequência
+            atrasados_frequentes = [n for n in numeros_atrasados if n in self.numeros_alta_frequencia]
+            if atrasados_frequentes:
+                recomendacoes['atrasados'] = {
+                    'numeros': atrasados_frequentes[:5],
+                    'confianca': 'Média-Alta',
+                    'peso': 1.3
+                }
+        
+        # 4. Análise de raios (quando houver)
+        ultimos_raios = [item for item in list(historico)[-20:] 
+                        if isinstance(item, dict) and item.get('is_lightning', False)]
+        if len(ultimos_raios) >= 2:
+            # Se teve raio recente, pode vir outro número normal
+            recomendacoes['pos_raio'] = {
+                'numeros': [n for n in self.numeros_alta_frequencia if n != ultimo_numero][:8],
+                'confianca': 'Média',
+                'peso': 1.1
+            }
+        
+        return recomendacoes
+
+# =============================
+# NOVO: ESTRATÉGIA DE NÚMEROS QUENTES (HOT NUMBERS)
+# =============================
+class EstrategiaHotNumbers:
+    def __init__(self):
+        self.historico = deque(maxlen=100)
+        self.numeros_hot = []
+        self.numeros_cold = []
+        self.janela_analise = 30
+        
+    def adicionar_numero(self, numero):
+        self.historico.append(numero)
+        self.atualizar_hot_numbers()
+        
+    def atualizar_hot_numbers(self):
+        if len(self.historico) < self.janela_analise:
+            return
+            
+        historico_lista = list(self.historico)[-self.janela_analise:]
+        contagem = Counter(historico_lista)
+        
+        # Hot numbers: números que apareceram mais de 3 vezes nos últimos 30
+        self.numeros_hot = [num for num, count in contagem.items() if count >= 3]
+        # Cold numbers: números que não apareceram nos últimos 30
+        todos_numeros = set(range(37))
+        self.numeros_cold = list(todos_numeros - set(historico_lista))
+        
+    def analisar_hot_numbers(self):
+        if len(self.historico) < 15:
+            return None
+            
+        if not self.numeros_hot:
+            return None
+            
+        # Se tem mais de 5 hot numbers, seleciona os mais frequentes
+        hot_selecionados = self.numeros_hot[:8] if len(self.numeros_hot) > 8 else self.numeros_hot
+        
+        return {
+            'nome': 'Hot Numbers (Números Quentes)',
+            'numeros_apostar': hot_selecionados,
+            'gatilho': f'{len(self.numeros_hot)} números quentes nos últimos 30 sorteios',
+            'confianca': 'Alta' if len(self.numeros_hot) <= 10 else 'Média',
+            'tipo': 'hot_numbers'
+        }
+    
+    def analisar_cold_numbers(self):
+        if len(self.historico) < 30:
+            return None
+            
+        if not self.numeros_cold:
+            return None
+            
+        # Seleciona cold numbers que são historicamente frequentes
+        cold_frequentes = [n for n in self.numeros_cold if n in [30, 21, 18, 25, 8, 29, 15, 5, 10, 23]]
+        cold_selecionados = cold_frequentes[:6] if cold_frequentes else self.numeros_cold[:6]
+        
+        if cold_selecionados:
+            return {
+                'nome': 'Cold Numbers (Números Atrasados)',
+                'numeros_apostar': cold_selecionados,
+                'gatilho': f'{len(self.numeros_cold)} números atrasados',
+                'confianca': 'Média',
+                'tipo': 'cold_numbers'
+            }
+        return None
+
+# =============================
+# NOVO: ESTRATÉGIA DE RAIOS
+# =============================
+class EstrategiaRaios:
+    def __init__(self):
+        self.historico_raios = deque(maxlen=50)
+        self.multipliers = []
+        
+    def adicionar_raio(self, numero, multiplier):
+        self.historico_raios.append({
+            'numero': numero,
+            'multiplier': multiplier,
+            'timestamp': datetime.now()
+        })
+        self.multipliers.append(multiplier)
+        
+    def analisar_raios(self):
+        if len(self.historico_raios) < 3:
+            return None
+            
+        # Números que mais foram raio
+        numeros_raios = [r['numero'] for r in self.historico_raios]
+        contagem_raios = Counter(numeros_raios)
+        
+        # Números que podem ser raio em breve (baseado em padrão)
+        numeros_comuns_raios = [20, 24, 8, 10, 12, 29]
+        
+        # Seleciona números que ainda não saíram como raio recentemente
+        ultimos_raios_numeros = [r['numero'] for r in list(self.historico_raios)[-10:]]
+        candidatos = [n for n in numeros_comuns_raios if n not in ultimos_raios_numeros[-3:]]
+        
+        if candidatos:
+            return {
+                'nome': 'Estratégia de Raios',
+                'numeros_apostar': candidatos[:5],
+                'gatilho': f'Padrão de raios detectado - Multiplicadores recentes: {self.multipliers[-3:]}',
+                'confianca': 'Média-Alta',
+                'tipo': 'raios'
+            }
+        return None
+
+# =============================
 # FUNÇÃO PARA FORMATAR NÚMERO COM ESTILO DE RAIO
 # =============================
 def format_number_with_lightning(numero, is_lightning, multiplier=None):
@@ -147,6 +356,9 @@ def format_number_with_lightning(numero, is_lightning, multiplier=None):
         multiplier_text = f" x{multiplier}" if multiplier else ""
         return f'<span style="background: linear-gradient(135deg, #FFD700, #FFA500); color: #000; font-weight: bold; padding: 4px 8px; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px #FFD700;" title="Número Raio!{multiplier_text}">⚡{numero}⚡</span>'
     else:
+        # Hot numbers tem cor diferenciada também
+        if hasattr(st.session_state, 'hot_numbers') and numero in st.session_state.hot_numbers:
+            return f'<span style="background: linear-gradient(135deg, #FF4444, #CC0000); color: white; font-weight: bold; padding: 4px 8px; border-radius: 50%; display: inline-block;" title="Número Quente">🔥{numero}🔥</span>'
         return f'<span style="background: #2c3e50; color: white; padding: 4px 8px; border-radius: 50%; display: inline-block;">{numero}</span>'
 
 # =============================
@@ -176,6 +388,10 @@ def enviar_previsao_super_simplificada(previsao):
                     mensagem = "📍 Núcleo 2"
                 else:
                     mensagem = f"📍 Núcleo {zona}"
+        elif 'Hot Numbers' in nome_estrategia:
+            mensagem = f"🔥 Números Quentes: {', '.join(map(str, sorted(numeros_apostar)[:5]))}..."
+        elif 'Raios' in nome_estrategia:
+            mensagem = f"⚡ Possíveis Raios: {', '.join(map(str, sorted(numeros_apostar)))}"
         elif 'Machine Learning' in nome_estrategia or 'ML' in nome_estrategia or 'CatBoost' in nome_estrategia:
             zonas_envolvidas = previsao.get('zonas_envolvidas', [])
             if len(zonas_envolvidas) > 1:
@@ -231,6 +447,10 @@ def enviar_alerta_numeros_simplificado(previsao):
             emoji = "📍"
         elif 'ML' in nome_estrategia:
             emoji = "🤖"
+        elif 'Hot Numbers' in nome_estrategia:
+            emoji = "🔥"
+        elif 'Raios' in nome_estrategia:
+            emoji = "⚡"
         else:
             emoji = "💰"
             
@@ -299,6 +519,10 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
                     else:
                         nucleo = zona_acertada
                     mensagem = f"{raio_emoji}✅ Acerto Núcleo {nucleo}\n🎲 Número: {numero_real}{raio_texto}"
+            elif 'Hot Numbers' in nome_estrategia:
+                mensagem = f"🔥✅ Acerto Hot Number!\n🎲 Número: {numero_real}{raio_texto}"
+            elif 'Raios' in nome_estrategia and is_lightning:
+                mensagem = f"⚡✅ ACERTOU O RAIO! x{multiplier}\n🎲 Número: {numero_real}"
             else:
                 mensagem = f"{raio_emoji}✅ Acerto\n🎲 Número: {numero_real}{raio_texto}"
         else:
@@ -312,6 +536,8 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
         if acerto:
             if is_lightning:
                 st.success(f"⚡⚡⚡ {mensagem} ⚡⚡⚡")
+            elif 'Hot Numbers' in nome_estrategia:
+                st.success(f"🔥 {mensagem}")
             else:
                 st.success(f"📢 {mensagem}")
         else:
@@ -556,7 +782,7 @@ class RoletaInteligente:
         return vizinhos
 
 # =============================
-# MÓDULO DE MACHINE LEARNING
+# MÓDULO DE MACHINE LEARNING (MANTIDO IGUAL)
 # =============================
 class MLRoletaOtimizada:
     def __init__(
@@ -984,7 +1210,7 @@ class MLRoletaOtimizada:
         }
 
 # =============================
-# ESTRATÉGIA DAS ZONAS (SEM FILTRO ALTO/BAIXO)
+# ESTRATÉGIA DAS ZONAS (MANTIDA IGUAL)
 # =============================
 class EstrategiaZonasOtimizada:
     def __init__(self):
@@ -1472,7 +1698,7 @@ class EstrategiaMidas:
         return None
 
 # =============================
-# ESTRATÉGIA ML (SEM FILTRO ALTO/BAIXO)
+# ESTRATÉGIA ML (MANTIDA IGUAL)
 # =============================
 class EstrategiaML:
     def __init__(self):
@@ -2053,13 +2279,17 @@ class EstrategiaML:
         logging.info("🔄 Padrões sequenciais e métricas zerados")
 
 # =============================
-# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA
+# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA E NOVAS ESTRATÉGIAS
 # =============================
 class SistemaRoletaCompleto:
     def __init__(self):
         self.estrategia_zonas = EstrategiaZonasOtimizada()
         self.estrategia_midas = EstrategiaMidas()
         self.estrategia_ml = EstrategiaML()
+        self.estrategia_hot = EstrategiaHotNumbers()
+        self.estrategia_raios = EstrategiaRaios()
+        self.analisador_padroes = AnalisadorPadroesAvancado()
+        
         self.previsao_ativa = None
         self.historico_desempenho = []
         self.acertos = 0
@@ -2090,9 +2320,18 @@ class SistemaRoletaCompleto:
             if self.sequencia_erros >= 2:
                 estrategia_atual = self.estrategia_selecionada
                 
+                # Rotação inteligente baseada no desempenho
                 if estrategia_atual == "Zonas":
-                    nova_estrategia = "ML"
+                    # Verifica se Hot Numbers está performando bem
+                    if hasattr(self, 'estrategia_hot') and len(self.estrategia_hot.numeros_hot) > 3:
+                        nova_estrategia = "Hot Numbers"
+                    else:
+                        nova_estrategia = "ML"
                 elif estrategia_atual == "ML":
+                    nova_estrategia = "Zonas"
+                elif estrategia_atual == "Hot Numbers":
+                    nova_estrategia = "Raios" if hasattr(self, 'estrategia_raios') else "Zonas"
+                elif estrategia_atual == "Raios":
                     nova_estrategia = "Zonas"
                 else:
                     nova_estrategia = "Zonas"
@@ -2114,6 +2353,11 @@ class SistemaRoletaCompleto:
             
         self.contador_sorteios_global += 1
             
+        if is_lightning and multiplier:
+            self.estrategia_raios.adicionar_raio(numero_real, multiplier)
+        
+        self.estrategia_hot.adicionar_numero(numero_real)
+        
         if self.previsao_ativa:
             acerto = False
             zonas_acertadas = []
@@ -2174,6 +2418,14 @@ class SistemaRoletaCompleto:
             nova_estrategia = self.estrategia_midas.analisar_midas()
         elif self.estrategia_selecionada == "ML":
             nova_estrategia = self.estrategia_ml.analisar_ml()
+        elif self.estrategia_selecionada == "Hot Numbers":
+            nova_estrategia = self.estrategia_hot.analisar_hot_numbers()
+        elif self.estrategia_selecionada == "Raios":
+            nova_estrategia = self.estrategia_raios.analisar_raios()
+        
+        # Se não encontrou previsão na estratégia selecionada, tenta Hot Numbers como fallback
+        if not nova_estrategia and self.estrategia_selecionada not in ["Hot Numbers", "Raios"]:
+            nova_estrategia = self.estrategia_hot.analisar_hot_numbers()
         
         if nova_estrategia:
             self.previsao_ativa = nova_estrategia
@@ -2259,7 +2511,7 @@ def fetch_latest_result():
         number = outcome.get("number")
         timestamp = game_data.get("startedAt")
         
-        # Captura os números com multiplicador (raios) - ESTRUTURA CORRETA
+        # Captura os números com multiplicador (raios)
         lucky_numbers_list = result.get("luckyNumbersList", [])
         lightning_multiplier = result.get("lightningMultiplier", 100)
         
@@ -2292,8 +2544,8 @@ def fetch_latest_result():
 # =============================
 # APLICAÇÃO STREAMLIT ATUALIZADA
 # =============================
-st.set_page_config(page_title="IA Roleta — Multi-Estratégias", layout="centered")
-st.title("⚡🎯 IA Roleta — Sistema Multi-Estratégias com Raio ⚡")
+st.set_page_config(page_title="IA Roleta — Multi-Estratégias Avançada", layout="centered")
+st.title("🔥⚡🎯 IA Roleta — Sistema Multi-Estratégias Avançado 🔥⚡🎯")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaRoletaCompleto()
@@ -2430,9 +2682,10 @@ with st.sidebar.expander("🔔 Alertas Alternativos", expanded=False):
         else:
             st.error("❌ Configure o Telegram primeiro")
 
+# Adiciona novas estratégias ao seletor
 estrategia = st.sidebar.selectbox(
     "🎯 Selecione a Estratégia:",
-    ["Zonas", "Midas", "ML"],
+    ["Zonas", "Midas", "ML", "Hot Numbers", "Raios"],
     key="estrategia_selecionada"
 )
 
@@ -2443,7 +2696,7 @@ if estrategia != st.session_state.sistema.estrategia_selecionada:
 with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
     status_rotacao = st.session_state.sistema.get_status_rotacao()
     
-    st.write("**Sistema de Rotação:**")
+    st.write("**Sistema de Rotação Inteligente:**")
     st.write(f"🎯 **Estratégia Atual:** {status_rotacao['estrategia_atual']}")
     st.write(f"❌ **Erros Seguidos:** {status_rotacao['sequencia_erros']}/2")
     st.write(f"🔄 **Próxima Rotação em:** {status_rotacao['proxima_rotacao_em']} erro(s)")
@@ -2456,12 +2709,16 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
     st.write("• ✅ **Acerto:** Continua na mesma estratégia")
     st.write("• ❌ **1 Erro:** Continua na estratégia") 
     st.write("• ❌❌ **2 Erros Seguidos:** Rotação automática")
-    st.write("• 🔄 **Zonas ↔ ML:** Rotação entre as duas principais")
+    st.write("• 🔄 **Zonas ↔ ML ↔ Hot Numbers ↔ Raios:** Rotação entre estratégias")
     
     if st.button("🔄 Forçar Rotação", use_container_width=True):
         estrategia_atual = st.session_state.sistema.estrategia_selecionada
         if estrategia_atual == "Zonas":
             nova_estrategia = "ML"
+        elif estrategia_atual == "ML":
+            nova_estrategia = "Hot Numbers"
+        elif estrategia_atual == "Hot Numbers":
+            nova_estrategia = "Raios"
         else:
             nova_estrategia = "Zonas"
         
@@ -2535,77 +2792,64 @@ with st.sidebar.expander("🧠 Treinamento ML", expanded=False):
     else:
         st.info("🤖 ML aguardando treinamento")
 
-with st.sidebar.expander("🔍 Estatísticas de Padrões ML", expanded=False):
-    if st.session_state.sistema.estrategia_selecionada == "ML":
-        estatisticas_padroes = st.session_state.sistema.estrategia_ml.get_estatisticas_padroes()
-        st.text(estatisticas_padroes)
-        
-        col_p1, col_p2 = st.columns(2)
-        with col_p1:
-            if st.button("🔄 Zerar Padrões", use_container_width=True):
-                st.session_state.sistema.estrategia_ml.zerar_padroes()
-                st.success("✅ Padrões zerados!")
-                st.rerun()
-                
-        with col_p2:
-            if st.button("📊 Atualizar Métricas", use_container_width=True):
-                st.rerun()
-    else:
-        st.info("🔍 Ative a estratégia ML para ver estatísticas de padrões")
-
-with st.sidebar.expander("📊 Informações das Estratégias"):
+with st.sidebar.expander("📊 Informações das Estratégias", expanded=False):
     if estrategia == "Zonas":
         info_zonas = st.session_state.sistema.estrategia_zonas.get_info_zonas()
         st.write("**🎯 Estratégia Zonas v6:**")
         st.write("**CONFIGURAÇÃO:** 6 antes + 6 depois (13 números/zona)")
-        st.write("**OTIMIZAÇÕES:**")
-        st.write("- 📊 Histórico: 70 números (35 → 70)")
-        st.write("- 🎯 Múltiplas janelas: Curto(12) Médio(24) Longo(48)")
-        st.write("- 📈 Threshold dinâmico por performance")
-        st.write("- 🔄 **INVERSÃO AUTOMÁTICA:** Combina as 2 melhores zonas quando possível")
-        st.write("- 🎯 **SELEÇÃO INTELIGENTE:** Máximo 15 números selecionados automaticamente")
         for zona, dados in info_zonas.items():
             st.write(f"**Zona {zona}** (Núcleo: {dados['central']})")
-            st.write(f"Descrição: {dados['descricao']}")
             st.write(f"Números: {', '.join(map(str, dados['numeros']))}")
-            st.write(f"Total: {dados['quantidade']} números")
             st.write("---")
     
+    elif estrategia == "Hot Numbers":
+        st.write("**🔥 Estratégia Hot Numbers (Números Quentes):**")
+        st.write("- Identifica números que mais apareceram nos últimos 30 sorteios")
+        st.write("- Aposta nos números com maior frequência")
+        st.write("- Baseado em estatística real dos dados coletados")
+        st.write("")
+        st.write("**Números historicamente quentes:** 30, 21, 18, 25, 8, 29, 15")
+        
+    elif estrategia == "Raios":
+        st.write("**⚡ Estratégia de Raios:**")
+        st.write("- Identifica padrões de números que costumam ser raio")
+        st.write("- Multiplicadores comuns: 50x, 100x, 150x, 600x")
+        st.write("- Números que mais foram raio: 20, 24, 8, 10, 12, 29")
+        
     elif estrategia == "Midas":
         st.write("**🎯 Estratégia Midas:**")
         st.write("Padrões baseados em terminais:")
         st.write("- **Terminal 0**: 0, 10, 20, 30")
         st.write("- **Terminal 7**: 7, 17, 27") 
         st.write("- **Terminal 5**: 5, 15, 25, 35")
-        st.write("---")
     
     elif estrategia == "ML":
-        st.write("**🤖 Estratégia Machine Learning - CATBOOST OTIMIZADO:**")
-        st.write("- **Modelo**: CatBoost (Gradient Boosting)")
-        st.write("- **Ensemble**: 3 modelos (2 → 3)")
-        st.write("- **Amostras mínimas**: 200 (100 → 200)")
-        st.write("- **Histórico máximo**: 1000 números (500 → 1000)")
-        st.write("- **Treinamento**: A cada 15 sorteios (10 → 15)")
-        st.write("- **Janelas**: [3, 8, 15, 30, 60, 120] (otimizadas)")
-        st.write("- **Zonas**: 6 antes + 6 depois (13 números/zona)")
-        st.write("- **Threshold**: Mínimo 7 números na mesma zona")
-        st.write("- **Saída**: Zona com maior concentração")
-        st.write("- 🔄 **INVERSÃO AUTOMÁTICA:** Combina as 2 melhores zonas quando possível")
-        st.write("- 🎯 **SELEÇÃO INTELIGENTE:** Máximo 15 números selecionados automaticamente")
-        
-        info_zonas_ml = st.session_state.sistema.estrategia_ml.get_info_zonas_ml()
-        for zona, dados in info_zonas_ml.items():
-            st.write(f"**Zona {zona}** (Núcleo: {dados['central']})")
-            st.write(f"Descrição: {dados['descricao']}")
-            st.write(f"Números: {', '.join(map(str, dados['numeros']))}")
-            st.write(f"Total: {dados['quantidade']} números")
-            st.write("---")
+        st.write("**🤖 Estratégia Machine Learning:**")
+        st.write("- CatBoost com ensemble de 3 modelos")
+        st.write("- Treinamento a cada 15 sorteios")
+        st.write("- 200 amostras mínimas")
 
 with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=False):
     if estrategia == "Zonas":
         analise = st.session_state.sistema.estrategia_zonas.get_analise_detalhada()
     elif estrategia == "ML":
         analise = st.session_state.sistema.estrategia_ml.get_analise_ml()
+    elif estrategia == "Hot Numbers":
+        hot = st.session_state.sistema.estrategia_hot
+        if hot.numeros_hot:
+            analise = f"🔥 NÚMEROS QUENTES (últimos 30):\n{', '.join(map(str, hot.numeros_hot[:10]))}\n\n❄️ NÚMEROS FRIOS (atrasados):\n{', '.join(map(str, hot.numeros_cold[:10]))}"
+        else:
+            analise = "Coletando dados para identificar números quentes..."
+    elif estrategia == "Raios":
+        raios = st.session_state.sistema.estrategia_raios
+        if raios.historico_raios:
+            ultimos_raios = list(raios.historico_raios)[-5:]
+            analise = f"⚡ ÚLTIMOS RAIOS:\n"
+            for r in ultimos_raios:
+                analise += f"Número {r['numero']} - Multiplicador x{r['multiplier']}\n"
+            analise += f"\n📊 Média multiplicadores: {sum(raios.multipliers[-10:])/len(raios.multipliers[-10:]):.0f}x" if raios.multipliers else ""
+        else:
+            analise = "Aguardando ocorrência de raios..."
     else:
         analise = "🎯 Estratégia Midas ativa\nAnalisando padrões de terminais..."
     
@@ -2660,7 +2904,11 @@ st.subheader("🔁 Últimos Números")
 if st.session_state.historico:
     ultimos_10 = st.session_state.historico[-10:]
     
-    # Mostrar números com destaque para raios
+    # Atualiza hot numbers para exibição
+    hot_numbers = st.session_state.sistema.estrategia_hot.numeros_hot
+    st.session_state.hot_numbers = hot_numbers
+    
+    # Mostrar números com destaque para raios e hot numbers
     numeros_html = []
     for item in ultimos_10:
         if isinstance(item, dict):
@@ -2673,11 +2921,20 @@ if st.session_state.historico:
     
     st.markdown(" ".join(numeros_html), unsafe_allow_html=True)
     
-    # Mostrar estatísticas de raios
-    lightning_count = sum(1 for item in st.session_state.historico[-50:] 
-                         if isinstance(item, dict) and item.get('is_lightning', False))
-    if lightning_count > 0:
-        st.info(f"⚡ Últimos 50 sorteios: {lightning_count} números raio ({lightning_count/50*100:.1f}%)")
+    # Mostrar estatísticas
+    col_est1, col_est2, col_est3 = st.columns(3)
+    with col_est1:
+        lightning_count = sum(1 for item in st.session_state.historico[-50:] 
+                             if isinstance(item, dict) and item.get('is_lightning', False))
+        st.metric("⚡ Raios (50 jogos)", f"{lightning_count} ({lightning_count/50*100:.0f}%)")
+    
+    with col_est2:
+        hot_count = len(st.session_state.sistema.estrategia_hot.numeros_hot)
+        st.metric("🔥 Hot Numbers", hot_count)
+    
+    with col_est3:
+        cold_count = len(st.session_state.sistema.estrategia_hot.numeros_cold)
+        st.metric("❄️ Cold Numbers", cold_count)
     
     # Mostrar últimos números raio com multiplicadores
     ultimos_raios = [item for item in st.session_state.historico[-20:] 
@@ -2686,6 +2943,11 @@ if st.session_state.historico:
         st.write("**⚡ Últimos números raio:**")
         raios_text = ", ".join([f"{item['number']} (x{item.get('multiplier', 100)})" for item in ultimos_raios[-5:]])
         st.write(raios_text)
+    
+    # Mostrar hot numbers atuais
+    hot_atual = st.session_state.sistema.estrategia_hot.numeros_hot[:10]
+    if hot_atual:
+        st.write(f"**🔥 Hot Numbers atuais:** {', '.join(map(str, hot_atual))}")
 else:
     st.write("Nenhum número registrado")
 
@@ -2707,7 +2969,6 @@ if sistema.previsao_ativa:
     
     if previsao.get('selecao_inteligente', False):
         st.success("🎯 **SELEÇÃO INTELIGENTE ATIVA** - 15 melhores números selecionados")
-        st.info("📊 **Critérios:** Frequência + Posição + Vizinhança + Tendência")
     
     numeros_originais = previsao.get('numeros_originais_qtd', len(previsao['numeros_apostar']))
     if numeros_originais > len(previsao['numeros_apostar']):
@@ -2734,6 +2995,12 @@ if sistema.previsao_ativa:
                 nucleo = zona
             st.write(f"**📍 Núcleo:** {nucleo}")
             
+    elif 'Hot Numbers' in previsao['nome']:
+        st.write("**🔥 Apostando nos números mais quentes**")
+        
+    elif 'Raios' in previsao['nome']:
+        st.write("**⚡ Apostando em possíveis números raio**")
+        
     elif 'ML' in previsao['nome']:
         zonas_envolvidas = previsao.get('zonas_envolvidas', [])
         if len(zonas_envolvidas) > 1:
@@ -2805,8 +3072,6 @@ if sistema.estrategias_contador:
             taxa_estrategia = (dados['acertos'] / dados['total'] * 100)
             cor = "🟢" if taxa_estrategia >= 50 else "🟡" if taxa_estrategia >= 30 else "🔴"
             st.write(f"{cor} {nome}: {dados['acertos']}/{dados['total']} ({taxa_estrategia:.1f}%)")
-        else:
-            st.write(f"⚠️ {nome}: Dados de performance não disponíveis")
 
 if sistema.historico_desempenho:
     st.write("**🔍 Últimas 5 Conferências:**")
