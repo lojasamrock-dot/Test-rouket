@@ -13,6 +13,7 @@ from sklearn.utils import resample
 import joblib
 from streamlit_autorefresh import st_autorefresh
 import pickle
+from datetime import datetime
 
 # =============================
 # CONFIGURAÇÕES DE PERSISTÊNCIA
@@ -138,6 +139,39 @@ def limpar_sessao():
         logging.error(f"❌ Erro ao limpar sessão: {e}")
 
 # =============================
+# FUNÇÃO PARA IDENTIFICAR NÚMEROS RAIO (LIGHTNING ROULETTE)
+# =============================
+def is_lightning_number(numero):
+    """
+    Verifica se um número é considerado "raio" no Lightning Roulette.
+    Em cada rodada, números aleatórios são multiplicados (1-5 números recebem multiplicadores).
+    Como a API não fornece diretamente, vamos considerar que TODOS os números podem ser raio
+    e vamos marcar alguns aleatoriamente para simular (ou baseado em padrões reais).
+    """
+    # Na versão real, você deve capturar o campo "lightningNumbers" da API
+    # Exemplo: lightning_numbers = data.get('lightningNumbers', [])
+    # return numero in lightning_numbers
+    
+    # Por enquanto, vamos usar uma lógica de exemplo: números que terminam com 7 ou 3 são raio
+    # Isso é APENAS para demonstração. Na prática, você deve usar os dados reais da API
+    return str(numero).endswith('7') or str(numero).endswith('3')
+
+# Versão melhorada para capturar da API real
+def is_lightning_number_from_api(numero, lightning_numbers):
+    """Verifica se o número está na lista de números com multiplicador"""
+    return numero in lightning_numbers if lightning_numbers else False
+
+# =============================
+# FUNÇÃO PARA FORMATAR NÚMERO COM ESTILO DE RAIO
+# =============================
+def format_number_with_lightning(numero, is_lightning):
+    """Retorna HTML formatado para o número com estilo diferenciado se for raio"""
+    if is_lightning:
+        return f'<span style="background: linear-gradient(135deg, #FFD700, #FFA500); color: #000; font-weight: bold; padding: 4px 8px; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px #FFD700;">⚡{numero}⚡</span>'
+    else:
+        return f'<span style="background: #2c3e50; color: white; padding: 4px 8px; border-radius: 50%; display: inline-block;">{numero}</span>'
+
+# =============================
 # CONFIGURAÇÕES DE NOTIFICAÇÃO
 # =============================
 def enviar_previsao_super_simplificada(previsao):
@@ -230,9 +264,12 @@ def enviar_alerta_numeros_simplificado(previsao):
     except Exception as e:
         logging.error(f"Erro ao enviar alerta simplificado: {e}")
 
-def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada=None):
-    """Envia notificação de resultado super simplificado"""
+def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada=None, is_lightning=False):
+    """Envia notificação de resultado super simplificado com info de raio"""
     try:
+        raio_emoji = "⚡ " if is_lightning else ""
+        raio_texto = " (RAIO!)" if is_lightning else ""
+        
         if acerto:
             if 'Zonas' in nome_estrategia and zona_acertada:
                 if '+' in zona_acertada:
@@ -248,7 +285,7 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
                         else:
                             nucleos.append(zona)
                     nucleo_str = "+".join(nucleos)
-                    mensagem = f"✅ Acerto Núcleos {nucleo_str}\n🎲 Número: {numero_real}"
+                    mensagem = f"{raio_emoji}✅ Acerto Núcleos {nucleo_str}\n🎲 Número: {numero_real}{raio_texto}"
                 else:
                     if zona_acertada == 'Vermelha':
                         nucleo = "7"
@@ -258,7 +295,7 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
                         nucleo = "2"
                     else:
                         nucleo = zona_acertada
-                    mensagem = f"✅ Acerto Núcleo {nucleo}\n🎲 Número: {numero_real}"
+                    mensagem = f"{raio_emoji}✅ Acerto Núcleo {nucleo}\n🎲 Número: {numero_real}{raio_texto}"
             elif 'ML' in nome_estrategia and zona_acertada:
                 if '+' in zona_acertada:
                     zonas = zona_acertada.split('+')
@@ -273,7 +310,7 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
                         else:
                             nucleos.append(zona)
                     nucleo_str = "+".join(nucleos)
-                    mensagem = f"✅ Acerto Núcleos {nucleo_str}\n🎲 Número: {numero_real}"
+                    mensagem = f"{raio_emoji}✅ Acerto Núcleos {nucleo_str}\n🎲 Número: {numero_real}{raio_texto}"
                 else:
                     if zona_acertada == 'Vermelha':
                         nucleo = "7"
@@ -283,31 +320,45 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
                         nucleo = "2"
                     else:
                         nucleo = zona_acertada
-                    mensagem = f"✅ Acerto Núcleo {nucleo}\n🎲 Número: {numero_real}"
+                    mensagem = f"{raio_emoji}✅ Acerto Núcleo {nucleo}\n🎲 Número: {numero_real}{raio_texto}"
             else:
-                mensagem = f"✅ Acerto\n🎲 Número: {numero_real}"
+                mensagem = f"{raio_emoji}✅ Acerto\n🎲 Número: {numero_real}{raio_texto}"
         else:
-            mensagem = f"❌ Erro\n🎲 Número: {numero_real}"
+            mensagem = f"{raio_emoji}❌ Erro\n🎲 Número: {numero_real}{raio_texto}"
+        
+        if is_lightning:
+            st.toast(f"⚡⚡⚡ NÚMERO RAIO! ⚡⚡⚡", icon="⚡")
         
         st.toast(f"🎲 Resultado", icon="✅" if acerto else "❌")
-        st.success(f"📢 {mensagem}") if acerto else st.error(f"📢 {mensagem}")
+        
+        if acerto:
+            if is_lightning:
+                st.success(f"⚡⚡⚡ {mensagem} ⚡⚡⚡")
+            else:
+                st.success(f"📢 {mensagem}")
+        else:
+            if is_lightning:
+                st.error(f"⚡ {mensagem}")
+            else:
+                st.error(f"📢 {mensagem}")
         
         if 'telegram_token' in st.session_state and 'telegram_chat_id' in st.session_state:
             if st.session_state.telegram_token and st.session_state.telegram_chat_id:
                 enviar_telegram(f"📢 RESULTADO\n{mensagem}")
-                enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia)
+                enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia, is_lightning)
                 
         salvar_sessao()
     except Exception as e:
         logging.error(f"Erro ao enviar resultado: {e}")
 
-def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia):
-    """Envia alerta de conferência super simplificado"""
+def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia, is_lightning=False):
+    """Envia alerta de conferência super simplificado com info de raio"""
     try:
+        raio_emoji = "⚡" if is_lightning else ""
         if acerto:
-            mensagem = f"🎉 ACERTOU! {numero_real}"
+            mensagem = f"🎉 ACERTOU! {numero_real}{raio_emoji}"
         else:
-            mensagem = f"💥 ERROU! {numero_real}"
+            mensagem = f"💥 ERROU! {numero_real}{raio_emoji}"
             
         enviar_telegram(mensagem)
         logging.info("🔔 Alerta de conferência enviado para Telegram")
@@ -2076,7 +2127,7 @@ class SistemaRoletaCompleto:
                 return True
             return False
 
-    def processar_novo_numero(self, numero):
+    def processar_novo_numero(self, numero, is_lightning=False):
         if isinstance(numero, dict) and 'number' in numero:
             numero_real = numero['number']
         else:
@@ -2116,7 +2167,7 @@ class SistemaRoletaCompleto:
                 self.erros += 1
             
             zona_acertada_str = "+".join(zonas_acertadas) if zonas_acertadas else None
-            enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada_str)
+            enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada_str, is_lightning)
             
             self.historico_desempenho.append({
                 'numero': numero_real,
@@ -2125,7 +2176,8 @@ class SistemaRoletaCompleto:
                 'previsao': numeros_apostados,
                 'rotacionou': rotacionou,
                 'zona_acertada': zona_acertada_str,
-                'tipo_aposta': self.previsao_ativa.get('tipo', 'unica')
+                'tipo_aposta': self.previsao_ativa.get('tipo', 'unica'),
+                'is_lightning': is_lightning
             })
             
             self.previsao_ativa = None
@@ -2214,6 +2266,7 @@ def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
         logging.error(f"Erro ao salvar histórico: {e}")
 
 def fetch_latest_result():
+    """Busca o último resultado da API com informações de raio"""
     try:
         response = requests.get(API_URL, headers=HEADERS, timeout=5)
         response.raise_for_status()
@@ -2223,7 +2276,35 @@ def fetch_latest_result():
         outcome = result.get("outcome", {})
         number = outcome.get("number")
         timestamp = game_data.get("startedAt")
-        return {"number": number, "timestamp": timestamp}
+        
+        # Tenta capturar os números que receberam multiplicadores (raio)
+        # Em Lightning Roulette, alguns números têm multiplicadores
+        # A estrutura pode variar, vamos tentar alguns campos comuns
+        lightning_numbers = []
+        
+        # Tenta diferentes formas que a API pode retornar os números com multiplicador
+        if 'lightningNumbers' in game_data:
+            lightning_numbers = game_data.get('lightningNumbers', [])
+        elif 'luckyNumbers' in game_data:
+            lightning_numbers = game_data.get('luckyNumbers', [])
+        elif 'multipliers' in game_data:
+            # Se tiver multiplicadores, pega os números que têm multiplicador > 1
+            multipliers = game_data.get('multipliers', {})
+            lightning_numbers = [num for num, mult in multipliers.items() if mult > 1]
+        elif 'lightning' in game_data:
+            lightning_data = game_data.get('lightning', {})
+            if 'numbers' in lightning_data:
+                lightning_numbers = lightning_data.get('numbers', [])
+        
+        # Converte para inteiros se necessário
+        lightning_numbers = [int(n) for n in lightning_numbers if str(n).isdigit()]
+        
+        return {
+            "number": number, 
+            "timestamp": timestamp,
+            "lightning_numbers": lightning_numbers,
+            "is_lightning": number in lightning_numbers if number is not None else False
+        }
     except Exception as e:
         logging.error(f"Erro ao buscar resultado: {e}")
         return None
@@ -2232,7 +2313,7 @@ def fetch_latest_result():
 # APLICAÇÃO STREAMLIT ATUALIZADA
 # =============================
 st.set_page_config(page_title="IA Roleta — Multi-Estratégias", layout="centered")
-st.title("🎯 IA Roleta — Sistema Multi-Estratégias")
+st.title("⚡🎯 IA Roleta — Sistema Multi-Estratégias com Raio ⚡")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaRoletaCompleto()
@@ -2340,7 +2421,7 @@ with st.sidebar.expander("🔔 Alertas Alternativos", expanded=False):
     st.info("""
     **📱 Alertas Ativados:**
     - 🔔 **Alerta de Aposta:** Números em 2 linhas
-    - 📢 **Alerta de Resultado:** Confirmação simples
+    - 📢 **Alerta de Resultado:** Confirmação simples com info de raio
     - 🎯 **Previsão Detalhada:** Mensagem completa
     """)
     
@@ -2578,15 +2659,37 @@ if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo
     numero_atual = resultado.get("number")
     if numero_atual is not None:
         st.session_state.historico.append(resultado)
-        st.session_state.sistema.processar_novo_numero(resultado)
+        # Passa a informação se é raio para o processamento
+        st.session_state.sistema.processar_novo_numero(resultado, resultado.get('is_lightning', False))
         salvar_resultado_em_arquivo(st.session_state.historico)
         salvar_sessao()
 
 st.subheader("🔁 Últimos Números")
 if st.session_state.historico:
     ultimos_10 = st.session_state.historico[-10:]
-    numeros_str = " ".join(str(item['number'] if isinstance(item, dict) else item) for item in ultimos_10)
-    st.write(numeros_str)
+    
+    # Mostrar números com destaque para raios
+    numeros_html = []
+    for item in ultimos_10:
+        if isinstance(item, dict):
+            num = item.get('number')
+            is_lightning = item.get('is_lightning', False)
+            
+            # Tenta identificar se é raio de outras formas
+            if not is_lightning and 'lightning_numbers' in item:
+                is_lightning = num in item.get('lightning_numbers', [])
+                
+            numeros_html.append(format_number_with_lightning(num, is_lightning))
+        else:
+            numeros_html.append(format_number_with_lightning(item, False))
+    
+    st.markdown(" ".join(numeros_html), unsafe_allow_html=True)
+    
+    # Mostrar estatísticas de raios
+    lightning_count = sum(1 for item in st.session_state.historico[-50:] 
+                         if isinstance(item, dict) and item.get('is_lightning', False))
+    if lightning_count > 0:
+        st.info(f"⚡ Últimos 50 sorteios: {lightning_count} números raio ({lightning_count/50*100:.1f}%)")
 else:
     st.write("Nenhum número registrado")
 
@@ -2714,6 +2817,7 @@ if sistema.historico_desempenho:
     for i, resultado in enumerate(sistema.historico_desempenho[-5:]):
         emoji = "🎉" if resultado['acerto'] else "❌"
         rotacao_emoji = " 🔄" if resultado.get('rotacionou', False) else ""
+        raio_emoji = "⚡" if resultado.get('is_lightning', False) else ""
         zona_info = ""
         if resultado['acerto'] and resultado.get('zona_acertada'):
             if '+' in resultado['zona_acertada']:
@@ -2745,7 +2849,7 @@ if sistema.historico_desempenho:
         if resultado.get('tipo_aposta') == 'dupla':
             tipo_aposta_info = " [DUPLA]"
         
-        st.write(f"{emoji}{rotacao_emoji} {resultado['estrategia']}{tipo_aposta_info}: Número {resultado['numero']}{zona_info}")
+        st.write(f"{emoji}{raio_emoji}{rotacao_emoji} {resultado['estrategia']}{tipo_aposta_info}: Número {resultado['numero']}{zona_info}")
 
 if os.path.exists(HISTORICO_PATH):
     with open(HISTORICO_PATH, "r") as f:
