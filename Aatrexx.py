@@ -139,308 +139,7 @@ def limpar_sessao():
         logging.error(f"❌ Erro ao limpar sessão: {e}")
 
 # =============================
-# NOVO: ANALISADOR DE PADRÕES AVANÇADO
-# =============================
-class AnalisadorPadroesAvancado:
-    def __init__(self):
-        self.padroes_detectados = {}
-        self.historico_padroes = deque(maxlen=100)
-        
-        # Números mais frequentes baseado nos dados reais
-        self.numeros_alta_frequencia = [30, 21, 18, 25, 8, 29, 15, 5, 10, 23]
-        
-        # Pares de números que saem frequentemente juntos
-        self.pares_frequentes = {
-            30: [21, 18, 25, 8],
-            21: [30, 18, 25, 29],
-            18: [30, 21, 29, 15],
-            25: [30, 21, 27, 18],
-            8: [30, 22, 21, 15],
-            29: [21, 18, 30, 28],
-            15: [18, 29, 8, 10],
-            10: [15, 30, 23, 5]
-        }
-        
-        # Números que costumam ser raio
-        self.numeros_raio_frequentes = [20, 24, 8, 10, 12, 29]
-        
-    def analisar_sequencia(self, historico):
-        """Analisa a sequência atual e retorna recomendações"""
-        if len(historico) < 5:
-            return None
-            
-        historico_numeros = []
-        for item in list(historico)[-20:]:
-            if isinstance(item, dict):
-                num = item.get('number')
-                if num is not None:
-                    historico_numeros.append(num)
-            else:
-                historico_numeros.append(item)
-        
-        recomendacoes = {}
-        
-        # 1. Análise de repetição de números
-        ultimo_numero = historico_numeros[-1] if historico_numeros else None
-        if ultimo_numero in self.pares_frequentes:
-            recomendacoes['pares'] = {
-                'numeros': self.pares_frequentes[ultimo_numero],
-                'confianca': 'Alta',
-                'peso': 1.5
-            }
-        
-        # 2. Análise de padrão de alternância
-        if len(historico_numeros) >= 3:
-            ultimos_3 = historico_numeros[-3:]
-            # Verifica padrão alto-baixo-alto ou baixo-alto-baixo
-            padrao_alternancia = []
-            for i in range(len(ultimos_3)-1):
-                padrao_alternancia.append(ultimos_3[i+1] - ultimos_3[i])
-            
-            if all(p > 0 for p in padrao_alternancia) or all(p < 0 for p in padrao_alternancia):
-                tendencia = 'crescente' if padrao_alternancia[0] > 0 else 'decrescente'
-                if tendencia == 'crescente' and ultimo_numero < 30:
-                    recomendacoes['tendencia'] = {
-                        'numeros': list(range(ultimo_numero + 1, min(ultimo_numero + 8, 37))),
-                        'confianca': 'Média',
-                        'peso': 1.2
-                    }
-                elif tendencia == 'decrescente' and ultimo_numero > 5:
-                    recomendacoes['tendencia'] = {
-                        'numeros': list(range(max(0, ultimo_numero - 7), ultimo_numero)),
-                        'confianca': 'Média',
-                        'peso': 1.2
-                    }
-        
-        # 3. Análise de números atrasados
-        todos_numeros = set(range(37))
-        numeros_sorteados = set(historico_numeros[-30:]) if len(historico_numeros) >= 30 else set(historico_numeros)
-        numeros_atrasados = list(todos_numeros - numeros_sorteados)
-        
-        if numeros_atrasados:
-            # Pega os números atrasados que são de alta frequência
-            atrasados_frequentes = [n for n in numeros_atrasados if n in self.numeros_alta_frequencia]
-            if atrasados_frequentes:
-                recomendacoes['atrasados'] = {
-                    'numeros': atrasados_frequentes[:5],
-                    'confianca': 'Média-Alta',
-                    'peso': 1.3
-                }
-        
-        # 4. Análise de raios (quando houver)
-        ultimos_raios = [item for item in list(historico)[-20:] 
-                        if isinstance(item, dict) and item.get('is_lightning', False)]
-        if len(ultimos_raios) >= 2:
-            # Se teve raio recente, pode vir outro número normal
-            recomendacoes['pos_raio'] = {
-                'numeros': [n for n in self.numeros_alta_frequencia if n != ultimo_numero][:8],
-                'confianca': 'Média',
-                'peso': 1.1
-            }
-        
-        return recomendacoes
-
-# =============================
-# ESTRATÉGIA DE NÚMEROS QUENTES (HOT NUMBERS) COM VIZINHOS
-# =============================
-class EstrategiaHotNumbers:
-    def __init__(self):
-        self.roleta = RoletaInteligente()
-        self.historico = deque(maxlen=100)
-        self.numeros_hot = []
-        self.numeros_cold = []
-        self.janela_analise = 30
-        
-    def adicionar_numero(self, numero):
-        self.historico.append(numero)
-        self.atualizar_hot_numbers()
-        
-    def atualizar_hot_numbers(self):
-        if len(self.historico) < self.janela_analise:
-            return
-            
-        historico_lista = list(self.historico)[-self.janela_analise:]
-        contagem = Counter(historico_lista)
-        
-        # Hot numbers: números que apareceram mais de 3 vezes nos últimos 30
-        self.numeros_hot = [num for num, count in contagem.items() if count >= 3]
-        # Cold numbers: números que não apareceram nos últimos 30
-        todos_numeros = set(range(37))
-        self.numeros_cold = list(todos_numeros - set(historico_lista))
-    
-    def get_vizinhos_completos(self, numero, quantidade=4):
-        """Retorna o número central + quantidade vizinhos antes e depois"""
-        if numero not in self.roleta.race:
-            return [numero]
-        
-        posicao = self.roleta.race.index(numero)
-        vizinhos = []
-        
-        # Adiciona vizinhos antes
-        for offset in range(-quantidade, 0):
-            vizinho = self.roleta.race[(posicao + offset) % len(self.roleta.race)]
-            vizinhos.append(vizinho)
-        
-        # Adiciona o número central
-        vizinhos.append(numero)
-        
-        # Adiciona vizinhos depois
-        for offset in range(1, quantidade + 1):
-            vizinho = self.roleta.race[(posicao + offset) % len(self.roleta.race)]
-            vizinhos.append(vizinho)
-        
-        return vizinhos
-    
-    def analisar_hot_numbers(self):
-        if len(self.historico) < 15:
-            return None
-            
-        if not self.numeros_hot:
-            return None
-        
-        # Coleta todos os números com seus vizinhos
-        numeros_com_vizinhos = set()
-        numeros_originais = []
-        
-        for hot_num in self.numeros_hot[:5]:  # Pega até 5 hot numbers
-            vizinhos = self.get_vizinhos_completos(hot_num, quantidade=4)
-            for v in vizinhos:
-                numeros_com_vizinhos.add(v)
-            numeros_originais.append({
-                'numero': hot_num,
-                'vizinhos': vizinhos
-            })
-        
-        # Converte para lista ordenada
-        numeros_apostar = sorted(list(numeros_com_vizinhos))
-        
-        # Limita a 15 números se necessário
-        numeros_originais_qtd = len(numeros_apostar)
-        if len(numeros_apostar) > 15:
-            # Seleciona os números com maior frequência nos últimos sorteios
-            historico_lista = list(self.historico)[-50:]
-            frequencias = Counter(historico_lista)
-            numeros_apostar = sorted(numeros_apostar, key=lambda x: frequencias.get(x, 0), reverse=True)[:15]
-        
-        # Prepara informação dos hot numbers com seus vizinhos
-        info_hot = []
-        for hot in numeros_originais[:3]:
-            info_hot.append(f"{hot['numero']} (viz: {', '.join(map(str, sorted(hot['vizinhos'][:4])))}...)")
-        
-        gatilho = f'🔥 {len(self.numeros_hot)} Hot Numbers | Vizinhos 4+4 | {len(numeros_apostar)} números finais'
-        
-        return {
-            'nome': 'Hot Numbers com Vizinhos',
-            'numeros_apostar': numeros_apostar,
-            'gatilho': gatilho,
-            'confianca': 'Alta' if len(self.numeros_hot) <= 8 else 'Média',
-            'tipo': 'hot_numbers',
-            'selecao_inteligente': len(numeros_apostar) < numeros_originais_qtd,
-            'numeros_originais_qtd': numeros_originais_qtd,
-            'hot_numbers': self.numeros_hot[:5],
-            'info_hot': info_hot
-        }
-    
-    def analisar_cold_numbers(self):
-        if len(self.historico) < 30:
-            return None
-            
-        if not self.numeros_cold:
-            return None
-            
-        # Para cold numbers, também pega vizinhos
-        numeros_com_vizinhos = set()
-        
-        for cold_num in self.numeros_cold[:3]:  # Pega até 3 cold numbers
-            vizinhos = self.get_vizinhos_completos(cold_num, quantidade=3)  # Menos vizinhos para cold
-            for v in vizinhos:
-                numeros_com_vizinhos.add(v)
-        
-        numeros_apostar = sorted(list(numeros_com_vizinhos))
-        
-        if numeros_apostar:
-            return {
-                'nome': 'Cold Numbers (Atrasados) com Vizinhos',
-                'numeros_apostar': numeros_apostar[:12],
-                'gatilho': f'❄️ {len(self.numeros_cold)} números atrasados',
-                'confianca': 'Média',
-                'tipo': 'cold_numbers'
-            }
-        return None
-
-# =============================
-# ESTRATÉGIA DE RAIOS
-# =============================
-class EstrategiaRaios:
-    def __init__(self):
-        self.roleta = RoletaInteligente()
-        self.historico_raios = deque(maxlen=50)
-        self.multipliers = []
-        
-    def get_vizinhos_completos(self, numero, quantidade=4):
-        """Retorna o número central + quantidade vizinhos antes e depois"""
-        if numero not in self.roleta.race:
-            return [numero]
-        
-        posicao = self.roleta.race.index(numero)
-        vizinhos = []
-        
-        for offset in range(-quantidade, 0):
-            vizinho = self.roleta.race[(posicao + offset) % len(self.roleta.race)]
-            vizinhos.append(vizinho)
-        
-        vizinhos.append(numero)
-        
-        for offset in range(1, quantidade + 1):
-            vizinho = self.roleta.race[(posicao + offset) % len(self.roleta.race)]
-            vizinhos.append(vizinho)
-        
-        return vizinhos
-        
-    def adicionar_raio(self, numero, multiplier):
-        self.historico_raios.append({
-            'numero': numero,
-            'multiplier': multiplier,
-            'timestamp': datetime.now()
-        })
-        self.multipliers.append(multiplier)
-        
-    def analisar_raios(self):
-        if len(self.historico_raios) < 3:
-            return None
-            
-        # Números que mais foram raio
-        numeros_raios = [r['numero'] for r in self.historico_raios]
-        contagem_raios = Counter(numeros_raios)
-        
-        # Números que podem ser raio em breve (baseado em padrão)
-        numeros_comuns_raios = [20, 24, 8, 10, 12, 29]
-        
-        # Seleciona números que ainda não saíram como raio recentemente
-        ultimos_raios_numeros = [r['numero'] for r in list(self.historico_raios)[-10:]]
-        candidatos = [n for n in numeros_comuns_raios if n not in ultimos_raios_numeros[-3:]]
-        
-        if candidatos:
-            # Adiciona vizinhos para cada candidato a raio
-            numeros_com_vizinhos = set()
-            for candidato in candidatos[:3]:
-                vizinhos = self.get_vizinhos_completos(candidato, quantidade=3)
-                for v in vizinhos:
-                    numeros_com_vizinhos.add(v)
-            
-            numeros_apostar = sorted(list(numeros_com_vizinhos))[:12]
-            
-            return {
-                'nome': 'Estratégia de Raios com Vizinhos',
-                'numeros_apostar': numeros_apostar,
-                'gatilho': f'⚡ Padrão de raios detectado - Multiplicadores recentes: {self.multipliers[-3:]}',
-                'confianca': 'Média-Alta',
-                'tipo': 'raios'
-            }
-        return None
-
-# =============================
-# FUNÇÃO PARA FORMATAR NÚMERO COM ESTILO DE RAIO
+# FUNÇÃO PARA FORMATAR NÚMERO COM ESTILO
 # =============================
 def format_number_with_lightning(numero, is_lightning, multiplier=None):
     """Retorna HTML formatado para o número com estilo diferenciado se for raio"""
@@ -448,7 +147,6 @@ def format_number_with_lightning(numero, is_lightning, multiplier=None):
         multiplier_text = f" x{multiplier}" if multiplier else ""
         return f'<span style="background: linear-gradient(135deg, #FFD700, #FFA500); color: #000; font-weight: bold; padding: 4px 8px; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px #FFD700;" title="Número Raio!{multiplier_text}">⚡{numero}⚡</span>'
     else:
-        # Hot numbers tem cor diferenciada também
         if hasattr(st.session_state, 'hot_numbers') and numero in st.session_state.hot_numbers:
             return f'<span style="background: linear-gradient(135deg, #FF4444, #CC0000); color: white; font-weight: bold; padding: 4px 8px; border-radius: 50%; display: inline-block;" title="Número Quente">🔥{numero}🔥</span>'
         return f'<span style="background: #2c3e50; color: white; padding: 4px 8px; border-radius: 50%; display: inline-block;">{numero}</span>'
@@ -835,7 +533,7 @@ class SistemaSelecaoInteligente:
         return analise
 
 # =============================
-# CLASSE PRINCIPAL DA ROLETA ATUALIZADA
+# CLASSE PRINCIPAL DA ROLETA
 # =============================
 class RoletaInteligente:
     def __init__(self):
@@ -878,7 +576,440 @@ class RoletaInteligente:
         return vizinhos
 
 # =============================
-# MÓDULO DE MACHINE LEARNING (MANTIDO IGUAL)
+# ESTRATÉGIA HOT NUMBERS (BASEADA NO HISTÓRICO REAL)
+# =============================
+class EstrategiaHotNumbers:
+    def __init__(self):
+        self.roleta = RoletaInteligente()
+        self.historico = deque(maxlen=200)  # Guarda histórico completo
+        self.numeros_hot = []
+        self.numeros_cold = []
+        self.janela_analise = 30
+        self.frequencias = {}
+        
+    def adicionar_numero(self, numero):
+        """Adiciona número ao histórico e atualiza estatísticas"""
+        self.historico.append(numero)
+        self.atualizar_hot_numbers()
+        
+    def atualizar_hot_numbers(self):
+        """Atualiza lista de números quentes baseado no histórico REAL"""
+        if len(self.historico) < self.janela_analise:
+            return
+            
+        # Pega os últimos N números
+        historico_lista = list(self.historico)[-self.janela_analise:]
+        
+        # Conta frequência de cada número
+        self.frequencias = Counter(historico_lista)
+        
+        # Calcula a média de ocorrências esperada
+        total_sorteios = len(historico_lista)
+        media_esperada = total_sorteios / 37  # ~0.81 para 30 sorteios
+        
+        # Hot numbers: números que apareceram ACIMA da média + 1 desvio
+        # Exemplo: se média é 0.81, hot é quem apareceu 2+ vezes
+        limiar_hot = max(2, int(media_esperada + 1))
+        
+        self.numeros_hot = [num for num, count in self.frequencias.items() if count >= limiar_hot]
+        
+        # Ordena hot numbers por frequência (mais frequentes primeiro)
+        self.numeros_hot.sort(key=lambda x: self.frequencias.get(x, 0), reverse=True)
+        
+        # Cold numbers: números que NÃO apareceram nos últimos 30 sorteios
+        todos_numeros = set(range(37))
+        numeros_sorteados = set(historico_lista)
+        self.numeros_cold = list(todos_numeros - numeros_sorteados)
+        
+        logging.info(f"🔥 Hot numbers atualizados: {self.numeros_hot[:10]} (freq: {[(n, self.frequencias.get(n,0)) for n in self.numeros_hot[:5]]})")
+    
+    def get_vizinhos_completos(self, numero, quantidade=4):
+        """Retorna o número central + quantidade vizinhos antes e depois"""
+        if numero not in self.roleta.race:
+            return [numero]
+        
+        posicao = self.roleta.race.index(numero)
+        vizinhos = []
+        
+        # Adiciona vizinhos antes
+        for offset in range(-quantidade, 0):
+            vizinho = self.roleta.race[(posicao + offset) % len(self.roleta.race)]
+            vizinhos.append(vizinho)
+        
+        # Adiciona o número central
+        vizinhos.append(numero)
+        
+        # Adiciona vizinhos depois
+        for offset in range(1, quantidade + 1):
+            vizinho = self.roleta.race[(posicao + offset) % len(self.roleta.race)]
+            vizinhos.append(vizinho)
+        
+        return vizinhos
+    
+    def analisar_hot_numbers(self):
+        """Analisa e retorna previsão baseada em números quentes REAIS"""
+        if len(self.historico) < 15:
+            return None
+            
+        if not self.numeros_hot:
+            return None
+        
+        # Pega até 5 hot numbers mais frequentes
+        top_hot = self.numeros_hot[:5]
+        
+        # Coleta todos os números com seus vizinhos
+        numeros_com_vizinhos = set()
+        numeros_originais = []
+        
+        for hot_num in top_hot:
+            vizinhos = self.get_vizinhos_completos(hot_num, quantidade=4)
+            for v in vizinhos:
+                numeros_com_vizinhos.add(v)
+            numeros_originais.append({
+                'numero': hot_num,
+                'frequencia': self.frequencias.get(hot_num, 0),
+                'vizinhos': vizinhos
+            })
+        
+        # Converte para lista ordenada
+        numeros_apostar = sorted(list(numeros_com_vizinhos))
+        
+        # Limita a 15 números se necessário
+        numeros_originais_qtd = len(numeros_apostar)
+        if len(numeros_apostar) > 15:
+            # Seleciona os números com maior frequência nos últimos sorteios
+            numeros_apostar = sorted(numeros_apostar, key=lambda x: self.frequencias.get(x, 0), reverse=True)[:15]
+        
+        # Prepara informação dos hot numbers com suas frequências
+        info_hot = []
+        for hot in numeros_originais[:3]:
+            info_hot.append(f"{hot['numero']} ({hot['frequencia']}x nos últimos {self.janela_analise})")
+        
+        # Calcula confiança baseada na quantidade e frequência dos hot numbers
+        confianca = self.calcular_confianca(top_hot)
+        
+        gatilho = f'🔥 {len(self.numeros_hot)} Hot Numbers identificados | Top: {", ".join(map(str, top_hot[:3]))} | Média esperada: {len(self.historico[-self.janela_analise:])/37:.1f}x'
+        
+        return {
+            'nome': 'Hot Numbers (Baseado no Histórico Real)',
+            'numeros_apostar': numeros_apostar,
+            'gatilho': gatilho,
+            'confianca': confianca,
+            'tipo': 'hot_numbers',
+            'selecao_inteligente': len(numeros_apostar) < numeros_originais_qtd,
+            'numeros_originais_qtd': numeros_originais_qtd,
+            'hot_numbers': top_hot,
+            'info_hot': info_hot,
+            'frequencias': {n: self.frequencias.get(n, 0) for n in top_hot}
+        }
+    
+    def calcular_confianca(self, top_hot):
+        """Calcula confiança baseada na frequência real dos números"""
+        if not top_hot:
+            return 'Baixa'
+        
+        # Pega a frequência do hot number mais frequente
+        maior_freq = self.frequencias.get(top_hot[0], 0)
+        total_sorteios = len(self.historico[-self.janela_analise:])
+        media_esperada = total_sorteios / 37
+        
+        # Quanto maior a frequência em relação à média, maior a confiança
+        ratio = maior_freq / media_esperada if media_esperada > 0 else 0
+        
+        if ratio >= 4:  # Apareceu 4x mais que o esperado
+            return 'Excelente'
+        elif ratio >= 3:
+            return 'Muito Alta'
+        elif ratio >= 2:
+            return 'Alta'
+        elif ratio >= 1.5:
+            return 'Média'
+        else:
+            return 'Baixa'
+    
+    def analisar_cold_numbers(self):
+        """Analisa números frios (atrasados)"""
+        if len(self.historico) < 30:
+            return None
+            
+        if not self.numeros_cold:
+            return None
+        
+        # Pega cold numbers que são historicamente frequentes (podem estar na iminência de sair)
+        # Ordena cold numbers por frequência histórica total
+        historico_total = list(self.historico)
+        freq_total = Counter(historico_total)
+        
+        cold_priorizados = sorted(self.numeros_cold, key=lambda x: freq_total.get(x, 0), reverse=True)
+        top_cold = cold_priorizados[:3]
+        
+        if top_cold:
+            numeros_com_vizinhos = set()
+            for cold_num in top_cold:
+                vizinhos = self.get_vizinhos_completos(cold_num, quantidade=3)
+                for v in vizinhos:
+                    numeros_com_vizinhos.add(v)
+            
+            numeros_apostar = sorted(list(numeros_com_vizinhos))[:12]
+            
+            return {
+                'nome': 'Cold Numbers (Atrasados)',
+                'numeros_apostar': numeros_apostar,
+                'gatilho': f'❄️ {len(self.numeros_cold)} números atrasados | Top: {", ".join(map(str, top_cold))}',
+                'confianca': 'Média',
+                'tipo': 'cold_numbers'
+            }
+        return None
+
+# =============================
+# ESTRATÉGIA DE RAIOS (BASEADA NO HISTÓRICO REAL DA API)
+# =============================
+class EstrategiaRaios:
+    def __init__(self):
+        self.roleta = RoletaInteligente()
+        self.historico_raios = deque(maxlen=200)  # Histórico de números que foram raio
+        self.multipliers = []
+        self.estatisticas_raios = {}  # Para rastrear padrões
+        self.historico_completo = deque(maxlen=200)  # Histórico completo de sorteios
+        
+    def adicionar_numero_normal(self, numero):
+        """Adiciona número normal ao histórico (quando não é raio)"""
+        self.historico_completo.append({
+            'numero': numero,
+            'is_lightning': False,
+            'timestamp': datetime.now()
+        })
+        
+    def adicionar_raio(self, numero, multiplier):
+        """Registra quando um número foi raio"""
+        self.historico_raios.append({
+            'numero': numero,
+            'multiplier': multiplier,
+            'timestamp': datetime.now()
+        })
+        self.historico_completo.append({
+            'numero': numero,
+            'is_lightning': True,
+            'multiplier': multiplier,
+            'timestamp': datetime.now()
+        })
+        self.multipliers.append(multiplier)
+        
+        # Atualiza estatísticas
+        if numero not in self.estatisticas_raios:
+            self.estatisticas_raios[numero] = {'total': 0, 'multipliers': [], 'ultima_vez': None}
+        self.estatisticas_raios[numero]['total'] += 1
+        self.estatisticas_raios[numero]['multipliers'].append(multiplier)
+        self.estatisticas_raios[numero]['ultima_vez'] = datetime.now()
+        
+        logging.info(f"⚡ Raio registrado: {numero} (x{multiplier}) - Total de raios: {len(self.historico_raios)}")
+    
+    def get_vizinhos_completos(self, numero, quantidade=2):
+        """Retorna vizinhos (mais conservador para raios)"""
+        if numero not in self.roleta.race:
+            return [numero]
+        
+        posicao = self.roleta.race.index(numero)
+        vizinhos = []
+        
+        for offset in range(-quantidade, 0):
+            vizinho = self.roleta.race[(posicao + offset) % len(self.roleta.race)]
+            vizinhos.append(vizinho)
+        
+        vizinhos.append(numero)
+        
+        for offset in range(1, quantidade + 1):
+            vizinho = self.roleta.race[(posicao + offset) % len(self.roleta.race)]
+            vizinhos.append(vizinho)
+        
+        return vizinhos
+    
+    def calcular_atraso_medio(self):
+        """Calcula quantos sorteios em média entre cada raio"""
+        if len(self.historico_raios) < 5:
+            return 0
+        
+        # Estima quantos números normais entre cada raio
+        total_sorteios = len(self.historico_completo)
+        total_raios = len(self.historico_raios)
+        
+        if total_raios > 0:
+            return total_sorteios / total_raios
+        return 0
+    
+    def analisar_raios(self):
+        """Análise baseada em padrões REAIS do histórico da API"""
+        if len(self.historico_raios) < 5:
+            return None
+        
+        # CRITÉRIO 1: Números que NUNCA foram raio (maior probabilidade estatística)
+        todos_numeros = set(range(37))
+        numeros_que_foram_raio = set([r['numero'] for r in self.historico_raios])
+        numeros_nunca_raio = list(todos_numeros - numeros_que_foram_raio)
+        
+        # CRITÉRIO 2: Números que estão atrasados para serem raio
+        # Calcula quantos sorteios desde o último raio de cada número
+        atraso_por_numero = {}
+        for num in range(37):
+            ultimo_raio = None
+            for r in reversed(self.historico_raios):
+                if r['numero'] == num:
+                    ultimo_raio = r['timestamp']
+                    break
+            
+            if ultimo_raio:
+                # Calcula tempo desde o último raio (em número de sorteios)
+                # Simplificação: conta quantos sorteios ocorreram desde então
+                sorteios_desde_ultimo = 0
+                for evento in reversed(self.historico_completo):
+                    if evento.get('timestamp') and ultimo_raio and evento['timestamp'] > ultimo_raio:
+                        sorteios_desde_ultimo += 1
+                    elif evento.get('timestamp') and ultimo_raio and evento['timestamp'] <= ultimo_raio:
+                        break
+                atraso_por_numero[num] = sorteios_desde_ultimo
+            else:
+                # Nunca foi raio, atraso máximo
+                atraso_por_numero[num] = len(self.historico_completo)
+        
+        # Números com maior atraso (prioriza quem nunca foi raio ou está há muito tempo)
+        atraso_medio = self.calcular_atraso_medio()
+        limiar_atraso = max(atraso_medio * 1.5, 10)  # 50% acima da média ou mínimo 10
+        
+        numeros_atrasados = [num for num, atraso in atraso_por_numero.items() if atraso >= limiar_atraso]
+        
+        # CRITÉRIO 3: Números que foram raio recentemente (padrão de repetição)
+        ultimos_10_raios = [r['numero'] for r in list(self.historico_raios)[-10:]]
+        contagem_recente = Counter(ultimos_10_raios)
+        numeros_repetidos = [num for num, count in contagem_recente.items() if count >= 2]
+        
+        # CRITÉRIO 4: Números com maiores multiplicadores (quando saem, valem mais)
+        medias_multipliers = {}
+        for num, dados in self.estatisticas_raios.items():
+            if dados['multipliers']:
+                medias_multipliers[num] = sum(dados['multipliers']) / len(dados['multipliers'])
+        
+        top_multipliers = sorted(medias_multipliers.items(), key=lambda x: x[1], reverse=True)[:3]
+        
+        # COMBINA OS CRITÉRIOS para selecionar candidatos
+        candidatos = []
+        
+        # 50% dos candidatos: números que NUNCA foram raio (prioridade máxima)
+        if numeros_nunca_raio:
+            # Prioriza números que são quentes (frequentemente sorteados)
+            hot_numbers = self.get_hot_numbers()
+            nunca_quentes = [n for n in numeros_nunca_raio if n in hot_numbers]
+            if nunca_quentes:
+                candidatos.extend(nunca_quentes[:3])
+            else:
+                candidatos.extend(numeros_nunca_raio[:3])
+        
+        # 30% dos candidatos: números muito atrasados
+        if numeros_atrasados and len(candidatos) < 5:
+            # Prioriza atrasados que também são quentes
+            hot_numbers = self.get_hot_numbers()
+            atrasados_quentes = [n for n in numeros_atrasados if n in hot_numbers]
+            if atrasados_quentes:
+                candidatos.extend(atrasados_quentes[:2])
+            else:
+                candidatos.extend(numeros_atrasados[:2])
+        
+        # 20% dos candidatos: números que repetiram como raio recentemente
+        if numeros_repetidos and len(candidatos) < 5:
+            candidatos.extend(numeros_repetidos[:1])
+        
+        # Remove duplicatas e limita a 5 candidatos
+        candidatos = list(dict.fromkeys(candidatos))[:5]
+        
+        if candidatos:
+            # Adiciona vizinhos (2 antes + 2 depois para raios, mais conservador)
+            numeros_com_vizinhos = set()
+            for candidato in candidatos:
+                vizinhos = self.get_vizinhos_completos(candidato, quantidade=2)
+                for v in vizinhos:
+                    numeros_com_vizinhos.add(v)
+            
+            numeros_apostar = sorted(list(numeros_com_vizinhos))[:12]
+            
+            # Calcula confiança baseada nos critérios atendidos
+            confianca = self.calcular_confianca(candidatos, numeros_atrasados, numeros_nunca_raio)
+            
+            # Gera gatilho explicativo
+            gatilho = self.gerar_gatilho(candidatos, numeros_atrasados, numeros_nunca_raio, atraso_medio)
+            
+            return {
+                'nome': 'Estratégia de Raios (Análise Estatística Real)',
+                'numeros_apostar': numeros_apostar,
+                'gatilho': gatilho,
+                'confianca': confianca,
+                'tipo': 'raios',
+                'candidatos': candidatos,
+                'total_raios_historico': len(self.historico_raios),
+                'atraso_medio': atraso_medio
+            }
+        return None
+    
+    def get_hot_numbers(self):
+        """Pega números quentes do sistema principal"""
+        if hasattr(st.session_state, 'sistema'):
+            return st.session_state.sistema.estrategia_hot.numeros_hot[:10]
+        return []
+    
+    def calcular_confianca(self, candidatos, atrasados, nunca_raio):
+        """Calcula confiança baseada nos critérios atendidos"""
+        score = 0
+        
+        # Tem candidatos que nunca foram raio?
+        nunca_em_candidatos = sum(1 for c in candidatos if c in nunca_raio)
+        if nunca_em_candidatos >= 2:
+            score += 50
+        elif nunca_em_candidatos >= 1:
+            score += 30
+        
+        # Tem candidatos atrasados?
+        atrasados_em_candidatos = sum(1 for c in candidatos if c in atrasados)
+        if atrasados_em_candidatos >= 2:
+            score += 30
+        elif atrasados_em_candidatos >= 1:
+            score += 15
+        
+        # Quantidade de candidatos (menos é mais preciso)
+        if len(candidatos) <= 3:
+            score += 20
+        elif len(candidatos) <= 4:
+            score += 10
+        
+        if score >= 80:
+            return 'Excelente'
+        elif score >= 60:
+            return 'Muito Alta'
+        elif score >= 40:
+            return 'Alta'
+        elif score >= 25:
+            return 'Média'
+        else:
+            return 'Baixa'
+    
+    def gerar_gatilho(self, candidatos, atrasados, nunca_raio, atraso_medio):
+        """Gera explicação do gatilho"""
+        partes = []
+        
+        nunca_sel = [c for c in candidatos if c in nunca_raio]
+        if nunca_sel:
+            partes.append(f"🚨 {len(nunca_sel)} números NUNCA foram raio: {nunca_sel}")
+        
+        atrasados_sel = [c for c in candidatos if c in atrasados]
+        if atrasados_sel:
+            partes.append(f"⏰ {len(atrasados_sel)} números atrasados: {atrasados_sel}")
+        
+        if not partes:
+            partes.append(f"🎲 {len(candidatos)} candidatos baseado em análise estatística")
+        
+        partes.append(f"📊 Média entre raios: {atraso_medio:.0f} sorteios")
+        
+        return f"⚡ {' | '.join(partes)}"
+
+# =============================
+# MÓDULO DE MACHINE LEARNING (MANTIDO)
 # =============================
 class MLRoletaOtimizada:
     def __init__(
@@ -1306,7 +1437,7 @@ class MLRoletaOtimizada:
         }
 
 # =============================
-# ESTRATÉGIA DAS ZONAS (MANTIDA IGUAL)
+# ESTRATÉGIA DAS ZONAS (MANTIDA)
 # =============================
 class EstrategiaZonasOtimizada:
     def __init__(self):
@@ -1794,7 +1925,7 @@ class EstrategiaMidas:
         return None
 
 # =============================
-# ESTRATÉGIA ML (MANTIDA IGUAL)
+# ESTRATÉGIA ML (MANTIDA)
 # =============================
 class EstrategiaML:
     def __init__(self):
@@ -2375,7 +2506,7 @@ class EstrategiaML:
         logging.info("🔄 Padrões sequenciais e métricas zerados")
 
 # =============================
-# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA E NOVAS ESTRATÉGIAS
+# SISTEMA DE GESTÃO COM ROTAÇÃO AUTOMÁTICA
 # =============================
 class SistemaRoletaCompleto:
     def __init__(self):
@@ -2384,7 +2515,6 @@ class SistemaRoletaCompleto:
         self.estrategia_ml = EstrategiaML()
         self.estrategia_hot = EstrategiaHotNumbers()
         self.estrategia_raios = EstrategiaRaios()
-        self.analisador_padroes = AnalisadorPadroesAvancado()
         
         self.previsao_ativa = None
         self.historico_desempenho = []
@@ -2416,13 +2546,8 @@ class SistemaRoletaCompleto:
             if self.sequencia_erros >= 2:
                 estrategia_atual = self.estrategia_selecionada
                 
-                # Rotação inteligente baseada no desempenho
                 if estrategia_atual == "Zonas":
-                    # Verifica se Hot Numbers está performando bem
-                    if hasattr(self, 'estrategia_hot') and len(self.estrategia_hot.numeros_hot) > 3:
-                        nova_estrategia = "Hot Numbers"
-                    else:
-                        nova_estrategia = "ML"
+                    nova_estrategia = "ML"
                 elif estrategia_atual == "ML":
                     nova_estrategia = "Hot Numbers"
                 elif estrategia_atual == "Hot Numbers":
@@ -2449,8 +2574,11 @@ class SistemaRoletaCompleto:
             
         self.contador_sorteios_global += 1
             
+        # Registra para as estratégias
         if is_lightning and multiplier:
             self.estrategia_raios.adicionar_raio(numero_real, multiplier)
+        else:
+            self.estrategia_raios.adicionar_numero_normal(numero_real)
         
         self.estrategia_hot.adicionar_numero(numero_real)
         
@@ -2516,13 +2644,11 @@ class SistemaRoletaCompleto:
             nova_estrategia = self.estrategia_ml.analisar_ml()
         elif self.estrategia_selecionada == "Hot Numbers":
             nova_estrategia = self.estrategia_hot.analisar_hot_numbers()
-            # Se não tem hot numbers suficientes, tenta cold numbers
             if not nova_estrategia:
                 nova_estrategia = self.estrategia_hot.analisar_cold_numbers()
         elif self.estrategia_selecionada == "Raios":
             nova_estrategia = self.estrategia_raios.analisar_raios()
         
-        # Se não encontrou previsão na estratégia selecionada, tenta Hot Numbers como fallback
         if not nova_estrategia and self.estrategia_selecionada not in ["Hot Numbers", "Raios"]:
             nova_estrategia = self.estrategia_hot.analisar_hot_numbers()
         
@@ -2603,18 +2729,15 @@ def fetch_latest_result():
         response.raise_for_status()
         data = response.json()
         
-        # Extrai os dados conforme a estrutura real da API
         game_data = data.get("data", {})
         result = game_data.get("result", {})
         outcome = result.get("outcome", {})
         number = outcome.get("number")
         timestamp = game_data.get("startedAt")
         
-        # Captura os números com multiplicador (raios)
         lucky_numbers_list = result.get("luckyNumbersList", [])
         lightning_multiplier = result.get("lightningMultiplier", 100)
         
-        # Cria um dicionário de números raio com seus multiplicadores
         lightning_dict = {}
         for item in lucky_numbers_list:
             num = item.get("number")
@@ -2622,7 +2745,6 @@ def fetch_latest_result():
             if num is not None:
                 lightning_dict[num] = multiplier
         
-        # Verifica se o número sorteado é raio
         is_lightning = number in lightning_dict if number is not None else False
         multiplier = lightning_dict.get(number) if is_lightning else None
         
@@ -2641,7 +2763,7 @@ def fetch_latest_result():
         return None
 
 # =============================
-# APLICAÇÃO STREAMLIT ATUALIZADA
+# APLICAÇÃO STREAMLIT
 # =============================
 st.set_page_config(page_title="IA Roleta — Multi-Estratégias Avançada", layout="centered")
 st.title("🔥⚡🎯 IA Roleta — Sistema Multi-Estratégias Avançado 🔥⚡🎯")
@@ -2666,7 +2788,7 @@ if "telegram_token" not in st.session_state and not sessao_carregada:
 if "telegram_chat_id" not in st.session_state and not sessao_carregada:
     st.session_state.telegram_chat_id = ""
 
-# Sidebar - Configurações Avançadas
+# Sidebar
 st.sidebar.title("⚙️ Configurações")
 
 with st.sidebar.expander("💾 Gerenciamento de Sessão", expanded=False):
@@ -2756,15 +2878,6 @@ with st.sidebar.expander("🔔 Alertas Alternativos", expanded=False):
     - 🎯 **Previsão Detalhada:** Mensagem completa
     """)
     
-    alertas_alternativos = st.checkbox(
-        "Ativar Alertas Simplificados", 
-        value=True,
-        help="Envia alertas super simples junto com os detalhados"
-    )
-    
-    if not alertas_alternativos:
-        st.warning("⚠️ Alertas simplificados desativados")
-    
     if st.button("Testar Alertas Simplificados"):
         if st.session_state.telegram_token and st.session_state.telegram_chat_id:
             previsao_teste = {
@@ -2781,7 +2894,6 @@ with st.sidebar.expander("🔔 Alertas Alternativos", expanded=False):
         else:
             st.error("❌ Configure o Telegram primeiro")
 
-# Adiciona novas estratégias ao seletor
 estrategia = st.sidebar.selectbox(
     "🎯 Selecione a Estratégia:",
     ["Zonas", "Midas", "ML", "Hot Numbers", "Raios"],
@@ -2902,20 +3014,23 @@ with st.sidebar.expander("📊 Informações das Estratégias", expanded=False):
             st.write("---")
     
     elif estrategia == "Hot Numbers":
-        st.write("**🔥 Estratégia Hot Numbers (Números Quentes):**")
-        st.write("- Identifica números que mais apareceram nos últimos 30 sorteios")
-        st.write("- Para cada número quente, adiciona 4 vizinhos antes e 4 depois na roleta")
+        st.write("**🔥 Estratégia Hot Numbers (Baseada no Histórico Real):**")
+        st.write("- Identifica números que apareceram ACIMA da média nos últimos 30 sorteios")
+        st.write("- Média esperada: ~0.8 vezes por número em 30 sorteios")
+        st.write("- Hot numbers: números com 2+ ocorrências nos últimos 30")
+        st.write("- Para cada hot number, adiciona 4 vizinhos antes e 4 depois")
         st.write("- Total limitado a 15 números por aposta")
-        st.write("- Baseado em estatística real dos dados coletados")
         st.write("")
-        st.write("**Números historicamente quentes:** 30, 21, 18, 25, 8, 29, 15")
+        st.write("**Aprendizado dinâmico:** Os hot numbers mudam conforme o histórico")
         
     elif estrategia == "Raios":
-        st.write("**⚡ Estratégia de Raios:**")
-        st.write("- Identifica padrões de números que costumam ser raio")
-        st.write("- Adiciona vizinhos para cada candidato a raio")
-        st.write("- Multiplicadores comuns: 50x, 100x, 150x, 600x")
-        st.write("- Números que mais foram raio: 20, 24, 8, 10, 12, 29")
+        st.write("**⚡ Estratégia de Raios (Baseada no Histórico Real da API):**")
+        st.write("- Analisa números que NUNCA foram raio (prioridade máxima)")
+        st.write("- Identifica números atrasados para serem raio")
+        st.write("- Detecta padrões de repetição de raios")
+        st.write("- Considera multiplicadores históricos")
+        st.write("- Adiciona 2 vizinhos antes e 2 depois para cada candidato")
+        st.write("- **NENHUMA LISTA FIXA** - tudo baseado no histórico real")
         
     elif estrategia == "Midas":
         st.write("**🎯 Estratégia Midas:**")
@@ -2938,19 +3053,42 @@ with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=False):
     elif estrategia == "Hot Numbers":
         hot = st.session_state.sistema.estrategia_hot
         if hot.numeros_hot:
-            analise = f"🔥 NÚMEROS QUENTES (últimos 30):\n{', '.join(map(str, hot.numeros_hot[:10]))}\n\n❄️ NÚMEROS FRIOS (atrasados):\n{', '.join(map(str, hot.numeros_cold[:10]))}\n\n📊 Total de hot numbers: {len(hot.numeros_hot)}"
+            total_sorteios = len(hot.historico[-30:]) if len(hot.historico) >= 30 else len(hot.historico)
+            media_esperada = total_sorteios / 37
+            analise = f"🔥 HOT NUMBERS (últimos 30 sorteios):\n"
+            for num in hot.numeros_hot[:10]:
+                freq = hot.frequencias.get(num, 0)
+                analise += f"  Número {num}: {freq}x (média esperada: {media_esperada:.1f}x)\n"
+            analise += f"\n❄️ COLD NUMBERS (não saíram):\n"
+            analise += f"  {', '.join(map(str, hot.numeros_cold[:10]))}"
+            if len(hot.numeros_cold) > 10:
+                analise += f" ... (+{len(hot.numeros_cold)-10})"
         else:
-            analise = "Coletando dados para identificar números quentes..."
+            analise = f"Coletando dados... ({len(hot.historico)}/30 números necessários)"
     elif estrategia == "Raios":
         raios = st.session_state.sistema.estrategia_raios
-        if raios.historico_raios:
-            ultimos_raios = list(raios.historico_raios)[-5:]
-            analise = f"⚡ ÚLTIMOS RAIOS:\n"
-            for r in ultimos_raios:
-                analise += f"Número {r['numero']} - Multiplicador x{r['multiplier']}\n"
-            analise += f"\n📊 Média multiplicadores: {sum(raios.multipliers[-10:])/len(raios.multipliers[-10:]):.0f}x" if raios.multipliers else ""
+        if len(raios.historico_raios) > 0:
+            total_raios = len(raios.historico_raios)
+            total_sorteios = len(raios.historico_completo)
+            freq_media = total_sorteios / total_raios if total_raios > 0 else 0
+            
+            analise = f"⚡ ESTATÍSTICAS DE RAIOS:\n"
+            analise += f"📊 Total de raios registrados: {total_raios}\n"
+            analise += f"📈 Média entre raios: {freq_media:.1f} sorteios\n"
+            analise += f"🎲 Números que NUNCA foram raio: "
+            
+            todos_numeros = set(range(37))
+            numeros_raio = set([r['numero'] for r in raios.historico_raios])
+            nunca_raio = list(todos_numeros - numeros_raio)
+            analise += f"{', '.join(map(str, nunca_raio[:10]))}"
+            if len(nunca_raio) > 10:
+                analise += f" ... (+{len(nunca_raio)-10})"
+            
+            if raios.multipliers:
+                media_mult = sum(raios.multipliers[-10:]) / min(10, len(raios.multipliers))
+                analise += f"\n💰 Média multiplicadores (últimos 10): {media_mult:.0f}x"
         else:
-            analise = "Aguardando ocorrência de raios..."
+            analise = "Aguardando primeiro raio da API para análise..."
     else:
         analise = "🎯 Estratégia Midas ativa\nAnalisando padrões de terminais..."
     
@@ -2983,7 +3121,6 @@ else:
 if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo_ts:
     numero_atual = resultado.get("number")
     if numero_atual is not None:
-        # Adiciona todas as informações ao histórico
         resultado_completo = {
             "number": numero_atual,
             "timestamp": resultado["timestamp"],
@@ -2992,7 +3129,6 @@ if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo
             "lightning_numbers": resultado["lightning_numbers"]
         }
         st.session_state.historico.append(resultado_completo)
-        # Passa a informação se é raio e o multiplicador para o processamento
         st.session_state.sistema.processar_novo_numero(
             resultado_completo, 
             resultado["is_lightning"], 
@@ -3005,11 +3141,9 @@ st.subheader("🔁 Últimos Números")
 if st.session_state.historico:
     ultimos_10 = st.session_state.historico[-10:]
     
-    # Atualiza hot numbers para exibição
     hot_numbers = st.session_state.sistema.estrategia_hot.numeros_hot
     st.session_state.hot_numbers = hot_numbers
     
-    # Mostrar números com destaque para raios e hot numbers
     numeros_html = []
     for item in ultimos_10:
         if isinstance(item, dict):
@@ -3022,7 +3156,6 @@ if st.session_state.historico:
     
     st.markdown(" ".join(numeros_html), unsafe_allow_html=True)
     
-    # Mostrar estatísticas
     col_est1, col_est2, col_est3 = st.columns(3)
     with col_est1:
         lightning_count = sum(1 for item in st.session_state.historico[-50:] 
@@ -3037,7 +3170,6 @@ if st.session_state.historico:
         cold_count = len(st.session_state.sistema.estrategia_hot.numeros_cold)
         st.metric("❄️ Cold Numbers", cold_count)
     
-    # Mostrar últimos números raio com multiplicadores
     ultimos_raios = [item for item in st.session_state.historico[-20:] 
                     if isinstance(item, dict) and item.get('is_lightning', False)]
     if ultimos_raios:
@@ -3045,7 +3177,6 @@ if st.session_state.historico:
         raios_text = ", ".join([f"{item['number']} (x{item.get('multiplier', 100)})" for item in ultimos_raios[-5:]])
         st.write(raios_text)
     
-    # Mostrar hot numbers atuais
     hot_atual = st.session_state.sistema.estrategia_hot.numeros_hot[:10]
     if hot_atual:
         st.write(f"**🔥 Hot Numbers atuais:** {', '.join(map(str, hot_atual))}")
@@ -3097,7 +3228,7 @@ if sistema.previsao_ativa:
             st.write(f"**📍 Núcleo:** {nucleo}")
             
     elif 'Hot Numbers' in previsao['nome']:
-        st.write("**🔥 Apostando nos números mais quentes com vizinhos 4+4**")
+        st.write("**🔥 Apostando nos números mais quentes (baseado no histórico real)**")
         info_hot = previsao.get('info_hot', [])
         if info_hot:
             st.write("**Hot numbers identificados:**")
@@ -3106,7 +3237,10 @@ if sistema.previsao_ativa:
         st.write(f"**Total de números na aposta:** {len(previsao['numeros_apostar'])}")
         
     elif 'Raios' in previsao['nome']:
-        st.write("**⚡ Apostando em possíveis números raio com vizinhos**")
+        st.write("**⚡ Apostando em possíveis números raio (análise estatística)**")
+        candidatos = previsao.get('candidatos', [])
+        if candidatos:
+            st.write(f"**Candidatos a raio:** {', '.join(map(str, candidatos))}")
         
     elif 'ML' in previsao['nome']:
         zonas_envolvidas = previsao.get('zonas_envolvidas', [])
@@ -3116,7 +3250,6 @@ if sistema.previsao_ativa:
             nucleo1 = "7" if zona1 == 'Vermelha' else "10" if zona1 == 'Azul' else "2"
             nucleo2 = "7" if zona2 == 'Vermelha' else "10" if zona2 == 'Azul' else "2"
             st.write(f"**🤖 Núcleos Combinados:** {nucleo1} + {nucleo2}")
-            st.info("🔄 **ESTRATÉGIA DUPLA:** Maior cobertura com 2 zonas")
         else:
             zona_ml = previsao.get('zona_ml', '')
             if zona_ml == 'Vermelha':
@@ -3130,18 +3263,8 @@ if sistema.previsao_ativa:
             st.write(f"**🤖 Núcleo:** {nucleo}")
     
     st.write(f"**🔢 Números para apostar ({len(previsao['numeros_apostar'])}):**")
-    # Mostra os números em grupos para melhor visualização
     numeros_str = ", ".join(map(str, sorted(previsao['numeros_apostar'])))
     st.write(numeros_str)
-    
-    if 'ML' in previsao['nome'] and previsao.get('padroes_aplicados', 0) > 0:
-        st.info(f"🔍 **Padrões aplicados:** {previsao['padroes_aplicados']} padrões sequenciais detectados")
-    
-    tipo_aposta = previsao.get('tipo', 'unica')
-    if tipo_aposta == 'dupla':
-        st.success("🎯 **APOSTA DUPLA:** Maior cobertura com 2 zonas combinadas")
-    else:
-        st.info("🎯 **APOSTA SIMPLES:** Foco em uma zona principal")
     
     st.info("⏳ Aguardando próximo sorteio para conferência...")
 else:
