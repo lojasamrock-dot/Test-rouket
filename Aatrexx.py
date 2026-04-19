@@ -45,7 +45,10 @@ def salvar_sessao():
             'ml_contador_sorteios': st.session_state.sistema.estrategia_ml.contador_sorteios,
             'ml_sequencias_padroes': st.session_state.sistema.estrategia_ml.sequencias_padroes,
             'ml_metricas_padroes': st.session_state.sistema.estrategia_ml.metricas_padroes,
-            'estrategia_selecionada': st.session_state.sistema.estrategia_selecionada
+            'estrategia_selecionada': st.session_state.sistema.estrategia_selecionada,
+            'zonas_ultima_combinacao_erro': st.session_state.sistema.zonas_ultima_combinacao_erro,
+            'zonas_erros_consecutivos': st.session_state.sistema.zonas_erros_consecutivos,
+            'zonas_combinacoes_bloqueadas': st.session_state.sistema.zonas_combinacoes_bloqueadas
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -90,6 +93,9 @@ def carregar_sessao():
                 st.session_state.sistema.sequencia_erros = session_data.get('sistema_sequencia_erros', 0)
                 st.session_state.sistema.ultima_estrategia_erro = session_data.get('sistema_ultima_estrategia_erro', '')
                 st.session_state.sistema.estrategia_selecionada = session_data.get('estrategia_selecionada', 'Zonas')
+                st.session_state.sistema.zonas_ultima_combinacao_erro = session_data.get('zonas_ultima_combinacao_erro', '')
+                st.session_state.sistema.zonas_erros_consecutivos = session_data.get('zonas_erros_consecutivos', 0)
+                st.session_state.sistema.zonas_combinacoes_bloqueadas = session_data.get('zonas_combinacoes_bloqueadas', [])
                 
                 zonas_historico = session_data.get('zonas_historico', [])
                 st.session_state.sistema.estrategia_zonas.historico = deque(zonas_historico, maxlen=70)
@@ -291,7 +297,6 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
         else:
             mensagem = f"❌ Erro\n🎲 Número: {numero_real}"
         
-        # Adiciona informação do multiplicador se for raio
         if multiplicador and multiplicador > 0:
             mensagem += f"\n⚡ RAIO! Multiplicador: {multiplicador}x"
         
@@ -324,10 +329,13 @@ def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia,
     except Exception as e:
         logging.error(f"Erro ao enviar alerta de conferência: {e}")
 
-def enviar_rotacao_automatica(estrategia_anterior, estrategia_nova):
+def enviar_rotacao_automatica(estrategia_anterior, estrategia_nova, motivo=None):
     """Envia notificação de rotação automática"""
     try:
-        mensagem = f"🔄 ROTAÇÃO AUTOMÁTICA\n{estrategia_anterior} → {estrategia_nova}"
+        if motivo:
+            mensagem = f"🔄 ROTAÇÃO AUTOMÁTICA\n{estrategia_anterior} → {estrategia_nova}\n📋 Motivo: {motivo}"
+        else:
+            mensagem = f"🔄 ROTAÇÃO AUTOMÁTICA\n{estrategia_anterior} → {estrategia_nova}"
         
         st.toast("🔄 Rotação Automática", icon="🔄")
         st.warning(f"🔄 {mensagem}")
@@ -338,6 +346,20 @@ def enviar_rotacao_automatica(estrategia_anterior, estrategia_nova):
                 
     except Exception as e:
         logging.error(f"Erro ao enviar rotação: {e}")
+
+def enviar_troca_combinacao_zonas(combinacao_antiga, combinacao_nova):
+    """Envia notificação de troca de combinação dentro da estratégia Zonas"""
+    try:
+        mensagem = f"🔄 TROCA DE COMBINAÇÃO ZONAS\n{combinacao_antiga} → {combinacao_nova}\n📋 Motivo: Erro na combinação anterior"
+        
+        st.info(f"🔄 {mensagem}")
+        
+        if 'telegram_token' in st.session_state and 'telegram_chat_id' in st.session_state:
+            if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+                enviar_telegram(f"🔄 TROCA ZONAS\n{mensagem}")
+                
+    except Exception as e:
+        logging.error(f"Erro ao enviar troca de combinação: {e}")
 
 def enviar_telegram(mensagem):
     """Envia mensagem para o Telegram"""
@@ -963,7 +985,7 @@ class MLRoletaOtimizada:
         }
 
 # =============================
-# ESTRATÉGIA DAS ZONAS CORRIGIDA - AGORA APOSTA NAS "ONDAS" (MAIOR FREQUÊNCIA RECENTE)
+# ESTRATÉGIA DAS ZONAS COM SELEÇÃO DINÂMICA E BLOQUEIO DE COMBINAÇÕES QUE ERRARAM
 # =============================
 class EstrategiaZonasOtimizada:
     def __init__(self):
@@ -983,6 +1005,13 @@ class EstrategiaZonasOtimizada:
             'Amarela': 6
         }
         
+        # Lista de todas as combinações possíveis de zonas duplas
+        self.combinacoes_possiveis = [
+            "Vermelha+Azul",
+            "Vermelha+Amarela",
+            "Azul+Amarela"
+        ]
+        
         self.stats_zonas = {zona: {
             'acertos': 0, 
             'tentativas': 0, 
@@ -997,13 +1026,13 @@ class EstrategiaZonasOtimizada:
             self.numeros_zonas[nome] = self.roleta.get_vizinhos_zona(central, qtd)
 
         self.janelas_analise = {
-            'curto_prazo': 12,   # Janela principal para detectar ondas
+            'curto_prazo': 12,
             'medio_prazo': 24,
             'longo_prazo': 48,
             'performance': 100
         }
         
-        self.threshold_base = 25  # Threshold reduzido para detectar ondas mais facilmente
+        self.threshold_base = 25
         self.sistema_selecao = SistemaSelecaoInteligente()
         
         # Estatísticas de combinações
@@ -1011,18 +1040,21 @@ class EstrategiaZonasOtimizada:
         self.janela_dinamica = 50
         
         # Inicializar todas as combinações possíveis
-        for zona1 in self.zonas.keys():
-            for zona2 in self.zonas.keys():
-                if zona1 != zona2:
-                    comb_nome = f"{zona1}+{zona2}"
-                    self.combinacoes_stats[comb_nome] = {
-                        'acertos': 0,
-                        'tentativas': 0,
-                        'ultimo_uso': 0,
-                        'sequencia_atual': 0,
-                        'melhor_taxa': 0,
-                        'historico_recente': deque(maxlen=self.janela_dinamica)
-                    }
+        for comb_nome in self.combinacoes_possiveis:
+            self.combinacoes_stats[comb_nome] = {
+                'acertos': 0,
+                'tentativas': 0,
+                'ultimo_uso': 0,
+                'sequencia_atual': 0,
+                'melhor_taxa': 0,
+                'historico_recente': deque(maxlen=self.janela_dinamica)
+            }
+        
+        # Controle de combinações bloqueadas (que acabaram de errar)
+        self.combinacoes_bloqueadas = []
+        self.ultima_combinacao_usada = None
+        self.erros_consecutivos_mesma_combinacao = 0
+        self.tentativas_combinacao = 0
 
     def adicionar_numero(self, numero):
         self.historico.append(numero)
@@ -1052,7 +1084,7 @@ class EstrategiaZonasOtimizada:
         return acertou_zona
 
     def atualizar_combinacoes_stats(self, combinacao_usada, acertou):
-        """Atualiza estatísticas da combinação usada"""
+        """Atualiza estatísticas da combinação usada e controla bloqueios"""
         if combinacao_usada in self.combinacoes_stats:
             self.combinacoes_stats[combinacao_usada]['tentativas'] += 1
             self.combinacoes_stats[combinacao_usada]['historico_recente'].append(1 if acertou else 0)
@@ -1060,8 +1092,20 @@ class EstrategiaZonasOtimizada:
             if acertou:
                 self.combinacoes_stats[combinacao_usada]['acertos'] += 1
                 self.combinacoes_stats[combinacao_usada]['sequencia_atual'] += 1
+                # Se acertou, remove dos bloqueados e reseta contadores
+                if combinacao_usada in self.combinacoes_bloqueadas:
+                    self.combinacoes_bloqueadas.remove(combinacao_usada)
+                self.erros_consecutivos_mesma_combinacao = 0
             else:
                 self.combinacoes_stats[combinacao_usada]['sequencia_atual'] = 0
+                # Se errou, bloqueia esta combinação
+                self.combinacoes_bloqueadas.append(combinacao_usada)
+                self.erros_consecutivos_mesma_combinacao += 1
+                logging.info(f"🚫 Combinação {combinacao_usada} bloqueada após erro")
+            
+            # Limitar tamanho da lista de bloqueadas (manter apenas as últimas 3)
+            if len(self.combinacoes_bloqueadas) > 3:
+                self.combinacoes_bloqueadas = self.combinacoes_bloqueadas[-3:]
             
             hist_recente = list(self.combinacoes_stats[combinacao_usada]['historico_recente'])
             if len(hist_recente) > 0:
@@ -1071,76 +1115,64 @@ class EstrategiaZonasOtimizada:
 
     def get_melhor_combinacao_dinamica(self):
         """
-        Analisa combinações baseado na FREQUÊNCIA RECENTE (ondas)
+        Retorna a melhor combinação disponível, EXCLUINDO as que estão bloqueadas (acabaram de errar)
         """
         if len(self.historico) < 20:
             return None
-            
+        
+        # Primeiro, obtém todas as combinações com suas pontuações
         scores_combinacoes = {}
         
-        for comb_nome, stats in self.combinacoes_stats.items():
-            hist_recente = list(stats['historico_recente'])
+        for comb_nome in self.combinacoes_possiveis:
+            # Pular combinações bloqueadas (que acabaram de errar)
+            if comb_nome in self.combinacoes_bloqueadas:
+                logging.info(f"⏭️ Combinacão {comb_nome} bloqueada (erro recente), pulando...")
+                continue
+                
+            stats = self.combinacoes_stats.get(comb_nome, {})
+            hist_recente = list(stats.get('historico_recente', []))
             
-            if len(hist_recente) < 5:
+            if len(hist_recente) < 3:
                 scores_combinacoes[comb_nome] = 0
                 continue
             
             # Fator principal: TAXA DE ACERTO RECENTE (a "onda")
             taxa_acerto = sum(hist_recente) / len(hist_recente) * 100
             
-            # Peso MUITO ALTO para taxa recente (80%)
-            score = taxa_acerto * 0.8
+            # Peso alto para taxa recente (70%)
+            score = taxa_acerto * 0.7
             
             # Bônus por sequência atual (indica onda forte)
-            if stats['sequencia_atual'] >= 2:
+            if stats.get('sequencia_atual', 0) >= 2:
                 score += stats['sequencia_atual'] * 5
             
-            # Bônus pequeno por performance histórica (apenas 20%)
-            if stats['tentativas'] > 0:
-                taxa_historica = (stats['acertos'] / stats['tentativas']) * 100
-                score += taxa_historica * 0.2
+            # Bônus pequeno por performance histórica (30%)
+            if stats.get('tentativas', 0) > 0:
+                taxa_historica = (stats.get('acertos', 0) / stats['tentativas']) * 100
+                score += taxa_historica * 0.3
             
             scores_combinacoes[comb_nome] = score
         
         if not scores_combinacoes:
             return None
         
+        # Se todas as combinações estão bloqueadas, limpa os bloqueios e tenta novamente
+        if all(score == 0 for score in scores_combinacoes.values()):
+            logging.info("⚠️ Todas as combinações bloqueadas! Limpando bloqueios...")
+            self.combinacoes_bloqueadas = []
+            return self.get_melhor_combinacao_dinamica()
+        
         melhor_combinacao = max(scores_combinacoes, key=scores_combinacoes.get)
         melhor_score = scores_combinacoes[melhor_combinacao]
         
         # Threshold baixo para pegar ondas emergentes
-        if melhor_score < 20:
+        if melhor_score < 15:
             return None
             
         return melhor_combinacao
 
-    def get_threshold_dinamico(self, zona):
-        # Threshold baseado na frequência recente, não na performance histórica
-        if len(self.historico) < 15:
-            return self.threshold_base
-        
-        # Conta quantas vezes a zona saiu nos últimos 12 sorteios
-        ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
-        freq_recente = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona])
-        percentual_recente = (freq_recente / len(ultimos_12)) * 100
-        
-        # Quanto maior a frequência recente, menor o threshold (mais fácil apostar)
-        if percentual_recente > 40:
-            return self.threshold_base - 10
-        elif percentual_recente > 30:
-            return self.threshold_base - 5
-        elif percentual_recente > 20:
-            return self.threshold_base
-        elif percentual_recente > 10:
-            return self.threshold_base + 5
-        else:
-            return self.threshold_base + 10
-
     def get_zona_mais_quente(self):
-        """
-        IDENTIFICA A ZONA MAIS FREQUENTE NOS ÚLTIMOS SORTEIOS (A "ONDA")
-        Esta é a lógica correta para apostar em tendências.
-        """
+        """Identifica a zona mais frequente (para fallback)"""
         if len(self.historico) < 15:
             return None
             
@@ -1149,74 +1181,50 @@ class EstrategiaZonasOtimizada:
         for zona in self.zonas.keys():
             score = 0
             
-            # FATOR 1: Frequência nos últimos 12 sorteios (PESO 60%) - A ONDA
             ultimos_curto = list(self.historico)[-self.janelas_analise['curto_prazo']:] if len(self.historico) >= self.janelas_analise['curto_prazo'] else list(self.historico)
             freq_curto = sum(1 for n in ultimos_curto if n in self.numeros_zonas[zona])
             percentual_curto = (freq_curto / len(ultimos_curto)) * 100 if len(ultimos_curto) > 0 else 0
-            score += percentual_curto * 0.6  # PESO 60% para a onda recente
+            score += percentual_curto * 0.6
             
-            # FATOR 2: Sequência atual (indica onda forte)
             sequencia = self.stats_zonas[zona]['sequencia_atual']
             if sequencia >= 2:
-                score += sequencia * 8  # Bônus significativo para sequência
+                score += sequencia * 8
             
-            # FATOR 3: Frequência nos últimos 24 (tendência de médio prazo) - PESO 20%
             ultimos_medio = list(self.historico)[-self.janelas_analise['medio_prazo']:] if len(self.historico) >= self.janelas_analise['medio_prazo'] else list(self.historico)
             freq_medio = sum(1 for n in ultimos_medio if n in self.numeros_zonas[zona])
             percentual_medio = (freq_medio / len(ultimos_medio)) * 100 if len(ultimos_medio) > 0 else 0
             score += percentual_medio * 0.2
             
-            # FATOR 4: Performance histórica (PESO MÍNIMO 10%) - apenas para evitar zonas muito ruins
-            if self.stats_zonas[zona]['tentativas'] > 10:
-                taxa_acerto = self.stats_zonas[zona]['performance_media']
-                # Penaliza zonas com performance muito baixa
-                if taxa_acerto < 15:
-                    score -= 10
-                elif taxa_acerto < 25:
-                    score -= 5
-                else:
-                    score += taxa_acerto * 0.1  # Peso mínimo para performance histórica
-            else:
-                score += 5  # Bônus para zonas com poucos dados (exploração)
-            
             zonas_score[zona] = score
         
-        # Retorna a zona com maior score (a "onda" mais forte)
         zona_vencedora = max(zonas_score, key=zonas_score.get) if zonas_score else None
         
         if zona_vencedora:
-            # Verifica se a zona realmente está em "onda" (frequência mínima)
             ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
             freq_zona = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_vencedora])
-            
-            # Só aposta se a zona apareceu pelo menos 3 vezes nos últimos 12
             if freq_zona >= 2:
                 return zona_vencedora
         
         return None
 
     def get_zonas_rankeadas(self):
-        """Retorna zonas rankeadas por frequência recente (ondas)"""
+        """Retorna zonas rankeadas por frequência recente"""
         if len(self.historico) < 15:
             return None
             
         zonas_score = {}
         
         for zona in self.zonas.keys():
-            # Frequência nos últimos 12 (principal)
             ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
             freq_12 = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona])
             percentual_12 = (freq_12 / len(ultimos_12)) * 100
             
-            # Frequência nos últimos 24 (suporte)
             ultimos_24 = list(self.historico)[-24:] if len(self.historico) >= 24 else list(self.historico)
             freq_24 = sum(1 for n in ultimos_24 if n in self.numeros_zonas[zona])
             percentual_24 = (freq_24 / len(ultimos_24)) * 100
             
-            # Score = peso 70% para onda recente + 30% para tendência de médio prazo
             score = (percentual_12 * 0.7) + (percentual_24 * 0.3)
             
-            # Bônus para sequência atual
             sequencia = self.stats_zonas[zona]['sequencia_atual']
             if sequencia >= 2:
                 score += sequencia * 5
@@ -1228,12 +1236,15 @@ class EstrategiaZonasOtimizada:
 
     def analisar_zonas_com_inversao(self):
         """
-        Lógica CORRIGIDA: Aposta nas zonas que estão em ONDA (mais frequentes recentemente)
+        Lógica CORRIGIDA: 
+        1. Evita usar combinações que acabaram de errar
+        2. Troca automaticamente para outra combinação quando uma erra
+        3. Só muda para ML depois que todas as combinações falham
         """
         if len(self.historico) < 15:
             return None
-            
-        # PRIORIDADE 1: Verificar combinações dinâmicas (baseado em ondas)
+        
+        # PRIORIDADE 1: Melhor combinação disponível (excluindo bloqueadas)
         melhor_combinacao = self.get_melhor_combinacao_dinamica()
         
         if melhor_combinacao:
@@ -1260,7 +1271,14 @@ class EstrategiaZonasOtimizada:
                 hist_recente = list(stats_comb.get('historico_recente', []))
                 taxa_recente = sum(hist_recente) / len(hist_recente) * 100 if hist_recente else 0
                 
-                gatilho = f'🌊 ONDA: {melhor_combinacao} (Taxa recente: {taxa_recente:.1f}%) | SEL: {len(numeros_combinados)} números'
+                # Mostrar combinações bloqueadas no gatilho
+                bloqueadas_str = ""
+                if self.combinacoes_bloqueadas:
+                    bloqueadas_str = f" | 🚫 Bloqueadas: {', '.join(self.combinacoes_bloqueadas)}"
+                
+                gatilho = f'🌊 ONDA: {melhor_combinacao} (Taxa: {taxa_recente:.1f}%) | SEL: {len(numeros_combinados)} números{bloqueadas_str}'
+                
+                self.ultima_combinacao_usada = melhor_combinacao
                 
                 return {
                     'nome': f'Zonas Duplas - {melhor_combinacao}',
@@ -1275,61 +1293,12 @@ class EstrategiaZonasOtimizada:
                     'numeros_originais_qtd': numeros_originais_qtd
                 }
         
-        # PRIORIDADE 2: Identificar a zona mais quente (a onda)
+        # PRIORIDADE 2: Se nenhuma combinação dupla disponível, tenta aposta simples na zona mais quente
         zona_primaria = self.get_zona_mais_quente()
         
         if not zona_primaria:
             return None
         
-        # Verificar se pode combinar com a segunda zona mais quente
-        zonas_rankeadas = self.get_zonas_rankeadas()
-        
-        if zonas_rankeadas and len(zonas_rankeadas) > 1:
-            zona_secundaria, score_secundario = zonas_rankeadas[1]
-            
-            # Verifica se a segunda zona também está em onda
-            ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
-            freq_secundaria = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_secundaria])
-            
-            # Se a segunda zona apareceu pelo menos 2 vezes nos últimos 12, combina
-            if freq_secundaria >= 2:
-                numeros_primarios = self.numeros_zonas[zona_primaria]
-                numeros_secundarios = self.numeros_zonas[zona_secundaria]
-                
-                numeros_combinados = list(set(numeros_primarios + numeros_secundarios))
-                numeros_originais_qtd = len(numeros_combinados)
-                
-                if len(numeros_combinados) > 15:
-                    numeros_combinados = self.sistema_selecao.selecionar_melhores_15_numeros(
-                        numeros_combinados, self.historico, "Zonas"
-                    )
-                
-                confianca_primaria = self.calcular_confianca_onda(zona_primaria)
-                confianca_secundaria = self.calcular_confianca_onda(zona_secundaria)
-                
-                # Calcular frequências para o gatilho
-                freq_primaria = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_primaria])
-                percentual_primaria = (freq_primaria / len(ultimos_12)) * 100
-                percentual_secundaria = (freq_secundaria / len(ultimos_12)) * 100
-                
-                combinacao_nome = f"{zona_primaria}+{zona_secundaria}"
-                
-                gatilho = f'🌊 ONDA DUPLA: {zona_primaria}({percentual_primaria:.0f}%) + {zona_secundaria}({percentual_secundaria:.0f}%) | FINAL: {len(numeros_combinados)} números'
-                
-                return {
-                    'nome': f'Zonas Duplas - {combinacao_nome}',
-                    'numeros_apostar': numeros_combinados,
-                    'gatilho': gatilho,
-                    'confianca': f'{confianca_primaria}+{confianca_secundaria}',
-                    'zona': combinacao_nome,
-                    'zonas_envolvidas': [zona_primaria, zona_secundaria],
-                    'tipo': 'dupla',
-                    'selecao_inteligente': True,
-                    'combinacao_usada': combinacao_nome,
-                    'numeros_originais_qtd': numeros_originais_qtd
-                }
-        
-        # Aposta simples na zona mais quente
         numeros_apostar = self.numeros_zonas[zona_primaria]
         numeros_originais_qtd = len(numeros_apostar)
         
@@ -1340,7 +1309,6 @@ class EstrategiaZonasOtimizada:
         
         confianca = self.calcular_confianca_onda(zona_primaria)
         
-        # Calcular frequência para o gatilho
         ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
         freq_zona = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_primaria])
         percentual = (freq_zona / len(ultimos_12)) * 100
@@ -1348,7 +1316,13 @@ class EstrategiaZonasOtimizada:
         sequencia = self.stats_zonas[zona_primaria]['sequencia_atual']
         sequencia_str = f" | 🔥 Seq: {sequencia}" if sequencia >= 2 else ""
         
-        gatilho = f'🌊 ONDA: {zona_primaria} ({freq_zona}/{len(ultimos_12)} = {percentual:.0f}%){sequencia_str} | FINAL: {len(numeros_apostar)} números'
+        bloqueadas_str = ""
+        if self.combinacoes_bloqueadas:
+            bloqueadas_str = f" | 🚫 Bloqueadas: {', '.join(self.combinacoes_bloqueadas)}"
+        
+        gatilho = f'🌊 ONDA SIMPLES: {zona_primaria} ({freq_zona}/{len(ultimos_12)} = {percentual:.0f}%){sequencia_str} | FINAL: {len(numeros_apostar)} números{bloqueadas_str}'
+        
+        self.ultima_combinacao_usada = zona_primaria
         
         return {
             'nome': f'Zona {zona_primaria}',
@@ -1367,9 +1341,7 @@ class EstrategiaZonasOtimizada:
         return self.analisar_zonas_com_inversao()
 
     def calcular_confianca_onda(self, zona):
-        """
-        Calcula confiança baseada na INTENSIDADE DA ONDA (frequência recente)
-        """
+        """Calcula confiança baseada na INTENSIDADE DA ONDA"""
         if len(self.historico) < 10:
             return 'Baixa'
         
@@ -1393,7 +1365,7 @@ class EstrategiaZonasOtimizada:
             return 'Muito Baixa'
 
     def get_zona_score(self, zona):
-        """Score baseado em frequência recente (para ranking)"""
+        """Score baseado em frequência recente"""
         if len(self.historico) < 10:
             return 0
         
@@ -1428,9 +1400,10 @@ class EstrategiaZonasOtimizada:
         if len(self.historico) == 0:
             return "Aguardando dados..."
         
-        analise = "🎯 ANÁLISE DE ONDAS - ZONAS v7\n"
+        analise = "🎯 ANÁLISE DE ONDAS - ZONAS v8 (COM BLOQUEIO)\n"
         analise += "=" * 55 + "\n"
         analise += "🔧 ESTRATÉGIA: Apostar nas ZONAS MAIS FREQUENTES (ONDAS)\n"
+        analise += "🚫 BLOQUEIO: Combinações que erraram são bloqueadas temporariamente\n"
         analise += f"📊 JANELA PRINCIPAL: Últimos {self.janelas_analise['curto_prazo']} sorteios\n"
         analise += "=" * 55 + "\n"
         
@@ -1451,15 +1424,24 @@ class EstrategiaZonasOtimizada:
             seq_str = f" 🔥 Seq: {seq}" if seq >= 2 else ""
             analise += f"  📍 {zona}: {freq}/{len(ultimos_12)} ({perc:.1f}%){seq_str}\n"
         
-        analise += "\n" + "=" * 55 + "\n"
-        analise += "📊 PERFORMANCE HISTÓRICA (Apenas referência):\n"
-        for zona in self.zonas.keys():
-            tentativas = self.stats_zonas[zona]['tentativas']
-            acertos = self.stats_zonas[zona]['acertos']
-            taxa = self.stats_zonas[zona]['performance_media']
-            analise += f"📍 {zona}: {acertos}/{tentativas} → {taxa:.1f}%\n"
+        # Mostrar combinações bloqueadas
+        if self.combinacoes_bloqueadas:
+            analise += "\n🚫 COMBINAÇÕES BLOQUEADAS (erro recente):\n"
+            for comb in self.combinacoes_bloqueadas:
+                analise += f"  ⛔ {comb}\n"
         
-        # Mostrar zona recomendada (a onda)
+        analise += "\n📊 PERFORMANCE POR COMBINAÇÃO:\n"
+        for comb_nome in self.combinacoes_possiveis:
+            stats = self.combinacoes_stats.get(comb_nome, {})
+            tentativas = stats.get('tentativas', 0)
+            acertos = stats.get('acertos', 0)
+            seq = stats.get('sequencia_atual', 0)
+            if tentativas > 0:
+                taxa = (acertos / tentativas) * 100
+                bloqueado_str = " 🚫" if comb_nome in self.combinacoes_bloqueadas else ""
+                seq_str = f" 🔥{seq}" if seq >= 2 else ""
+                analise += f"  📊 {comb_nome}: {acertos}/{tentativas} ({taxa:.1f}%){seq_str}{bloqueado_str}\n"
+        
         zona_recomendada = self.get_zona_mais_quente()
         if zona_recomendada:
             freq = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_recomendada])
@@ -1492,6 +1474,9 @@ class EstrategiaZonasOtimizada:
                 'melhor_taxa': 0,
                 'historico_recente': deque(maxlen=self.janela_dinamica)
             }
+        self.combinacoes_bloqueadas = []
+        self.ultima_combinacao_usada = None
+        self.erros_consecutivos_mesma_combinacao = 0
         logging.info("📊 Estatísticas das Zonas zeradas")
 
 # =============================
@@ -2133,7 +2118,7 @@ class EstrategiaML:
         logging.info("🔄 Padrões sequenciais e métricas zerados")
 
 # =============================
-# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA
+# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA E BLOQUEIO DE COMBINAÇÕES
 # =============================
 class SistemaRoletaCompleto:
     def __init__(self):
@@ -2150,6 +2135,10 @@ class SistemaRoletaCompleto:
         
         self.sequencia_erros = 0
         self.ultima_estrategia_erro = ""
+        
+        # Controle de rotação entre estratégias (Zonas ↔ ML)
+        self.erros_consecutivos_estrategia = 0
+        self.ultima_estrategia_usada = "Zonas"
 
     def set_estrategia(self, estrategia):
         self.estrategia_selecionada = estrategia
@@ -2159,29 +2148,41 @@ class SistemaRoletaCompleto:
         return self.estrategia_ml.treinar_modelo_ml(historico_completo)
 
     def rotacionar_estrategia_automaticamente(self, acerto, nome_estrategia):
+        """
+        Lógica de rotação entre Zonas e ML:
+        - Só rotaciona se a estratégia atual errar 2 vezes seguidas
+        - A rotação é entre Zonas e ML apenas (Midas fica de fora)
+        """
         if acerto:
-            self.sequencia_erros = 0
+            # Reset ao acertar
+            self.erros_consecutivos_estrategia = 0
             self.ultima_estrategia_erro = ""
+            self.ultima_estrategia_usada = nome_estrategia
             return False
         else:
-            self.sequencia_erros += 1
+            self.erros_consecutivos_estrategia += 1
             self.ultima_estrategia_erro = nome_estrategia
             
-            if self.sequencia_erros >= 2:
+            # Se a estratégia atual errar 2 vezes seguidas, rotaciona
+            if self.erros_consecutivos_estrategia >= 2:
                 estrategia_atual = self.estrategia_selecionada
                 
+                # Rotação apenas entre Zonas e ML
                 if estrategia_atual == "Zonas":
                     nova_estrategia = "ML"
+                    motivo = "2 erros consecutivos nas Zonas"
                 elif estrategia_atual == "ML":
                     nova_estrategia = "Zonas"
+                    motivo = "2 erros consecutivos no ML"
                 else:
-                    nova_estrategia = "Zonas"
+                    nova_estrategia = "Zonas"  # fallback
+                    motivo = "Estratégia não reconhecida, voltando para Zonas"
                 
                 self.estrategia_selecionada = nova_estrategia
-                self.sequencia_erros = 0
+                self.erros_consecutivos_estrategia = 0
                 
-                enviar_rotacao_automatica(estrategia_atual, nova_estrategia)
-                logging.info(f"🔄 ROTAÇÃO AUTOMÁTICA: {estrategia_atual} → {nova_estrategia}")
+                enviar_rotacao_automatica(estrategia_atual, nova_estrategia, motivo)
+                logging.info(f"🔄 ROTAÇÃO AUTOMÁTICA: {estrategia_atual} → {nova_estrategia} - Motivo: {motivo}")
                 
                 return True
             return False
@@ -2189,7 +2190,6 @@ class SistemaRoletaCompleto:
     def processar_novo_numero(self, numero):
         if isinstance(numero, dict) and 'number' in numero:
             numero_real = numero['number']
-            # Extrai o multiplicador se o número for raio
             multiplicador = None
             lucky_numbers = numero.get('luckyNumbers', [])
             lucky_multipliers = numero.get('luckyMultipliers', {})
@@ -2226,6 +2226,7 @@ class SistemaRoletaCompleto:
                 combinacao_usada = self.previsao_ativa['combinacao_usada']
                 self.estrategia_zonas.atualizar_combinacoes_stats(combinacao_usada, acerto)
             
+            # Rotação entre estratégias (Zonas ↔ ML)
             rotacionou = self.rotacionar_estrategia_automaticamente(acerto, nome_estrategia)
             
             if nome_estrategia not in self.estrategias_contador:
@@ -2279,6 +2280,7 @@ class SistemaRoletaCompleto:
         self.contador_sorteios_global = 0
         self.sequencia_erros = 0
         self.ultima_estrategia_erro = ""
+        self.erros_consecutivos_estrategia = 0
         
         self.estrategia_zonas.zerar_estatisticas()
         
@@ -2319,9 +2321,9 @@ class SistemaRoletaCompleto:
     def get_status_rotacao(self):
         return {
             'estrategia_atual': self.estrategia_selecionada,
-            'sequencia_erros': self.sequencia_erros,
+            'sequencia_erros': self.erros_consecutivos_estrategia,
             'ultima_estrategia_erro': self.ultima_estrategia_erro,
-            'proxima_rotacao_em': max(0, 2 - self.sequencia_erros)
+            'proxima_rotacao_em': max(0, 2 - self.erros_consecutivos_estrategia)
         }
 
 # =============================
@@ -2338,10 +2340,7 @@ def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
         logging.error(f"Erro ao salvar histórico: {e}")
 
 def extrair_numeros_raio(resultado_api):
-    """
-    Extrai os números que foram raios (lucky numbers) da resposta da API.
-    Retorna uma lista de números e um dicionário com os multiplicadores.
-    """
+    """Extrai os números que foram raios e seus multiplicadores"""
     numeros_raio = []
     multiplicadores = {}
     try:
@@ -2374,7 +2373,6 @@ def fetch_latest_result():
         number = outcome.get("number")
         timestamp = game_data.get("startedAt")
         
-        # Extraindo os números de raio e seus multiplicadores
         numeros_raio, multiplicadores = extrair_numeros_raio(data)
         
         return {
@@ -2556,6 +2554,12 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
     st.write("• ❌❌ **2 Erros Seguidos:** Rotação automática")
     st.write("• 🔄 **Zonas ↔ ML:** Rotação entre as duas principais")
     
+    st.write("---")
+    st.write("**🚫 Bloqueio de Combinações nas Zonas:**")
+    st.write("• Quando uma combinação de zonas erra, ela é bloqueada temporariamente")
+    st.write("• O sistema troca automaticamente para outra combinação disponível")
+    st.write("• As combinações bloqueadas são liberadas após acerto ou limpeza")
+    
     if st.button("🔄 Forçar Rotação", use_container_width=True):
         estrategia_atual = st.session_state.sistema.estrategia_selecionada
         if estrategia_atual == "Zonas":
@@ -2564,8 +2568,13 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
             nova_estrategia = "Zonas"
         
         st.session_state.sistema.estrategia_selecionada = nova_estrategia
-        st.session_state.sistema.sequencia_erros = 0
+        st.session_state.sistema.erros_consecutivos_estrategia = 0
         st.success(f"🔄 Rotação forçada: {estrategia_atual} → {nova_estrategia}")
+        st.rerun()
+    
+    if st.button("🚫 Limpar Bloqueios Zonas", use_container_width=True):
+        st.session_state.sistema.estrategia_zonas.combinacoes_bloqueadas = []
+        st.success("✅ Bloqueios de combinações das Zonas foram limpos!")
         st.rerun()
 
 with st.sidebar.expander("🧠 Treinamento ML", expanded=False):
@@ -2654,14 +2663,15 @@ with st.sidebar.expander("🔍 Estatísticas de Padrões ML", expanded=False):
 with st.sidebar.expander("📊 Informações das Estratégias"):
     if estrategia == "Zonas":
         info_zonas = st.session_state.sistema.estrategia_zonas.get_info_zonas()
-        st.write("**🎯 Estratégia Zonas v7 (ONDAS):**")
+        st.write("**🎯 Estratégia Zonas v8 (COM BLOQUEIO):**")
         st.write("**CONFIGURAÇÃO:** 6 antes + 6 depois (13 números/zona)")
-        st.write("**LÓGICA CORRIGIDA:**")
+        st.write("**LÓGICA ATUALIZADA:**")
         st.write("- 🌊 **APOSTA NAS ONDAS:** Zonas mais frequentes nos últimos 12 sorteios")
-        st.write("- 📊 **PESO 60% para frequência recente** (últimos 12 números)")
+        st.write("- 🚫 **BLOQUEIO DE COMBINAÇÕES:** Combinações que erram são bloqueadas")
+        st.write("- 🔄 **TROCA AUTOMÁTICA:** Se uma combinação erra, troca para outra disponível")
+        st.write("- 📊 **PESO 70% para taxa recente** (últimos 12 números)")
         st.write("- 🔥 **BÔNUS para sequências ativas** (acertos consecutivos)")
         st.write("- 🎯 **SELEÇÃO INTELIGENTE:** Máximo 15 números selecionados automaticamente")
-        st.write("- 🔄 **COMBINAÇÃO DUPLA:** Une as 2 zonas mais quentes quando possível")
         for zona, dados in info_zonas.items():
             st.write(f"**Zona {zona}** (Núcleo: {dados['central']})")
             st.write(f"Descrição: {dados['descricao']}")
@@ -2736,7 +2746,6 @@ else:
 if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo_ts:
     numero_atual = resultado.get("number")
     if numero_atual is not None:
-        # Adiciona os números de raio e multiplicadores ao registro do histórico
         resultado_completo = resultado
         st.session_state.historico.append(resultado_completo)
         st.session_state.sistema.processar_novo_numero(resultado_completo)
@@ -2788,6 +2797,9 @@ if sistema.previsao_ativa:
     if '🌊' in previsao.get('gatilho', ''):
         st.info("🌊 **ESTRATÉGIA DE ONDAS ATIVA:** Apostando nas zonas mais frequentes")
     
+    if '🚫' in previsao.get('gatilho', ''):
+        st.warning("🚫 **BLOQUEIO ATIVO:** Combinações que erraram estão temporariamente bloqueadas")
+    
     numeros_originais = previsao.get('numeros_originais_qtd', len(previsao['numeros_apostar']))
     if numeros_originais > len(previsao['numeros_apostar']):
         st.info(f"📊 **Redução final:** {numeros_originais} → {len(previsao['numeros_apostar'])} números")
@@ -2836,7 +2848,6 @@ if sistema.previsao_ativa:
     
     st.write(f"**🔢 Números para apostar ({len(previsao['numeros_apostar'])}):**")
     
-    # Verificando quais números da previsão são raios (se houver algum registro no histórico com luckyNumbers)
     numeros_raio_ativos = set()
     if st.session_state.historico:
         ultimo_item = st.session_state.historico[-1]
@@ -2908,7 +2919,6 @@ if sistema.historico_desempenho:
         emoji = "🎉" if resultado['acerto'] else "❌"
         rotacao_emoji = " 🔄" if resultado.get('rotacionou', False) else ""
         
-        # Adiciona informação do multiplicador se foi raio e acertou
         mult_info = ""
         if resultado.get('multiplicador') and resultado['acerto']:
             mult_info = f" ⚡{resultado['multiplicador']}x"
