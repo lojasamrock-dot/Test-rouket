@@ -956,13 +956,13 @@ class MLRoletaOtimizada:
         }
 
 # =============================
-# ESTRATÉGIA DAS ZONAS COM SELEÇÃO DINÂMICA (BASEADA NO HISTÓRICO REAL)
+# ESTRATÉGIA DAS ZONAS CORRIGIDA - AGORA APOSTA NAS "ONDAS" (MAIOR FREQUÊNCIA RECENTE)
 # =============================
 class EstrategiaZonasOtimizada:
     def __init__(self):
         self.roleta = RoletaInteligente()
         self.historico = deque(maxlen=70)
-        self.nome = "Zonas Ultra Otimizada v6"
+        self.nome = "Zonas Ondas v7"
         
         self.zonas = {
             'Vermelha': 7,
@@ -990,18 +990,18 @@ class EstrategiaZonasOtimizada:
             self.numeros_zonas[nome] = self.roleta.get_vizinhos_zona(central, qtd)
 
         self.janelas_analise = {
-            'curto_prazo': 12,
+            'curto_prazo': 12,   # Janela principal para detectar ondas
             'medio_prazo': 24,
             'longo_prazo': 48,
             'performance': 100
         }
         
-        self.threshold_base = 28
+        self.threshold_base = 25  # Threshold reduzido para detectar ondas mais facilmente
         self.sistema_selecao = SistemaSelecaoInteligente()
         
-        # NOVO: Estatísticas de combinações para seleção dinâmica
+        # Estatísticas de combinações
         self.combinacoes_stats = {}
-        self.janela_dinamica = 50  # Últimas 50 rodadas para análise
+        self.janela_dinamica = 50
         
         # Inicializar todas as combinações possíveis
         for zona1 in self.zonas.keys():
@@ -1056,7 +1056,6 @@ class EstrategiaZonasOtimizada:
             else:
                 self.combinacoes_stats[combinacao_usada]['sequencia_atual'] = 0
             
-            # Calcular taxa recente (últimas N rodadas)
             hist_recente = list(self.combinacoes_stats[combinacao_usada]['historico_recente'])
             if len(hist_recente) > 0:
                 taxa_recente = sum(hist_recente) / len(hist_recente) * 100
@@ -1065,8 +1064,7 @@ class EstrategiaZonasOtimizada:
 
     def get_melhor_combinacao_dinamica(self):
         """
-        Analisa TODAS as combinações nas últimas N rodadas (janela_dinamica)
-        e retorna a que está com melhor performance no momento.
+        Analisa combinações baseado na FREQUÊNCIA RECENTE (ondas)
         """
         if len(self.historico) < 20:
             return None
@@ -1076,21 +1074,21 @@ class EstrategiaZonasOtimizada:
         for comb_nome, stats in self.combinacoes_stats.items():
             hist_recente = list(stats['historico_recente'])
             
-            if len(hist_recente) < 5:  # Poucos dados, ainda não confiável
+            if len(hist_recente) < 5:
                 scores_combinacoes[comb_nome] = 0
                 continue
             
-            # Fatores para pontuação
+            # Fator principal: TAXA DE ACERTO RECENTE (a "onda")
             taxa_acerto = sum(hist_recente) / len(hist_recente) * 100
             
-            # Peso maior para taxa recente
-            score = taxa_acerto * 0.6
+            # Peso MUITO ALTO para taxa recente (80%)
+            score = taxa_acerto * 0.8
             
-            # Bônus por sequência atual
+            # Bônus por sequência atual (indica onda forte)
             if stats['sequencia_atual'] >= 2:
-                score += stats['sequencia_atual'] * 3
+                score += stats['sequencia_atual'] * 5
             
-            # Bônus por performance histórica da combinação
+            # Bônus pequeno por performance histórica (apenas 20%)
             if stats['tentativas'] > 0:
                 taxa_historica = (stats['acertos'] / stats['tentativas']) * 100
                 score += taxa_historica * 0.2
@@ -1103,99 +1101,135 @@ class EstrategiaZonasOtimizada:
         melhor_combinacao = max(scores_combinacoes, key=scores_combinacoes.get)
         melhor_score = scores_combinacoes[melhor_combinacao]
         
-        # Threshold mínimo para apostar (evita apostas em combinações ruins)
-        if melhor_score < 25:
+        # Threshold baixo para pegar ondas emergentes
+        if melhor_score < 20:
             return None
             
         return melhor_combinacao
 
     def get_threshold_dinamico(self, zona):
-        if zona not in self.stats_zonas:
+        # Threshold baseado na frequência recente, não na performance histórica
+        if len(self.historico) < 15:
             return self.threshold_base
         
-        perf = self.stats_zonas[zona]['performance_media']
+        # Conta quantas vezes a zona saiu nos últimos 12 sorteios
+        ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
+        freq_recente = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona])
+        percentual_recente = (freq_recente / len(ultimos_12)) * 100
         
-        if perf > 40:
+        # Quanto maior a frequência recente, menor o threshold (mais fácil apostar)
+        if percentual_recente > 40:
+            return self.threshold_base - 10
+        elif percentual_recente > 30:
             return self.threshold_base - 5
-        elif perf < 20:
+        elif percentual_recente > 20:
+            return self.threshold_base
+        elif percentual_recente > 10:
             return self.threshold_base + 5
         else:
-            return self.threshold_base
+            return self.threshold_base + 10
 
     def get_zona_mais_quente(self):
+        """
+        IDENTIFICA A ZONA MAIS FREQUENTE NOS ÚLTIMOS SORTEIOS (A "ONDA")
+        Esta é a lógica correta para apostar em tendências.
+        """
         if len(self.historico) < 15:
             return None
             
         zonas_score = {}
-        total_numeros = len(self.historico)
         
         for zona in self.zonas.keys():
             score = 0
             
-            freq_geral = sum(1 for n in self.historico if n in self.numeros_zonas[zona])
-            percentual_geral = freq_geral / total_numeros
-            score += percentual_geral * 25
-            
-            ultimos_curto = list(self.historico)[-self.janelas_analise['curto_prazo']:] if total_numeros >= self.janelas_analise['curto_prazo'] else list(self.historico)
+            # FATOR 1: Frequência nos últimos 12 sorteios (PESO 60%) - A ONDA
+            ultimos_curto = list(self.historico)[-self.janelas_analise['curto_prazo']:] if len(self.historico) >= self.janelas_analise['curto_prazo'] else list(self.historico)
             freq_curto = sum(1 for n in ultimos_curto if n in self.numeros_zonas[zona])
-            percentual_curto = freq_curto / len(ultimos_curto) if len(ultimos_curto) > 0 else 0
-            score += percentual_curto * 35
+            percentual_curto = (freq_curto / len(ultimos_curto)) * 100 if len(ultimos_curto) > 0 else 0
+            score += percentual_curto * 0.6  # PESO 60% para a onda recente
             
-            if self.stats_zonas[zona]['tentativas'] > 10:
-                taxa_acerto = self.stats_zonas[zona]['performance_media']
-                if taxa_acerto > 40: 
-                    score += 30
-                elif taxa_acerto > 35:
-                    score += 25
-                elif taxa_acerto > 30:
-                    score += 20
-                elif taxa_acerto > 25:
-                    score += 15
-                else:
-                    score += 10
-            else:
-                score += 10
-            
+            # FATOR 2: Sequência atual (indica onda forte)
             sequencia = self.stats_zonas[zona]['sequencia_atual']
             if sequencia >= 2:
-                score += min(sequencia * 3, 12)
+                score += sequencia * 8  # Bônus significativo para sequência
+            
+            # FATOR 3: Frequência nos últimos 24 (tendência de médio prazo) - PESO 20%
+            ultimos_medio = list(self.historico)[-self.janelas_analise['medio_prazo']:] if len(self.historico) >= self.janelas_analise['medio_prazo'] else list(self.historico)
+            freq_medio = sum(1 for n in ultimos_medio if n in self.numeros_zonas[zona])
+            percentual_medio = (freq_medio / len(ultimos_medio)) * 100 if len(ultimos_medio) > 0 else 0
+            score += percentual_medio * 0.2
+            
+            # FATOR 4: Performance histórica (PESO MÍNIMO 10%) - apenas para evitar zonas muito ruins
+            if self.stats_zonas[zona]['tentativas'] > 10:
+                taxa_acerto = self.stats_zonas[zona]['performance_media']
+                # Penaliza zonas com performance muito baixa
+                if taxa_acerto < 15:
+                    score -= 10
+                elif taxa_acerto < 25:
+                    score -= 5
+                else:
+                    score += taxa_acerto * 0.1  # Peso mínimo para performance histórica
+            else:
+                score += 5  # Bônus para zonas com poucos dados (exploração)
             
             zonas_score[zona] = score
         
+        # Retorna a zona com maior score (a "onda" mais forte)
         zona_vencedora = max(zonas_score, key=zonas_score.get) if zonas_score else None
         
         if zona_vencedora:
-            threshold = self.get_threshold_dinamico(zona_vencedora)
+            # Verifica se a zona realmente está em "onda" (frequência mínima)
+            ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
+            freq_zona = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_vencedora])
             
-            if self.stats_zonas[zona_vencedora]['sequencia_atual'] >= 2:
-                threshold -= 2
-            
-            return zona_vencedora if zonas_score[zona_vencedora] >= threshold else None
+            # Só aposta se a zona apareceu pelo menos 3 vezes nos últimos 12
+            if freq_zona >= 2:
+                return zona_vencedora
         
         return None
 
     def get_zonas_rankeadas(self):
+        """Retorna zonas rankeadas por frequência recente (ondas)"""
         if len(self.historico) < 15:
             return None
             
         zonas_score = {}
         
         for zona in self.zonas.keys():
-            score = self.get_zona_score(zona)
+            # Frequência nos últimos 12 (principal)
+            ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
+            freq_12 = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona])
+            percentual_12 = (freq_12 / len(ultimos_12)) * 100
+            
+            # Frequência nos últimos 24 (suporte)
+            ultimos_24 = list(self.historico)[-24:] if len(self.historico) >= 24 else list(self.historico)
+            freq_24 = sum(1 for n in ultimos_24 if n in self.numeros_zonas[zona])
+            percentual_24 = (freq_24 / len(ultimos_24)) * 100
+            
+            # Score = peso 70% para onda recente + 30% para tendência de médio prazo
+            score = (percentual_12 * 0.7) + (percentual_24 * 0.3)
+            
+            # Bônus para sequência atual
+            sequencia = self.stats_zonas[zona]['sequencia_atual']
+            if sequencia >= 2:
+                score += sequencia * 5
+            
             zonas_score[zona] = score
         
         zonas_rankeadas = sorted(zonas_score.items(), key=lambda x: x[1], reverse=True)
         return zonas_rankeadas
 
     def analisar_zonas_com_inversao(self):
+        """
+        Lógica CORRIGIDA: Aposta nas zonas que estão em ONDA (mais frequentes recentemente)
+        """
         if len(self.historico) < 15:
             return None
             
-        # NOVO: Usar seleção dinâmica baseada no histórico real
+        # PRIORIDADE 1: Verificar combinações dinâmicas (baseado em ondas)
         melhor_combinacao = self.get_melhor_combinacao_dinamica()
         
         if melhor_combinacao:
-            # Extrair zonas da combinação
             zonas = melhor_combinacao.split('+')
             if len(zonas) == 2:
                 zona_primaria = zonas[0]
@@ -1212,18 +1246,14 @@ class EstrategiaZonasOtimizada:
                         numeros_combinados, self.historico, "Zonas"
                     )
                 
-                confianca_primaria = self.calcular_confianca_ultra(zona_primaria)
-                confianca_secundaria = self.calcular_confianca_ultra(zona_secundaria)
+                confianca_primaria = self.calcular_confianca_onda(zona_primaria)
+                confianca_secundaria = self.calcular_confianca_onda(zona_secundaria)
                 
-                # Obter taxa da combinação para o gatilho
                 stats_comb = self.combinacoes_stats.get(melhor_combinacao, {})
                 hist_recente = list(stats_comb.get('historico_recente', []))
                 taxa_recente = sum(hist_recente) / len(hist_recente) * 100 if hist_recente else 0
                 
-                gatilho = f'🔍 DINÂMICO: {melhor_combinacao} (Taxa recente: {taxa_recente:.1f}%) | SEL: {len(numeros_combinados)} números'
-                
-                # Registrar que esta combinação foi usada (para estatísticas futuras)
-                # O acerto/erro será registrado no processar_novo_numero
+                gatilho = f'🌊 ONDA: {melhor_combinacao} (Taxa recente: {taxa_recente:.1f}%) | SEL: {len(numeros_combinados)} números'
                 
                 return {
                     'nome': f'Zonas Duplas - {melhor_combinacao}',
@@ -1238,22 +1268,24 @@ class EstrategiaZonasOtimizada:
                     'numeros_originais_qtd': numeros_originais_qtd
                 }
         
-        # Fallback: Se nenhuma combinação atingiu threshold, usar lógica original
+        # PRIORIDADE 2: Identificar a zona mais quente (a onda)
+        zona_primaria = self.get_zona_mais_quente()
+        
+        if not zona_primaria:
+            return None
+        
+        # Verificar se pode combinar com a segunda zona mais quente
         zonas_rankeadas = self.get_zonas_rankeadas()
-        if not zonas_rankeadas:
-            return None
         
-        zona_primaria, score_primario = zonas_rankeadas[0]
-        
-        threshold_primario = self.get_threshold_dinamico(zona_primaria)
-        if score_primario < threshold_primario:
-            return None
-        
-        if len(zonas_rankeadas) > 1:
+        if zonas_rankeadas and len(zonas_rankeadas) > 1:
             zona_secundaria, score_secundario = zonas_rankeadas[1]
             
-            threshold_secundario = threshold_primario - 5
-            if score_secundario >= threshold_secundario:
+            # Verifica se a segunda zona também está em onda
+            ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
+            freq_secundaria = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_secundaria])
+            
+            # Se a segunda zona apareceu pelo menos 2 vezes nos últimos 12, combina
+            if freq_secundaria >= 2:
                 numeros_primarios = self.numeros_zonas[zona_primaria]
                 numeros_secundarios = self.numeros_zonas[zona_secundaria]
                 
@@ -1265,12 +1297,17 @@ class EstrategiaZonasOtimizada:
                         numeros_combinados, self.historico, "Zonas"
                     )
                 
-                confianca_primaria = self.calcular_confianca_ultra(zona_primaria)
-                confianca_secundaria = self.calcular_confianca_ultra(zona_secundaria)
+                confianca_primaria = self.calcular_confianca_onda(zona_primaria)
+                confianca_secundaria = self.calcular_confianca_onda(zona_secundaria)
+                
+                # Calcular frequências para o gatilho
+                freq_primaria = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_primaria])
+                percentual_primaria = (freq_primaria / len(ultimos_12)) * 100
+                percentual_secundaria = (freq_secundaria / len(ultimos_12)) * 100
                 
                 combinacao_nome = f"{zona_primaria}+{zona_secundaria}"
                 
-                gatilho = f'Zona {zona_primaria} (Score: {score_primario:.1f}) + Zona {zona_secundaria} (Score: {score_secundario:.1f}) | Perf: {self.stats_zonas[zona_primaria]["performance_media"]:.1f}% | FINAL: {len(numeros_combinados)} números'
+                gatilho = f'🌊 ONDA DUPLA: {zona_primaria}({percentual_primaria:.0f}%) + {zona_secundaria}({percentual_secundaria:.0f}%) | FINAL: {len(numeros_combinados)} números'
                 
                 return {
                     'nome': f'Zonas Duplas - {combinacao_nome}',
@@ -1285,6 +1322,7 @@ class EstrategiaZonasOtimizada:
                     'numeros_originais_qtd': numeros_originais_qtd
                 }
         
+        # Aposta simples na zona mais quente
         numeros_apostar = self.numeros_zonas[zona_primaria]
         numeros_originais_qtd = len(numeros_apostar)
         
@@ -1293,10 +1331,17 @@ class EstrategiaZonasOtimizada:
                 numeros_apostar, self.historico, "Zonas"
             )
         
-        confianca = self.calcular_confianca_ultra(zona_primaria)
-        score = self.get_zona_score(zona_primaria)
+        confianca = self.calcular_confianca_onda(zona_primaria)
         
-        gatilho = f'Zona {zona_primaria} - Score: {score:.1f} | Perf: {self.stats_zonas[zona_primaria]["performance_media"]:.1f}% | Thr: {self.get_threshold_dinamico(zona_primaria)} | FINAL: {len(numeros_apostar)} números'
+        # Calcular frequência para o gatilho
+        ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
+        freq_zona = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_primaria])
+        percentual = (freq_zona / len(ultimos_12)) * 100
+        
+        sequencia = self.stats_zonas[zona_primaria]['sequencia_atual']
+        sequencia_str = f" | 🔥 Seq: {sequencia}" if sequencia >= 2 else ""
+        
+        gatilho = f'🌊 ONDA: {zona_primaria} ({freq_zona}/{len(ultimos_12)} = {percentual:.0f}%){sequencia_str} | FINAL: {len(numeros_apostar)} números'
         
         return {
             'nome': f'Zona {zona_primaria}',
@@ -1314,113 +1359,50 @@ class EstrategiaZonasOtimizada:
     def analisar_zonas(self):
         return self.analisar_zonas_com_inversao()
 
-    def calcular_confianca_ultra(self, zona):
+    def calcular_confianca_onda(self, zona):
+        """
+        Calcula confiança baseada na INTENSIDADE DA ONDA (frequência recente)
+        """
         if len(self.historico) < 10:
             return 'Baixa'
-            
-        fatores = []
-        pesos = []
         
-        perf_historica = self.stats_zonas[zona]['performance_media']
-        if perf_historica > 40: 
-            fatores.append(3)
-            pesos.append(4)
-        elif perf_historica > 30: 
-            fatores.append(2)
-            pesos.append(4)
-        else: 
-            fatores.append(1)
-            pesos.append(4)
-        
-        for janela_nome, tamanho in self.janelas_analise.items():
-            if janela_nome != 'performance':
-                historico_janela = list(self.historico)[-tamanho:] if len(self.historico) >= tamanho else list(self.historico)
-                freq_janela = sum(1 for n in historico_janela if n in self.numeros_zonas[zona])
-                perc_janela = (freq_janela / len(historico_janela)) * 100 if len(historico_janela) > 0 else 0
-                
-                if perc_janela > 50: 
-                    fatores.append(3)
-                elif perc_janela > 35: 
-                    fatores.append(2)
-                else: 
-                    fatores.append(1)
-                pesos.append(2)
+        ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
+        freq_recente = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona])
+        percentual_recente = (freq_recente / len(ultimos_12)) * 100
         
         sequencia = self.stats_zonas[zona]['sequencia_atual']
-        if sequencia >= 3: 
-            fatores.append(3)
-            pesos.append(2)
-        elif sequencia >= 2: 
-            fatores.append(2)
-            pesos.append(2)
-        else: 
-            fatores.append(1)
-            pesos.append(2)
         
-        if len(self.historico) >= 10:
-            ultimos_5 = list(self.historico)[-5:]
-            anteriores_5 = list(self.historico)[-10:-5]
-            
-            freq_ultimos = sum(1 for n in ultimos_5 if n in self.numeros_zonas[zona])
-            freq_anteriores = sum(1 for n in anteriores_5 if n in self.numeros_zonas[zona]) if anteriores_5 else 0
-            
-            if freq_ultimos > freq_anteriores: 
-                fatores.append(3)
-                pesos.append(2)
-            elif freq_ultimos == freq_anteriores: 
-                fatores.append(2)
-                pesos.append(2)
-            else: 
-                fatores.append(1)
-                pesos.append(2)
-        
-        total_pontos = sum(f * p for f, p in zip(fatores, pesos))
-        total_pesos = sum(pesos)
-        score_confianca = total_pontos / total_pesos if total_pesos > 0 else 1
-        
-        if score_confianca >= 2.5: 
+        if percentual_recente >= 50 and sequencia >= 2:
             return 'Excelente'
-        elif score_confianca >= 2.2: 
+        elif percentual_recente >= 40:
             return 'Muito Alta'
-        elif score_confianca >= 1.8: 
+        elif percentual_recente >= 30:
             return 'Alta'
-        elif score_confianca >= 1.5: 
+        elif percentual_recente >= 20:
             return 'Média'
-        else: 
+        elif percentual_recente >= 10:
             return 'Baixa'
+        else:
+            return 'Muito Baixa'
 
     def get_zona_score(self, zona):
+        """Score baseado em frequência recente (para ranking)"""
         if len(self.historico) < 10:
             return 0
-            
-        score = 0
-        total_numeros = len(self.historico)
         
-        freq_geral = sum(1 for n in self.historico if n in self.numeros_zonas[zona])
-        percentual_geral = freq_geral / total_numeros
-        score += percentual_geral * 25
+        ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
+        freq_12 = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona])
+        percentual_12 = (freq_12 / len(ultimos_12)) * 100
         
-        for janela_nome, tamanho in self.janelas_analise.items():
-            if janela_nome != 'performance':
-                historico_janela = list(self.historico)[-tamanho:] if total_numeros >= tamanho else list(self.historico)
-                freq_janela = sum(1 for n in historico_janela if n in self.numeros_zonas[zona])
-                percentual_janela = freq_janela / len(historico_janela) if len(historico_janela) > 0 else 0
-                peso = 35 if janela_nome == 'curto_prazo' else 15
-                score += percentual_janela * peso
+        ultimos_24 = list(self.historico)[-24:] if len(self.historico) >= 24 else list(self.historico)
+        freq_24 = sum(1 for n in ultimos_24 if n in self.numeros_zonas[zona])
+        percentual_24 = (freq_24 / len(ultimos_24)) * 100
         
-        if self.stats_zonas[zona]['tentativas'] > 10:
-            taxa_acerto = self.stats_zonas[zona]['performance_media']
-            if taxa_acerto > 40: score += 30
-            elif taxa_acerto > 35: score += 25
-            elif taxa_acerto > 30: score += 20
-            elif taxa_acerto > 25: score += 15
-            else: score += 10
-        else:
-            score += 10
+        score = (percentual_12 * 0.7) + (percentual_24 * 0.3)
         
         sequencia = self.stats_zonas[zona]['sequencia_atual']
         if sequencia >= 2:
-            score += min(sequencia * 3, 12)
+            score += sequencia * 5
             
         return score
 
@@ -1439,64 +1421,46 @@ class EstrategiaZonasOtimizada:
         if len(self.historico) == 0:
             return "Aguardando dados..."
         
-        analise = "🎯 ANÁLISE ULTRA OTIMIZADA - ZONAS v6 (DINÂMICO)\n"
+        analise = "🎯 ANÁLISE DE ONDAS - ZONAS v7\n"
         analise += "=" * 55 + "\n"
-        analise += "🔧 CONFIGURAÇÃO: 6 antes + 6 depois (13 números/zona)\n"
-        analise += f"📊 JANELAS: Curto({self.janelas_analise['curto_prazo']}) Médio({self.janelas_analise['medio_prazo']}) Longo({self.janelas_analise['longo_prazo']})\n"
-        analise += f"🎯 SELEÇÃO DINÂMICA: Últimas {self.janelas_analise['curto_prazo']} rodadas\n"
+        analise += "🔧 ESTRATÉGIA: Apostar nas ZONAS MAIS FREQUENTES (ONDAS)\n"
+        analise += f"📊 JANELA PRINCIPAL: Últimos {self.janelas_analise['curto_prazo']} sorteios\n"
         analise += "=" * 55 + "\n"
         
-        analise += "📊 PERFORMANCE POR COMBINAÇÃO (Últimas rodadas):\n"
+        analise += "🌊 RANKING DE ONDAS (Frequência nos últimos 12 sorteios):\n"
         
-        # Mostrar ranking das combinações
-        ranking_combinacoes = []
-        for comb_nome, stats in self.combinacoes_stats.items():
-            hist_recente = list(stats['historico_recente'])
-            if len(hist_recente) >= 5:
-                taxa = sum(hist_recente) / len(hist_recente) * 100
-                ranking_combinacoes.append((comb_nome, taxa, stats['sequencia_atual']))
+        ultimos_12 = list(self.historico)[-12:] if len(self.historico) >= 12 else list(self.historico)
         
-        ranking_combinacoes.sort(key=lambda x: x[1], reverse=True)
+        ranking_ondas = []
+        for zona in self.zonas.keys():
+            freq = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona])
+            percentual = (freq / len(ultimos_12)) * 100
+            sequencia = self.stats_zonas[zona]['sequencia_atual']
+            ranking_ondas.append((zona, freq, percentual, sequencia))
         
-        for comb_nome, taxa, seq in ranking_combinacoes[:6]:
-            seq_str = f" | 🔥 Seq: {seq}" if seq >= 2 else ""
-            analise += f"  📍 {comb_nome}: {taxa:.1f}%{seq_str}\n"
+        ranking_ondas.sort(key=lambda x: x[1], reverse=True)
+        
+        for zona, freq, perc, seq in ranking_ondas:
+            seq_str = f" 🔥 Seq: {seq}" if seq >= 2 else ""
+            analise += f"  📍 {zona}: {freq}/{len(ultimos_12)} ({perc:.1f}%){seq_str}\n"
         
         analise += "\n" + "=" * 55 + "\n"
-        analise += "📊 PERFORMANCE AVANÇADA:\n"
+        analise += "📊 PERFORMANCE HISTÓRICA (Apenas referência):\n"
         for zona in self.zonas.keys():
             tentativas = self.stats_zonas[zona]['tentativas']
             acertos = self.stats_zonas[zona]['acertos']
             taxa = self.stats_zonas[zona]['performance_media']
-            sequencia = self.stats_zonas[zona]['sequencia_atual']
-            seq_maxima = self.stats_zonas[zona]['sequencia_maxima']
-            threshold = self.get_threshold_dinamico(zona)
-            
-            analise += f"📍 {zona}: {acertos}/{tentativas} → {taxa:.1f}% | Seq: {sequencia} | Máx: {seq_maxima} | Thr: {threshold}\n"
+            analise += f"📍 {zona}: {acertos}/{tentativas} → {taxa:.1f}%\n"
         
-        analise += "\n📈 FREQUÊNCIA MULTI-JANELAS:\n"
-        for zona in self.zonas.keys():
-            freq_total = sum(1 for n in self.historico if isinstance(n, (int, float)) and n in self.numeros_zonas[zona])
-            perc_total = (freq_total / len(self.historico)) * 100
-            
-            freq_curto = sum(1 for n in list(self.historico)[-self.janelas_analise['curto_prazo']:] if n in self.numeros_zonas[zona])
-            perc_curto = (freq_curto / min(self.janelas_analise['curto_prazo'], len(self.historico))) * 100 if min(self.janelas_analise['curto_prazo'], len(self.historico)) > 0 else 0
-            
-            score = self.get_zona_score(zona)
-            analise += f"📍 {zona}: Total:{freq_total}/{len(self.historico)}({perc_total:.1f}%) | Curto:{freq_curto}/{self.janelas_analise['curto_prazo']}({perc_curto:.1f}%) | Score: {score:.1f}\n"
-        
-        # Mostrar combinação recomendada atualmente
-        melhor_comb = self.get_melhor_combinacao_dinamica()
-        if melhor_comb:
-            stats_comb = self.combinacoes_stats.get(melhor_comb, {})
-            hist_recente = list(stats_comb.get('historico_recente', []))
-            taxa = sum(hist_recente) / len(hist_recente) * 100 if hist_recente else 0
-            analise += f"\n💡 RECOMENDAÇÃO DINÂMICA: {melhor_comb}\n"
-            analise += f"📈 Taxa nas últimas {len(hist_recente)} rodadas: {taxa:.1f}%\n"
-            if stats_comb.get('sequencia_atual', 0) >= 2:
-                analise += f"🔥 Sequência atual: {stats_comb['sequencia_atual']} acertos seguidos!\n"
+        # Mostrar zona recomendada (a onda)
+        zona_recomendada = self.get_zona_mais_quente()
+        if zona_recomendada:
+            freq = sum(1 for n in ultimos_12 if n in self.numeros_zonas[zona_recomendada])
+            perc = (freq / len(ultimos_12)) * 100
+            analise += f"\n💡 ONDA RECOMENDADA: {zona_recomendada}\n"
+            analise += f"📈 Frequência: {freq}/{len(ultimos_12)} ({perc:.1f}%)\n"
         else:
-            analise += "\n⚠️ AGUARDAR: Nenhuma combinação com confiança suficiente\n"
+            analise += "\n⚠️ AGUARDAR: Nenhuma onda forte identificada\n"
         
         return analise
 
@@ -1512,7 +1476,6 @@ class EstrategiaZonasOtimizada:
                 'sequencia_maxima': 0,
                 'performance_media': 0
             }
-        # Resetar também estatísticas de combinações
         for comb in self.combinacoes_stats.keys():
             self.combinacoes_stats[comb] = {
                 'acertos': 0,
@@ -1522,7 +1485,7 @@ class EstrategiaZonasOtimizada:
                 'melhor_taxa': 0,
                 'historico_recente': deque(maxlen=self.janela_dinamica)
             }
-        logging.info("📊 Estatísticas das Zonas e Combinações zeradas")
+        logging.info("📊 Estatísticas das Zonas zeradas")
 
 # =============================
 # ESTRATÉGIA MIDAS (MANTIDA)
@@ -2666,14 +2629,14 @@ with st.sidebar.expander("🔍 Estatísticas de Padrões ML", expanded=False):
 with st.sidebar.expander("📊 Informações das Estratégias"):
     if estrategia == "Zonas":
         info_zonas = st.session_state.sistema.estrategia_zonas.get_info_zonas()
-        st.write("**🎯 Estratégia Zonas v6 (DINÂMICA):**")
+        st.write("**🎯 Estratégia Zonas v7 (ONDAS):**")
         st.write("**CONFIGURAÇÃO:** 6 antes + 6 depois (13 números/zona)")
-        st.write("**OTIMIZAÇÕES:**")
-        st.write("- 📊 Histórico: 70 números (35 → 70)")
-        st.write("- 🎯 Múltiplas janelas: Curto(12) Médio(24) Longo(48)")
-        st.write("- 📈 Threshold dinâmico por performance")
-        st.write("- 🔄 **SELEÇÃO DINÂMICA:** Sistema escolhe a melhor combinação baseado no histórico real")
+        st.write("**LÓGICA CORRIGIDA:**")
+        st.write("- 🌊 **APOSTA NAS ONDAS:** Zonas mais frequentes nos últimos 12 sorteios")
+        st.write("- 📊 **PESO 60% para frequência recente** (últimos 12 números)")
+        st.write("- 🔥 **BÔNUS para sequências ativas** (acertos consecutivos)")
         st.write("- 🎯 **SELEÇÃO INTELIGENTE:** Máximo 15 números selecionados automaticamente")
+        st.write("- 🔄 **COMBINAÇÃO DUPLA:** Une as 2 zonas mais quentes quando possível")
         for zona, dados in info_zonas.items():
             st.write(f"**Zona {zona}** (Núcleo: {dados['central']})")
             st.write(f"Descrição: {dados['descricao']}")
@@ -2792,8 +2755,8 @@ if sistema.previsao_ativa:
         st.success("🎯 **SELEÇÃO INTELIGENTE ATIVA** - 15 melhores números selecionados")
         st.info("📊 **Critérios:** Frequência + Posição + Vizinhança + Tendência")
     
-    if 'DINÂMICO' in previsao.get('gatilho', ''):
-        st.info("🔄 **SELEÇÃO DINÂMICA ATIVA:** Sistema escolheu a melhor combinação baseado no histórico")
+    if '🌊' in previsao.get('gatilho', ''):
+        st.info("🌊 **ESTRATÉGIA DE ONDAS ATIVA:** Apostando nas zonas mais frequentes")
     
     numeros_originais = previsao.get('numeros_originais_qtd', len(previsao['numeros_apostar']))
     if numeros_originais > len(previsao['numeros_apostar']):
@@ -2807,7 +2770,7 @@ if sistema.previsao_ativa:
             nucleo1 = "7" if zona1 == 'Vermelha' else "10" if zona1 == 'Azul' else "2"
             nucleo2 = "7" if zona2 == 'Vermelha' else "10" if zona2 == 'Azul' else "2"
             st.write(f"**📍 Núcleos Combinados:** {nucleo1} + {nucleo2}")
-            st.info("🔄 **ESTRATÉGIA DUPLA:** Investindo nas 2 melhores zonas")
+            st.info("🌊 **ESTRATÉGIA DUPLA:** Investindo nas 2 zonas mais quentes")
         else:
             zona = previsao.get('zona', '')
             if zona == 'Vermelha':
