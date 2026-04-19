@@ -2358,6 +2358,28 @@ def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
     except Exception as e:
         logging.error(f"Erro ao salvar histórico: {e}")
 
+def extrair_numeros_raio(resultado_api):
+    """
+    Extrai os números que foram raios (lucky numbers) da resposta da API.
+    Retorna uma lista de números ou uma lista vazia se não houver.
+    """
+    numeros_raio = []
+    try:
+        if resultado_api and isinstance(resultado_api, dict):
+            data = resultado_api.get('data', {})
+            result = data.get('result', {})
+            lucky_numbers_list = result.get('luckyNumbersList', [])
+            
+            for item in lucky_numbers_list:
+                numero = item.get('number')
+                if numero is not None:
+                    numeros_raio.append(numero)
+                    
+    except Exception as e:
+        logging.error(f"Erro ao extrair números de raio: {e}")
+        
+    return numeros_raio
+
 def fetch_latest_result():
     try:
         response = requests.get(API_URL, headers=HEADERS, timeout=5)
@@ -2368,7 +2390,11 @@ def fetch_latest_result():
         outcome = result.get("outcome", {})
         number = outcome.get("number")
         timestamp = game_data.get("startedAt")
-        return {"number": number, "timestamp": timestamp}
+        
+        # Extraindo os números de raio
+        numeros_raio = extrair_numeros_raio(data)
+        
+        return {"number": number, "timestamp": timestamp, "luckyNumbers": numeros_raio}
     except Exception as e:
         logging.error(f"Erro ao buscar resultado: {e}")
         return None
@@ -2722,16 +2748,27 @@ else:
 if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo_ts:
     numero_atual = resultado.get("number")
     if numero_atual is not None:
-        st.session_state.historico.append(resultado)
-        st.session_state.sistema.processar_novo_numero(resultado)
+        # Adiciona os números de raio ao registro do histórico
+        resultado_completo = resultado
+        st.session_state.historico.append(resultado_completo)
+        st.session_state.sistema.processar_novo_numero(resultado_completo)
         salvar_resultado_em_arquivo(st.session_state.historico)
         salvar_sessao()
 
 st.subheader("🔁 Últimos Números")
 if st.session_state.historico:
     ultimos_10 = st.session_state.historico[-10:]
-    numeros_str = " ".join(str(item['number'] if isinstance(item, dict) else item) for item in ultimos_10)
-    st.write(numeros_str)
+    numeros_formatados = []
+    for item in ultimos_10:
+        numero = item['number'] if isinstance(item, dict) else item
+        numeros_raio = item.get('luckyNumbers', []) if isinstance(item, dict) else []
+        
+        if numero in numeros_raio:
+            numeros_formatados.append(f"⚡ **{numero}**")
+        else:
+            numeros_formatados.append(str(numero))
+            
+    st.write(" ".join(numeros_formatados))
 else:
     st.write("Nenhum número registrado")
 
@@ -2805,7 +2842,22 @@ if sistema.previsao_ativa:
             st.write(f"**🤖 Núcleo:** {nucleo}")
     
     st.write(f"**🔢 Números para apostar ({len(previsao['numeros_apostar'])}):**")
-    st.write(", ".join(map(str, sorted(previsao['numeros_apostar']))))
+    
+    # Verificando quais números da previsão são raios (se houver algum registro no histórico com luckyNumbers)
+    numeros_raio_ativos = set()
+    if st.session_state.historico:
+        ultimo_item = st.session_state.historico[-1]
+        if isinstance(ultimo_item, dict) and 'luckyNumbers' in ultimo_item:
+            numeros_raio_ativos = set(ultimo_item['luckyNumbers'])
+    
+    numeros_apostar_str = []
+    for num in sorted(previsao['numeros_apostar']):
+        if num in numeros_raio_ativos:
+            numeros_apostar_str.append(f"⚡ **{num}**")
+        else:
+            numeros_apostar_str.append(str(num))
+    
+    st.write(", ".join(numeros_apostar_str))
     
     if 'ML' in previsao['nome'] and previsao.get('padroes_aplicados', 0) > 0:
         st.info(f"🔍 **Padrões aplicados:** {previsao['padroes_aplicados']} padrões sequenciais detectados")
