@@ -232,8 +232,8 @@ def enviar_alerta_numeros_simplificado(previsao):
     except Exception as e:
         logging.error(f"Erro ao enviar alerta simplificado: {e}")
 
-def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada=None):
-    """Envia notificação de resultado super simplificado"""
+def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada=None, multiplicador=None):
+    """Envia notificação de resultado super simplificado com multiplicador se for raio"""
     try:
         if acerto:
             if 'Zonas' in nome_estrategia and zona_acertada:
@@ -291,25 +291,32 @@ def enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zo
         else:
             mensagem = f"❌ Erro\n🎲 Número: {numero_real}"
         
+        # Adiciona informação do multiplicador se for raio
+        if multiplicador and multiplicador > 0:
+            mensagem += f"\n⚡ RAIO! Multiplicador: {multiplicador}x"
+        
         st.toast(f"🎲 Resultado", icon="✅" if acerto else "❌")
         st.success(f"📢 {mensagem}") if acerto else st.error(f"📢 {mensagem}")
         
         if 'telegram_token' in st.session_state and 'telegram_chat_id' in st.session_state:
             if st.session_state.telegram_token and st.session_state.telegram_chat_id:
                 enviar_telegram(f"📢 RESULTADO\n{mensagem}")
-                enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia)
+                enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia, multiplicador)
                 
         salvar_sessao()
     except Exception as e:
         logging.error(f"Erro ao enviar resultado: {e}")
 
-def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia):
-    """Envia alerta de conferência super simplificado"""
+def enviar_alerta_conferencia_simplificado(numero_real, acerto, nome_estrategia, multiplicador=None):
+    """Envia alerta de conferência super simplificado com multiplicador se for raio"""
     try:
         if acerto:
             mensagem = f"🎉 ACERTOU! {numero_real}"
         else:
             mensagem = f"💥 ERROU! {numero_real}"
+        
+        if multiplicador and multiplicador > 0:
+            mensagem += f" ⚡{multiplicador}x"
             
         enviar_telegram(mensagem)
         logging.info("🔔 Alerta de conferência enviado para Telegram")
@@ -2182,8 +2189,16 @@ class SistemaRoletaCompleto:
     def processar_novo_numero(self, numero):
         if isinstance(numero, dict) and 'number' in numero:
             numero_real = numero['number']
+            # Extrai o multiplicador se o número for raio
+            multiplicador = None
+            lucky_numbers = numero.get('luckyNumbers', [])
+            lucky_multipliers = numero.get('luckyMultipliers', {})
+            
+            if numero_real in lucky_numbers:
+                multiplicador = lucky_multipliers.get(numero_real)
         else:
             numero_real = numero
+            multiplicador = None
             
         self.contador_sorteios_global += 1
             
@@ -2224,7 +2239,7 @@ class SistemaRoletaCompleto:
                 self.erros += 1
             
             zona_acertada_str = "+".join(zonas_acertadas) if zonas_acertadas else None
-            enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada_str)
+            enviar_resultado_super_simplificado(numero_real, acerto, nome_estrategia, zona_acertada_str, multiplicador)
             
             self.historico_desempenho.append({
                 'numero': numero_real,
@@ -2233,7 +2248,8 @@ class SistemaRoletaCompleto:
                 'previsao': numeros_apostados,
                 'rotacionou': rotacionou,
                 'zona_acertada': zona_acertada_str,
-                'tipo_aposta': self.previsao_ativa.get('tipo', 'unica')
+                'tipo_aposta': self.previsao_ativa.get('tipo', 'unica'),
+                'multiplicador': multiplicador if multiplicador else None
             })
             
             self.previsao_ativa = None
@@ -2324,9 +2340,10 @@ def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
 def extrair_numeros_raio(resultado_api):
     """
     Extrai os números que foram raios (lucky numbers) da resposta da API.
-    Retorna uma lista de números ou uma lista vazia se não houver.
+    Retorna uma lista de números e um dicionário com os multiplicadores.
     """
     numeros_raio = []
+    multiplicadores = {}
     try:
         if resultado_api and isinstance(resultado_api, dict):
             data = resultado_api.get('data', {})
@@ -2335,13 +2352,16 @@ def extrair_numeros_raio(resultado_api):
             
             for item in lucky_numbers_list:
                 numero = item.get('number')
+                multiplicador = item.get('roundedMultiplier')
                 if numero is not None:
                     numeros_raio.append(numero)
+                    if multiplicador is not None:
+                        multiplicadores[numero] = multiplicador
                     
     except Exception as e:
         logging.error(f"Erro ao extrair números de raio: {e}")
         
-    return numeros_raio
+    return numeros_raio, multiplicadores
 
 def fetch_latest_result():
     try:
@@ -2354,10 +2374,15 @@ def fetch_latest_result():
         number = outcome.get("number")
         timestamp = game_data.get("startedAt")
         
-        # Extraindo os números de raio
-        numeros_raio = extrair_numeros_raio(data)
+        # Extraindo os números de raio e seus multiplicadores
+        numeros_raio, multiplicadores = extrair_numeros_raio(data)
         
-        return {"number": number, "timestamp": timestamp, "luckyNumbers": numeros_raio}
+        return {
+            "number": number, 
+            "timestamp": timestamp, 
+            "luckyNumbers": numeros_raio,
+            "luckyMultipliers": multiplicadores
+        }
     except Exception as e:
         logging.error(f"Erro ao buscar resultado: {e}")
         return None
@@ -2711,7 +2736,7 @@ else:
 if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo_ts:
     numero_atual = resultado.get("number")
     if numero_atual is not None:
-        # Adiciona os números de raio ao registro do histórico
+        # Adiciona os números de raio e multiplicadores ao registro do histórico
         resultado_completo = resultado
         st.session_state.historico.append(resultado_completo)
         st.session_state.sistema.processar_novo_numero(resultado_completo)
@@ -2725,9 +2750,14 @@ if st.session_state.historico:
     for item in ultimos_10:
         numero = item['number'] if isinstance(item, dict) else item
         numeros_raio = item.get('luckyNumbers', []) if isinstance(item, dict) else []
+        multiplicadores = item.get('luckyMultipliers', {}) if isinstance(item, dict) else {}
         
         if numero in numeros_raio:
-            numeros_formatados.append(f"⚡ **{numero}**")
+            mult = multiplicadores.get(numero, '')
+            if mult:
+                numeros_formatados.append(f"⚡ **{numero}** ({mult}x)")
+            else:
+                numeros_formatados.append(f"⚡ **{numero}**")
         else:
             numeros_formatados.append(str(numero))
             
@@ -2877,6 +2907,12 @@ if sistema.historico_desempenho:
     for i, resultado in enumerate(sistema.historico_desempenho[-5:]):
         emoji = "🎉" if resultado['acerto'] else "❌"
         rotacao_emoji = " 🔄" if resultado.get('rotacionou', False) else ""
+        
+        # Adiciona informação do multiplicador se foi raio e acertou
+        mult_info = ""
+        if resultado.get('multiplicador') and resultado['acerto']:
+            mult_info = f" ⚡{resultado['multiplicador']}x"
+        
         zona_info = ""
         if resultado['acerto'] and resultado.get('zona_acertada'):
             if '+' in resultado['zona_acertada']:
@@ -2908,7 +2944,7 @@ if sistema.historico_desempenho:
         if resultado.get('tipo_aposta') == 'dupla':
             tipo_aposta_info = " [DUPLA]"
         
-        st.write(f"{emoji}{rotacao_emoji} {resultado['estrategia']}{tipo_aposta_info}: Número {resultado['numero']}{zona_info}")
+        st.write(f"{emoji}{rotacao_emoji} {resultado['estrategia']}{tipo_aposta_info}: Número {resultado['numero']}{mult_info}{zona_info}")
 
 if os.path.exists(HISTORICO_PATH):
     with open(HISTORICO_PATH, "r") as f:
