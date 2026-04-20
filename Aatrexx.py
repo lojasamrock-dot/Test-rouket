@@ -50,7 +50,10 @@ def salvar_sessao():
             'zonas_combinacao_atual': st.session_state.sistema.estrategia_zonas.combinacao_atual,
             'markov_historico': list(st.session_state.sistema.estrategia_markov.historico) if hasattr(st.session_state.sistema, 'estrategia_markov') else [],
             'markov_matriz_transicao': st.session_state.sistema.estrategia_markov.matriz_transicao if hasattr(st.session_state.sistema, 'estrategia_markov') else {},
-            'markov_contador_sorteios': st.session_state.sistema.estrategia_markov.contador_sorteios if hasattr(st.session_state.sistema, 'estrategia_markov') else 0
+            'markov_contador_sorteios': st.session_state.sistema.estrategia_markov.contador_sorteios if hasattr(st.session_state.sistema, 'estrategia_markov') else 0,
+            # NOVA ESTRATÉGIA SCORE ENGINE
+            'score_engine_historico': list(st.session_state.sistema.estrategia_score.historico) if hasattr(st.session_state.sistema, 'estrategia_score') else [],
+            'score_engine_lucky_tracking': st.session_state.sistema.estrategia_score.lucky_tracking if hasattr(st.session_state.sistema, 'estrategia_score') else []
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -132,6 +135,12 @@ def carregar_sessao():
                     st.session_state.sistema.estrategia_markov.historico = deque(markov_historico, maxlen=200)
                     st.session_state.sistema.estrategia_markov.matriz_transicao = session_data.get('markov_matriz_transicao', {})
                     st.session_state.sistema.estrategia_markov.contador_sorteios = session_data.get('markov_contador_sorteios', 0)
+                
+                # NOVA ESTRATÉGIA SCORE ENGINE
+                score_engine_historico = session_data.get('score_engine_historico', [])
+                if hasattr(st.session_state.sistema, 'estrategia_score'):
+                    st.session_state.sistema.estrategia_score.historico = deque(score_engine_historico, maxlen=200)
+                    st.session_state.sistema.estrategia_score.lucky_tracking = session_data.get('score_engine_lucky_tracking', [])
             
             logging.info("✅ Sessão carregada com sucesso")
             return True
@@ -208,6 +217,8 @@ def enviar_previsao_super_simplificada(previsao):
                         mensagem = f"🤖 Zona {zona_ml}"
         elif 'Markov' in nome_estrategia:
             mensagem = f"🎲 Cadeia de Markov - {len(numeros_apostar)} números mais prováveis"
+        elif 'Score Engine' in nome_estrategia:
+            mensagem = f"🧠 Score Engine - Top {len(numeros_apostar)} números"
         else:
             mensagem = f"💰 {previsao['nome']}"
         
@@ -239,6 +250,8 @@ def enviar_alerta_numeros_simplificado(previsao):
             emoji = "🤖"
         elif 'Markov' in nome_estrategia:
             emoji = "🎲"
+        elif 'Score Engine' in nome_estrategia:
+            emoji = "🧠"
         else:
             emoji = "💰"
             
@@ -567,6 +580,294 @@ class RoletaInteligente:
                 vizinhos.append(vizinho)
         
         return vizinhos
+
+# =============================
+# NOVA ESTRATÉGIA: SCORE ENGINE PRO
+# =============================
+class EstrategiaScoreEngine:
+    """
+    Estratégia baseada em scoring dinâmico combinando:
+    - Frequência (peso 25%)
+    - Recência (peso 25%)
+    - Cluster/Repetição (peso 20%)
+    - Vizinhança física (peso 10%)
+    - Delay (tempo sem sair) (peso 10%)
+    - Lucky Numbers (peso 10%)
+    """
+    def __init__(self, top_k: int = 12):
+        self.roleta = RoletaInteligente()
+        self.historico = deque(maxlen=200)  # Armazena números puros
+        self.lucky_tracking = deque(maxlen=50)  # Histórico de lucky numbers
+        self.nome = "Score Engine Pro"
+        self.top_k = top_k
+        self.sistema_selecao = SistemaSelecaoInteligente()
+        
+        # Pesos configuráveis
+        self.pesos = {
+            'frequencia': 0.25,
+            'recencia': 0.25,
+            'cluster': 0.20,
+            'vizinhanca': 0.10,
+            'delay': 0.10,
+            'lucky': 0.10
+        }
+        
+        # Janelas de análise
+        self.janela_recencia = 20
+        self.janela_frequencia = 50
+        self.janela_vizinhanca = 30
+        
+    def adicionar_numero(self, numero, lucky_numbers=None):
+        """Adiciona um número ao histórico e registra lucky numbers"""
+        self.historico.append(numero)
+        if lucky_numbers:
+            self.lucky_tracking.extend(lucky_numbers)
+        if 'sistema' in st.session_state:
+            salvar_sessao()
+    
+    def _calcular_frequencia(self):
+        """Calcula frequência normalizada de cada número (0-1)"""
+        if len(self.historico) < 5:
+            return {i: 0.0 for i in range(37)}
+        
+        historico_lista = list(self.historico)
+        janela = historico_lista[-self.janela_frequencia:] if len(historico_lista) >= self.janela_frequencia else historico_lista
+        contagem = Counter(janela)
+        max_freq = max(contagem.values()) if contagem else 1
+        
+        freq_score = {}
+        for i in range(37):
+            freq_score[i] = contagem.get(i, 0) / max_freq if max_freq > 0 else 0.0
+        return freq_score
+    
+    def _calcular_recencia(self):
+        """Números que apareceram recentemente têm maior score"""
+        if len(self.historico) < 5:
+            return {i: 0.0 for i in range(37)}
+        
+        historico_lista = list(self.historico)
+        janela = historico_lista[-self.janela_recencia:] if len(historico_lista) >= self.janela_recencia else historico_lista
+        contagem = Counter(janela)
+        max_rec = max(contagem.values()) if contagem else 1
+        
+        recencia_score = {}
+        for i in range(37):
+            recencia_score[i] = contagem.get(i, 0) / max_rec if max_rec > 0 else 0.0
+        return recencia_score
+    
+    def _calcular_cluster(self):
+        """Detecta repetições consecutivas (cluster)"""
+        if len(self.historico) < 2:
+            return {i: 0.0 for i in range(37)}
+        
+        historico_lista = list(self.historico)
+        cluster_count = Counter()
+        
+        # Conta repetições consecutivas
+        for i in range(1, len(historico_lista)):
+            if historico_lista[i] == historico_lista[i-1]:
+                cluster_count[historico_lista[i]] += 1
+        
+        # Normaliza
+        max_cluster = max(cluster_count.values()) if cluster_count else 1
+        cluster_score = {}
+        for i in range(37):
+            cluster_score[i] = cluster_count.get(i, 0) / max_cluster if max_cluster > 0 else 0.0
+        return cluster_score
+    
+    def _calcular_vizinhanca(self):
+        """Números vizinhos aos que saíram recentemente ganham peso"""
+        if len(self.historico) < 3:
+            return {i: 0.0 for i in range(37)}
+        
+        historico_lista = list(self.historico)
+        janela = historico_lista[-self.janela_vizinhanca:] if len(historico_lista) >= self.janela_vizinhanca else historico_lista
+        
+        neighbor_score = {i: 0.0 for i in range(37)}
+        for num in janela:
+            vizinhos = self.roleta.get_vizinhos_fisicos(num, raio=2)
+            for v in vizinhos:
+                neighbor_score[v] += 1
+        
+        max_score = max(neighbor_score.values()) if neighbor_score else 1
+        for i in range(37):
+            neighbor_score[i] = neighbor_score[i] / max_score if max_score > 0 else 0.0
+        return neighbor_score
+    
+    def _calcular_delay(self):
+        """Números que não saem há muito tempo (delay alto) recebem score inversamente proporcional"""
+        if len(self.historico) == 0:
+            return {i: 1.0 for i in range(37)}
+        
+        historico_lista = list(self.historico)
+        delay_score = {}
+        
+        for n in range(37):
+            if n in historico_lista:
+                # Posição da última ocorrência
+                ultima_pos = max(i for i, x in enumerate(historico_lista) if x == n)
+                delay = len(historico_lista) - 1 - ultima_pos
+            else:
+                delay = len(historico_lista)  # nunca apareceu
+        
+            # Score inversamente proporcional ao delay (quanto maior delay, menor score)
+            # Usamos 1/(delay+1) para normalizar entre 0 e 1
+            delay_score[n] = 1.0 / (delay + 1)
+        
+        return delay_score
+    
+    def _calcular_lucky(self):
+        """Números que aparecem como Lucky Numbers recentemente ganham peso"""
+        if len(self.lucky_tracking) == 0:
+            return {i: 0.0 for i in range(37)}
+        
+        lucky_list = list(self.lucky_tracking)
+        contagem = Counter(lucky_list)
+        max_lucky = max(contagem.values()) if contagem else 1
+        
+        lucky_score = {}
+        for i in range(37):
+            lucky_score[i] = contagem.get(i, 0) / max_lucky if max_lucky > 0 else 0.0
+        return lucky_score
+    
+    def calcular_score_total(self):
+        """Calcula o score combinado para todos os números"""
+        freq = self._calcular_frequencia()
+        rec = self._calcular_recencia()
+        clust = self._calcular_cluster()
+        viz = self._calcular_vizinhanca()
+        delay = self._calcular_delay()
+        lucky = self._calcular_lucky()
+        
+        scores = {}
+        detalhes = {}
+        
+        for n in range(37):
+            score = (
+                freq[n] * self.pesos['frequencia'] +
+                rec[n] * self.pesos['recencia'] +
+                clust[n] * self.pesos['cluster'] +
+                viz[n] * self.pesos['vizinhanca'] +
+                delay[n] * self.pesos['delay'] +
+                lucky[n] * self.pesos['lucky']
+            )
+            scores[n] = score
+            detalhes[n] = {
+                'freq': freq[n],
+                'rec': rec[n],
+                'cluster': clust[n],
+                'viz': viz[n],
+                'delay': delay[n],
+                'lucky': lucky[n],
+                'total': score
+            }
+        
+        return scores, detalhes
+    
+    def analisar_score(self):
+        """Analisa e retorna previsão baseada no score engine"""
+        if len(self.historico) < 5:
+            return None
+        
+        scores, detalhes = self.calcular_score_total()
+        
+        # Ordena por score decrescente
+        ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # Seleciona os top_k números
+        top_numeros = [num for num, score in ranking[:self.top_k]]
+        numeros_originais_qtd = len(top_numeros)
+        
+        # Aplica seleção inteligente se mais de 15 números
+        if len(top_numeros) > 15:
+            top_numeros = self.sistema_selecao.selecionar_melhores_15_numeros(
+                top_numeros, self.historico, "ScoreEngine"
+            )
+        
+        # Calcula confiança baseada no score médio dos top 3
+        score_top3 = sum(scores[n] for n in top_numeros[:3]) / 3
+        confianca = self._calcular_nivel_confianca(score_top3)
+        
+        # Gera gatilho descritivo
+        top3_scores = [(n, scores[n]) for n in top_numeros[:3]]
+        top3_str = ", ".join([f"{n}({s:.2f})" for n, s in top3_scores])
+        gatilho = f"🧠 Score Engine | Top 3: {top3_str} | Confiança: {confianca}"
+        
+        # Identifica se há lucky numbers entre os top
+        lucky_recentes = set(self.lucky_tracking)
+        lucky_no_top = [n for n in top_numeros if n in lucky_recentes]
+        if lucky_no_top:
+            gatilho += f" | 🍀 Lucky: {lucky_no_top[:3]}"
+        
+        return {
+            'nome': 'Score Engine Pro',
+            'numeros_apostar': top_numeros,
+            'gatilho': gatilho,
+            'confianca': confianca,
+            'tipo': 'score_engine',
+            'selecao_inteligente': len(top_numeros) < self.top_k,
+            'numeros_originais_qtd': numeros_originais_qtd,
+            'scores_detalhados': {n: detalhes[n] for n in top_numeros},
+            'ranking_completo': ranking[:20]
+        }
+    
+    def _calcular_nivel_confianca(self, score_medio):
+        """Converte score médio em nível de confiança"""
+        if score_medio >= 0.7:
+            return 'Muito Alta'
+        elif score_medio >= 0.5:
+            return 'Alta'
+        elif score_medio >= 0.35:
+            return 'Média'
+        elif score_medio >= 0.2:
+            return 'Baixa'
+        else:
+            return 'Muito Baixa'
+    
+    def get_analise_score(self):
+        """Retorna análise detalhada do score engine"""
+        if len(self.historico) < 5:
+            return "🧠 Score Engine: Aguardando mais dados (mínimo 5 números)"
+        
+        scores, detalhes = self.calcular_score_total()
+        ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:15]
+        
+        analise = "🧠 ANÁLISE SCORE ENGINE PRO\n"
+        analise += "=" * 45 + "\n"
+        analise += f"📊 Histórico: {len(self.historico)} números\n"
+        analise += f"🍀 Lucky Numbers tracking: {len(self.lucky_tracking)} registros\n"
+        analise += f"🎯 Pesos: F:{self.pesos['frequencia']:.0%} R:{self.pesos['recencia']:.0%} "
+        analise += f"C:{self.pesos['cluster']:.0%} V:{self.pesos['vizinhanca']:.0%} "
+        analise += f"D:{self.pesos['delay']:.0%} L:{self.pesos['lucky']:.0%}\n"
+        analise += "=" * 45 + "\n"
+        analise += "🏆 TOP 15 SCORES:\n"
+        
+        for i, (num, score) in enumerate(ranking, 1):
+            det = detalhes[num]
+            barra = "█" * int(score * 20)
+            analise += f"{i:2d}. {num:2d}: {barra} {score:.3f} "
+            analise += f"(F:{det['freq']:.2f} R:{det['rec']:.2f} C:{det['cluster']:.2f} "
+            analise += f"V:{det['viz']:.2f} D:{det['delay']:.2f} L:{det['lucky']:.2f})\n"
+        
+        # Últimos lucky numbers
+        if self.lucky_tracking:
+            ultimos_lucky = list(self.lucky_tracking)[-10:]
+            analise += f"\n🍀 Últimos Lucky Numbers: {ultimos_lucky}\n"
+        
+        # Detecção de cluster ativo
+        if len(self.historico) >= 2:
+            ultimo = self.historico[-1]
+            penultimo = self.historico[-2] if len(self.historico) >= 2 else None
+            if ultimo == penultimo:
+                analise += f"\n🔥 CLUSTER ATIVO: Número {ultimo} repetiu!\n"
+        
+        return analise
+    
+    def zerar_estatisticas(self):
+        """Zera histórico e tracking"""
+        self.historico.clear()
+        self.lucky_tracking.clear()
+        logging.info("🧠 Estatísticas do Score Engine zeradas")
 
 # =============================
 # MÓDULO DE CADEIA DE MARKOV
@@ -2386,14 +2687,15 @@ class EstrategiaML:
         logging.info("🔄 Padrões sequenciais e métricas zerados")
 
 # =============================
-# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA (Zonas ↔ ML ↔ Markov)
+# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA (Zonas ↔ ML ↔ Markov ↔ Score Engine)
 # =============================
 class SistemaRoletaCompleto:
     def __init__(self):
         self.estrategia_zonas = EstrategiaZonasOtimizada()
         self.estrategia_midas = EstrategiaMidas()
         self.estrategia_ml = EstrategiaML()
-        self.estrategia_markov = EstrategiaMarkov(ordem=2, top_k=6)  # Nova estratégia Markov
+        self.estrategia_markov = EstrategiaMarkov(ordem=2, top_k=6)
+        self.estrategia_score = EstrategiaScoreEngine(top_k=12)  # NOVA ESTRATÉGIA
         self.previsao_ativa = None
         self.historico_desempenho = []
         self.acertos = 0
@@ -2402,7 +2704,7 @@ class SistemaRoletaCompleto:
         self.estrategia_selecionada = "Zonas"
         self.contador_sorteios_global = 0
         
-        self.erros_consecutivos_estrategia = 0
+        self.sequencia_erros = 0
         self.ultima_estrategia_erro = ""
 
     def set_estrategia(self, estrategia):
@@ -2414,22 +2716,22 @@ class SistemaRoletaCompleto:
 
     def rotacionar_estrategia_automaticamente(self, acerto, nome_estrategia):
         """
-        Rotação entre Zonas, ML e Markov:
+        Rotação entre Zonas, ML, Markov e Score Engine:
         - Só rotaciona se a estratégia atual errar 2 vezes seguidas
-        - Ordem de rotação: Zonas → ML → Markov → Zonas
+        - Ordem de rotação: Zonas → ML → Markov → Score Engine → Zonas
         """
         if acerto:
-            self.erros_consecutivos_estrategia = 0
+            self.sequencia_erros = 0
             self.ultima_estrategia_erro = ""
             return False
         else:
-            self.erros_consecutivos_estrategia += 1
+            self.sequencia_erros += 1
             self.ultima_estrategia_erro = nome_estrategia
             
-            if self.erros_consecutivos_estrategia >= 2:
+            if self.sequencia_erros >= 2:
                 estrategia_atual = self.estrategia_selecionada
                 
-                # Define a ordem de rotação
+                # Define a ordem de rotação (incluindo Score Engine)
                 if estrategia_atual == "Zonas":
                     nova_estrategia = "ML"
                     motivo = "2 erros consecutivos nas Zonas"
@@ -2437,14 +2739,17 @@ class SistemaRoletaCompleto:
                     nova_estrategia = "Markov"
                     motivo = "2 erros consecutivos no ML"
                 elif estrategia_atual == "Markov":
-                    nova_estrategia = "Zonas"
+                    nova_estrategia = "ScoreEngine"
                     motivo = "2 erros consecutivos no Markov"
+                elif estrategia_atual == "ScoreEngine":
+                    nova_estrategia = "Zonas"
+                    motivo = "2 erros consecutivos no Score Engine"
                 else:
                     nova_estrategia = "Zonas"
                     motivo = "Estratégia não reconhecida, voltando para Zonas"
                 
                 self.estrategia_selecionada = nova_estrategia
-                self.erros_consecutivos_estrategia = 0
+                self.sequencia_erros = 0
                 
                 enviar_rotacao_automatica(estrategia_atual, nova_estrategia, motivo)
                 logging.info(f"🔄 ROTAÇÃO: {estrategia_atual} → {nova_estrategia} - {motivo}")
@@ -2464,6 +2769,7 @@ class SistemaRoletaCompleto:
         else:
             numero_real = numero
             multiplicador = None
+            lucky_numbers = []
             
         self.contador_sorteios_global += 1
             
@@ -2485,9 +2791,6 @@ class SistemaRoletaCompleto:
                         if numero_real in numeros:
                             zonas_acertadas.append(zona)
                             break
-                elif 'Markov' in nome_estrategia:
-                    # Para Markov, não há zona específica
-                    pass
             
             # Atualizar estatísticas da combinação usada (apenas para estratégia Zonas)
             if 'Zonas' in nome_estrategia and 'combinacao_usada' in self.previsao_ativa:
@@ -2528,6 +2831,7 @@ class SistemaRoletaCompleto:
         self.estrategia_midas.adicionar_numero(numero_real)
         self.estrategia_ml.adicionar_numero(numero_real)
         self.estrategia_markov.adicionar_numero(numero_real)
+        self.estrategia_score.adicionar_numero(numero_real, lucky_numbers)  # NOVA
         
         nova_estrategia = None
         
@@ -2539,6 +2843,8 @@ class SistemaRoletaCompleto:
             nova_estrategia = self.estrategia_ml.analisar_ml()
         elif self.estrategia_selecionada == "Markov":
             nova_estrategia = self.estrategia_markov.analisar_markov()
+        elif self.estrategia_selecionada == "ScoreEngine":  # NOVA
+            nova_estrategia = self.estrategia_score.analisar_score()
         
         if nova_estrategia:
             self.previsao_ativa = nova_estrategia
@@ -2550,11 +2856,12 @@ class SistemaRoletaCompleto:
         self.estrategias_contador = {}
         self.historico_desempenho = []
         self.contador_sorteios_global = 0
-        self.erros_consecutivos_estrategia = 0
+        self.sequencia_erros = 0
         self.ultima_estrategia_erro = ""
         
         self.estrategia_zonas.zerar_estatisticas()
-        self.estrategia_markov.zerar_matriz()  # Zera a matriz de Markov
+        self.estrategia_markov.zerar_matriz()
+        self.estrategia_score.zerar_estatisticas()  # NOVA
         
         logging.info("📊 Todas as estatísticas de desempenho foram zeradas")
         salvar_sessao()
@@ -2577,10 +2884,10 @@ class SistemaRoletaCompleto:
                     self.estrategias_contador[estrategia]['acertos'] += 1
             
             ultimos_resultados = self.historico_desempenho[-5:]
-            self.erros_consecutivos_estrategia = 0
+            self.sequencia_erros = 0
             for resultado in reversed(ultimos_resultados):
                 if not resultado['acerto']:
-                    self.erros_consecutivos_estrategia += 1
+                    self.sequencia_erros += 1
                 else:
                     break
             
@@ -2593,9 +2900,9 @@ class SistemaRoletaCompleto:
     def get_status_rotacao(self):
         return {
             'estrategia_atual': self.estrategia_selecionada,
-            'sequencia_erros': self.erros_consecutivos_estrategia,
+            'sequencia_erros': self.sequencia_erros,
             'ultima_estrategia_erro': self.ultima_estrategia_erro,
-            'proxima_rotacao_em': max(0, 2 - self.erros_consecutivos_estrategia)
+            'proxima_rotacao_em': max(0, 2 - self.sequencia_erros)
         }
 
 # =============================
@@ -2660,8 +2967,8 @@ def fetch_latest_result():
 # =============================
 # APLICAÇÃO STREAMLIT ATUALIZADA
 # =============================
-st.set_page_config(page_title="IA Roleta — Multi-Estratégias", layout="centered")
-st.title("🎯 IA Roleta — Sistema Multi-Estratégias")
+st.set_page_config(page_title="IA Roleta — Multi-Estratégias PRO", layout="centered")
+st.title("🎯 IA Roleta — Sistema Multi-Estratégias PRO")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaRoletaCompleto()
@@ -2798,9 +3105,10 @@ with st.sidebar.expander("🔔 Alertas Alternativos", expanded=False):
         else:
             st.error("❌ Configure o Telegram primeiro")
 
+# Atualização do seletor de estratégias para incluir Score Engine
 estrategia = st.sidebar.selectbox(
     "🎯 Selecione a Estratégia:",
-    ["Zonas", "Midas", "ML", "Markov"],
+    ["Zonas", "Midas", "ML", "Markov", "ScoreEngine"],
     key="estrategia_selecionada"
 )
 
@@ -2824,7 +3132,7 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
     st.write("• ✅ **Acerto:** Continua na mesma estratégia")
     st.write("• ❌ **1 Erro:** Continua na estratégia") 
     st.write("• ❌❌ **2 Erros Seguidos:** Rotação automática")
-    st.write("• 🔄 **Ordem:** Zonas → ML → Markov → Zonas")
+    st.write("• 🔄 **Ordem:** Zonas → ML → Markov → ScoreEngine → Zonas")
     
     st.write("---")
     st.write("**🔄 Rotação de Combinações nas Zonas:**")
@@ -2833,18 +3141,20 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
     
     if st.button("🔄 Forçar Rotação Estratégia", use_container_width=True):
         estrategia_atual = st.session_state.sistema.estrategia_selecionada
-        # Define a ordem de rotação
+        # Define a ordem de rotação (atualizada)
         if estrategia_atual == "Zonas":
             nova_estrategia = "ML"
         elif estrategia_atual == "ML":
             nova_estrategia = "Markov"
         elif estrategia_atual == "Markov":
+            nova_estrategia = "ScoreEngine"
+        elif estrategia_atual == "ScoreEngine":
             nova_estrategia = "Zonas"
         else:
             nova_estrategia = "Zonas"
         
         st.session_state.sistema.estrategia_selecionada = nova_estrategia
-        st.session_state.sistema.erros_consecutivos_estrategia = 0
+        st.session_state.sistema.sequencia_erros = 0
         st.success(f"🔄 Rotação forçada: {estrategia_atual} → {nova_estrategia}")
         st.rerun()
     
@@ -2853,6 +3163,35 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
         st.session_state.sistema.estrategia_zonas.combinacao_atual = st.session_state.sistema.estrategia_zonas.combinacoes_possiveis[0]
         st.session_state.sistema.estrategia_zonas.ultima_combinacao_erro = ""
         st.success("✅ Combinação das Zonas resetada para a primeira da lista!")
+        st.rerun()
+
+# Nova seção para configurações do Score Engine
+with st.sidebar.expander("🧠 Configurações Score Engine", expanded=False):
+    st.write("**Score Engine Pro**")
+    st.write("Combinação ponderada de 6 fatores:")
+    st.write("• 📊 Frequência (25%)")
+    st.write("• 🔁 Recência (25%)")
+    st.write("• 🔥 Cluster/Repetição (20%)")
+    st.write("• 🎯 Vizinhança (10%)")
+    st.write("• ⏳ Delay (10%)")
+    st.write("• 🍀 Lucky Numbers (10%)")
+    
+    top_k_score = st.slider(
+        "Número de previsões:",
+        min_value=6,
+        max_value=20,
+        value=12,
+        help="Quantos números com maior score retornar"
+    )
+    
+    if st.button("Aplicar Configurações Score"):
+        st.session_state.sistema.estrategia_score.top_k = top_k_score
+        st.success(f"✅ Configurações Score aplicadas! (Top {top_k_score} números)")
+        st.rerun()
+    
+    if st.button("🧹 Zerar Tracking Score", use_container_width=True):
+        st.session_state.sistema.estrategia_score.zerar_estatisticas()
+        st.success("✅ Histórico e tracking do Score Engine zerados!")
         st.rerun()
 
 with st.sidebar.expander("🎲 Configurações Markov", expanded=False):
@@ -3031,7 +3370,7 @@ with st.sidebar.expander("📊 Informações das Estratégias"):
         st.write("- **Fallback**: Frequência quando dados insuficientes")
         st.write("- **Histórico máximo**: 200 números")
         st.write("- 🎯 **SAÍDA:** Lista dos números mais prováveis")
-        st.write("- 🔄 **ROTAÇÃO:** Entra na rotação automática com Zonas e ML")
+        st.write("- 🔄 **ROTAÇÃO:** Entra na rotação automática com Zonas, ML e Score Engine")
         
         info_markov = f"""
         **🎯 Como funciona:**
@@ -3041,6 +3380,24 @@ with st.sidebar.expander("📊 Informações das Estratégias"):
         4. Ajusta pela vizinhança física na roleta
         """
         st.write(info_markov)
+    
+    elif estrategia == "ScoreEngine":
+        st.write("**🧠 Estratégia Score Engine Pro:**")
+        st.write("- **Modelo**: Scoring dinâmico com 6 fatores")
+        st.write("- **Pesos configuráveis:**")
+        st.write("  - 📊 Frequência: 25%")
+        st.write("  - 🔁 Recência (últ. 20): 25%")
+        st.write("  - 🔥 Cluster/Repetição: 20%")
+        st.write("  - 🎯 Vizinhança física: 10%")
+        st.write("  - ⏳ Delay (tempo sem sair): 10%")
+        st.write("  - 🍀 Lucky Numbers: 10%")
+        st.write("- **Janelas de análise:**")
+        st.write("  - Recência: 20 números")
+        st.write("  - Frequência: 50 números")
+        st.write("  - Vizinhança: 30 números")
+        st.write("- **Tracking de Lucky Numbers:** 50 registros")
+        st.write("- 🎯 **SAÍDA:** Top números ranqueados por score")
+        st.write("- 🔄 **ROTAÇÃO:** Entra na rotação automática")
 
 with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=False):
     if estrategia == "Zonas":
@@ -3049,6 +3406,8 @@ with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=False):
         analise = st.session_state.sistema.estrategia_ml.get_analise_ml()
     elif estrategia == "Markov":
         analise = st.session_state.sistema.estrategia_markov.get_analise_markov()
+    elif estrategia == "ScoreEngine":
+        analise = st.session_state.sistema.estrategia_score.get_analise_score()
     else:
         analise = "🎯 Estratégia Midas ativa\nAnalisando padrões de terminais..."
     
@@ -3060,9 +3419,9 @@ if st.button("Adicionar") and entrada:
     try:
         nums = [int(n) for n in entrada.split() if n.isdigit() and 0 <= int(n) <= 36]
         for n in nums:
-            item = {"number": n, "timestamp": f"manual_{len(st.session_state.historico)}"}
+            item = {"number": n, "timestamp": f"manual_{len(st.session_state.historico)}", "luckyNumbers": [], "luckyMultipliers": {}}
             st.session_state.historico.append(item)
-            st.session_state.sistema.processar_novo_numero(n)
+            st.session_state.sistema.processar_novo_numero(item)
         salvar_resultado_em_arquivo(st.session_state.historico)
         salvar_sessao()
         st.success(f"{len(nums)} números adicionados!")
@@ -3132,6 +3491,13 @@ if sistema.previsao_ativa:
     if '🌊' in previsao.get('gatilho', ''):
         st.info("🌊 **ESTRATÉGIA DE ONDAS ATIVA:** Apostando nas zonas mais frequentes")
     
+    if 'Score Engine' in previsao['nome']:
+        st.info("🧠 **SCORE ENGINE ATIVO:** Combinação ponderada de 6 fatores")
+        if 'scores_detalhados' in previsao:
+            st.write("**📊 Scores dos principais números:**")
+            for num, det in list(previsao['scores_detalhados'].items())[:5]:
+                st.write(f"  Nº {num}: {det['total']:.3f} (F:{det['freq']:.2f} R:{det['rec']:.2f} C:{det['cluster']:.2f})")
+    
     numeros_originais = previsao.get('numeros_originais_qtd', len(previsao['numeros_apostar']))
     if numeros_originais > len(previsao['numeros_apostar']):
         st.info(f"📊 **Redução final:** {numeros_originais} → {len(previsao['numeros_apostar'])} números")
@@ -3191,6 +3557,14 @@ if sistema.previsao_ativa:
             else:
                 st.write(f"**🔍 Último número:** {previsao['estado_atual']}")
     
+    elif 'Score Engine' in previsao['nome']:
+        st.write("**🧠 Score Engine - Ranqueamento Inteligente**")
+        if 'ranking_completo' in previsao:
+            st.write("**📊 Top Scores:**")
+            for i, (num, score) in enumerate(previsao['ranking_completo'][:10], 1):
+                barra = "█" * int(score * 20)
+                st.write(f"  {i}. Número {num:2d}: {barra} {score:.3f}")
+    
     st.write(f"**🔢 Números para apostar ({len(previsao['numeros_apostar'])}):**")
     
     numeros_raio_ativos = set()
@@ -3216,6 +3590,8 @@ if sistema.previsao_ativa:
         st.success("🎯 **APOSTA DUPLA:** Maior cobertura com 2 zonas combinadas")
     elif tipo_aposta == 'markov':
         st.success("🎲 **PREVISÃO MARKOV:** Baseada em cadeias de probabilidade")
+    elif tipo_aposta == 'score_engine':
+        st.success("🧠 **SCORE ENGINE:** Baseado em 6 fatores ponderados")
     else:
         st.info("🎯 **APOSTA SIMPLES:** Foco em uma zona principal")
     
@@ -3302,6 +3678,8 @@ if sistema.historico_desempenho:
             tipo_aposta_info = " [DUPLA]"
         elif resultado.get('tipo_aposta') == 'markov':
             tipo_aposta_info = " [MARKOV]"
+        elif resultado.get('tipo_aposta') == 'score_engine':
+            tipo_aposta_info = " [SCORE]"
         
         st.write(f"{emoji}{rotacao_emoji} {resultado['estrategia']}{tipo_aposta_info}: Número {resultado['numero']}{mult_info}{zona_info}")
 
