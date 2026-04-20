@@ -47,7 +47,10 @@ def salvar_sessao():
             'ml_metricas_padroes': st.session_state.sistema.estrategia_ml.metricas_padroes,
             'estrategia_selecionada': st.session_state.sistema.estrategia_selecionada,
             'zonas_ultima_combinacao_erro': st.session_state.sistema.estrategia_zonas.ultima_combinacao_erro,
-            'zonas_combinacao_atual': st.session_state.sistema.estrategia_zonas.combinacao_atual
+            'zonas_combinacao_atual': st.session_state.sistema.estrategia_zonas.combinacao_atual,
+            'markov_historico': list(st.session_state.sistema.estrategia_markov.historico) if hasattr(st.session_state.sistema, 'estrategia_markov') else [],
+            'markov_matriz_transicao': st.session_state.sistema.estrategia_markov.matriz_transicao if hasattr(st.session_state.sistema, 'estrategia_markov') else {},
+            'markov_contador_sorteios': st.session_state.sistema.estrategia_markov.contador_sorteios if hasattr(st.session_state.sistema, 'estrategia_markov') else 0
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -122,6 +125,13 @@ def carregar_sessao():
                     'eficiencia_por_tipo': {},
                     'historico_validacao': []
                 })
+                
+                # Carregar dados da estratégia Markov
+                markov_historico = session_data.get('markov_historico', [])
+                if hasattr(st.session_state.sistema, 'estrategia_markov'):
+                    st.session_state.sistema.estrategia_markov.historico = deque(markov_historico, maxlen=200)
+                    st.session_state.sistema.estrategia_markov.matriz_transicao = session_data.get('markov_matriz_transicao', {})
+                    st.session_state.sistema.estrategia_markov.contador_sorteios = session_data.get('markov_contador_sorteios', 0)
             
             logging.info("✅ Sessão carregada com sucesso")
             return True
@@ -196,6 +206,8 @@ def enviar_previsao_super_simplificada(previsao):
                         mensagem = "🤖 Zona 2"
                     else:
                         mensagem = f"🤖 Zona {zona_ml}"
+        elif 'Markov' in nome_estrategia:
+            mensagem = f"🎲 Cadeia de Markov - {len(numeros_apostar)} números mais prováveis"
         else:
             mensagem = f"💰 {previsao['nome']}"
         
@@ -225,6 +237,8 @@ def enviar_alerta_numeros_simplificado(previsao):
             emoji = "📍"
         elif 'ML' in nome_estrategia:
             emoji = "🤖"
+        elif 'Markov' in nome_estrategia:
+            emoji = "🎲"
         else:
             emoji = "💰"
             
@@ -553,6 +567,313 @@ class RoletaInteligente:
                 vizinhos.append(vizinho)
         
         return vizinhos
+
+# =============================
+# MÓDULO DE CADEIA DE MARKOV
+# =============================
+class EstrategiaMarkov:
+    """
+    Estratégia baseada em Cadeia de Markov para previsão de números da roleta.
+    Analisa sequências de números e calcula probabilidades de transição.
+    Retorna os 6 números mais prováveis baseados no último número sorteado.
+    """
+    
+    def __init__(self, ordem: int = 2, top_k: int = 6):
+        """
+        Inicializa a estratégia de Markov.
+        
+        Args:
+            ordem: Ordem da cadeia de Markov (1 = último número, 2 = últimos 2 números)
+            top_k: Número de previsões a retornar (padrão = 6)
+        """
+        self.roleta = RoletaInteligente()
+        self.historico = deque(maxlen=200)  # Mantém até 200 números no histórico
+        self.nome = "Cadeia de Markov"
+        self.ordem = ordem
+        self.top_k = top_k
+        self.matriz_transicao = {}  # Dicionário para armazenar as probabilidades de transição
+        self.contador_sorteios = 0
+        self.sistema_selecao = SistemaSelecaoInteligente()
+        
+        # Inicializa a matriz de transição para todos os estados possíveis
+        self._inicializar_matriz()
+        
+    def _inicializar_matriz(self):
+        """Inicializa a estrutura da matriz de transição"""
+        self.matriz_transicao = {}
+        
+        # Para cadeia de ordem 1: estados são números individuais (0-36)
+        if self.ordem == 1:
+            for i in range(37):
+                self.matriz_transicao[i] = {j: 0 for j in range(37)}
+        
+        # Para cadeia de ordem 2: estados são tuplas de 2 números
+        else:
+            for i in range(37):
+                for j in range(37):
+                    self.matriz_transicao[(i, j)] = {k: 0 for k in range(37)}
+    
+    def adicionar_numero(self, numero):
+        """Adiciona um número ao histórico e atualiza a matriz de transição"""
+        self.historico.append(numero)
+        self.contador_sorteios += 1
+        
+        # Atualiza a matriz de transição
+        self._atualizar_matriz_transicao()
+        
+        # Retreinamento periódico da matriz
+        if self.contador_sorteios >= 50:
+            self.contador_sorteios = 0
+            self._normalizar_matriz()
+            
+        if 'sistema' in st.session_state:
+            salvar_sessao()
+    
+    def _atualizar_matriz_transicao(self):
+        """Atualiza a matriz de transição baseada no histórico"""
+        if len(self.historico) < self.ordem + 1:
+            return
+        
+        historico_lista = list(self.historico)
+        
+        if self.ordem == 1:
+            # Cadeia de Markov de ordem 1
+            for i in range(len(historico_lista) - 1):
+                estado_atual = historico_lista[i]
+                proximo_estado = historico_lista[i + 1]
+                
+                if estado_atual in self.matriz_transicao:
+                    if proximo_estado in self.matriz_transicao[estado_atual]:
+                        self.matriz_transicao[estado_atual][proximo_estado] += 1
+        
+        else:
+            # Cadeia de Markov de ordem 2
+            for i in range(len(historico_lista) - 2):
+                estado_atual = (historico_lista[i], historico_lista[i + 1])
+                proximo_estado = historico_lista[i + 2]
+                
+                if estado_atual in self.matriz_transicao:
+                    if proximo_estado in self.matriz_transicao[estado_atual]:
+                        self.matriz_transicao[estado_atual][proximo_estado] += 1
+    
+    def _normalizar_matriz(self):
+        """Normaliza as probabilidades na matriz de transição"""
+        for estado in self.matriz_transicao:
+            total = sum(self.matriz_transicao[estado].values())
+            if total > 0:
+                for proximo in self.matriz_transicao[estado]:
+                    self.matriz_transicao[estado][proximo] = self.matriz_transicao[estado][proximo] / total
+    
+    def _obter_estado_atual(self):
+        """Retorna o estado atual baseado no histórico mais recente"""
+        if len(self.historico) < self.ordem:
+            return None
+        
+        historico_lista = list(self.historico)
+        
+        if self.ordem == 1:
+            return historico_lista[-1]
+        else:
+            return (historico_lista[-2], historico_lista[-1])
+    
+    def _prever_proximos_numeros(self):
+        """
+        Prevê os próximos números baseado no estado atual da cadeia.
+        Retorna lista de tuplas (número, probabilidade) ordenada por probabilidade.
+        """
+        estado_atual = self._obter_estado_atual()
+        
+        if estado_atual is None or estado_atual not in self.matriz_transicao:
+            return []
+        
+        probabilidades = self.matriz_transicao[estado_atual]
+        
+        # Filtra apenas números com probabilidade > 0
+        previsoes = [(num, prob) for num, prob in probabilidades.items() if prob > 0]
+        
+        # Ordena por probabilidade decrescente
+        previsoes.sort(key=lambda x: x[1], reverse=True)
+        
+        return previsoes[:self.top_k]
+    
+    def _ajustar_com_vizinhanca(self, previsoes):
+        """
+        Ajusta as previsões considerando a vizinhança física na roleta.
+        Se um número previsto tem alta probabilidade, seus vizinhos também ganham peso.
+        """
+        if not previsoes:
+            return previsoes
+        
+        scores = {}
+        for num, prob in previsoes:
+            scores[num] = prob
+        
+        # Adiciona peso aos vizinhos dos números mais prováveis
+        for num in list(scores.keys())[:3]:  # Apenas top 3
+            vizinhos = self.roleta.get_vizinhos_fisicos(num, raio=2)
+            for vizinho in vizinhos:
+                if vizinho in scores:
+                    scores[vizinho] += scores[num] * 0.3
+                else:
+                    scores[vizinho] = scores[num] * 0.3
+        
+        # Reordena baseado nos novos scores
+        previsoes_ajustadas = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        
+        return previsoes_ajustadas[:self.top_k]
+    
+    def analisar_markov(self):
+        """
+        Analisa o histórico e retorna previsão baseada na Cadeia de Markov.
+        Retorna os top_k números mais prováveis.
+        """
+        if len(self.historico) < self.ordem + 5:
+            return None
+        
+        # Obtém previsões iniciais
+        previsoes = self._prever_proximos_numeros()
+        
+        if not previsoes:
+            # Fallback: usar frequência simples
+            return self._fallback_frequencia()
+        
+        # Ajusta com vizinhança
+        previsoes_ajustadas = self._ajustar_com_vizinhanca(previsoes)
+        
+        # Extrai apenas os números
+        numeros_previstos = [num for num, prob in previsoes_ajustadas]
+        
+        # Aplica seleção inteligente se necessário
+        numeros_originais_qtd = len(numeros_previstos)
+        if len(numeros_previstos) > 15:
+            numeros_previstos = self.sistema_selecao.selecionar_melhores_15_numeros(
+                numeros_previstos, self.historico, "Markov"
+            )
+        
+        # Calcula confiança baseada na soma das probabilidades
+        confianca_valor = sum(prob for _, prob in previsoes_ajustadas[:3])
+        confianca = self._calcular_nivel_confianca(confianca_valor)
+        
+        # Gera gatilho informativo
+        estado_atual = self._obter_estado_atual()
+        gatilho = self._gerar_gatilho(estado_atual, previsoes_ajustadas)
+        
+        return {
+            'nome': f'Cadeia de Markov (Ordem {self.ordem})',
+            'numeros_apostar': numeros_previstos,
+            'gatilho': gatilho,
+            'confianca': confianca,
+            'tipo': 'markov',
+            'selecao_inteligente': len(numeros_previstos) < numeros_originais_qtd,
+            'numeros_originais_qtd': numeros_originais_qtd,
+            'previsoes_detalhadas': previsoes_ajustadas,
+            'estado_atual': estado_atual
+        }
+    
+    def _fallback_frequencia(self):
+        """Fallback baseado em frequência simples quando a matriz não tem dados suficientes"""
+        if len(self.historico) < 10:
+            return None
+        
+        historico_lista = list(self.historico)
+        contagem = Counter(historico_lista[-30:])  # Últimos 30 números
+        
+        numeros_mais_frequentes = [num for num, _ in contagem.most_common(self.top_k)]
+        
+        return {
+            'nome': 'Cadeia de Markov (Fallback - Frequência)',
+            'numeros_apostar': numeros_mais_frequentes,
+            'gatilho': f'Fallback: Baseado em frequência dos últimos 30 números',
+            'confianca': 'Baixa',
+            'tipo': 'markov_fallback',
+            'selecao_inteligente': False,
+            'numeros_originais_qtd': len(numeros_mais_frequentes)
+        }
+    
+    def _calcular_nivel_confianca(self, valor_probabilidade):
+        """Converte o valor de probabilidade em nível de confiança"""
+        if valor_probabilidade >= 0.6:
+            return 'Muito Alta'
+        elif valor_probabilidade >= 0.45:
+            return 'Alta'
+        elif valor_probabilidade >= 0.3:
+            return 'Média'
+        elif valor_probabilidade >= 0.15:
+            return 'Baixa'
+        else:
+            return 'Muito Baixa'
+    
+    def _gerar_gatilho(self, estado_atual, previsoes):
+        """Gera texto descritivo do gatilho"""
+        if estado_atual is None:
+            return "Aguardando dados suficientes para Cadeia de Markov"
+        
+        if self.ordem == 1:
+            estado_str = f"Último número: {estado_atual}"
+        else:
+            estado_str = f"Últimos números: {estado_atual[0]} → {estado_atual[1]}"
+        
+        top3_str = ", ".join([f"{num}({prob:.1%})" for num, prob in previsoes[:3]])
+        
+        return f"🎲 Markov (ordem {self.ordem}) | {estado_str} | Top 3: {top3_str}"
+    
+    def get_analise_markov(self):
+        """Retorna análise detalhada do estado atual da cadeia de Markov"""
+        if len(self.historico) < self.ordem + 2:
+            return f"🎲 Cadeia de Markov: Aguardando mais dados (mínimo {self.ordem + 2} números)"
+        
+        analise = f"🎲 ANÁLISE DA CADEIA DE MARKOV (Ordem {self.ordem})\n"
+        analise += "=" * 45 + "\n"
+        analise += f"📊 Histórico: {len(self.historico)} números\n"
+        analise += f"🎯 Top {self.top_k} previsões\n"
+        
+        estado_atual = self._obter_estado_atual()
+        if estado_atual:
+            if self.ordem == 1:
+                analise += f"🔍 Estado atual: {estado_atual}\n"
+            else:
+                analise += f"🔍 Estado atual: {estado_atual[0]} → {estado_atual[1]}\n"
+            
+            previsoes = self._prever_proximos_numeros()
+            if previsoes:
+                analise += "\n📈 PROBABILIDADES:\n"
+                for i, (num, prob) in enumerate(previsoes[:self.top_k], 1):
+                    barra = "█" * int(prob * 20)
+                    analise += f"  {i}. Número {num:2d}: {barra} {prob:.1%}\n"
+        
+        # Estatísticas da matriz
+        total_transicoes = sum(len(trans) for trans in self.matriz_transicao.values())
+        analise += f"\n📊 Matriz de transição: {len(self.matriz_transicao)} estados, {total_transicoes} transições registradas\n"
+        
+        return analise
+    
+    def get_estatisticas_matriz(self):
+        """Retorna estatísticas da matriz de transição"""
+        if not self.matriz_transicao:
+            return "Matriz de transição vazia"
+        
+        total_estados = len(self.matriz_transicao)
+        estados_com_dados = sum(1 for estado in self.matriz_transicao if sum(self.matriz_transicao[estado].values()) > 0)
+        
+        estatisticas = f"📊 ESTATÍSTICAS DA MATRIZ DE MARKOV\n"
+        estatisticas += f"🎲 Ordem da cadeia: {self.ordem}\n"
+        estatisticas += f"📈 Estados possíveis: {total_estados}\n"
+        estatisticas += f"✅ Estados com dados: {estados_com_dados}\n"
+        estatisticas += f"📊 Cobertura: {(estados_com_dados/total_estados)*100:.1f}%\n"
+        
+        if self.ordem == 1:
+            estatisticas += f"🎯 Números possíveis: 37\n"
+        else:
+            estatisticas += f"🎯 Pares possíveis: 1369\n"
+        
+        return estatisticas
+    
+    def zerar_matriz(self):
+        """Zera a matriz de transição e o histórico"""
+        self.historico.clear()
+        self._inicializar_matriz()
+        self.contador_sorteios = 0
+        logging.info("🔄 Matriz de Markov zerada")
 
 # =============================
 # MÓDULO DE MACHINE LEARNING
@@ -2065,13 +2386,14 @@ class EstrategiaML:
         logging.info("🔄 Padrões sequenciais e métricas zerados")
 
 # =============================
-# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA (Zonas ↔ ML)
+# SISTEMA DE GESTÃO ATUALIZADO COM ROTAÇÃO AUTOMÁTICA (Zonas ↔ ML ↔ Markov)
 # =============================
 class SistemaRoletaCompleto:
     def __init__(self):
         self.estrategia_zonas = EstrategiaZonasOtimizada()
         self.estrategia_midas = EstrategiaMidas()
         self.estrategia_ml = EstrategiaML()
+        self.estrategia_markov = EstrategiaMarkov(ordem=2, top_k=6)  # Nova estratégia Markov
         self.previsao_ativa = None
         self.historico_desempenho = []
         self.acertos = 0
@@ -2092,8 +2414,9 @@ class SistemaRoletaCompleto:
 
     def rotacionar_estrategia_automaticamente(self, acerto, nome_estrategia):
         """
-        Rotação entre Zonas e ML:
+        Rotação entre Zonas, ML e Markov:
         - Só rotaciona se a estratégia atual errar 2 vezes seguidas
+        - Ordem de rotação: Zonas → ML → Markov → Zonas
         """
         if acerto:
             self.erros_consecutivos_estrategia = 0
@@ -2106,12 +2429,16 @@ class SistemaRoletaCompleto:
             if self.erros_consecutivos_estrategia >= 2:
                 estrategia_atual = self.estrategia_selecionada
                 
+                # Define a ordem de rotação
                 if estrategia_atual == "Zonas":
                     nova_estrategia = "ML"
                     motivo = "2 erros consecutivos nas Zonas"
                 elif estrategia_atual == "ML":
-                    nova_estrategia = "Zonas"
+                    nova_estrategia = "Markov"
                     motivo = "2 erros consecutivos no ML"
+                elif estrategia_atual == "Markov":
+                    nova_estrategia = "Zonas"
+                    motivo = "2 erros consecutivos no Markov"
                 else:
                     nova_estrategia = "Zonas"
                     motivo = "Estratégia não reconhecida, voltando para Zonas"
@@ -2158,6 +2485,9 @@ class SistemaRoletaCompleto:
                         if numero_real in numeros:
                             zonas_acertadas.append(zona)
                             break
+                elif 'Markov' in nome_estrategia:
+                    # Para Markov, não há zona específica
+                    pass
             
             # Atualizar estatísticas da combinação usada (apenas para estratégia Zonas)
             if 'Zonas' in nome_estrategia and 'combinacao_usada' in self.previsao_ativa:
@@ -2193,9 +2523,11 @@ class SistemaRoletaCompleto:
             
             self.previsao_ativa = None
         
+        # Atualiza todas as estratégias com o novo número
         self.estrategia_zonas.adicionar_numero(numero_real)
         self.estrategia_midas.adicionar_numero(numero_real)
         self.estrategia_ml.adicionar_numero(numero_real)
+        self.estrategia_markov.adicionar_numero(numero_real)
         
         nova_estrategia = None
         
@@ -2205,6 +2537,8 @@ class SistemaRoletaCompleto:
             nova_estrategia = self.estrategia_midas.analisar_midas()
         elif self.estrategia_selecionada == "ML":
             nova_estrategia = self.estrategia_ml.analisar_ml()
+        elif self.estrategia_selecionada == "Markov":
+            nova_estrategia = self.estrategia_markov.analisar_markov()
         
         if nova_estrategia:
             self.previsao_ativa = nova_estrategia
@@ -2220,6 +2554,7 @@ class SistemaRoletaCompleto:
         self.ultima_estrategia_erro = ""
         
         self.estrategia_zonas.zerar_estatisticas()
+        self.estrategia_markov.zerar_matriz()  # Zera a matriz de Markov
         
         logging.info("📊 Todas as estatísticas de desempenho foram zeradas")
         salvar_sessao()
@@ -2465,7 +2800,7 @@ with st.sidebar.expander("🔔 Alertas Alternativos", expanded=False):
 
 estrategia = st.sidebar.selectbox(
     "🎯 Selecione a Estratégia:",
-    ["Zonas", "Midas", "ML"],
+    ["Zonas", "Midas", "ML", "Markov"],
     key="estrategia_selecionada"
 )
 
@@ -2489,7 +2824,7 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
     st.write("• ✅ **Acerto:** Continua na mesma estratégia")
     st.write("• ❌ **1 Erro:** Continua na estratégia") 
     st.write("• ❌❌ **2 Erros Seguidos:** Rotação automática")
-    st.write("• 🔄 **Zonas ↔ ML:** Rotação entre as duas principais")
+    st.write("• 🔄 **Ordem:** Zonas → ML → Markov → Zonas")
     
     st.write("---")
     st.write("**🔄 Rotação de Combinações nas Zonas:**")
@@ -2498,8 +2833,13 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
     
     if st.button("🔄 Forçar Rotação Estratégia", use_container_width=True):
         estrategia_atual = st.session_state.sistema.estrategia_selecionada
+        # Define a ordem de rotação
         if estrategia_atual == "Zonas":
             nova_estrategia = "ML"
+        elif estrategia_atual == "ML":
+            nova_estrategia = "Markov"
+        elif estrategia_atual == "Markov":
+            nova_estrategia = "Zonas"
         else:
             nova_estrategia = "Zonas"
         
@@ -2513,6 +2853,41 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
         st.session_state.sistema.estrategia_zonas.combinacao_atual = st.session_state.sistema.estrategia_zonas.combinacoes_possiveis[0]
         st.session_state.sistema.estrategia_zonas.ultima_combinacao_erro = ""
         st.success("✅ Combinação das Zonas resetada para a primeira da lista!")
+        st.rerun()
+
+with st.sidebar.expander("🎲 Configurações Markov", expanded=False):
+    st.write("**🎲 Cadeia de Markov**")
+    
+    ordem = st.selectbox(
+        "Ordem da Cadeia:",
+        [1, 2],
+        index=1,
+        help="Ordem 1: baseado no último número | Ordem 2: baseado nos últimos 2 números"
+    )
+    
+    top_k = st.slider(
+        "Número de previsões:",
+        min_value=3,
+        max_value=15,
+        value=6,
+        help="Quantos números mais prováveis retornar"
+    )
+    
+    if st.button("Aplicar Configurações Markov"):
+        st.session_state.sistema.estrategia_markov.ordem = ordem
+        st.session_state.sistema.estrategia_markov.top_k = top_k
+        st.session_state.sistema.estrategia_markov._inicializar_matriz()
+        st.success(f"✅ Configurações Markov aplicadas! (Ordem {ordem}, Top {top_k})")
+        st.rerun()
+    
+    st.write("---")
+    st.write("**📊 Status da Matriz:**")
+    estatisticas_markov = st.session_state.sistema.estrategia_markov.get_estatisticas_matriz()
+    st.text(estatisticas_markov)
+    
+    if st.button("🔄 Zerar Matriz Markov", use_container_width=True):
+        st.session_state.sistema.estrategia_markov.zerar_matriz()
+        st.success("✅ Matriz de Markov zerada!")
         st.rerun()
 
 with st.sidebar.expander("🧠 Treinamento ML", expanded=False):
@@ -2646,12 +3021,34 @@ with st.sidebar.expander("📊 Informações das Estratégias"):
             st.write(f"Números: {', '.join(map(str, dados['numeros']))}")
             st.write(f"Total: {dados['quantidade']} números")
             st.write("---")
+    
+    elif estrategia == "Markov":
+        st.write("**🎲 Estratégia Cadeia de Markov:**")
+        st.write("- **Modelo**: Cadeia de Markov de ordem configurável")
+        st.write("- **Previsão**: Top 6 números mais prováveis")
+        st.write("- **Matriz de transição**: Atualizada a cada número")
+        st.write("- **Vizinhança**: Ajuste por proximidade na roleta")
+        st.write("- **Fallback**: Frequência quando dados insuficientes")
+        st.write("- **Histórico máximo**: 200 números")
+        st.write("- 🎯 **SAÍDA:** Lista dos números mais prováveis")
+        st.write("- 🔄 **ROTAÇÃO:** Entra na rotação automática com Zonas e ML")
+        
+        info_markov = f"""
+        **🎯 Como funciona:**
+        1. Analisa sequências de números anteriores
+        2. Calcula probabilidades de transição
+        3. Identifica os números mais prováveis baseado no último resultado
+        4. Ajusta pela vizinhança física na roleta
+        """
+        st.write(info_markov)
 
 with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=False):
     if estrategia == "Zonas":
         analise = st.session_state.sistema.estrategia_zonas.get_analise_detalhada()
     elif estrategia == "ML":
         analise = st.session_state.sistema.estrategia_ml.get_analise_ml()
+    elif estrategia == "Markov":
+        analise = st.session_state.sistema.estrategia_markov.get_analise_markov()
     else:
         analise = "🎯 Estratégia Midas ativa\nAnalisando padrões de terminais..."
     
@@ -2781,6 +3178,19 @@ if sistema.previsao_ativa:
                 nucleo = zona_ml
             st.write(f"**🤖 Núcleo:** {nucleo}")
     
+    elif 'Markov' in previsao['nome']:
+        st.write("**🎲 Cadeia de Markov - Previsão Baseada em Sequências**")
+        if 'previsoes_detalhadas' in previsao:
+            st.write("**📊 Probabilidades calculadas:**")
+            for i, (num, prob) in enumerate(previsao['previsoes_detalhadas'][:6], 1):
+                barra = "█" * int(prob * 20)
+                st.write(f"  {i}. Número {num:2d}: {barra} {prob:.1%}")
+        if 'estado_atual' in previsao and previsao['estado_atual']:
+            if isinstance(previsao['estado_atual'], tuple):
+                st.write(f"**🔍 Estado atual:** {previsao['estado_atual'][0]} → {previsao['estado_atual'][1]}")
+            else:
+                st.write(f"**🔍 Último número:** {previsao['estado_atual']}")
+    
     st.write(f"**🔢 Números para apostar ({len(previsao['numeros_apostar'])}):**")
     
     numeros_raio_ativos = set()
@@ -2804,6 +3214,8 @@ if sistema.previsao_ativa:
     tipo_aposta = previsao.get('tipo', 'unica')
     if tipo_aposta == 'dupla':
         st.success("🎯 **APOSTA DUPLA:** Maior cobertura com 2 zonas combinadas")
+    elif tipo_aposta == 'markov':
+        st.success("🎲 **PREVISÃO MARKOV:** Baseada em cadeias de probabilidade")
     else:
         st.info("🎯 **APOSTA SIMPLES:** Foco em uma zona principal")
     
@@ -2888,6 +3300,8 @@ if sistema.historico_desempenho:
         tipo_aposta_info = ""
         if resultado.get('tipo_aposta') == 'dupla':
             tipo_aposta_info = " [DUPLA]"
+        elif resultado.get('tipo_aposta') == 'markov':
+            tipo_aposta_info = " [MARKOV]"
         
         st.write(f"{emoji}{rotacao_emoji} {resultado['estrategia']}{tipo_aposta_info}: Número {resultado['numero']}{mult_info}{zona_info}")
 
