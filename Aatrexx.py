@@ -52,7 +52,10 @@ def salvar_sessao():
             'markov_matriz_transicao': st.session_state.sistema.estrategia_markov.matriz_transicao if hasattr(st.session_state.sistema, 'estrategia_markov') else {},
             'markov_contador_sorteios': st.session_state.sistema.estrategia_markov.contador_sorteios if hasattr(st.session_state.sistema, 'estrategia_markov') else 0,
             'score_engine_historico': list(st.session_state.sistema.estrategia_score.historico) if hasattr(st.session_state.sistema, 'estrategia_score') else [],
-            'score_engine_lucky_tracking': st.session_state.sistema.estrategia_score.lucky_tracking if hasattr(st.session_state.sistema, 'estrategia_score') else []
+            'score_engine_lucky_tracking': st.session_state.sistema.estrategia_score.lucky_tracking if hasattr(st.session_state.sistema, 'estrategia_score') else [],
+            'hedge_historico': list(st.session_state.sistema.estrategia_hedge.historico) if hasattr(st.session_state.sistema, 'estrategia_hedge') else [],
+            'hedge_lucky_tracking': st.session_state.sistema.estrategia_hedge.lucky_tracking if hasattr(st.session_state.sistema, 'estrategia_hedge') else [],
+            'hedge_transitions': dict(st.session_state.sistema.estrategia_hedge.transitions) if hasattr(st.session_state.sistema, 'estrategia_hedge') else {}
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -138,6 +141,12 @@ def carregar_sessao():
                 if hasattr(st.session_state.sistema, 'estrategia_score'):
                     st.session_state.sistema.estrategia_score.historico = deque(score_engine_historico, maxlen=200)
                     st.session_state.sistema.estrategia_score.lucky_tracking = session_data.get('score_engine_lucky_tracking', [])
+                
+                hedge_historico = session_data.get('hedge_historico', [])
+                if hasattr(st.session_state.sistema, 'estrategia_hedge'):
+                    st.session_state.sistema.estrategia_hedge.historico = deque(hedge_historico, maxlen=200)
+                    st.session_state.sistema.estrategia_hedge.lucky_tracking = session_data.get('hedge_lucky_tracking', [])
+                    st.session_state.sistema.estrategia_hedge.transitions = defaultdict(Counter, session_data.get('hedge_transitions', {}))
             
             logging.info("✅ Sessão carregada com sucesso")
             return True
@@ -582,7 +591,7 @@ class RoletaInteligente:
         
         return vizinhos
 
-# ===== NOVO: ANALISADOR DE ESTADO DA ROLETA =====
+# ===== NOVO: ANALISADOR DE ESTADO DA ROLETA (CORRIGIDO) =====
 class AnalisadorEstadoRoleta:
     """Classifica o momento atual da roleta e calcula entropia"""
     
@@ -592,6 +601,9 @@ class AnalisadorEstadoRoleta:
         
     def calcular_entropia(self, numeros, janela=15):
         """Calcula entropia de Shannon para medir aleatoriedade"""
+        # Converte para lista se for deque
+        if isinstance(numeros, deque):
+            numeros = list(numeros)
         if len(numeros) < janela:
             return 5.0  # Alta entropia quando poucos dados
         
@@ -604,16 +616,18 @@ class AnalisadorEstadoRoleta:
             return 0.0
         
         entropia = -np.sum(probs * np.log2(probs))
-        # Normaliza para 0-1 (máximo teórico log2(37) ≈ 5.2)
         entropia_normalizada = entropia / np.log2(37)
         return entropia_normalizada
     
     def classificar_estado(self, historico):
         """Classifica o estado atual baseado nos últimos giros"""
-        if len(historico) < 10:
+        if isinstance(historico, deque):
+            hist = list(historico)
+        else:
+            hist = historico
+        if len(hist) < 10:
             return 'RANDOM', 0.0
         
-        hist = list(historico)
         ultimos_10 = hist[-10:]
         ultimo = hist[-1]
         
@@ -647,10 +661,6 @@ class AnalisadorEstadoRoleta:
         estado, confianca = self.classificar_estado(historico)
         entropia = self.calcular_entropia(historico)
         
-        # Momento favorável se:
-        # 1. Estado não é RANDOM
-        # 2. Entropia está abaixo do threshold
-        # 3. Confiança do estado é razoável
         favoravel = (estado != 'RANDOM') and (entropia < threshold_entropia) and (confianca >= 0.6)
         
         return favoravel, estado, entropia, confianca
@@ -676,24 +686,14 @@ class FiltroEntrada:
         if not favoravel:
             return False, f"Estado {estado} | Entropia {entropia:.2f} (alta)"
         
-        # Verifica se há um sinal forte (score máximo alto)
         max_score = max(scores_numeros.values()) if scores_numeros else 0
         if max_score < self.threshold_score:
             return False, f"Sinal fraco (max score {max_score:.2f})"
         
         return True, f"✅ SINAL FORTE | {estado} | Entropia {entropia:.2f}"
 
-# ===== NOVO: ESTRATÉGIA HEDGE FUND PRO =====
+# ===== NOVO: ESTRATÉGIA HEDGE FUND PRO (CORRIGIDO) =====
 class EstrategiaHedgeFund:
-    """
-    Estratégia avançada que combina:
-    - Markov condicional (40%)
-    - Recência (20%)
-    - Cluster (15%)
-    - Densidade de vizinhança (15%)
-    - Lucky Numbers (10%)
-    E só aposta quando o Filtro de Entrada autoriza.
-    """
     def __init__(self, top_k: int = 8):
         self.roleta = RoletaInteligente()
         self.historico = deque(maxlen=200)
@@ -702,11 +702,7 @@ class EstrategiaHedgeFund:
         self.top_k = top_k
         self.sistema_selecao = SistemaSelecaoInteligente()
         self.filtro = FiltroEntrada()
-        
-        # Matriz de transição Markov
         self.transitions = defaultdict(Counter)
-        
-        # Pesos do score
         self.pesos = {
             'markov': 0.40,
             'recencia': 0.20,
@@ -720,7 +716,6 @@ class EstrategiaHedgeFund:
         if lucky_numbers:
             self.lucky_tracking.extend(lucky_numbers)
         
-        # Atualiza matriz de transição Markov
         hist_list = list(self.historico)
         if len(hist_list) >= 2:
             atual = hist_list[-2]
@@ -731,74 +726,56 @@ class EstrategiaHedgeFund:
             salvar_sessao()
     
     def _prob_markov(self, numero, ultimo_numero):
-        """Probabilidade condicional P(numero | ultimo_numero)"""
         if ultimo_numero not in self.transitions:
             return 0.0
-        
         total = sum(self.transitions[ultimo_numero].values())
         if total == 0:
             return 0.0
-        
         count = self.transitions[ultimo_numero].get(numero, 0)
         return count / total
     
     def _score_recencia(self):
-        """Números que apareceram nos últimos 15 giros"""
         if len(self.historico) < 5:
             return {i: 0.0 for i in range(37)}
-        
         recentes = list(self.historico)[-15:]
         contagem = Counter(recentes)
         max_count = max(contagem.values()) if contagem else 1
-        
         return {i: contagem.get(i, 0) / max_count for i in range(37)}
     
     def _score_cluster(self):
-        """Detecta repetições consecutivas"""
         if len(self.historico) < 3:
             return {i: 0.0 for i in range(37)}
-        
         hist_list = list(self.historico)
         cluster = Counter()
         for i in range(1, len(hist_list)):
             if hist_list[i] == hist_list[i-1]:
                 cluster[hist_list[i]] += 1
-        
         max_cluster = max(cluster.values()) if cluster else 1
         return {i: cluster.get(i, 0) / max_cluster for i in range(37)}
     
     def _score_vizinhanca(self):
-        """Densidade de vizinhança nos últimos 10 giros"""
         if len(self.historico) < 5:
             return {i: 0.0 for i in range(37)}
-        
         recentes = list(self.historico)[-10:]
         vizinhanca_score = {i: 0.0 for i in range(37)}
-        
         for num in recentes:
             vizinhos = self.roleta.get_vizinhos_fisicos(num, raio=2)
             for v in vizinhos:
                 vizinhanca_score[v] += 1
-        
         max_score = max(vizinhanca_score.values()) if vizinhanca_score else 1
         return {i: vizinhanca_score[i] / max_score for i in range(37)}
     
     def _score_lucky(self):
-        """Correlação com Lucky Numbers recentes"""
         if len(self.lucky_tracking) == 0:
             return {i: 0.0 for i in range(37)}
-        
         contagem = Counter(self.lucky_tracking)
         max_lucky = max(contagem.values()) if contagem else 1
         return {i: contagem.get(i, 0) / max_lucky for i in range(37)}
     
     def calcular_score_total(self):
-        """Combina todos os scores com os pesos definidos"""
         if len(self.historico) < 5:
             return {}, {}
-        
         ultimo = self.historico[-1]
-        
         markov = {i: self._prob_markov(i, ultimo) for i in range(37)}
         recencia = self._score_recencia()
         cluster = self._score_cluster()
@@ -807,7 +784,6 @@ class EstrategiaHedgeFund:
         
         scores = {}
         detalhes = {}
-        
         for n in range(37):
             score = (
                 markov[n] * self.pesos['markov'] +
@@ -825,36 +801,26 @@ class EstrategiaHedgeFund:
                 'lucky': lucky[n],
                 'total': score
             }
-        
         return scores, detalhes
     
     def analisar(self):
-        """Gera previsão apenas se o filtro autorizar"""
         if len(self.historico) < 15:
             return None
-        
         scores, detalhes = self.calcular_score_total()
-        
-        # Filtro de entrada
         pode_apostar, motivo = self.filtro.deve_apostar(self.historico, scores)
         
         if not pode_apostar:
-            # Retorna None para indicar que não é momento de apostar
             logging.info(f"🚫 Hedge Fund: {motivo}")
             return None
         
-        # Ordena por score
         ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         top_numeros = [num for num, score in ranking[:self.top_k]]
-        
-        # Seleção inteligente se necessário
         numeros_originais_qtd = len(top_numeros)
         if len(top_numeros) > 12:
             top_numeros = self.sistema_selecao.selecionar_melhores_15_numeros(
                 top_numeros, self.historico, "HedgeFund"
             )
         
-        # Confiança baseada no score máximo
         max_score = scores[top_numeros[0]]
         if max_score >= 0.6:
             confianca = "Muito Alta"
@@ -865,7 +831,7 @@ class EstrategiaHedgeFund:
         else:
             confianca = "Baixa"
         
-        estado, entropia, _ = self.filtro.analisador.classificar_estado(self.historico)
+        estado, _ = self.filtro.analisador.classificar_estado(self.historico)
         entropia_val = self.filtro.analisador.calcular_entropia(self.historico)
         
         gatilho = f"🏦 Hedge Fund | {estado} | Entropia {entropia_val:.2f} | Max Score {max_score:.3f}"
@@ -884,14 +850,12 @@ class EstrategiaHedgeFund:
         }
     
     def get_analise(self):
-        """Retorna análise detalhada do estado atual"""
         if len(self.historico) < 10:
             return "🏦 Hedge Fund: Aguardando mais dados..."
         
         scores, detalhes = self.calcular_score_total()
         estado, _ = self.filtro.analisador.classificar_estado(self.historico)
         entropia = self.filtro.analisador.calcular_entropia(self.historico)
-        
         pode_apostar, motivo = self.filtro.deve_apostar(self.historico, scores)
         
         analise = f"🏦 ANÁLISE HEDGE FUND PRO\n"
@@ -1367,7 +1331,7 @@ class EstrategiaMidas:
             return {'nome': 'Padrão do Cinco', 'numeros_apostar': [5,15,25,35], 'gatilho': 'Terminal 5', 'confianca': 'Média'}
         return None
 
-# ===== ESTRATÉGIA ML (mantida, resumida para brevidade) =====
+# ===== ESTRATÉGIA ML (simplificada) =====
 class MLRoletaOtimizada:
     def __init__(self, roleta_obj, min_training_samples=200, max_history=1000, retrain_every_n=15, seed=42):
         self.roleta = roleta_obj
@@ -1393,21 +1357,17 @@ class MLRoletaOtimizada:
         except: return [numero]
 
     def extrair_features(self, historico, numero_alvo=None):
-        # Implementação simplificada - mesma lógica do código original
         hist = list(historico)
         N = len(hist)
         if N < 10: return None, None
-        features = []
-        # (mantido igual ao original, omitido por brevidade)
-        return features, []
+        # simplificado - retorna lista vazia para não quebrar
+        return [], []
 
     def preparar_dados_treinamento(self, historico):
-        # (mantido igual)
         return np.array([]), np.array([])
 
     def treinar_modelo(self, historico, force_retrain=False, balance=True):
-        # (mantido igual)
-        return False, "Não implementado"
+        return False, "Não treinado"
 
     def carregar_modelo(self):
         return False
@@ -1432,12 +1392,10 @@ class EstrategiaML:
         self.contador_sorteios += 1
         if self.contador_sorteios >= 15:
             self.contador_sorteios = 0
-            # treinar_automatico
         if 'sistema' in st.session_state: salvar_sessao()
 
     def analisar_ml(self):
         if len(self.historico) < 10 or not self.ml.is_trained: return None
-        # Retorna None ou previsão simplificada
         return None
 
     def treinar_modelo_ml(self, historico=None):
@@ -1454,7 +1412,7 @@ class SistemaRoletaCompleto:
         self.estrategia_ml = EstrategiaML()
         self.estrategia_markov = EstrategiaMarkov(ordem=2, top_k=6)
         self.estrategia_score = EstrategiaScoreEngine(top_k=12)
-        self.estrategia_hedge = EstrategiaHedgeFund(top_k=8)  # NOVA
+        self.estrategia_hedge = EstrategiaHedgeFund(top_k=8)
         self.previsao_ativa = None
         self.historico_desempenho = []
         self.acertos = 0
@@ -1482,7 +1440,6 @@ class SistemaRoletaCompleto:
             self.ultima_estrategia_erro = nome_estrategia
             if self.sequencia_erros >= 2:
                 atual = self.estrategia_selecionada
-                # Ordem: Zonas → ML → Markov → ScoreEngine → HedgeFund → Zonas
                 if atual == "Zonas": nova = "ML"
                 elif atual == "ML": nova = "Markov"
                 elif atual == "Markov": nova = "ScoreEngine"
@@ -1546,7 +1503,6 @@ class SistemaRoletaCompleto:
             })
             self.previsao_ativa = None
 
-        # Atualiza todas as estratégias
         self.estrategia_zonas.adicionar_numero(numero_real)
         self.estrategia_midas.adicionar_numero(numero_real)
         self.estrategia_ml.adicionar_numero(numero_real)
@@ -1554,7 +1510,6 @@ class SistemaRoletaCompleto:
         self.estrategia_score.adicionar_numero(numero_real, lucky)
         self.estrategia_hedge.adicionar_numero(numero_real, lucky)
 
-        # Gera nova previsão conforme estratégia selecionada
         nova = None
         if self.estrategia_selecionada == "Zonas":
             nova = self.estrategia_zonas.analisar_zonas()
@@ -1572,7 +1527,6 @@ class SistemaRoletaCompleto:
         if nova:
             self.previsao_ativa = nova
             enviar_previsao_super_simplificada(nova)
-        # Se retornar None (Hedge Fund pulou), não gera previsão
 
     def zerar_estatisticas_desempenho(self):
         self.acertos = 0
@@ -1721,7 +1675,6 @@ with st.sidebar.expander("🔔 Telegram", expanded=False):
         salvar_sessao()
         st.success("✅ Salvo!")
 
-# Seletor de estratégia (agora inclui HedgeFund)
 estrategia = st.sidebar.selectbox(
     "🎯 Estratégia:",
     ["Zonas", "Midas", "ML", "Markov", "ScoreEngine", "HedgeFund"],
@@ -1759,7 +1712,6 @@ with st.sidebar.expander("🏦 Hedge Fund Config", expanded=False):
         st.session_state.sistema.estrategia_hedge.zerar_estatisticas()
         st.success("✅ Zerado!")
 
-# Análise conforme estratégia
 with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=False):
     if estrategia == "Zonas":
         analise = st.session_state.sistema.estrategia_zonas.get_analise_detalhada()
@@ -1775,7 +1727,6 @@ with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=False):
         analise = "Estratégia Midas ativa"
     st.text(analise)
 
-# Input manual
 st.subheader("✍️ Inserir Sorteios")
 entrada = st.text_input("Números (0-36) separados por espaço:")
 if st.button("Adicionar") and entrada:
@@ -1792,10 +1743,8 @@ if st.button("Adicionar") and entrada:
     except Exception as e:
         st.error(f"Erro: {e}")
 
-# Auto-refresh
 st_autorefresh(interval=3000, key="refresh")
 
-# Busca API
 resultado = fetch_latest_result()
 if st.session_state.historico:
     ultimo_ts = st.session_state.historico[-1].get("timestamp") if st.session_state.historico else None
@@ -1810,7 +1759,6 @@ if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo
         salvar_resultado_em_arquivo(st.session_state.historico)
         salvar_sessao()
 
-# Últimos números
 st.subheader("🔁 Últimos Números")
 if st.session_state.historico:
     ultimos = st.session_state.historico[-10:]
@@ -1826,14 +1774,12 @@ if st.session_state.historico:
 else:
     st.write("Nenhum número")
 
-# Status rotação
 status = st.session_state.sistema.get_status_rotacao()
 col1, col2, col3 = st.columns(3)
 col1.metric("🎯 Estratégia", status['estrategia_atual'])
 col2.metric("❌ Erros", f"{status['sequencia_erros']}/2")
 col3.metric("🔄 Próx. Rotação", f"Em {status['proxima_rotacao_em']} erro(s)")
 
-# Previsão Ativa
 st.subheader("🎯 Previsão Ativa")
 sistema = st.session_state.sistema
 
@@ -1852,7 +1798,6 @@ else:
     else:
         st.info(f"🎲 Analisando padrões ({estrategia})...")
 
-# Desempenho
 st.subheader("📈 Desempenho")
 total = sistema.acertos + sistema.erros
 taxa = (sistema.acertos / total * 100) if total > 0 else 0.0
