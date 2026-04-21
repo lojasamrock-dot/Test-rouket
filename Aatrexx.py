@@ -804,7 +804,7 @@ class EstrategiaHedgeFund:
         return scores, detalhes
     
     def analisar(self):
-        if len(self.historico) < 15:
+        if len(self.historico) < 5:
             return None
         scores, detalhes = self.calcular_score_total()
         pode_apostar, motivo = self.filtro.deve_apostar(self.historico, scores)
@@ -850,7 +850,7 @@ class EstrategiaHedgeFund:
         }
     
     def get_analise(self):
-        if len(self.historico) < 10:
+        if len(self.historico) < 5:
             return "🏦 Hedge Fund: Aguardando mais dados..."
         
         scores, detalhes = self.calcular_score_total()
