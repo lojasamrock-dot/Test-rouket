@@ -36,7 +36,9 @@ def salvar_sessao():
             }),
             'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 70),
             'expandir_com_vizinhos': st.session_state.get('expandir_com_vizinhos', True),
-            'max_numeros_entrada': st.session_state.get('max_numeros_entrada', 6)
+            'max_numeros_entrada': st.session_state.get('max_numeros_entrada', 15),
+            'qtd_vizinhos_antes': st.session_state.get('qtd_vizinhos_antes', 3),
+            'qtd_vizinhos_depois': st.session_state.get('qtd_vizinhos_depois', 3)
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -59,7 +61,7 @@ def carregar_sessao():
             st.session_state.telegram_token = session_data.get('telegram_token', '')
             st.session_state.telegram_chat_id = session_data.get('telegram_chat_id', '')
             
-            # Carrega estratégias ativas (apenas as 3 de elite)
+            # Carrega estratégias ativas
             st.session_state.estrategias_ativas = session_data.get('estrategias_ativas', {
                 'Dominante': True, 'Ruptura': True, 'CicloReal': True
             })
@@ -67,7 +69,9 @@ def carregar_sessao():
             # Carrega configurações
             st.session_state.forca_minima_sinal = session_data.get('forca_minima_sinal', 70)
             st.session_state.expandir_com_vizinhos = session_data.get('expandir_com_vizinhos', True)
-            st.session_state.max_numeros_entrada = session_data.get('max_numeros_entrada', 6)
+            st.session_state.max_numeros_entrada = session_data.get('max_numeros_entrada', 15)
+            st.session_state.qtd_vizinhos_antes = session_data.get('qtd_vizinhos_antes', 3)
+            st.session_state.qtd_vizinhos_depois = session_data.get('qtd_vizinhos_depois', 3)
             
             if 'sistema' in st.session_state:
                 st.session_state.sistema.acertos = session_data.get('sistema_acertos', 0)
@@ -124,9 +128,12 @@ def enviar_previsao_auto(previsao):
         msg += f"📊 Força: {barras} {forca}%\n"
         msg += f"📋 {gatilho}"
         
+        # Mostra info de expansão
+        if previsao.get('expandido'):
+            msg += f"\n📈 Expandido: {previsao.get('num_originais', 0)} → {len(numeros)} números"
+        
         st.toast(f"🎯 {nome} - Força {forca}%", icon=emoji)
         
-        # Só mostra em destaque se força alta
         if forca >= 70:
             st.success(f"🔔 **SINAL FORTE!** {msg}")
         elif forca >= 50:
@@ -199,6 +206,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 # =============================
 class RoletaBase:
     def __init__(self):
+        # Roda europeia (ordem física)
         self.race = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
         
     def get_vizinhos(self, numero, raio=2):
@@ -211,7 +219,7 @@ class RoletaBase:
                 vizinhos.append(self.race[(posicao + offset) % 37])
         return vizinhos
     
-    def get_vizinhos_anteriores(self, numero, quantidade=2):
+    def get_vizinhos_anteriores(self, numero, quantidade=3):
         """Retorna os vizinhos anteriores (esquerda) na roda"""
         if numero not in self.race:
             return []
@@ -221,7 +229,7 @@ class RoletaBase:
             vizinhos.append(self.race[(posicao - i) % 37])
         return vizinhos
     
-    def get_vizinhos_posteriores(self, numero, quantidade=2):
+    def get_vizinhos_posteriores(self, numero, quantidade=3):
         """Retorna os vizinhos posteriores (direita) na roda"""
         if numero not in self.race:
             return []
@@ -256,6 +264,101 @@ class RoletaBase:
         dist = abs(p1 - p2)
         return min(dist, 37 - dist)
 
+
+# =============================
+# SELETOR INTELIGENTE DE NÚMEROS
+# =============================
+class SeletorInteligente:
+    """Seleciona os melhores números quando há muitos candidatos"""
+    
+    def __init__(self):
+        self.roleta = RoletaBase()
+    
+    def expandir_com_vizinhos(self, numeros_base, historico, max_numeros=15, 
+                              qtd_anteriores=3, qtd_posteriores=3):
+        """
+        Expande a lista de números adicionando vizinhos anteriores e posteriores
+        e depois seleciona os melhores até o limite
+        """
+        if len(numeros_base) == 0:
+            return [], 0
+        
+        num_originais = len(numeros_base)
+        numeros_expandidos = set(numeros_base)
+        
+        # Adiciona vizinhos de cada número base
+        for num in numeros_base:
+            # Adiciona vizinhos anteriores (esquerda)
+            anteriores = self.roleta.get_vizinhos_anteriores(num, qtd_anteriores)
+            numeros_expandidos.update(anteriores)
+            
+            # Adiciona vizinhos posteriores (direita)
+            posteriores = self.roleta.get_vizinhos_posteriores(num, qtd_posteriores)
+            numeros_expandidos.update(posteriores)
+        
+        # Converte para lista
+        lista_expandida = list(numeros_expandidos)
+        
+        # Se tem menos ou igual ao máximo, retorna todos
+        if len(lista_expandida) <= max_numeros:
+            return sorted(lista_expandida), num_originais
+        
+        # Seleciona os melhores até o limite
+        selecionados = self.selecionar_melhores(lista_expandida, historico, max_numeros)
+        return selecionados, num_originais
+    
+    def selecionar_melhores(self, numeros_candidatos, historico, max_numeros=15):
+        """
+        Seleciona os melhores números baseado em:
+        - Frequência recente
+        - Proximidade na roda com números quentes
+        - Diversidade de regiões
+        """
+        if len(numeros_candidatos) <= max_numeros:
+            return sorted(numeros_candidatos)
+        
+        hist_list = list(historico)
+        
+        # Calcula score para cada número
+        scores = {}
+        for num in numeros_candidatos:
+            score = 0
+            
+            # 1. Frequência recente (40%)
+            if len(hist_list) >= 10:
+                recentes = hist_list[-20:]  # Últimas 20 rodadas
+                freq = recentes.count(num) / len(recentes)
+                score += freq * 40
+            
+            # 2. Proximidade com números que saíram recentemente (25%)
+            if len(hist_list) >= 5:
+                ultimos_5 = hist_list[-5:]
+                for ult in ultimos_5:
+                    dist = self.roleta.get_distancia_roda(num, ult)
+                    if dist <= 4:
+                        score += 5 * (1 - dist/5)  # Mais próximo = mais pontos
+            
+            # 3. É número quente do estudo? (20%)
+            quentes_estudo = [33, 14, 17, 30, 25, 32, 8, 7]
+            if num in quentes_estudo:
+                score += 20
+            
+            # 4. Diversidade - bônus para números ainda não selecionados (10%)
+            score += 10
+            
+            # 5. Número 0 tem bônus especial (5%)
+            if num == 0:
+                score += 5
+            
+            scores[num] = score
+        
+        # Ordena por score e pega os melhores
+        ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        selecionados = [num for num, _ in ordenados[:max_numeros]]
+        
+        return sorted(selecionados)
+
+
 # =============================
 # ESTRATÉGIA 1: DOMINANTE (TRANSIÇÃO + CONFIRMAÇÃO)
 # =============================
@@ -270,7 +373,7 @@ class EstrategiaDominante:
     def __init__(self):
         self.roleta = RoletaBase()
         self.nome = "Dominante"
-        self.min_ocorrencias = 3  # Precisa ter aparecido pelo menos 3x no histórico
+        self.seletor = SeletorInteligente()
         
     def _calcular_forca_sinal(self, numero, hist_list, transicoes, ocorrencias_6):
         """Calcula força do sinal de 0-100%"""
@@ -296,7 +399,8 @@ class EstrategiaDominante:
         
         return min(100, int(forca))
     
-    def detectar(self, hist_list, ultimo, matriz_transicao, forca_minima=70):
+    def detectar(self, hist_list, ultimo, matriz_transicao, forca_minima=70,
+                 expandir_vizinhos=True, max_numeros=15, qtd_antes=3, qtd_depois=3):
         if len(hist_list) < 10:
             return None
         
@@ -329,26 +433,33 @@ class EstrategiaDominante:
         if forca < forca_minima:
             return None
         
-        # Monta números: TOP 2 transições + 1 vizinho
-        numeros = set(top_transicoes[:2])
+        # Monta números base: TOP 2 transições + número dominante
+        numeros_base = set(top_transicoes[:2])
+        numeros_base.add(ultimo)
         
-        # Adiciona 1 vizinho do número dominante
-        vizinhos = self.roleta.get_vizinhos(ultimo, raio=1)
-        if vizinhos:
-            numeros.add(vizinhos[0])
+        num_originais = len(numeros_base)
         
-        # Garante que o próprio número está incluído
-        numeros.add(ultimo)
+        # Expande com vizinhos
+        if expandir_vizinhos:
+            numeros_final, _ = self.seletor.expandir_com_vizinhos(
+                list(numeros_base), hist_list, max_numeros, qtd_antes, qtd_depois
+            )
+            expandido = len(numeros_final) > num_originais
+        else:
+            numeros_final = self.seletor.selecionar_melhores(list(numeros_base), hist_list, max_numeros)
+            expandido = False
         
         return {
             'nome': self.nome,
-            'numeros_apostar': sorted(list(numeros)),
+            'numeros_apostar': sorted(numeros_final),
             'gatilho': f"⚡ Dominante: {ultimo} (2x em 6 rodadas) → {top_transicoes[:2]}",
             'confianca': 'Muito Alta' if forca >= 80 else 'Alta',
             'forca_sinal': forca,
             'numero_dominante': ultimo,
             'transicoes': top_transicoes[:2],
-            'tipo': 'dominante'
+            'tipo': 'dominante',
+            'expandido': expandido,
+            'num_originais': num_originais
         }
 
 
@@ -367,6 +478,7 @@ class EstrategiaRuptura:
     def __init__(self):
         self.roleta = RoletaBase()
         self.nome = "Ruptura"
+        self.seletor = SeletorInteligente()
         
     def _detectar_sequencia_proxima(self, hist_list):
         """Detecta se há 3 números próximos ou com repetição"""
@@ -432,7 +544,8 @@ class EstrategiaRuptura:
         
         return min(100, int(forca))
     
-    def detectar(self, hist_list, ultimo, forca_minima=70):
+    def detectar(self, hist_list, ultimo, forca_minima=70,
+                 expandir_vizinhos=True, max_numeros=15, qtd_antes=3, qtd_depois=3):
         if len(hist_list) < 5:
             return None
         
@@ -449,23 +562,33 @@ class EstrategiaRuptura:
             return None
         
         # Gera números opostos (ruptura)
-        numeros = set()
+        numeros_base = set()
         
         # Pega opostos de cada número da sequência
         for num in sequencia[-2:]:  # Últimos 2 números
-            opostos = self.roleta.get_opostos_regiao(num, quantidade=2)
-            numeros.update(opostos)
+            opostos = self.roleta.get_opostos_regiao(num, quantidade=3)
+            numeros_base.update(opostos)
         
         # Adiciona alguns números de salto longo
         if ultimo:
             for i in range(37):
                 if abs(i - ultimo) >= 19:
-                    numeros.add(i)
-                    if len(numeros) >= 6:
+                    numeros_base.add(i)
+                    if len(numeros_base) >= 8:
                         break
         
-        # Limita a 6 números
-        numeros_final = list(numeros)[:6]
+        numeros_base_list = list(numeros_base)
+        num_originais = len(numeros_base_list)
+        
+        # Expande com vizinhos
+        if expandir_vizinhos:
+            numeros_final, _ = self.seletor.expandir_com_vizinhos(
+                numeros_base_list, hist_list, max_numeros, qtd_antes, qtd_depois
+            )
+            expandido = len(numeros_final) > num_originais
+        else:
+            numeros_final = self.seletor.selecionar_melhores(numeros_base_list, hist_list, max_numeros)
+            expandido = False
         
         return {
             'nome': self.nome,
@@ -474,7 +597,9 @@ class EstrategiaRuptura:
             'confianca': 'Muito Alta' if forca >= 80 else 'Alta',
             'forca_sinal': forca,
             'sequencia': sequencia,
-            'tipo': 'ruptura'
+            'tipo': 'ruptura',
+            'expandido': expandido,
+            'num_originais': num_originais
         }
 
 
@@ -492,6 +617,7 @@ class EstrategiaCicloReal:
         self.roleta = RoletaBase()
         self.nome = "Ciclo Real"
         self.tolerancia_janela = 2  # ±2 rodadas de tolerância
+        self.seletor = SeletorInteligente()
         
     def _encontrar_ciclos(self, hist_list):
         """Encontra números que aparecem em intervalos regulares"""
@@ -522,7 +648,7 @@ class EstrategiaCicloReal:
         
         return ciclos
     
-    def _calcular_forca_sinal(self, ciclo_info, hist_list):
+    def _calcular_forca_sinal(self, num, ciclo_info, hist_list):
         """Calcula força do sinal do ciclo"""
         forca = 0
         
@@ -540,12 +666,13 @@ class EstrategiaCicloReal:
         # 3. Número apareceu recentemente? (20%)
         if len(hist_list) > 0:
             ultimos_10 = hist_list[-10:]
-            freq_recente = ultimos_10.count(list(ciclo_info.keys())[0] if isinstance(ciclo_info, dict) else 0) / 10
+            freq_recente = ultimos_10.count(num) / 10
             forca += freq_recente * 20
         
         return min(100, int(forca))
     
-    def detectar(self, hist_list, ultimo, forca_minima=70):
+    def detectar(self, hist_list, ultimo, forca_minima=70,
+                 expandir_vizinhos=True, max_numeros=15, qtd_antes=3, qtd_depois=3):
         if len(hist_list) < 15:
             return None
         
@@ -564,32 +691,45 @@ class EstrategiaCicloReal:
             # Verifica se está na janela esperada
             if abs(rodadas_desde_ultimo - media) <= self.tolerancia_janela:
                 
-                forca = self._calcular_forca_sinal({'info': info, 'numero': num}, hist_list)
+                forca = self._calcular_forca_sinal(num, info, hist_list)
                 
                 if forca < forca_minima:
                     continue
                 
-                # Monta entrada: número do ciclo + vizinhos
-                numeros = {num}
-                vizinhos = self.roleta.get_vizinhos(num, raio=2)
-                numeros.update(vizinhos[:3])
+                # Monta entrada: número do ciclo
+                numeros_base = [num]
+                num_originais = 1
+                
+                # Expande com vizinhos
+                if expandir_vizinhos:
+                    numeros_final, _ = self.seletor.expandir_com_vizinhos(
+                        numeros_base, hist_list, max_numeros, qtd_antes, qtd_depois
+                    )
+                    expandido = len(numeros_final) > num_originais
+                else:
+                    vizinhos = self.roleta.get_vizinhos(num, raio=2)
+                    numeros_base.extend(vizinhos)
+                    numeros_final = self.seletor.selecionar_melhores(numeros_base, hist_list, max_numeros)
+                    expandido = False
                 
                 return {
                     'nome': self.nome,
-                    'numeros_apostar': sorted(list(numeros)),
+                    'numeros_apostar': sorted(numeros_final),
                     'gatilho': f"🌀 Ciclo: {num} volta a cada ~{media:.0f} rodadas (agora: {rodadas_desde_ultimo})",
                     'confianca': 'Muito Alta' if forca >= 80 else 'Alta',
                     'forca_sinal': forca,
                     'numero_ciclo': num,
                     'media_ciclo': media,
-                    'tipo': 'ciclo_real'
+                    'tipo': 'ciclo_real',
+                    'expandido': expandido,
+                    'num_originais': num_originais
                 }
         
         return None
 
 
 # =============================
-# DETECTOR DE GATILHOS UNIFICADO (APENAS 3 ESTRATÉGIAS)
+# DETECTOR DE GATILHOS UNIFICADO
 # =============================
 class DetectorGatilhosUnificado:
     """Avalia apenas as 3 estratégias de elite"""
@@ -608,7 +748,8 @@ class DetectorGatilhosUnificado:
         self.ordem_prioridade = ['Dominante', 'Ruptura', 'CicloReal']
         
     def detectar(self, hist_list, hist_mult, ultimo, matriz_transicao, ciclos_numeros,
-                 estrategias_ativas=None, forca_minima=70):
+                 estrategias_ativas=None, forca_minima=70,
+                 expandir_vizinhos=True, max_numeros=15, qtd_antes=3, qtd_depois=3):
         """
         Avalia as estratégias ATIVAS e retorna a primeira com força suficiente
         """
@@ -630,11 +771,20 @@ class DetectorGatilhosUnificado:
             resultado = None
             
             if nome == 'Dominante':
-                resultado = estrategia.detectar(hist_list, ultimo, matriz_transicao, forca_minima)
+                resultado = estrategia.detectar(
+                    hist_list, ultimo, matriz_transicao, forca_minima,
+                    expandir_vizinhos, max_numeros, qtd_antes, qtd_depois
+                )
             elif nome == 'Ruptura':
-                resultado = estrategia.detectar(hist_list, ultimo, forca_minima)
+                resultado = estrategia.detectar(
+                    hist_list, ultimo, forca_minima,
+                    expandir_vizinhos, max_numeros, qtd_antes, qtd_depois
+                )
             elif nome == 'CicloReal':
-                resultado = estrategia.detectar(hist_list, ultimo, forca_minima)
+                resultado = estrategia.detectar(
+                    hist_list, ultimo, forca_minima,
+                    expandir_vizinhos, max_numeros, qtd_antes, qtd_depois
+                )
             
             if resultado:
                 forca = resultado.get('forca_sinal', 0)
@@ -764,6 +914,10 @@ class SistemaAutoAdaptativo:
             })
             
             forca_minima = st.session_state.get('forca_minima_sinal', 70)
+            expandir_vizinhos = st.session_state.get('expandir_com_vizinhos', True)
+            max_numeros = st.session_state.get('max_numeros_entrada', 15)
+            qtd_antes = st.session_state.get('qtd_vizinhos_antes', 3)
+            qtd_depois = st.session_state.get('qtd_vizinhos_depois', 3)
             
             nova = self.detector.detectar(
                 hist_list,
@@ -772,7 +926,11 @@ class SistemaAutoAdaptativo:
                 self.matriz_transicao,
                 self.ciclos_numeros,
                 estrategias_ativas,
-                forca_minima
+                forca_minima,
+                expandir_vizinhos,
+                max_numeros,
+                qtd_antes,
+                qtd_depois
             )
             
             if nova:
@@ -815,8 +973,15 @@ class SistemaAutoAdaptativo:
             analise += f"{emoji} {nome}: {status}\n"
         
         forca_minima = st.session_state.get('forca_minima_sinal', 70)
+        expandir = st.session_state.get('expandir_com_vizinhos', True)
+        max_num = st.session_state.get('max_numeros_entrada', 15)
+        qtd_antes = st.session_state.get('qtd_vizinhos_antes', 3)
+        qtd_depois = st.session_state.get('qtd_vizinhos_depois', 3)
+        
         analise += f"\n⚙️ Força mínima: {forca_minima}%\n"
-        analise += f"📊 Rodadas desde última entrada: {self.rodadas_sem_entrada}\n"
+        analise += f"📊 Expansão: {'✅ ATIVA' if expandir else '❌ INATIVA'} ({qtd_antes} antes + {qtd_depois} depois)\n"
+        analise += f"📊 Máx números: {max_num}\n"
+        analise += f"📊 Rodadas sem entrada: {self.rodadas_sem_entrada}\n"
         
         analise += "\n" + "=" * 50 + "\n"
         
@@ -902,7 +1067,13 @@ if "expandir_com_vizinhos" not in st.session_state:
     st.session_state.expandir_com_vizinhos = True
 
 if "max_numeros_entrada" not in st.session_state:
-    st.session_state.max_numeros_entrada = 6
+    st.session_state.max_numeros_entrada = 15
+
+if "qtd_vizinhos_antes" not in st.session_state:
+    st.session_state.qtd_vizinhos_antes = 3
+
+if "qtd_vizinhos_depois" not in st.session_state:
+    st.session_state.qtd_vizinhos_depois = 3
 
 sessao_carregada = carregar_sessao()
 
@@ -923,6 +1094,50 @@ if "telegram_chat_id" not in st.session_state and not sessao_carregada:
 
 # Sidebar
 st.sidebar.title("⚙️ Configurações")
+
+# ===== CONFIGURAÇÕES DE EXPANSÃO =====
+with st.sidebar.expander("🔧 Expansão com Vizinhos", expanded=True):
+    st.write("**Configurações de Vizinhos:**")
+    
+    st.session_state.expandir_com_vizinhos = st.checkbox(
+        "🔄 Expandir com vizinhos", 
+        value=st.session_state.expandir_com_vizinhos,
+        help="Adiciona vizinhos anteriores e posteriores de cada número"
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.session_state.qtd_vizinhos_antes = st.number_input(
+            "⬅️ Vizinhos antes", 
+            min_value=1, 
+            max_value=5, 
+            value=st.session_state.qtd_vizinhos_antes,
+            help="Quantidade de vizinhos à esquerda na roda"
+        )
+    with col2:
+        st.session_state.qtd_vizinhos_depois = st.number_input(
+            "➡️ Vizinhos depois", 
+            min_value=1, 
+            max_value=5, 
+            value=st.session_state.qtd_vizinhos_depois,
+            help="Quantidade de vizinhos à direita na roda"
+        )
+    
+    st.session_state.max_numeros_entrada = st.slider(
+        "📊 Máximo de números por entrada",
+        min_value=5,
+        max_value=20,
+        value=st.session_state.max_numeros_entrada,
+        step=1,
+        help="Limite máximo de números para apostar (redução inteligente)"
+    )
+    
+    # Exemplo de expansão
+    st.caption(f"💡 Exemplo: 1 número → +{st.session_state.qtd_vizinhos_antes} antes +{st.session_state.qtd_vizinhos_depois} depois = até {1 + st.session_state.qtd_vizinhos_antes + st.session_state.qtd_vizinhos_depois} números por número base")
+    
+    if st.button("💾 Salvar Expansão", use_container_width=True):
+        salvar_sessao()
+        st.success("✅ Configurações salvas!")
 
 # ===== FILTRO DE FORÇA =====
 with st.sidebar.expander("🎚️ Filtro de Força", expanded=True):
@@ -972,27 +1187,6 @@ with st.sidebar.expander("⚡ Estratégias de Elite", expanded=True):
     
     ativas = sum(1 for v in st.session_state.estrategias_ativas.values() if v)
     st.caption(f"📊 {ativas}/3 estratégias ativas")
-    
-    if st.button("💾 Salvar Configurações", use_container_width=True):
-        salvar_sessao()
-        st.success("✅ Configurações salvas!")
-
-# ===== ESTRATÉGIAS REMOVIDAS (AVISO) =====
-with st.sidebar.expander("🚫 Estratégias Removidas", expanded=False):
-    st.warning("""
-    **REMOVIDAS POR BAIXA PERFORMANCE:**
-    
-    ❌ Entropia (ruim no curto prazo)
-    ❌ Núcleo Quente puro
-    ❌ Cluster fraco
-    ❌ Bloco simples
-    ❌ Salto
-    ❌ Agrupamento
-    ❌ Compressão
-    ❌ Markov puro
-    
-    **MOTIVO:** Muito ruído → baixa assertividade
-    """)
 
 with st.sidebar.expander("💾 Gerenciamento", expanded=False):
     if st.button("💾 Salvar Sessão", use_container_width=True):
@@ -1127,12 +1321,18 @@ elif sistema.previsao_ativa:
         st.info(f"{emoji} **{p['nome'].upper()}** - FORÇA {forca}% {barras}")
     
     st.info(f"📋 **Gatilho:** {p['gatilho']}")
+    
+    if p.get('expandido'):
+        st.caption(f"📈 Expandido: {p.get('num_originais', '?')} → {len(p['numeros_apostar'])} números")
+    
     st.write(f"**🔢 Números ({len(p['numeros_apostar'])}):**")
     
     nums = sorted(p['numeros_apostar'])
-    colunas = st.columns(6)
+    
+    # Mostra em grade
+    colunas = st.columns(5)
     for i, num in enumerate(nums):
-        colunas[i % 6].write(f"**{num}**")
+        colunas[i % 5].write(f"**{num}**")
 else:
     ativas = sum(1 for v in st.session_state.estrategias_ativas.values() if v)
     if ativas == 0:
