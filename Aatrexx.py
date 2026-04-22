@@ -25,7 +25,8 @@ def salvar_sessao():
             'sistema_estrategias_contador': st.session_state.sistema.estrategias_contador,
             'sistema_historico_desempenho': st.session_state.sistema.historico_desempenho,
             'historico_numeros': list(st.session_state.sistema.historico_numeros),
-            'historico_multiplicadores': list(st.session_state.sistema.historico_multiplicadores)
+            'historico_multiplicadores': list(st.session_state.sistema.historico_multiplicadores),
+            'estrategia_ativa_manual': st.session_state.sistema.estrategia_ativa_manual
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -55,6 +56,7 @@ def carregar_sessao():
                 st.session_state.sistema.historico_desempenho = session_data.get('sistema_historico_desempenho', [])
                 st.session_state.sistema.historico_numeros = deque(session_data.get('historico_numeros', []), maxlen=100)
                 st.session_state.sistema.historico_multiplicadores = deque(session_data.get('historico_multiplicadores', []), maxlen=100)
+                st.session_state.sistema.estrategia_ativa_manual = session_data.get('estrategia_ativa_manual', False)
             
             logging.info("✅ Sessão carregada com sucesso")
             return True
@@ -85,14 +87,12 @@ def enviar_previsao_auto(previsao):
         numeros = sorted(previsao['numeros_apostar'])
         gatilho = previsao['gatilho']
         
-        # Emoji por tipo de estratégia
         emojis = {
             'Cluster': '🔥',
             'Núcleo Quente': '🎯',
             'Pós-Sequência': '💣',
             'Bloco': '📊',
-            'Multiplicador': '🚀',
-            'Híbrida': '🧠'
+            'Multiplicador': '🚀'
         }
         emoji = emojis.get(nome, '🎲')
         
@@ -103,11 +103,13 @@ def enviar_previsao_auto(previsao):
         
         if st.session_state.telegram_token and st.session_state.telegram_chat_id:
             enviar_telegram(f"🔔 GATILHO DETECTADO\n{msg}")
-            # Envia números
             metade = len(numeros) // 2
-            linha1 = " ".join(map(str, numeros[:metade]))
-            linha2 = " ".join(map(str, numeros[metade:]))
-            enviar_telegram(f"{emoji} APOSTAR AGORA\n{linha1}\n{linha2}")
+            if metade > 0:
+                linha1 = " ".join(map(str, numeros[:metade]))
+                linha2 = " ".join(map(str, numeros[metade:]))
+                enviar_telegram(f"{emoji} APOSTAR AGORA\n{linha1}\n{linha2}")
+            else:
+                enviar_telegram(f"{emoji} APOSTAR AGORA\n" + " ".join(map(str, numeros)))
                 
         salvar_sessao()
     except Exception as e:
@@ -181,6 +183,20 @@ class RoletaBase:
                 vizinhos.append(self.race[(posicao + offset) % 37])
         return vizinhos
     
+    def get_vizinho_esquerda(self, numero):
+        """Retorna apenas o vizinho da esquerda"""
+        if numero not in self.race:
+            return None
+        posicao = self.race.index(numero)
+        return self.race[(posicao - 1) % 37]
+    
+    def get_vizinho_direita(self, numero):
+        """Retorna apenas o vizinho da direita"""
+        if numero not in self.race:
+            return None
+        posicao = self.race.index(numero)
+        return self.race[(posicao + 1) % 37]
+    
     def get_oposto(self, numero):
         if numero not in self.race:
             return None
@@ -188,18 +204,19 @@ class RoletaBase:
         return self.race[(posicao + 18) % 37]
 
 # =============================
-# SISTEMA DE DETECÇÃO AUTOMÁTICA DE GATILHOS
+# SISTEMA DE DETECÇÃO AUTOMÁTICA DE GATILHOS (SEM HÍBRIDA)
 # =============================
 class DetectorGatilhos:
     """
     Avalia TODOS os gatilhos a cada rodada e retorna a estratégia ativada
+    HÍBRIDA REMOVIDA - Só ativa quando há gatilho REAL
     """
     
     def __init__(self):
         self.roleta = RoletaBase()
         self.numeros_quentes = [33, 14, 17, 30, 25, 32, 8, 7]
         
-    def detectar(self, historico_numeros, historico_multiplicadores):
+    def detectar(self, historico_numeros, historico_multiplicadores, perdas_cluster=0, perdas_bloco=0):
         """
         Avalia todos os gatilhos e retorna a melhor estratégia ativada
         Ordem de prioridade:
@@ -208,7 +225,7 @@ class DetectorGatilhos:
         3. Núcleo Quente
         4. Bloco
         5. Multiplicador
-        6. Híbrida (fallback)
+        6. NENHUM - Aguarda próximo sorteio (NÃO USA HÍBRIDA)
         """
         if len(historico_numeros) < 3:
             return None
@@ -217,9 +234,10 @@ class DetectorGatilhos:
         ultimo = hist_list[-1]
         
         # ===== GATILHO 1: CLUSTER (REPETIÇÃO) =====
-        cluster = self._detectar_cluster(hist_list, ultimo)
-        if cluster:
-            return cluster
+        if perdas_cluster < 2:  # Só ativa se não estourou stop
+            cluster = self._detectar_cluster(hist_list, ultimo)
+            if cluster:
+                return cluster
         
         # ===== GATILHO 2: PÓS-SEQUÊNCIA =====
         pos_seq = self._detectar_pos_sequencia(hist_list)
@@ -232,19 +250,17 @@ class DetectorGatilhos:
             return nucleo
         
         # ===== GATILHO 4: BLOCO (ALTOS/BAIXOS) =====
-        bloco = self._detectar_bloco(hist_list)
-        if bloco:
-            return bloco
+        if perdas_bloco < 2:  # Só ativa se não estourou stop
+            bloco = self._detectar_bloco(hist_list)
+            if bloco:
+                return bloco
         
         # ===== GATILHO 5: MULTIPLICADOR =====
         multi = self._detectar_multiplicador(hist_list, historico_multiplicadores)
         if multi:
             return multi
         
-        # ===== GATILHO 6: HÍBRIDA (sempre ativa como fallback) =====
-        if len(hist_list) >= 5:
-            return self._gerar_hibrida(hist_list, ultimo)
-        
+        # ===== NENHUM GATILHO ATIVO =====
         return None
     
     def _detectar_cluster(self, hist_list, ultimo):
@@ -415,35 +431,9 @@ class DetectorGatilhos:
             }
         
         return None
-    
-    def _gerar_hibrida(self, hist_list, ultimo):
-        """Gera estratégia híbrida (fallback)"""
-        numeros = set()
-        numeros.add(ultimo)
-        
-        vizinhos = self.roleta.get_vizinhos(ultimo, raio=2)
-        numeros.update(vizinhos[:2])
-        
-        frequencias = Counter(hist_list)
-        quentes = [num for num, _ in frequencias.most_common(3)]
-        numeros.update(quentes)
-        
-        # Adiciona um atrasado
-        for num in range(37):
-            if num not in hist_list[-30:]:
-                numeros.add(num)
-                break
-        
-        return {
-            'nome': 'Híbrida',
-            'numeros_apostar': sorted(list(numeros))[:12],
-            'gatilho': "🧠 Modo Híbrido (monitoramento contínuo)",
-            'confianca': 'Média',
-            'tipo': 'hibrida'
-        }
 
 # =============================
-# SISTEMA PRINCIPAL AUTO-ADAPTATIVO
+# SISTEMA PRINCIPAL AUTO-ADAPTATIVO (SEM HÍBRIDA)
 # =============================
 class SistemaAutoAdaptativo:
     def __init__(self):
@@ -464,6 +454,9 @@ class SistemaAutoAdaptativo:
         # Controle de stop loss
         self.perdas_cluster = 0
         self.perdas_bloco = 0
+        
+        # Controle manual
+        self.estrategia_ativa_manual = False
         
     def processar_novo_numero(self, numero_data):
         """Processa novo número da API"""
@@ -517,31 +510,22 @@ class SistemaAutoAdaptativo:
             
             self.previsao_ativa = None
         
+        # Se modo manual ativado, não gera previsão automática
+        if self.estrategia_ativa_manual:
+            return
+        
         # DETECTA GATILHOS AUTOMATICAMENTE
-        # Verifica stops antes de gerar nova previsão
-        if self.perdas_cluster >= 2:
-            # Pula Cluster se já perdeu 2x seguidas
-            pass
-        if self.perdas_bloco >= 2:
-            # Pula Bloco se já perdeu 2x seguidas
-            pass
+        nova = self.detector.detectar(
+            self.historico_numeros, 
+            self.historico_multiplicadores,
+            self.perdas_cluster,
+            self.perdas_bloco
+        )
         
-        # Detecta gatilhos e gera nova previsão
-        nova = self.detector.detectar(self.historico_numeros, self.historico_multiplicadores)
-        
-        # Aplica regras de stop
         if nova:
-            if nova['nome'] == 'Cluster' and self.perdas_cluster >= 2:
-                # Força fallback para Híbrida
-                nova = self.detector._gerar_hibrida(list(self.historico_numeros), numero_real)
-                nova['gatilho'] = f"⚠️ Cluster pausado (2 perdas) - {nova['gatilho']}"
-            
-            if nova['nome'] == 'Bloco' and self.perdas_bloco >= 2:
-                nova = self.detector._gerar_hibrida(list(self.historico_numeros), numero_real)
-                nova['gatilho'] = f"⚠️ Bloco pausado (2 perdas) - {nova['gatilho']}"
-            
             self.previsao_ativa = nova
             enviar_previsao_auto(nova)
+        # Se não houver gatilho, NÃO gera previsão (sem Híbrida)
     
     def zerar_estatisticas(self):
         self.acertos = 0
@@ -568,7 +552,9 @@ class SistemaAutoAdaptativo:
         
         # 1. Cluster
         analise += "🔥 CLUSTER (Repetição):\n"
-        if len(hist_list) >= 2 and hist_list[-1] == hist_list[-2]:
+        if self.perdas_cluster >= 2:
+            analise += f"   ⚠️ PAUSADO! ({self.perdas_cluster}/2 perdas)\n"
+        elif len(hist_list) >= 2 and hist_list[-1] == hist_list[-2]:
             analise += f"   ✅ ATIVO! Repetição direta: {ultimo}→{ultimo}\n"
         else:
             ultimos_5 = hist_list[-5:] if len(hist_list) >= 5 else hist_list
@@ -578,7 +564,7 @@ class SistemaAutoAdaptativo:
                 analise += f"   🟡 Parcial: {', '.join(repeticoes)}\n"
             else:
                 analise += "   ❌ Inativo\n"
-        analise += f"   Perdas consecutivas: {self.perdas_cluster}/2\n\n"
+        analise += f"   Perdas: {self.perdas_cluster}/2\n\n"
         
         # 2. Pós-Sequência
         analise += "💣 PÓS-SEQUÊNCIA:\n"
@@ -603,30 +589,33 @@ class SistemaAutoAdaptativo:
             analise += f"   ❌ Inativo ({len(quentes_5)}/2 quentes)\n"
         
         frequencias = Counter(hist_list)
-        analise += f"   Top 5 frequências: {frequencias.most_common(5)}\n\n"
+        analise += f"   Top 5: {frequencias.most_common(5)}\n\n"
         
         # 4. Bloco
         analise += "📊 BLOCO (Altos/Baixos):\n"
-        altos = 0
-        for n in reversed(hist_list):
-            if n > 19:
-                altos += 1
-            else:
-                break
-        baixos = 0
-        for n in reversed(hist_list):
-            if n <= 18:
-                baixos += 1
-            else:
-                break
-        
-        if altos >= 4:
-            analise += f"   ✅ ATIVO! {altos} altos seguidos → inverter para BAIXOS\n"
-        elif baixos >= 4:
-            analise += f"   ✅ ATIVO! {baixos} baixos seguidos → inverter para ALTOS\n"
+        if self.perdas_bloco >= 2:
+            analise += f"   ⚠️ PAUSADO! ({self.perdas_bloco}/2 perdas)\n"
         else:
-            analise += f"   ❌ Inativo (Altos: {altos}, Baixos: {baixos})\n"
-        analise += f"   Perdas consecutivas: {self.perdas_bloco}/2\n\n"
+            altos = 0
+            for n in reversed(hist_list):
+                if n > 19:
+                    altos += 1
+                else:
+                    break
+            baixos = 0
+            for n in reversed(hist_list):
+                if n <= 18:
+                    baixos += 1
+                else:
+                    break
+            
+            if altos >= 4:
+                analise += f"   ✅ ATIVO! {altos} altos seguidos → BAIXOS\n"
+            elif baixos >= 4:
+                analise += f"   ✅ ATIVO! {baixos} baixos seguidos → ALTOS\n"
+            else:
+                analise += f"   ❌ Inativo (Altos: {altos}, Baixos: {baixos})\n"
+        analise += f"   Perdas: {self.perdas_bloco}/2\n\n"
         
         # 5. Multiplicador
         analise += "🚀 MULTIPLICADOR:\n"
@@ -638,15 +627,10 @@ class SistemaAutoAdaptativo:
         if 5 <= rodadas_sem <= 12:
             analise += f"   ✅ ATIVO! {rodadas_sem} rodadas sem spike\n"
         else:
-            analise += f"   ❌ Inativo ({rodadas_sem} rodadas sem spike)\n"
-        
-        if mult_list:
-            ultimos_mult = [m for m in mult_list[-5:] if m]
-            if ultimos_mult:
-                analise += f"   Últimos multiplicadores: {ultimos_mult}\n"
+            analise += f"   ❌ Inativo ({rodadas_sem} rodadas)\n"
         
         analise += "\n" + "=" * 50 + "\n"
-        analise += f"🎲 Último número: {ultimo}\n"
+        analise += f"🎲 Último: {ultimo}\n"
         analise += f"📊 Últimos 10: {hist_list[-10:]}\n"
         
         return analise
@@ -756,27 +740,45 @@ with st.sidebar.expander("🔔 Telegram", expanded=False):
         salvar_sessao()
         st.success("✅ Salvo!")
 
+# Controle Manual/Automático
+st.sidebar.subheader("🎮 Modo de Operação")
+modo_auto = st.sidebar.checkbox("🔄 Modo Automático", value=not st.session_state.sistema.estrategia_ativa_manual)
+if st.sidebar.button("Atualizar Modo"):
+    st.session_state.sistema.estrategia_ativa_manual = not modo_auto
+    st.rerun()
+
+if st.session_state.sistema.estrategia_ativa_manual:
+    st.sidebar.warning("⚠️ Modo MANUAL - Sem previsões automáticas")
+else:
+    st.sidebar.success("✅ Modo AUTOMÁTICO - Detectando gatilhos")
+
 # Análise de Gatilhos
 with st.sidebar.expander("🔍 Análise de Gatilhos", expanded=True):
     analise = st.session_state.sistema.get_analise_completa()
     st.text(analise)
 
-# Info sobre o sistema
 st.sidebar.info("""
-**🎯 SISTEMA AUTO-ADAPTATIVO**
-
-O sistema detecta automaticamente:
+**🎯 GATILHOS ATIVOS:**
 - 🔥 Cluster (Repetição)
 - 💣 Pós-Sequência  
 - 🎯 Núcleo Quente
 - 📊 Bloco (Altos/Baixos)
 - 🚀 Multiplicador
-- 🧠 Híbrida (fallback)
 
-**Stop Loss:**
+**⛔ STOP LOSS:**
 - Cluster: 2 perdas → pausa
 - Bloco: 2 perdas → pausa
+
+**🚫 HÍBRIDA REMOVIDA**
+(Não gera entrada sem gatilho real)
 """)
+
+# Botão para resetar stops
+if st.sidebar.button("🔄 Resetar Stops", use_container_width=True):
+    st.session_state.sistema.perdas_cluster = 0
+    st.session_state.sistema.perdas_bloco = 0
+    st.success("✅ Stops resetados!")
+    st.rerun()
 
 # Inserção manual
 st.subheader("✍️ Inserir Sorteios")
@@ -838,13 +840,15 @@ col3.metric("🔥 Cluster", f"{status['perdas_cluster']}/2")
 col4.metric("📊 Bloco", f"{status['perdas_bloco']}/2")
 
 # Previsão Ativa
-st.subheader("🎯 Previsão Ativa (Auto-Detectada)")
+st.subheader("🎯 Previsão Ativa")
 sistema = st.session_state.sistema
 
-if sistema.previsao_ativa:
+if sistema.estrategia_ativa_manual:
+    st.warning("⚠️ MODO MANUAL ATIVO - Sem previsões automáticas")
+elif sistema.previsao_ativa:
     p = sistema.previsao_ativa
     emoji = {'Cluster': '🔥', 'Núcleo Quente': '🎯', 'Pós-Sequência': '💣', 
-             'Bloco': '📊', 'Multiplicador': '🚀', 'Híbrida': '🧠'}.get(p['nome'], '🎲')
+             'Bloco': '📊', 'Multiplicador': '🚀'}.get(p['nome'], '🎲')
     st.success(f"{emoji} **{p['nome'].upper()}**")
     st.info(f"📋 **Gatilho:** {p['gatilho']}")
     st.write(f"**🔢 Números ({len(p['numeros_apostar'])}):**")
@@ -854,7 +858,7 @@ if sistema.previsao_ativa:
     for i, num in enumerate(nums):
         colunas[i % 6].write(f"**{num}**")
 else:
-    st.info("🎲 Aguardando primeiro sorteio para detectar gatilhos...")
+    st.info("🎲 Aguardando gatilhos... (Nenhum ativo no momento)")
 
 # Desempenho por Estratégia
 st.subheader("📈 Desempenho por Estratégia")
@@ -863,13 +867,20 @@ taxa = (sistema.acertos / total * 100) if total > 0 else 0.0
 st.caption(f"Taxa geral: {taxa:.1f}% ({sistema.acertos}/{total})")
 
 if sistema.estrategias_contador:
+    # Ordena por taxa de acerto
+    desempenho_ordenado = []
     for nome, dados in sistema.estrategias_contador.items():
         if dados['total'] > 0:
             tx = dados['acertos'] / dados['total'] * 100
-            cor = "🟢" if tx >= 50 else "🟡" if tx >= 30 else "🔴"
-            emoji = {'Cluster': '🔥', 'Núcleo Quente': '🎯', 'Pós-Sequência': '💣',
-                    'Bloco': '📊', 'Multiplicador': '🚀', 'Híbrida': '🧠'}.get(nome, '🎲')
-            st.write(f"{cor} {emoji} {nome}: {dados['acertos']}/{dados['total']} ({tx:.1f}%)")
+            desempenho_ordenado.append((nome, dados, tx))
+    
+    desempenho_ordenado.sort(key=lambda x: x[2], reverse=True)
+    
+    for nome, dados, tx in desempenho_ordenado:
+        cor = "🟢" if tx >= 50 else "🟡" if tx >= 30 else "🔴"
+        emoji = {'Cluster': '🔥', 'Núcleo Quente': '🎯', 'Pós-Sequência': '💣',
+                'Bloco': '📊', 'Multiplicador': '🚀'}.get(nome, '🎲')
+        st.write(f"{cor} {emoji} {nome}: {dados['acertos']}/{dados['total']} ({tx:.1f}%)")
 
 # Histórico recente
 if sistema.historico_desempenho:
