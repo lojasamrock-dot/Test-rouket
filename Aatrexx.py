@@ -3,7 +3,6 @@ import json
 import os
 import requests
 import logging
-import numpy as np
 from collections import Counter, deque
 from streamlit_autorefresh import st_autorefresh
 import pickle
@@ -25,13 +24,8 @@ def salvar_sessao():
             'sistema_erros': st.session_state.sistema.erros,
             'sistema_estrategias_contador': st.session_state.sistema.estrategias_contador,
             'sistema_historico_desempenho': st.session_state.sistema.historico_desempenho,
-            'estrategia_selecionada': st.session_state.sistema.estrategia_selecionada,
-            'cluster_historico': list(st.session_state.sistema.estrategia_cluster.historico),
-            'nucleo_quente_historico': list(st.session_state.sistema.estrategia_nucleo.historico),
-            'pos_sequencia_historico': list(st.session_state.sistema.estrategia_pos.historico),
-            'bloco_historico': list(st.session_state.sistema.estrategia_bloco.historico),
-            'multiplicador_historico': list(st.session_state.sistema.estrategia_multi.historico),
-            'hibrida_historico': list(st.session_state.sistema.estrategia_hibrida.historico)
+            'historico_numeros': list(st.session_state.sistema.historico_numeros),
+            'historico_multiplicadores': list(st.session_state.sistema.historico_multiplicadores)
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -59,21 +53,8 @@ def carregar_sessao():
                 st.session_state.sistema.erros = session_data.get('sistema_erros', 0)
                 st.session_state.sistema.estrategias_contador = session_data.get('sistema_estrategias_contador', {})
                 st.session_state.sistema.historico_desempenho = session_data.get('sistema_historico_desempenho', [])
-                st.session_state.sistema.estrategia_selecionada = session_data.get('estrategia_selecionada', 'Híbrida PRO')
-                
-                # Carrega históricos das novas estratégias
-                if hasattr(st.session_state.sistema, 'estrategia_cluster'):
-                    st.session_state.sistema.estrategia_cluster.historico = deque(session_data.get('cluster_historico', []), maxlen=50)
-                if hasattr(st.session_state.sistema, 'estrategia_nucleo'):
-                    st.session_state.sistema.estrategia_nucleo.historico = deque(session_data.get('nucleo_quente_historico', []), maxlen=50)
-                if hasattr(st.session_state.sistema, 'estrategia_pos'):
-                    st.session_state.sistema.estrategia_pos.historico = deque(session_data.get('pos_sequencia_historico', []), maxlen=30)
-                if hasattr(st.session_state.sistema, 'estrategia_bloco'):
-                    st.session_state.sistema.estrategia_bloco.historico = deque(session_data.get('bloco_historico', []), maxlen=50)
-                if hasattr(st.session_state.sistema, 'estrategia_multi'):
-                    st.session_state.sistema.estrategia_multi.historico = deque(session_data.get('multiplicador_historico', []), maxlen=30)
-                if hasattr(st.session_state.sistema, 'estrategia_hibrida'):
-                    st.session_state.sistema.estrategia_hibrida.historico = deque(session_data.get('hibrida_historico', []), maxlen=50)
+                st.session_state.sistema.historico_numeros = deque(session_data.get('historico_numeros', []), maxlen=100)
+                st.session_state.sistema.historico_multiplicadores = deque(session_data.get('historico_multiplicadores', []), maxlen=100)
             
             logging.info("✅ Sessão carregada com sucesso")
             return True
@@ -91,60 +72,54 @@ def limpar_sessao():
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
-        logging.info("🗑️ Sessão limpa com sucesso")
     except Exception as e:
         logging.error(f"❌ Erro ao limpar sessão: {e}")
 
 # =============================
 # CONFIGURAÇÕES DE NOTIFICAÇÃO
 # =============================
-def enviar_previsao_simplificada(previsao):
-    """Envia notificação de previsão simplificada"""
+def enviar_previsao_auto(previsao):
+    """Envia notificação de previsão automática"""
     try:
         nome = previsao['nome']
         numeros = sorted(previsao['numeros_apostar'])
+        gatilho = previsao['gatilho']
         
-        if 'Cluster' in nome:
-            emoji = "🔥"
-            msg = f"{emoji} REPETIÇÃO ATIVA!\nNúmero: {previsao.get('numero_gatilho')}"
-        elif 'Núcleo Quente' in nome:
-            emoji = "🎯"
-            msg = f"{emoji} NÚCLEO QUENTE!\nBase: {previsao.get('nucleo', [])[:5]}"
-        elif 'Pós-Sequência' in nome:
-            emoji = "💣"
-            msg = f"{emoji} PÓS-SEQUÊNCIA!\nQuebrou: {previsao.get('numero_quebra')}"
-        elif 'Bloco' in nome:
-            emoji = "📊"
-            msg = f"{emoji} BLOCO {previsao.get('bloco_tipo', '')}!\nInvertendo para: {previsao.get('bloco_alvo', '')}"
-        elif 'Multiplicador' in nome:
-            emoji = "🚀"
-            msg = f"{emoji} CAÇA EXPLOSÃO!\n{previsao.get('rodadas_sem_mult', 0)} rodadas sem spike"
-        else:
-            emoji = "🧠"
-            msg = f"{emoji} HÍBRIDA PRO!\nGatilhos: {previsao.get('gatilhos_ativos', [])}"
+        # Emoji por tipo de estratégia
+        emojis = {
+            'Cluster': '🔥',
+            'Núcleo Quente': '🎯',
+            'Pós-Sequência': '💣',
+            'Bloco': '📊',
+            'Multiplicador': '🚀',
+            'Híbrida': '🧠'
+        }
+        emoji = emojis.get(nome, '🎲')
         
-        st.toast(f"🎯 Nova Previsão", icon="🔥")
+        msg = f"{emoji} **{nome.upper()}** ATIVADA!\n📋 {gatilho}"
+        
+        st.toast(f"🎯 {nome} Ativada!", icon=emoji)
         st.warning(f"🔔 {msg}")
         
         if st.session_state.telegram_token and st.session_state.telegram_chat_id:
-            enviar_telegram(f"🔔 PREVISÃO\n{msg}\n📋 Números: {len(numeros)}")
-            # Envia números em formato compacto
+            enviar_telegram(f"🔔 GATILHO DETECTADO\n{msg}")
+            # Envia números
             metade = len(numeros) // 2
             linha1 = " ".join(map(str, numeros[:metade]))
             linha2 = " ".join(map(str, numeros[metade:]))
-            enviar_telegram(f"{emoji} APOSTAR\n{linha1}\n{linha2}")
+            enviar_telegram(f"{emoji} APOSTAR AGORA\n{linha1}\n{linha2}")
                 
         salvar_sessao()
     except Exception as e:
         logging.error(f"Erro ao enviar previsão: {e}")
 
-def enviar_resultado_simplificado(numero_real, acerto, nome_estrategia, multiplicador=None):
-    """Envia notificação de resultado simplificado"""
+def enviar_resultado_auto(numero_real, acerto, nome_estrategia, multiplicador=None):
+    """Envia notificação de resultado"""
     try:
         if acerto:
-            msg = f"✅ ACERTO!\n🎲 Número: {numero_real}"
+            msg = f"✅ ACERTO!\n🎲 Número: {numero_real}\n🎯 Estratégia: {nome_estrategia}"
         else:
-            msg = f"❌ ERRO!\n🎲 Número: {numero_real}"
+            msg = f"❌ ERRO!\n🎲 Número: {numero_real}\n🎯 Estratégia: {nome_estrategia}"
         
         if multiplicador and multiplicador > 0:
             msg += f"\n⚡ RAIO! {multiplicador}x"
@@ -180,8 +155,6 @@ def enviar_telegram(mensagem):
         }
         
         response = requests.post(url, json=payload, timeout=10)
-        if response.status_code == 200:
-            logging.info("Mensagem enviada para Telegram com sucesso")
     except Exception as e:
         logging.error(f"Erro na conexão com Telegram: {e}")
 
@@ -192,152 +165,163 @@ API_URL = "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremeli
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # =============================
-# ROLETA BASE (APENAS PARA VIZINHOS)
+# ROLETA BASE
 # =============================
 class RoletaBase:
     def __init__(self):
-        # Roda europeia (ordem física)
         self.race = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
         
     def get_vizinhos(self, numero, raio=2):
-        """Retorna vizinhos físicos na roda"""
         if numero not in self.race:
             return []
-        
         posicao = self.race.index(numero)
         vizinhos = []
-        
         for offset in range(-raio, raio + 1):
             if offset != 0:
                 vizinhos.append(self.race[(posicao + offset) % 37])
-        
         return vizinhos
     
     def get_oposto(self, numero):
-        """Retorna número oposto na roda (aproximado)"""
         if numero not in self.race:
             return None
         posicao = self.race.index(numero)
         return self.race[(posicao + 18) % 37]
 
 # =============================
-# ESTRATÉGIA 1: REPETIÇÃO (CLUSTER)
+# SISTEMA DE DETECÇÃO AUTOMÁTICA DE GATILHOS
 # =============================
-class EstrategiaCluster:
+class DetectorGatilhos:
     """
-    Gatilho: número repetido OU apareceu 2x em até 5 rodadas
-    Entrada: mesmo número + vizinhos
-    Stop: 2 perdas seguidas
+    Avalia TODOS os gatilhos a cada rodada e retorna a estratégia ativada
     """
     
     def __init__(self):
         self.roleta = RoletaBase()
-        self.historico = deque(maxlen=50)
-        self.nome = "🔥 Cluster (Repetição)"
-        self.perdas_consecutivas = 0
+        self.numeros_quentes = [33, 14, 17, 30, 25, 32, 8, 7]
         
-    def adicionar_numero(self, numero):
-        self.historico.append(numero)
-        
-    def analisar(self):
-        if len(self.historico) < 3:
+    def detectar(self, historico_numeros, historico_multiplicadores):
+        """
+        Avalia todos os gatilhos e retorna a melhor estratégia ativada
+        Ordem de prioridade:
+        1. Cluster (Repetição) - MAIS FORTE
+        2. Pós-Sequência
+        3. Núcleo Quente
+        4. Bloco
+        5. Multiplicador
+        6. Híbrida (fallback)
+        """
+        if len(historico_numeros) < 3:
             return None
             
-        hist_list = list(self.historico)
+        hist_list = list(historico_numeros)
         ultimo = hist_list[-1]
         
-        # Verifica repetição direta
-        if len(hist_list) >= 2 and hist_list[-1] == hist_list[-2]:
-            return self._gerar_entrada(ultimo, "Repetição direta")
+        # ===== GATILHO 1: CLUSTER (REPETIÇÃO) =====
+        cluster = self._detectar_cluster(hist_list, ultimo)
+        if cluster:
+            return cluster
         
-        # Verifica 2x em 5 rodadas
-        ultimos_5 = hist_list[-5:] if len(hist_list) >= 5 else hist_list
-        contagem = Counter(ultimos_5)
-        for num, count in contagem.items():
-            if count >= 2 and num == ultimo:
-                return self._gerar_entrada(num, f"2x em 5 rodadas")
+        # ===== GATILHO 2: PÓS-SEQUÊNCIA =====
+        pos_seq = self._detectar_pos_sequencia(hist_list)
+        if pos_seq:
+            return pos_seq
+        
+        # ===== GATILHO 3: NÚCLEO QUENTE =====
+        nucleo = self._detectar_nucleo_quente(hist_list)
+        if nucleo:
+            return nucleo
+        
+        # ===== GATILHO 4: BLOCO (ALTOS/BAIXOS) =====
+        bloco = self._detectar_bloco(hist_list)
+        if bloco:
+            return bloco
+        
+        # ===== GATILHO 5: MULTIPLICADOR =====
+        multi = self._detectar_multiplicador(hist_list, historico_multiplicadores)
+        if multi:
+            return multi
+        
+        # ===== GATILHO 6: HÍBRIDA (sempre ativa como fallback) =====
+        if len(hist_list) >= 5:
+            return self._gerar_hibrida(hist_list, ultimo)
         
         return None
     
-    def _gerar_entrada(self, numero, gatilho):
+    def _detectar_cluster(self, hist_list, ultimo):
+        """Detecta repetição: número repetido OU 2x em 5 rodadas"""
+        # Repetição direta
+        if len(hist_list) >= 2 and hist_list[-1] == hist_list[-2]:
+            return self._gerar_cluster(ultimo, "Repetição direta")
+        
+        # 2x em 5 rodadas
+        if len(hist_list) >= 5:
+            ultimos_5 = hist_list[-5:]
+            contagem = Counter(ultimos_5)
+            for num, count in contagem.items():
+                if count >= 2 and num == ultimo:
+                    return self._gerar_cluster(num, f"2x em 5 rodadas")
+        
+        return None
+    
+    def _gerar_cluster(self, numero, motivo):
         vizinhos = self.roleta.get_vizinhos(numero, raio=2)
         numeros = list(set([numero] + vizinhos))
         
         return {
-            'nome': self.nome,
+            'nome': 'Cluster',
             'numeros_apostar': sorted(numeros),
-            'gatilho': f"🔥 {gatilho}: {numero}",
+            'gatilho': f"🔥 {motivo}: {numero}",
             'confianca': 'Alta',
             'numero_gatilho': numero,
             'tipo': 'cluster'
         }
     
-    def get_analise(self):
-        if len(self.historico) < 3:
-            return "🔥 Cluster: Aguardando dados..."
-        
-        hist_list = list(self.historico)
-        ultimos_10 = hist_list[-10:] if len(hist_list) >= 10 else hist_list
-        
-        analise = "🔥 ANÁLISE CLUSTER\n" + "="*40 + "\n"
-        analise += f"Últimos: {ultimos_10}\n"
-        
-        # Detecta repetições
-        repeticoes = []
-        for i in range(1, len(hist_list)):
-            if hist_list[i] == hist_list[i-1]:
-                repeticoes.append(hist_list[i])
-        
-        if repeticoes:
-            analise += f"\n📊 Repetições recentes: {repeticoes[-5:]}\n"
-        else:
-            analise += "\n📊 Nenhuma repetição recente\n"
-        
-        return analise
-    
-    def zerar(self):
-        self.historico.clear()
-        self.perdas_consecutivas = 0
-
-# =============================
-# ESTRATÉGIA 2: NÚCLEO QUENTE
-# =============================
-class EstrategiaNucleoQuente:
-    """
-    Gatilho: 2 ou mais números quentes aparecem em 5 rodadas
-    Entrada: base de números quentes (top 5-7 frequentes)
-    Stop: 3 rodadas sem acerto
-    """
-    
-    def __init__(self):
-        self.historico = deque(maxlen=50)
-        self.nome = "🎯 Núcleo Quente"
-        self.numeros_quentes = [33, 14, 17, 30, 25, 32, 8, 7]  # Do seu estudo
-        self.perdas_consecutivas = 0
-        
-    def adicionar_numero(self, numero):
-        self.historico.append(numero)
-        
-    def analisar(self):
-        if len(self.historico) < 5:
+    def _detectar_pos_sequencia(self, hist_list):
+        """Detecta quebra de sequência de repetição"""
+        if len(hist_list) < 4:
             return None
-            
-        hist_list = list(self.historico)
-        ultimos_5 = hist_list[-5:]
         
-        # Conta quantos números quentes apareceram nas últimas 5 rodadas
+        # Procura padrão X, X, X, Y (Y ≠ X)
+        for i in range(len(hist_list) - 3, len(hist_list) - 1):
+            if i >= 2:
+                if hist_list[i-2] == hist_list[i-1] == hist_list[i]:
+                    numero_rep = hist_list[i]
+                    numero_quebra = hist_list[i+1]
+                    
+                    if numero_quebra != numero_rep:
+                        vizinhos = self.roleta.get_vizinhos(numero_rep, raio=2)
+                        oposto = self.roleta.get_oposto(numero_rep)
+                        
+                        numeros = list(set(vizinhos))
+                        if oposto:
+                            numeros.append(oposto)
+                        
+                        return {
+                            'nome': 'Pós-Sequência',
+                            'numeros_apostar': sorted(numeros),
+                            'gatilho': f"💣 Quebra após {numero_rep}→{numero_rep}→{numero_rep}",
+                            'confianca': 'Média-Alta',
+                            'numero_repetido': numero_rep,
+                            'tipo': 'pos_sequencia'
+                        }
+        
+        return None
+    
+    def _detectar_nucleo_quente(self, hist_list):
+        """Detecta 2+ números quentes em 5 rodadas"""
+        if len(hist_list) < 5:
+            return None
+        
+        ultimos_5 = hist_list[-5:]
         quentes_recentes = [n for n in ultimos_5 if n in self.numeros_quentes]
         
         if len(quentes_recentes) >= 2:
-            # Atualiza dinamicamente os mais frequentes do histórico completo
             frequencias = Counter(hist_list)
-            top_frequentes = [num for num, _ in frequencias.most_common(7)]
-            
-            # Combina com os quentes fixos
+            top_frequentes = [num for num, _ in frequencias.most_common(5)]
             base = list(set(self.numeros_quentes + top_frequentes))[:8]
             
             return {
-                'nome': self.nome,
+                'nome': 'Núcleo Quente',
                 'numeros_apostar': sorted(base),
                 'gatilho': f"🎯 {len(quentes_recentes)} quentes em 5 rodadas: {quentes_recentes}",
                 'confianca': 'Alta',
@@ -347,239 +331,58 @@ class EstrategiaNucleoQuente:
         
         return None
     
-    def get_analise(self):
-        if len(self.historico) < 5:
-            return "🎯 Núcleo Quente: Aguardando dados..."
-        
-        hist_list = list(self.historico)
-        frequencias = Counter(hist_list)
-        
-        analise = "🎯 ANÁLISE NÚCLEO QUENTE\n" + "="*40 + "\n"
-        analise += "Top 10 frequências:\n"
-        for num, freq in frequencias.most_common(10):
-            barra = "█" * min(freq, 20)
-            analise += f"  {num:2d}: {barra} {freq}x\n"
-        
-        ultimos_5 = hist_list[-5:]
-        quentes = [n for n in ultimos_5 if n in self.numeros_quentes]
-        analise += f"\n🔥 Quentes nas últimas 5: {quentes} ({len(quentes)})\n"
-        
-        return analise
-    
-    def zerar(self):
-        self.historico.clear()
-        self.perdas_consecutivas = 0
-
-# =============================
-# ESTRATÉGIA 3: PÓS-SEQUÊNCIA
-# =============================
-class EstrategiaPosSequencia:
-    """
-    Gatilho: sequência de repetição termina (ex: 14→14→14 → quebra)
-    Entrada: vizinhos do número que repetiu + oposto
-    """
-    
-    def __init__(self):
-        self.roleta = RoletaBase()
-        self.historico = deque(maxlen=30)
-        self.nome = "💣 Pós-Sequência"
-        
-    def adicionar_numero(self, numero):
-        self.historico.append(numero)
-        
-    def analisar(self):
-        if len(self.historico) < 4:
+    def _detectar_bloco(self, hist_list):
+        """Detecta 4+ altos ou baixos seguidos"""
+        if len(hist_list) < 5:
             return None
-            
-        hist_list = list(self.historico)
         
-        # Procura por sequência de repetição que quebrou
-        # Ex: 14, 14, 14, X (onde X ≠ 14)
-        for i in range(len(hist_list) - 3, len(hist_list) - 1):
-            if i >= 2:
-                if hist_list[i-2] == hist_list[i-1] == hist_list[i]:
-                    numero_rep = hist_list[i]
-                    numero_quebra = hist_list[i+1]
-                    
-                    if numero_quebra != numero_rep:
-                        # Sequência quebrou! Gerar entrada
-                        vizinhos = self.roleta.get_vizinhos(numero_rep, raio=2)
-                        oposto = self.roleta.get_oposto(numero_rep)
-                        
-                        numeros = list(set(vizinhos))
-                        if oposto:
-                            numeros.append(oposto)
-                        
-                        return {
-                            'nome': self.nome,
-                            'numeros_apostar': sorted(numeros),
-                            'gatilho': f"💣 Quebra após {numero_rep}→{numero_rep}→{numero_rep}",
-                            'confianca': 'Média-Alta',
-                            'numero_quebra': numero_quebra,
-                            'numero_repetido': numero_rep,
-                            'tipo': 'pos_sequencia'
-                        }
+        ultimos = hist_list[-6:]
         
-        return None
-    
-    def get_analise(self):
-        if len(self.historico) < 3:
-            return "💣 Pós-Sequência: Aguardando dados..."
-        
-        hist_list = list(self.historico)
-        
-        analise = "💣 ANÁLISE PÓS-SEQUÊNCIA\n" + "="*40 + "\n"
-        analise += f"Últimos: {hist_list[-10:]}\n"
-        
-        # Detecta sequências ativas
-        if len(hist_list) >= 2:
-            ultimo = hist_list[-1]
-            penultimo = hist_list[-2]
-            if ultimo == penultimo:
-                # Conta tamanho da sequência
-                seq = 2
-                for i in range(len(hist_list)-3, -1, -1):
-                    if hist_list[i] == ultimo:
-                        seq += 1
-                    else:
-                        break
-                analise += f"\n🔥 Sequência ativa: {ultimo} repetiu {seq}x\n"
-        
-        return analise
-    
-    def zerar(self):
-        self.historico.clear()
-
-# =============================
-# ESTRATÉGIA 4: BLOCO (ALTOS VS BAIXOS)
-# =============================
-class EstrategiaBloco:
-    """
-    Gatilho: 4+ números seguidos acima de 19 (ou abaixo)
-    Entrada: inverter lado
-    Stop: 2 tentativas
-    """
-    
-    def __init__(self):
-        self.historico = deque(maxlen=50)
-        self.nome = "📊 Bloco (Altos/Baixos)"
-        self.perdas_consecutivas = 0
-        
-    def adicionar_numero(self, numero):
-        self.historico.append(numero)
-        
-    def analisar(self):
-        if len(self.historico) < 5:
-            return None
-            
-        hist_list = list(self.historico)
-        ultimos = hist_list[-6:]  # Olha 6 para ter margem
-        
-        # Verifica bloco de altos (>19)
-        altos_seguidos = 0
+        # Conta altos seguidos (>19)
+        altos = 0
         for n in reversed(ultimos):
             if n > 19:
-                altos_seguidos += 1
+                altos += 1
             else:
                 break
         
-        # Verifica bloco de baixos (≤18)
-        baixos_seguidos = 0
+        # Conta baixos seguidos (≤18)
+        baixos = 0
         for n in reversed(ultimos):
             if n <= 18:
-                baixos_seguidos += 1
+                baixos += 1
             else:
                 break
         
-        if altos_seguidos >= 4:
-            # Bloco de altos - apostar em baixos
-            numeros = list(range(0, 19))  # 0-18
+        if altos >= 4:
             return {
-                'nome': self.nome,
-                'numeros_apostar': numeros,
-                'gatilho': f"📊 {altos_seguidos} altos seguidos - invertendo para BAIXOS (0-18)",
+                'nome': 'Bloco',
+                'numeros_apostar': list(range(0, 19)),
+                'gatilho': f"📊 {altos} altos seguidos - invertendo para BAIXOS (0-18)",
                 'confianca': 'Média',
                 'bloco_tipo': 'Altos',
-                'bloco_alvo': 'Baixos (0-18)',
                 'tipo': 'bloco'
             }
         
-        if baixos_seguidos >= 4:
-            # Bloco de baixos - apostar em altos
-            numeros = list(range(19, 37))  # 19-36
+        if baixos >= 4:
             return {
-                'nome': self.nome,
-                'numeros_apostar': numeros,
-                'gatilho': f"📊 {baixos_seguidos} baixos seguidos - invertendo para ALTOS (19-36)",
+                'nome': 'Bloco',
+                'numeros_apostar': list(range(19, 37)),
+                'gatilho': f"📊 {baixos} baixos seguidos - invertendo para ALTOS (19-36)",
                 'confianca': 'Média',
                 'bloco_tipo': 'Baixos',
-                'bloco_alvo': 'Altos (19-36)',
                 'tipo': 'bloco'
             }
         
         return None
     
-    def get_analise(self):
-        if len(self.historico) < 5:
-            return "📊 Bloco: Aguardando dados..."
-        
-        hist_list = list(self.historico)
-        
-        analise = "📊 ANÁLISE BLOCO\n" + "="*40 + "\n"
-        analise += f"Últimos: {hist_list[-10:]}\n"
-        
-        # Classifica últimos
-        altos = sum(1 for n in hist_list[-10:] if n > 19)
-        baixos = sum(1 for n in hist_list[-10:] if n <= 18)
-        
-        analise += f"\nÚltimas 10 rodadas:\n"
-        analise += f"  Altos (19-36): {altos}\n"
-        analise += f"  Baixos (0-18): {baixos}\n"
-        
-        # Detecta bloco atual
-        bloco_atual = "Altos" if hist_list[-1] > 19 else "Baixos"
-        tamanho = 1
-        for i in range(len(hist_list)-2, -1, -1):
-            if (bloco_atual == "Altos" and hist_list[i] > 19) or (bloco_atual == "Baixos" and hist_list[i] <= 18):
-                tamanho += 1
-            else:
-                break
-        
-        analise += f"\n📈 Bloco atual: {bloco_atual} ({tamanho} seguidos)\n"
-        
-        return analise
-    
-    def zerar(self):
-        self.historico.clear()
-        self.perdas_consecutivas = 0
-
-# =============================
-# ESTRATÉGIA 5: MULTIPLICADOR (CAÇA EXPLOSÃO)
-# =============================
-class EstrategiaMultiplicador:
-    """
-    Gatilho: 5-8 rodadas sem multiplicador alto (>500x)
-    Entrada: apostar aberto (8-12 números incluindo 0, quentes, últimos)
-    """
-    
-    def __init__(self):
-        self.historico = deque(maxlen=30)
-        self.historico_mult = deque(maxlen=30)  # Guarda multiplicadores
-        self.nome = "🚀 Caça Explosão"
-        self.numeros_quentes = [33, 14, 17, 30, 25, 32, 8, 7]
-        
-    def adicionar_numero(self, numero, multiplicador=None):
-        self.historico.append(numero)
-        self.historico_mult.append(multiplicador if multiplicador else 0)
-        
-    def analisar(self):
-        if len(self.historico) < 8:
+    def _detectar_multiplicador(self, hist_list, hist_mult):
+        """Detecta 5-8 rodadas sem multiplicador >500x"""
+        if len(hist_list) < 8:
             return None
-            
-        hist_list = list(self.historico)
-        mult_list = list(self.historico_mult)
         
-        # Conta rodadas sem multiplicador alto (>500x)
+        mult_list = list(hist_mult)
+        
         rodadas_sem = 0
         for m in reversed(mult_list):
             if m and m >= 500:
@@ -587,19 +390,15 @@ class EstrategiaMultiplicador:
             rodadas_sem += 1
         
         if 5 <= rodadas_sem <= 12:
-            # Gera conjunto aberto
             numeros = set()
-            numeros.add(0)  # Sempre inclui 0
+            numeros.add(0)
             
-            # Adiciona números quentes
             for n in self.numeros_quentes[:4]:
                 numeros.add(n)
             
-            # Adiciona últimos números
             for n in hist_list[-3:]:
                 numeros.add(n)
             
-            # Completa até 10-12 números
             frequencias = Counter(hist_list)
             for num, _ in frequencias.most_common(5):
                 numeros.add(num)
@@ -607,193 +406,65 @@ class EstrategiaMultiplicador:
                     break
             
             return {
-                'nome': self.nome,
+                'nome': 'Multiplicador',
                 'numeros_apostar': sorted(list(numeros))[:12],
-                'gatilho': f"🚀 {rodadas_sem} rodadas sem multiplicador >500x",
-                'confianca': 'Alta para Spike',
-                'rodadas_sem_mult': rodadas_sem,
+                'gatilho': f"🚀 {rodadas_sem} rodadas sem spike >500x",
+                'confianca': 'Alta',
+                'rodadas_sem': rodadas_sem,
                 'tipo': 'multiplicador'
             }
         
         return None
     
-    def get_analise(self):
-        if len(self.historico) < 5:
-            return "🚀 Multiplicador: Aguardando dados..."
-        
-        mult_list = list(self.historico_mult)
-        
-        analise = "🚀 ANÁLISE MULTIPLICADOR\n" + "="*40 + "\n"
-        
-        # Conta rodadas sem spike
-        rodadas_sem = 0
-        for m in reversed(mult_list):
-            if m and m >= 500:
-                break
-            rodadas_sem += 1
-        
-        analise += f"📊 Rodadas sem spike (>500x): {rodadas_sem}\n"
-        
-        # Mostra últimos multiplicadores
-        if any(mult_list):
-            ultimos_mult = [m for m in mult_list[-10:] if m]
-            if ultimos_mult:
-                analise += f"⚡ Últimos multiplicadores: {ultimos_mult}\n"
-        
-        if 5 <= rodadas_sem <= 12:
-            analise += "\n🟢 GATILHO ATIVO! Probabilidade de spike elevada!\n"
-        elif rodadas_sem > 12:
-            analise += "\n🔴 Muitas rodadas sem spike - cautela!\n"
-        
-        return analise
-    
-    def zerar(self):
-        self.historico.clear()
-        self.historico_mult.clear()
-
-# =============================
-# ESTRATÉGIA 6: HÍBRIDA PRO (RECOMENDADA)
-# =============================
-class EstrategiaHibrida:
-    """
-    Combina todos os gatilhos:
-    - Repetição OU núcleo ativo
-    - Base: último número + 2 vizinhos + 3 quentes + 1 atrasado
-    """
-    
-    def __init__(self):
-        self.roleta = RoletaBase()
-        self.historico = deque(maxlen=50)
-        self.nome = "🧠 Híbrida PRO"
-        self.numeros_quentes = [33, 14, 17, 30, 25, 32, 8, 7]
-        
-    def adicionar_numero(self, numero):
-        self.historico.append(numero)
-        
-    def analisar(self):
-        if len(self.historico) < 5:
-            return None
-            
-        hist_list = list(self.historico)
-        ultimo = hist_list[-1]
-        
-        # Verifica gatilhos
-        gatilhos = []
-        
-        # Gatilho 1: Repetição
-        if len(hist_list) >= 2 and hist_list[-1] == hist_list[-2]:
-            gatilhos.append("Repetição")
-        
-        # Gatilho 2: Núcleo ativo (2+ quentes em 5 rodadas)
-        ultimos_5 = hist_list[-5:]
-        quentes_5 = [n for n in ultimos_5 if n in self.numeros_quentes]
-        if len(quentes_5) >= 2:
-            gatilhos.append(f"Núcleo ({len(quentes_5)} quentes)")
-        
-        # Se não tem gatilho, não gera entrada
-        if not gatilhos:
-            return None
-        
-        # Monta base híbrida
+    def _gerar_hibrida(self, hist_list, ultimo):
+        """Gera estratégia híbrida (fallback)"""
         numeros = set()
-        
-        # 1. Último número
         numeros.add(ultimo)
         
-        # 2. Vizinhos do último
         vizinhos = self.roleta.get_vizinhos(ultimo, raio=2)
         numeros.update(vizinhos[:2])
         
-        # 3. Números quentes (top 3)
         frequencias = Counter(hist_list)
-        quentes_dinamicos = [num for num, _ in frequencias.most_common(3)]
-        numeros.update(quentes_dinamicos)
+        quentes = [num for num, _ in frequencias.most_common(3)]
+        numeros.update(quentes)
         
-        # 4. Número atrasado (não saiu há mais tempo)
-        todos = set(range(37))
-        presentes = set(hist_list)
-        ausentes = todos - presentes
-        if ausentes:
-            # Pega o que não saiu há mais tempo (considerando ordem)
-            for num in range(37):
-                if num not in hist_list[-30:]:
-                    numeros.add(num)
-                    break
-        
-        # Limita a 12 números
-        numeros_final = sorted(list(numeros))[:12]
+        # Adiciona um atrasado
+        for num in range(37):
+            if num not in hist_list[-30:]:
+                numeros.add(num)
+                break
         
         return {
-            'nome': self.nome,
-            'numeros_apostar': numeros_final,
-            'gatilho': f"🧠 Gatilhos: {', '.join(gatilhos)}",
-            'confianca': 'Alta',
-            'gatilhos_ativos': gatilhos,
+            'nome': 'Híbrida',
+            'numeros_apostar': sorted(list(numeros))[:12],
+            'gatilho': "🧠 Modo Híbrido (monitoramento contínuo)",
+            'confianca': 'Média',
             'tipo': 'hibrida'
         }
-    
-    def get_analise(self):
-        if len(self.historico) < 5:
-            return "🧠 Híbrida: Aguardando dados..."
-        
-        hist_list = list(self.historico)
-        
-        analise = "🧠 ANÁLISE HÍBRIDA PRO\n" + "="*40 + "\n"
-        analise += f"Último: {hist_list[-1]}\n"
-        
-        # Verifica gatilhos ativos
-        gatilhos = []
-        
-        if len(hist_list) >= 2 and hist_list[-1] == hist_list[-2]:
-            gatilhos.append("✅ Repetição ativa")
-        
-        ultimos_5 = hist_list[-5:]
-        quentes_5 = [n for n in ultimos_5 if n in self.numeros_quentes]
-        if len(quentes_5) >= 2:
-            gatilhos.append(f"✅ Núcleo ativo ({len(quentes_5)} quentes)")
-        
-        analise += "\n🎯 Status dos Gatilhos:\n"
-        if gatilhos:
-            for g in gatilhos:
-                analise += f"  {g}\n"
-            analise += "\n🟢 CONDIÇÕES ATENDIDAS - ENTRADA ATIVA!\n"
-        else:
-            analise += "  ❌ Nenhum gatilho ativo\n"
-            analise += "\n🔴 Aguardando condições...\n"
-        
-        # Mostra frequências
-        frequencias = Counter(hist_list)
-        analise += f"\n📊 Top 5 frequências: {frequencias.most_common(5)}\n"
-        
-        return analise
-    
-    def zerar(self):
-        self.historico.clear()
 
 # =============================
-# SISTEMA PRINCIPAL
+# SISTEMA PRINCIPAL AUTO-ADAPTATIVO
 # =============================
-class SistemaRoletaPro:
+class SistemaAutoAdaptativo:
     def __init__(self):
-        # NOVAS ESTRATÉGIAS (baseadas no seu estudo)
-        self.estrategia_cluster = EstrategiaCluster()
-        self.estrategia_nucleo = EstrategiaNucleoQuente()
-        self.estrategia_pos = EstrategiaPosSequencia()
-        self.estrategia_bloco = EstrategiaBloco()
-        self.estrategia_multi = EstrategiaMultiplicador()
-        self.estrategia_hibrida = EstrategiaHibrida()
+        self.detector = DetectorGatilhos()
+        self.roleta = RoletaBase()
         
+        # Históricos
+        self.historico_numeros = deque(maxlen=100)
+        self.historico_multiplicadores = deque(maxlen=100)
+        
+        # Previsão e desempenho
         self.previsao_ativa = None
         self.historico_desempenho = []
         self.acertos = 0
         self.erros = 0
         self.estrategias_contador = {}
-        self.estrategia_selecionada = "Híbrida PRO"  # Default recomendada
         
-    def set_estrategia(self, estrategia):
-        self.estrategia_selecionada = estrategia
-        salvar_sessao()
-    
+        # Controle de stop loss
+        self.perdas_cluster = 0
+        self.perdas_bloco = 0
+        
     def processar_novo_numero(self, numero_data):
         """Processa novo número da API"""
         if isinstance(numero_data, dict):
@@ -805,11 +476,16 @@ class SistemaRoletaPro:
             lucky = []
             mult = None
         
+        # Adiciona aos históricos
+        self.historico_numeros.append(numero_real)
+        self.historico_multiplicadores.append(mult if mult else 0)
+        
         # Verifica resultado da previsão anterior
         if self.previsao_ativa:
             acerto = numero_real in self.previsao_ativa.get('numeros_apostar', [])
             nome = self.previsao_ativa['nome']
             
+            # Atualiza contadores
             if nome not in self.estrategias_contador:
                 self.estrategias_contador[nome] = {'acertos': 0, 'total': 0}
             self.estrategias_contador[nome]['total'] += 1
@@ -817,10 +493,20 @@ class SistemaRoletaPro:
             if acerto:
                 self.estrategias_contador[nome]['acertos'] += 1
                 self.acertos += 1
+                # Reseta perdas da estratégia
+                if nome == 'Cluster':
+                    self.perdas_cluster = 0
+                elif nome == 'Bloco':
+                    self.perdas_bloco = 0
             else:
                 self.erros += 1
+                # Incrementa perdas da estratégia
+                if nome == 'Cluster':
+                    self.perdas_cluster += 1
+                elif nome == 'Bloco':
+                    self.perdas_bloco += 1
             
-            enviar_resultado_simplificado(numero_real, acerto, nome, mult)
+            enviar_resultado_auto(numero_real, acerto, nome, mult)
             
             self.historico_desempenho.append({
                 'numero': numero_real,
@@ -831,52 +517,147 @@ class SistemaRoletaPro:
             
             self.previsao_ativa = None
         
-        # Adiciona número a todas as estratégias
-        self.estrategia_cluster.adicionar_numero(numero_real)
-        self.estrategia_nucleo.adicionar_numero(numero_real)
-        self.estrategia_pos.adicionar_numero(numero_real)
-        self.estrategia_bloco.adicionar_numero(numero_real)
-        self.estrategia_multi.adicionar_numero(numero_real, mult)
-        self.estrategia_hibrida.adicionar_numero(numero_real)
+        # DETECTA GATILHOS AUTOMATICAMENTE
+        # Verifica stops antes de gerar nova previsão
+        if self.perdas_cluster >= 2:
+            # Pula Cluster se já perdeu 2x seguidas
+            pass
+        if self.perdas_bloco >= 2:
+            # Pula Bloco se já perdeu 2x seguidas
+            pass
         
-        # Gera nova previsão baseada na estratégia selecionada
-        nova = None
-        if self.estrategia_selecionada == "Cluster":
-            nova = self.estrategia_cluster.analisar()
-        elif self.estrategia_selecionada == "Núcleo Quente":
-            nova = self.estrategia_nucleo.analisar()
-        elif self.estrategia_selecionada == "Pós-Sequência":
-            nova = self.estrategia_pos.analisar()
-        elif self.estrategia_selecionada == "Bloco":
-            nova = self.estrategia_bloco.analisar()
-        elif self.estrategia_selecionada == "Multiplicador":
-            nova = self.estrategia_multi.analisar()
-        elif self.estrategia_selecionada == "Híbrida PRO":
-            nova = self.estrategia_hibrida.analisar()
+        # Detecta gatilhos e gera nova previsão
+        nova = self.detector.detectar(self.historico_numeros, self.historico_multiplicadores)
         
+        # Aplica regras de stop
         if nova:
+            if nova['nome'] == 'Cluster' and self.perdas_cluster >= 2:
+                # Força fallback para Híbrida
+                nova = self.detector._gerar_hibrida(list(self.historico_numeros), numero_real)
+                nova['gatilho'] = f"⚠️ Cluster pausado (2 perdas) - {nova['gatilho']}"
+            
+            if nova['nome'] == 'Bloco' and self.perdas_bloco >= 2:
+                nova = self.detector._gerar_hibrida(list(self.historico_numeros), numero_real)
+                nova['gatilho'] = f"⚠️ Bloco pausado (2 perdas) - {nova['gatilho']}"
+            
             self.previsao_ativa = nova
-            enviar_previsao_simplificada(nova)
+            enviar_previsao_auto(nova)
     
     def zerar_estatisticas(self):
         self.acertos = 0
         self.erros = 0
         self.estrategias_contador = {}
         self.historico_desempenho = []
-        self.estrategia_cluster.zerar()
-        self.estrategia_nucleo.zerar()
-        self.estrategia_pos.zerar()
-        self.estrategia_bloco.zerar()
-        self.estrategia_multi.zerar()
-        self.estrategia_hibrida.zerar()
+        self.historico_numeros.clear()
+        self.historico_multiplicadores.clear()
+        self.perdas_cluster = 0
+        self.perdas_bloco = 0
         salvar_sessao()
+    
+    def get_analise_completa(self):
+        """Retorna análise completa de todos os gatilhos"""
+        if len(self.historico_numeros) < 5:
+            return "📊 Aguardando dados para análise..."
+        
+        hist_list = list(self.historico_numeros)
+        mult_list = list(self.historico_multiplicadores)
+        ultimo = hist_list[-1]
+        
+        analise = "🎯 ANÁLISE DE GATILHOS (Auto-Detecção)\n"
+        analise += "=" * 50 + "\n\n"
+        
+        # 1. Cluster
+        analise += "🔥 CLUSTER (Repetição):\n"
+        if len(hist_list) >= 2 and hist_list[-1] == hist_list[-2]:
+            analise += f"   ✅ ATIVO! Repetição direta: {ultimo}→{ultimo}\n"
+        else:
+            ultimos_5 = hist_list[-5:] if len(hist_list) >= 5 else hist_list
+            contagem = Counter(ultimos_5)
+            repeticoes = [f"{n}({c}x)" for n, c in contagem.items() if c >= 2]
+            if repeticoes:
+                analise += f"   🟡 Parcial: {', '.join(repeticoes)}\n"
+            else:
+                analise += "   ❌ Inativo\n"
+        analise += f"   Perdas consecutivas: {self.perdas_cluster}/2\n\n"
+        
+        # 2. Pós-Sequência
+        analise += "💣 PÓS-SEQUÊNCIA:\n"
+        seq_ativa = None
+        for i in range(len(hist_list)-1, 1, -1):
+            if hist_list[i] == hist_list[i-1] == hist_list[i-2]:
+                seq_ativa = hist_list[i]
+                break
+        if seq_ativa:
+            analise += f"   🟡 Sequência ativa: {seq_ativa} (3x+)\n"
+        else:
+            analise += "   ❌ Inativo\n\n"
+        
+        # 3. Núcleo Quente
+        analise += "🎯 NÚCLEO QUENTE:\n"
+        quentes_fixos = [33, 14, 17, 30, 25, 32, 8, 7]
+        ultimos_5 = hist_list[-5:]
+        quentes_5 = [n for n in ultimos_5 if n in quentes_fixos]
+        if len(quentes_5) >= 2:
+            analise += f"   ✅ ATIVO! {len(quentes_5)} quentes: {quentes_5}\n"
+        else:
+            analise += f"   ❌ Inativo ({len(quentes_5)}/2 quentes)\n"
+        
+        frequencias = Counter(hist_list)
+        analise += f"   Top 5 frequências: {frequencias.most_common(5)}\n\n"
+        
+        # 4. Bloco
+        analise += "📊 BLOCO (Altos/Baixos):\n"
+        altos = 0
+        for n in reversed(hist_list):
+            if n > 19:
+                altos += 1
+            else:
+                break
+        baixos = 0
+        for n in reversed(hist_list):
+            if n <= 18:
+                baixos += 1
+            else:
+                break
+        
+        if altos >= 4:
+            analise += f"   ✅ ATIVO! {altos} altos seguidos → inverter para BAIXOS\n"
+        elif baixos >= 4:
+            analise += f"   ✅ ATIVO! {baixos} baixos seguidos → inverter para ALTOS\n"
+        else:
+            analise += f"   ❌ Inativo (Altos: {altos}, Baixos: {baixos})\n"
+        analise += f"   Perdas consecutivas: {self.perdas_bloco}/2\n\n"
+        
+        # 5. Multiplicador
+        analise += "🚀 MULTIPLICADOR:\n"
+        rodadas_sem = 0
+        for m in reversed(mult_list):
+            if m and m >= 500:
+                break
+            rodadas_sem += 1
+        if 5 <= rodadas_sem <= 12:
+            analise += f"   ✅ ATIVO! {rodadas_sem} rodadas sem spike\n"
+        else:
+            analise += f"   ❌ Inativo ({rodadas_sem} rodadas sem spike)\n"
+        
+        if mult_list:
+            ultimos_mult = [m for m in mult_list[-5:] if m]
+            if ultimos_mult:
+                analise += f"   Últimos multiplicadores: {ultimos_mult}\n"
+        
+        analise += "\n" + "=" * 50 + "\n"
+        analise += f"🎲 Último número: {ultimo}\n"
+        analise += f"📊 Últimos 10: {hist_list[-10:]}\n"
+        
+        return analise
     
     def get_status(self):
         return {
-            'estrategia_atual': self.estrategia_selecionada,
             'acertos': self.acertos,
             'erros': self.erros,
-            'total': self.acertos + self.erros
+            'total': self.acertos + self.erros,
+            'perdas_cluster': self.perdas_cluster,
+            'perdas_bloco': self.perdas_bloco
         }
 
 # =============================
@@ -926,11 +707,11 @@ def fetch_latest_result():
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="IA Roleta — Estratégias PRO", layout="centered")
-st.title("🎯 IA Roleta — Sistema Multi-Estratégias PRO")
+st.set_page_config(page_title="🎯 IA Roleta — Auto-Detecção de Gatilhos", layout="centered")
+st.title("🎯 IA Roleta — Sistema Auto-Adaptativo")
 
 if "sistema" not in st.session_state:
-    st.session_state.sistema = SistemaRoletaPro()
+    st.session_state.sistema = SistemaAutoAdaptativo()
 
 sessao_carregada = carregar_sessao()
 
@@ -975,31 +756,27 @@ with st.sidebar.expander("🔔 Telegram", expanded=False):
         salvar_sessao()
         st.success("✅ Salvo!")
 
-# Seleção de estratégia
-estrategias_disponiveis = ["Híbrida PRO", "Cluster", "Núcleo Quente", "Pós-Sequência", "Bloco", "Multiplicador"]
-estrategia = st.sidebar.selectbox(
-    "🎯 Estratégia:",
-    estrategias_disponiveis,
-    key="estrategia_selecionada"
-)
-if estrategia != st.session_state.sistema.estrategia_selecionada:
-    st.session_state.sistema.set_estrategia(estrategia)
-
-# Análise da estratégia selecionada
-with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=True):
-    if estrategia == "Cluster":
-        analise = st.session_state.sistema.estrategia_cluster.get_analise()
-    elif estrategia == "Núcleo Quente":
-        analise = st.session_state.sistema.estrategia_nucleo.get_analise()
-    elif estrategia == "Pós-Sequência":
-        analise = st.session_state.sistema.estrategia_pos.get_analise()
-    elif estrategia == "Bloco":
-        analise = st.session_state.sistema.estrategia_bloco.get_analise()
-    elif estrategia == "Multiplicador":
-        analise = st.session_state.sistema.estrategia_multi.get_analise()
-    else:
-        analise = st.session_state.sistema.estrategia_hibrida.get_analise()
+# Análise de Gatilhos
+with st.sidebar.expander("🔍 Análise de Gatilhos", expanded=True):
+    analise = st.session_state.sistema.get_analise_completa()
     st.text(analise)
+
+# Info sobre o sistema
+st.sidebar.info("""
+**🎯 SISTEMA AUTO-ADAPTATIVO**
+
+O sistema detecta automaticamente:
+- 🔥 Cluster (Repetição)
+- 💣 Pós-Sequência  
+- 🎯 Núcleo Quente
+- 📊 Bloco (Altos/Baixos)
+- 🚀 Multiplicador
+- 🧠 Híbrida (fallback)
+
+**Stop Loss:**
+- Cluster: 2 perdas → pausa
+- Bloco: 2 perdas → pausa
+""")
 
 # Inserção manual
 st.subheader("✍️ Inserir Sorteios")
@@ -1018,10 +795,10 @@ if st.button("Adicionar") and entrada:
     except Exception as e:
         st.error(f"Erro: {e}")
 
-# Auto-refresh para buscar API
+# Auto-refresh
 st_autorefresh(interval=3000, key="refresh")
 
-# Busca resultado da API
+# Busca API
 resultado = fetch_latest_result()
 if st.session_state.historico:
     ultimo_ts = st.session_state.historico[-1].get("timestamp") if st.session_state.historico else None
@@ -1054,48 +831,47 @@ else:
 
 # Status
 status = st.session_state.sistema.get_status()
-col1, col2, col3 = st.columns(3)
-col1.metric("🎯 Estratégia", status['estrategia_atual'])
-col2.metric("🟢 Acertos", status['acertos'])
-col3.metric("🔴 Erros", status['erros'])
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("🟢 Acertos", status['acertos'])
+col2.metric("🔴 Erros", status['erros'])
+col3.metric("🔥 Cluster", f"{status['perdas_cluster']}/2")
+col4.metric("📊 Bloco", f"{status['perdas_bloco']}/2")
 
 # Previsão Ativa
-st.subheader("🎯 Previsão Ativa")
+st.subheader("🎯 Previsão Ativa (Auto-Detectada)")
 sistema = st.session_state.sistema
 
 if sistema.previsao_ativa:
     p = sistema.previsao_ativa
-    st.success(f"**{p['nome']}**")
+    emoji = {'Cluster': '🔥', 'Núcleo Quente': '🎯', 'Pós-Sequência': '💣', 
+             'Bloco': '📊', 'Multiplicador': '🚀', 'Híbrida': '🧠'}.get(p['nome'], '🎲')
+    st.success(f"{emoji} **{p['nome'].upper()}**")
     st.info(f"📋 **Gatilho:** {p['gatilho']}")
     st.write(f"**🔢 Números ({len(p['numeros_apostar'])}):**")
     
-    # Mostra números em formato amigável
     nums = sorted(p['numeros_apostar'])
-    colunas = st.columns(4)
+    colunas = st.columns(6)
     for i, num in enumerate(nums):
-        colunas[i % 4].write(f"**{num}**")
+        colunas[i % 6].write(f"**{num}**")
 else:
-    st.info(f"🎲 Aguardando condições para **{estrategia}**...")
+    st.info("🎲 Aguardando primeiro sorteio para detectar gatilhos...")
 
-# Desempenho
-st.subheader("📈 Desempenho")
+# Desempenho por Estratégia
+st.subheader("📈 Desempenho por Estratégia")
 total = sistema.acertos + sistema.erros
 taxa = (sistema.acertos / total * 100) if total > 0 else 0.0
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("🟢 Acertos", sistema.acertos)
-c2.metric("🔴 Erros", sistema.erros)
-c3.metric("📊 Total", total)
-c4.metric("✅ Taxa", f"{taxa:.1f}%")
+st.caption(f"Taxa geral: {taxa:.1f}% ({sistema.acertos}/{total})")
 
 if sistema.estrategias_contador:
-    st.write("**📊 Performance por Estratégia:**")
     for nome, dados in sistema.estrategias_contador.items():
         if dados['total'] > 0:
             tx = dados['acertos'] / dados['total'] * 100
             cor = "🟢" if tx >= 50 else "🟡" if tx >= 30 else "🔴"
-            st.write(f"{cor} {nome}: {dados['acertos']}/{dados['total']} ({tx:.1f}%)")
+            emoji = {'Cluster': '🔥', 'Núcleo Quente': '🎯', 'Pós-Sequência': '💣',
+                    'Bloco': '📊', 'Multiplicador': '🚀', 'Híbrida': '🧠'}.get(nome, '🎲')
+            st.write(f"{cor} {emoji} {nome}: {dados['acertos']}/{dados['total']} ({tx:.1f}%)")
 
+# Histórico recente
 if sistema.historico_desempenho:
     st.write("**🔍 Últimas Conferências:**")
     for r in sistema.historico_desempenho[-5:]:
