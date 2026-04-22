@@ -30,7 +30,13 @@ def salvar_sessao():
             'historico_multiplicadores': list(st.session_state.sistema.historico_multiplicadores),
             'estrategia_ativa_manual': st.session_state.sistema.estrategia_ativa_manual,
             'matriz_transicao': dict(st.session_state.sistema.matriz_transicao),
-            'ciclos_numeros': st.session_state.sistema.ciclos_numeros
+            'ciclos_numeros': st.session_state.sistema.ciclos_numeros,
+            'estrategias_ativas': st.session_state.get('estrategias_ativas', {
+                'Cluster': True, 'PosSequencia': True, 'Markov': True,
+                'Agrupamento': True, 'Compressao': True, 'Ciclo': True,
+                'NucleoQuente': True, 'Bloco': True, 'Salto': True,
+                'Entropia': True, 'Multiplicador': True
+            })
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -52,6 +58,14 @@ def carregar_sessao():
             st.session_state.historico = session_data.get('historico', [])
             st.session_state.telegram_token = session_data.get('telegram_token', '')
             st.session_state.telegram_chat_id = session_data.get('telegram_chat_id', '')
+            
+            # Carrega estratégias ativas
+            st.session_state.estrategias_ativas = session_data.get('estrategias_ativas', {
+                'Cluster': True, 'PosSequencia': True, 'Markov': True,
+                'Agrupamento': True, 'Compressao': True, 'Ciclo': True,
+                'NucleoQuente': True, 'Bloco': True, 'Salto': True,
+                'Entropia': True, 'Multiplicador': True
+            })
             
             if 'sistema' in st.session_state:
                 st.session_state.sistema.acertos = session_data.get('sistema_acertos', 0)
@@ -213,7 +227,6 @@ class RoletaBase:
         if len(numeros) < 3:
             return False, []
         
-        # Verifica se há 3+ números próximos (distância <= 4)
         agrupados = []
         for i, n1 in enumerate(numeros):
             grupo = [n1]
@@ -227,15 +240,11 @@ class RoletaBase:
         return len(agrupados) >= 3, agrupados
 
 # =============================
-# NOVAS ESTRATÉGIAS AVANÇADAS
+# ESTRATÉGIAS
 # =============================
 
 class EstrategiaMarkovTransicao:
-    """
-    Cadeia de Markov: o que mais sai depois de cada número
-    Gatilho: número atual já apareceu pelo menos 5x
-    Entrada: TOP 3 números que mais seguem ele
-    """
+    """Cadeia de Markov: o que mais sai depois de cada número"""
     
     def __init__(self):
         self.roleta = RoletaBase()
@@ -246,11 +255,9 @@ class EstrategiaMarkovTransicao:
         if len(hist_list) < 10:
             return None
         
-        # Conta ocorrências do número atual
         ocorrencias = sum(1 for n in hist_list if n == ultimo)
         
         if ocorrencias >= self.min_ocorrencias and ultimo in matriz_transicao:
-            # Pega os 3 números que mais seguem este
             transicoes = matriz_transicao[ultimo]
             if transicoes:
                 top3 = [num for num, _ in transicoes.most_common(3)]
@@ -268,18 +275,13 @@ class EstrategiaMarkovTransicao:
 
 
 class EstrategiaSalto:
-    """
-    Padrão de distância entre números consecutivos
-    Gatilho: 3 saltos do mesmo tipo seguidos
-    Entrada: apostar na quebra do padrão
-    """
+    """Padrão de distância entre números consecutivos"""
     
     def __init__(self):
         self.roleta = RoletaBase()
         self.nome = "Salto"
         
     def _classificar_salto(self, diff):
-        """Classifica o salto: curto (1-6), médio (7-18), extremo (19+)"""
         abs_diff = abs(diff)
         if abs_diff <= 6:
             return 'curto'
@@ -289,7 +291,6 @@ class EstrategiaSalto:
             return 'extremo'
     
     def _get_saltos(self, hist_list):
-        """Calcula diferenças entre números consecutivos"""
         if len(hist_list) < 2:
             return []
         
@@ -308,35 +309,27 @@ class EstrategiaSalto:
         if len(saltos) < 4:
             return None
         
-        # Verifica últimos 3 saltos
         ultimos_3 = saltos[-3:]
         tipos = [t for _, t in ultimos_3]
         
-        # Se todos do mesmo tipo
         if len(set(tipos)) == 1:
             tipo_atual = tipos[0]
-            
-            # Gera números para quebra do padrão
             numeros = set()
             
             if tipo_atual == 'curto':
-                # Espera salto médio ou extremo - pegar números distantes
                 for i in range(37):
                     if abs(i - ultimo) > 6:
                         numeros.add(i)
             elif tipo_atual == 'medio':
-                # Espera curto ou extremo
                 for i in range(37):
                     diff = abs(i - ultimo)
                     if diff <= 6 or diff >= 19:
                         numeros.add(i)
-            else:  # extremo
-                # Espera curto ou médio
+            else:
                 for i in range(37):
                     if abs(i - ultimo) <= 18:
                         numeros.add(i)
             
-            # Limita a 10 números
             numeros_final = list(numeros)[:10]
             
             return {
@@ -352,18 +345,13 @@ class EstrategiaSalto:
 
 
 class EstrategiaCiclo:
-    """
-    Ciclo invisível: tempo médio de reaparição de cada número
-    Gatilho: número atingiu limite médio de atraso
-    Entrada: número + vizinhos
-    """
+    """Ciclo invisível: tempo médio de reaparição de cada número"""
     
     def __init__(self):
         self.roleta = RoletaBase()
         self.nome = "Ciclo"
         
     def _calcular_ciclos(self, hist_list):
-        """Calcula tempo médio de reaparição para cada número"""
         ciclos = {}
         
         for num in range(37):
@@ -384,20 +372,15 @@ class EstrategiaCiclo:
         if len(hist_list) < 20:
             return None
         
-        # Atualiza ciclos
         ciclos = self._calcular_ciclos(hist_list)
-        
-        # Procura números atrasados (ultimo > media * 1.2)
         atrasados = []
         for num, dados in ciclos.items():
             if dados['ultimo'] > dados['media'] * 1.2 and dados['ultimo'] >= 8:
                 atrasados.append((num, dados['ultimo'] / dados['media']))
         
         if atrasados:
-            # Pega o mais atrasado proporcionalmente
             atrasados.sort(key=lambda x: x[1], reverse=True)
             numero = atrasados[0][0]
-            
             vizinhos = self.roleta.get_vizinhos(numero, raio=2)
             numeros = list(set([numero] + vizinhos))
             
@@ -414,11 +397,7 @@ class EstrategiaCiclo:
 
 
 class EstrategiaAgrupamento:
-    """
-    Agrupamento dinâmico: detecta zonas ativas na roda
-    Gatilho: 3+ números próximos no wheel em 5 rodadas
-    Entrada: cobrir a região inteira
-    """
+    """Agrupamento dinâmico: detecta zonas ativas na roda"""
     
     def __init__(self):
         self.roleta = RoletaBase()
@@ -432,7 +411,6 @@ class EstrategiaAgrupamento:
         agrupado, grupo = self.roleta.get_regiao(ultimos_5)
         
         if agrupado and len(grupo) >= 3:
-            # Expande o grupo para cobrir a região
             regiao_completa = set()
             for num in grupo:
                 vizinhos = self.roleta.get_vizinhos_amplo(num, raio=3)
@@ -451,16 +429,12 @@ class EstrategiaAgrupamento:
 
 
 class EstrategiaEntropia:
-    """
-    Mede a "bagunça" da sequência
-    Gatilho: entropia baixa (previsível) ou alta (aleatório)
-    """
+    """Mede a "bagunça" da sequência"""
     
     def __init__(self):
         self.nome = "Entropia"
         
     def _calcular_entropia(self, sequencia):
-        """Calcula entropia de Shannon"""
         if len(sequencia) < 5:
             return 1.0
         
@@ -472,7 +446,6 @@ class EstrategiaEntropia:
             prob = count / total
             entropia -= prob * math.log2(prob)
         
-        # Normaliza (máximo seria log2(37) ≈ 5.2)
         entropia_max = math.log2(min(37, total))
         if entropia_max > 0:
             return entropia / entropia_max
@@ -483,12 +456,10 @@ class EstrategiaEntropia:
         if len(hist_list) < 15:
             return None
         
-        # Calcula entropia da janela de 15
         janela = hist_list[-15:]
         entropia = self._calcular_entropia(janela)
         
-        if entropia < 0.35:  # Baixa entropia = previsível
-            # Aposta em continuidade (repetição/cluster)
+        if entropia < 0.35:
             frequencias = Counter(janela)
             top5 = [num for num, _ in frequencias.most_common(5)]
             
@@ -501,17 +472,14 @@ class EstrategiaEntropia:
                 'tipo': 'entropia_baixa'
             }
         
-        elif entropia > 0.75:  # Alta entropia = aleatório
-            # Aposta espalhado
+        elif entropia > 0.75:
             numeros = set()
             numeros.add(0)
             numeros.add(ultimo)
             
-            # Pega números de regiões diferentes
             for i in [9, 18, 27]:
                 numeros.add(i)
             
-            # Adiciona alguns frequentes
             frequencias = Counter(hist_list)
             for num, _ in frequencias.most_common(3):
                 numeros.add(num)
@@ -529,11 +497,7 @@ class EstrategiaEntropia:
 
 
 class EstrategiaCompressao:
-    """
-    Compressão: números "apertando"
-    Gatilho: 4+ números dentro de intervalo pequeno
-    Entrada: EXPLOSÃO - pegar números fora da zona
-    """
+    """Compressão: números "apertando" """
     
     def __init__(self):
         self.roleta = RoletaBase()
@@ -544,27 +508,18 @@ class EstrategiaCompressao:
             return None
         
         ultimos_6 = hist_list[-6:]
-        
-        # Verifica se há compressão (números próximos)
-        # Ordena os últimos 6
         ordenados = sorted(ultimos_6)
         
-        # Verifica se 4+ números estão em intervalo pequeno (diferença <= 8)
         for i in range(len(ordenados) - 3):
             if ordenados[i+3] - ordenados[i] <= 8:
-                # Compressão detectada!
                 zona_comprimida = set(ordenados[i:i+4])
-                
-                # Pega números FORA da zona comprimida
                 numeros_fora = set()
                 for num in range(37):
-                    # Se está longe de todos da zona
                     distancias = [abs(num - z) for z in zona_comprimida]
                     if min(distancias) > 10:
                         numeros_fora.add(num)
                 
                 if len(numeros_fora) > 5:
-                    # Adiciona 0 e números extremos
                     numeros_final = list(numeros_fora)[:12]
                     
                     return {
@@ -779,93 +734,85 @@ class EstrategiaMultiplicador:
 # DETECTOR DE GATILHOS UNIFICADO
 # =============================
 class DetectorGatilhosUnificado:
-    """
-    Avalia TODAS as estratégias e retorna a melhor ativada
-    """
+    """Avalia TODAS as estratégias e retorna a melhor ativada"""
     
     def __init__(self):
         self.roleta = RoletaBase()
         
-        # Todas as estratégias
-        self.estrategias = [
-            EstrategiaMarkovTransicao(),
-            EstrategiaSalto(),
-            EstrategiaCiclo(),
-            EstrategiaAgrupamento(),
-            EstrategiaEntropia(),
-            EstrategiaCompressao(),
-            EstrategiaCluster(),
-            EstrategiaNucleoQuente(),
-            EstrategiaPosSequencia(),
-            EstrategiaBloco(),
-            EstrategiaMultiplicador()
+        # Mapeamento de estratégias
+        self.estrategias_map = {
+            'Cluster': EstrategiaCluster(),
+            'PosSequencia': EstrategiaPosSequencia(),
+            'Markov': EstrategiaMarkovTransicao(),
+            'Agrupamento': EstrategiaAgrupamento(),
+            'Compressao': EstrategiaCompressao(),
+            'Ciclo': EstrategiaCiclo(),
+            'NucleoQuente': EstrategiaNucleoQuente(),
+            'Bloco': EstrategiaBloco(),
+            'Salto': EstrategiaSalto(),
+            'Entropia': EstrategiaEntropia(),
+            'Multiplicador': EstrategiaMultiplicador()
+        }
+        
+        # Ordem de prioridade
+        self.ordem_prioridade = [
+            'Cluster', 'PosSequencia', 'Markov', 'Agrupamento', 
+            'Compressao', 'Ciclo', 'NucleoQuente', 'Bloco', 
+            'Salto', 'Entropia', 'Multiplicador'
         ]
         
     def detectar(self, hist_list, hist_mult, ultimo, matriz_transicao, ciclos_numeros, 
-                 perdas_cluster=0, perdas_bloco=0):
+                 perdas_cluster=0, perdas_bloco=0, estrategias_ativas=None):
         """
-        Avalia todas as estratégias e retorna a primeira ativada
-        Ordem de prioridade (as mais fortes primeiro)
+        Avalia todas as estratégias ATIVAS e retorna a primeira ativada
         """
         if len(hist_list) < 3:
             return None
         
-        # Prioridade 1: Cluster (se não estourou stop)
-        if perdas_cluster < 2:
-            resultado = self.estrategias[6].detectar(hist_list, ultimo)  # Cluster
+        if estrategias_ativas is None:
+            estrategias_ativas = {nome: True for nome in self.ordem_prioridade}
+        
+        for nome in self.ordem_prioridade:
+            # Pula se estratégia não estiver ativa
+            if not estrategias_ativas.get(nome, True):
+                continue
+            
+            # Verifica stops
+            if nome == 'Cluster' and perdas_cluster >= 2:
+                continue
+            if nome == 'Bloco' and perdas_bloco >= 2:
+                continue
+            
+            estrategia = self.estrategias_map[nome]
+            
+            # Chama o método detectar apropriado para cada estratégia
+            resultado = None
+            
+            if nome == 'Cluster':
+                resultado = estrategia.detectar(hist_list, ultimo)
+            elif nome == 'PosSequencia':
+                resultado = estrategia.detectar(hist_list)
+            elif nome == 'Markov':
+                resultado = estrategia.detectar(hist_list, ultimo, matriz_transicao)
+            elif nome == 'Agrupamento':
+                resultado = estrategia.detectar(hist_list)
+            elif nome == 'Compressao':
+                resultado = estrategia.detectar(hist_list)
+            elif nome == 'Ciclo':
+                resultado = estrategia.detectar(hist_list, ciclos_numeros)
+            elif nome == 'NucleoQuente':
+                resultado = estrategia.detectar(hist_list)
+            elif nome == 'Bloco':
+                resultado = estrategia.detectar(hist_list)
+            elif nome == 'Salto':
+                resultado = estrategia.detectar(hist_list, ultimo)
+            elif nome == 'Entropia':
+                resultado = estrategia.detectar(hist_list, ultimo)
+            elif nome == 'Multiplicador':
+                resultado = estrategia.detectar(hist_list, hist_mult)
+            
             if resultado:
                 return resultado
-        
-        # Prioridade 2: Pós-Sequência
-        resultado = self.estrategias[8].detectar(hist_list)
-        if resultado:
-            return resultado
-        
-        # Prioridade 3: Markov (Transição)
-        resultado = self.estrategias[0].detectar(hist_list, ultimo, matriz_transicao)
-        if resultado:
-            return resultado
-        
-        # Prioridade 4: Agrupamento
-        resultado = self.estrategias[3].detectar(hist_list)
-        if resultado:
-            return resultado
-        
-        # Prioridade 5: Compressão
-        resultado = self.estrategias[5].detectar(hist_list)
-        if resultado:
-            return resultado
-        
-        # Prioridade 6: Ciclo
-        resultado = self.estrategias[2].detectar(hist_list, ciclos_numeros)
-        if resultado:
-            return resultado
-        
-        # Prioridade 7: Núcleo Quente
-        resultado = self.estrategias[7].detectar(hist_list)
-        if resultado:
-            return resultado
-        
-        # Prioridade 8: Bloco (se não estourou stop)
-        if perdas_bloco < 2:
-            resultado = self.estrategias[9].detectar(hist_list)
-            if resultado:
-                return resultado
-        
-        # Prioridade 9: Salto
-        resultado = self.estrategias[1].detectar(hist_list, ultimo)
-        if resultado:
-            return resultado
-        
-        # Prioridade 10: Entropia
-        resultado = self.estrategias[4].detectar(hist_list, ultimo)
-        if resultado:
-            return resultado
-        
-        # Prioridade 11: Multiplicador
-        resultado = self.estrategias[10].detectar(hist_list, hist_mult)
-        if resultado:
-            return resultado
         
         return None
 
@@ -971,6 +918,14 @@ class SistemaAutoAdaptativo:
         if len(hist_list) > 0:
             ultimo = hist_list[-1]
             
+            # Obtém estratégias ativas da sessão
+            estrategias_ativas = st.session_state.get('estrategias_ativas', {
+                'Cluster': True, 'PosSequencia': True, 'Markov': True,
+                'Agrupamento': True, 'Compressao': True, 'Ciclo': True,
+                'NucleoQuente': True, 'Bloco': True, 'Salto': True,
+                'Entropia': True, 'Multiplicador': True
+            })
+            
             nova = self.detector.detectar(
                 hist_list,
                 self.historico_multiplicadores,
@@ -978,7 +933,8 @@ class SistemaAutoAdaptativo:
                 self.matriz_transicao,
                 self.ciclos_numeros,
                 self.perdas_cluster,
-                self.perdas_bloco
+                self.perdas_bloco,
+                estrategias_ativas
             )
             
             if nova:
@@ -1014,20 +970,20 @@ class SistemaAutoAdaptativo:
         analise += "📈 STATUS DAS ESTRATÉGIAS:\n"
         analise += "-" * 30 + "\n"
         
-        # Lista todas as estratégias e seus status
-        estrategias_nomes = [
-            "🔥 Cluster", "💣 Pós-Sequência", "🧠 Markov", 
-            "🎰 Agrupamento", "💥 Compressão", "🌀 Ciclo",
-            "🎯 Núcleo Quente", "📊 Bloco", "⚡ Salto", 
-            "📐 Entropia", "🚀 Multiplicador"
-        ]
-        
-        for nome in estrategias_nomes:
-            analise += f"{nome}\n"
+        estrategias_ativas = st.session_state.get('estrategias_ativas', {})
+        for nome in ['Cluster', 'PosSequencia', 'Markov', 'Agrupamento', 'Compressao', 
+                     'Ciclo', 'NucleoQuente', 'Bloco', 'Salto', 'Entropia', 'Multiplicador']:
+            status = "✅ ATIVA" if estrategias_ativas.get(nome, True) else "❌ INATIVA"
+            emoji = {
+                'Cluster': '🔥', 'PosSequencia': '💣', 'Markov': '🧠',
+                'Agrupamento': '🎰', 'Compressao': '💥', 'Ciclo': '🌀',
+                'NucleoQuente': '🎯', 'Bloco': '📊', 'Salto': '⚡',
+                'Entropia': '📐', 'Multiplicador': '🚀'
+            }.get(nome, '🎲')
+            analise += f"{emoji} {nome}: {status}\n"
         
         analise += "\n" + "=" * 50 + "\n"
         
-        # Mostra matriz de transição para o último número
         if ultimo in self.matriz_transicao and self.matriz_transicao[ultimo]:
             analise += f"\n🧠 Markov - após {ultimo}:\n"
             for prox, count in self.matriz_transicao[ultimo].most_common(3):
@@ -1097,6 +1053,15 @@ st.title("🎯 IA Roleta — Sistema Multi-Estratégias PRO")
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaAutoAdaptativo()
 
+# Inicializa estratégias ativas se não existir
+if "estrategias_ativas" not in st.session_state:
+    st.session_state.estrategias_ativas = {
+        'Cluster': True, 'PosSequencia': True, 'Markov': True,
+        'Agrupamento': True, 'Compressao': True, 'Ciclo': True,
+        'NucleoQuente': True, 'Bloco': True, 'Salto': True,
+        'Entropia': True, 'Multiplicador': True
+    }
+
 sessao_carregada = carregar_sessao()
 
 if "historico" not in st.session_state:
@@ -1116,6 +1081,57 @@ if "telegram_chat_id" not in st.session_state and not sessao_carregada:
 
 # Sidebar
 st.sidebar.title("⚙️ Configurações")
+
+# ===== SELEÇÃO DE ESTRATÉGIAS =====
+with st.sidebar.expander("🎯 Estratégias Ativas", expanded=True):
+    st.write("**Selecione quais estratégias usar:**")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.session_state.estrategias_ativas['Cluster'] = st.checkbox("🔥 Cluster", value=st.session_state.estrategias_ativas['Cluster'])
+        st.session_state.estrategias_ativas['PosSequencia'] = st.checkbox("💣 Pós-Sequência", value=st.session_state.estrategias_ativas['PosSequencia'])
+        st.session_state.estrategias_ativas['Markov'] = st.checkbox("🧠 Markov", value=st.session_state.estrategias_ativas['Markov'])
+        st.session_state.estrategias_ativas['Agrupamento'] = st.checkbox("🎰 Agrupamento", value=st.session_state.estrategias_ativas['Agrupamento'])
+        st.session_state.estrategias_ativas['Compressao'] = st.checkbox("💥 Compressão", value=st.session_state.estrategias_ativas['Compressao'])
+        st.session_state.estrategias_ativas['Ciclo'] = st.checkbox("🌀 Ciclo", value=st.session_state.estrategias_ativas['Ciclo'])
+    
+    with col2:
+        st.session_state.estrategias_ativas['NucleoQuente'] = st.checkbox("🎯 Núcleo Quente", value=st.session_state.estrategias_ativas['NucleoQuente'])
+        st.session_state.estrategias_ativas['Bloco'] = st.checkbox("📊 Bloco", value=st.session_state.estrategias_ativas['Bloco'])
+        st.session_state.estrategias_ativas['Salto'] = st.checkbox("⚡ Salto", value=st.session_state.estrategias_ativas['Salto'])
+        st.session_state.estrategias_ativas['Entropia'] = st.checkbox("📐 Entropia", value=st.session_state.estrategias_ativas['Entropia'])
+        st.session_state.estrategias_ativas['Multiplicador'] = st.checkbox("🚀 Multiplicador", value=st.session_state.estrategias_ativas['Multiplicador'])
+    
+    # Botões rápidos
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("✅ Todos", use_container_width=True):
+            for k in st.session_state.estrategias_ativas:
+                st.session_state.estrategias_ativas[k] = True
+            salvar_sessao()
+            st.rerun()
+    with c2:
+        if st.button("❌ Nenhum", use_container_width=True):
+            for k in st.session_state.estrategias_ativas:
+                st.session_state.estrategias_ativas[k] = False
+            salvar_sessao()
+            st.rerun()
+    with c3:
+        if st.button("⭐ Básicas", use_container_width=True):
+            # Ativa apenas as originais
+            for k in st.session_state.estrategias_ativas:
+                st.session_state.estrategias_ativas[k] = False
+            st.session_state.estrategias_ativas['Cluster'] = True
+            st.session_state.estrategias_ativas['NucleoQuente'] = True
+            st.session_state.estrategias_ativas['Bloco'] = True
+            st.session_state.estrategias_ativas['Multiplicador'] = True
+            salvar_sessao()
+            st.rerun()
+    
+    # Contador de ativas
+    ativas = sum(1 for v in st.session_state.estrategias_ativas.values() if v)
+    st.caption(f"📊 {ativas}/11 estratégias ativas")
 
 with st.sidebar.expander("💾 Gerenciamento", expanded=False):
     if st.button("💾 Salvar Sessão", use_container_width=True):
@@ -1162,21 +1178,6 @@ if st.sidebar.button("🔄 Resetar Stops", use_container_width=True):
 with st.sidebar.expander("🔍 Análise", expanded=True):
     analise = st.session_state.sistema.get_analise_completa()
     st.text(analise)
-
-st.sidebar.info("""
-**🎯 11 ESTRATÉGIAS:**
-- 🔥 Cluster
-- 💣 Pós-Sequência
-- 🧠 Markov (Transição)
-- 🎰 Agrupamento
-- 💥 Compressão
-- 🌀 Ciclo
-- 🎯 Núcleo Quente
-- 📊 Bloco
-- ⚡ Salto
-- 📐 Entropia
-- 🚀 Multiplicador
-""")
 
 # Inserção manual
 st.subheader("✍️ Inserir Sorteios")
@@ -1260,7 +1261,12 @@ elif sistema.previsao_ativa:
     for i, num in enumerate(nums):
         colunas[i % 6].write(f"**{num}**")
 else:
-    st.info("🎲 Aguardando gatilhos...")
+    # Verifica se há estratégias ativas
+    ativas = sum(1 for v in st.session_state.estrategias_ativas.values() if v)
+    if ativas == 0:
+        st.warning("⚠️ Nenhuma estratégia ativa! Ative pelo menos uma na sidebar.")
+    else:
+        st.info("🎲 Aguardando gatilhos...")
 
 # Desempenho
 st.subheader("📈 Desempenho por Estratégia")
