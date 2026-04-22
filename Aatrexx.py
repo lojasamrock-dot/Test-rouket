@@ -601,8 +601,9 @@ class RoletaInteligente:
         return vizinhos
 
 # ===== NOVO: ESTRATÉGIA TERMINAL UM =====
+#class EstrategiaTerminalUm:
 class EstrategiaTerminalUm:
-    """Estratégia Terminal Um: Gatilho após 14 sorteios sem Terminal 1 e 15º número específico"""
+    """Estratégia Terminal Um: A cada novo número, verifica os 14 anteriores + gatilho"""
     
     def __init__(self):
         self.roleta = RoletaInteligente()
@@ -614,12 +615,11 @@ class EstrategiaTerminalUm:
         self.terminal_1 = [1, 11, 21, 31]
         self.terminal_2 = [2, 12, 22, 32]
         
-        # Lista de números gatilho (fornecida pelo usuário)
+        # Lista de números gatilho
         self.numeros_gatilho = [4, 0, 10, 27, 9, 14, 25, 19, 1, 2, 32, 16]
         
-        # Janela de análise
-        self.janela_analise = 14
-        self.raio_vizinhos = 2  # 2 vizinhos antes e 2 depois
+        # Raio de vizinhos
+        self.raio_vizinhos = 2
         
     def adicionar_numero(self, numero):
         """Adiciona número ao histórico"""
@@ -632,7 +632,7 @@ class EstrategiaTerminalUm:
         return not any(n in self.terminal_1 for n in sequencia)
     
     def _get_vizinhos_numero(self, numero, raio=2):
-        """Retorna os vizinhos físicos de um número na roda"""
+        """Retorna os vizinhos físicos de um número na roda (apenas vizinhos, sem o número central)"""
         if numero not in self.roleta.race:
             return []
         
@@ -667,21 +667,25 @@ class EstrategiaTerminalUm:
         return sorted(list(numeros_aposta))
     
     def analisar(self):
-        """Analisa se as condições de gatilho foram atendidas"""
-        if len(self.historico) < self.janela_analise + 1:
-            return None
-        
+        """
+        Analisa a cada novo número se as condições de gatilho foram atendidas.
+        Verifica os 14 números ANTERIORES ao último.
+        """
         hist_list = list(self.historico)
         
-        # Últimos 14 números (índices -15 até -2)
-        ultimos_14 = hist_list[-15:-1] if len(hist_list) >= 15 else hist_list[:-1]
+        # Precisa de pelo menos 15 números (14 anteriores + 1 atual)
+        if len(hist_list) < 15:
+            return None
         
-        # 15º número (o mais recente)
-        numero_gatilho = hist_list[-1]
+        # Último número sorteado (posição -1)
+        ultimo_numero = hist_list[-1]
+        
+        # 14 números anteriores ao último (posições -15 até -2)
+        quatorze_anteriores = hist_list[-15:-1]
         
         # Verifica condições
-        ausencia_terminal1 = self._verificar_ausencia_terminal1(ultimos_14)
-        gatilho_ativado = numero_gatilho in self.numeros_gatilho
+        ausencia_terminal1 = self._verificar_ausencia_terminal1(quatorze_anteriores)
+        gatilho_ativado = ultimo_numero in self.numeros_gatilho
         
         if ausencia_terminal1 and gatilho_ativado:
             numeros_apostar = self._gerar_numeros_aposta()
@@ -694,10 +698,9 @@ class EstrategiaTerminalUm:
                 )
             
             # Gera mensagem de gatilho detalhada
-            terminais_ausentes = [n for n in self.terminal_1]
             gatilho = (f"🎯 TERMINAL UM ATIVADO!\n"
-                      f"📊 14 sorteios sem: {terminais_ausentes}\n"
-                      f"🔥 Gatilho no 15º: {numero_gatilho}")
+                      f"📊 14 anteriores sem Terminal 1\n"
+                      f"🔥 Gatilho no último: {ultimo_numero}")
             
             return {
                 'nome': 'Terminal Um Pro',
@@ -707,9 +710,8 @@ class EstrategiaTerminalUm:
                 'tipo': 'terminal_um',
                 'selecao_inteligente': len(numeros_apostar) < numeros_originais_qtd,
                 'numeros_originais_qtd': numeros_originais_qtd,
-                'numero_gatilho': numero_gatilho,
-                'terminais_ausentes': terminais_ausentes,
-                'janela_14': ultimos_14[-5:] if len(ultimos_14) > 5 else ultimos_14  # últimos 5 da janela
+                'numero_gatilho': ultimo_numero,
+                'janela_14': quatorze_anteriores[-5:] if len(quatorze_anteriores) > 5 else quatorze_anteriores
             }
         
         return None
@@ -727,29 +729,34 @@ class EstrategiaTerminalUm:
         analise += f"📊 Total histórico: {len(self.historico)} números\n"
         analise += f"🎲 Últimos 10: {ultimos[-10:]}\n\n"
         
-        # Status atual da janela de 14
-        if len(hist_list) >= 14:
-            janela_14 = hist_list[-15:-1] if len(hist_list) >= 15 else hist_list[-14:]
-            ausentes = not self._verificar_ausencia_terminal1(janela_14)
-            tem_terminal1 = any(n in self.terminal_1 for n in janela_14)
+        # Status atual da verificação
+        if len(hist_list) >= 15:
+            ultimo = hist_list[-1]
+            anteriores_14 = hist_list[-15:-1]
+            tem_terminal1 = any(n in self.terminal_1 for n in anteriores_14)
+            eh_gatilho = ultimo in self.numeros_gatilho
             
-            analise += f"📈 Janela 14 sorteios: {len(janela_14)} números\n"
-            analise += f"❌ Terminal 1 presente? {'SIM' if tem_terminal1 else 'NÃO'}\n"
+            analise += f"📈 ÚLTIMO NÚMERO: {ultimo}\n"
+            analise += f"   {'⚡ GATILHO!' if eh_gatilho else '⏳ Não é gatilho'}\n\n"
+            
+            analise += f"📊 14 ANTERIORES: {anteriores_14}\n"
+            analise += f"   Terminal 1 presente? {'❌ SIM' if tem_terminal1 else '✅ NÃO'}\n"
             
             if tem_terminal1:
-                terminais_encontrados = [n for n in janela_14 if n in self.terminal_1]
-                analise += f"   Números: {terminais_encontrados}\n"
+                encontrados = [n for n in anteriores_14 if n in self.terminal_1]
+                analise += f"   Números: {encontrados}\n"
+            
+            analise += f"\n🎯 STATUS: "
+            if not tem_terminal1 and eh_gatilho:
+                analise += "🟢 ENTRADA ATIVADA!\n"
+            elif not tem_terminal1:
+                analise += "🟡 Aguardando número gatilho...\n"
+            elif eh_gatilho:
+                analise += "🟠 Terminal 1 apareceu nos últimos 14\n"
             else:
-                analise += f"   ✅ JANELA LIMPA! Aguardando gatilho...\n"
-        
-        # Status do último número
-        if len(hist_list) >= 1:
-            ultimo = hist_list[-1]
-            analise += f"\n🎲 Último número: {ultimo}\n"
-            if ultimo in self.numeros_gatilho:
-                analise += f"   ⚡ Número GATILHO! ({ultimo})\n"
-            else:
-                analise += f"   ⏳ Aguardando número gatilho...\n"
+                analise += "🔴 Aguardando condições...\n"
+        else:
+            analise += f"⏳ Aguardando mais {15 - len(hist_list)} números para análise completa...\n"
         
         # Lista de números gatilho
         analise += f"\n🎯 Números Gatilho: {sorted(self.numeros_gatilho)}\n"
@@ -759,7 +766,10 @@ class EstrategiaTerminalUm:
         # Números que seriam apostados se ativasse agora
         numeros_aposta = self._gerar_numeros_aposta()
         analise += f"\n📋 Aposta potencial ({len(numeros_aposta)} números):\n"
-        analise += f"{numeros_aposta[:10]}..." if len(numeros_aposta) > 10 else f"{numeros_aposta}"
+        if len(numeros_aposta) > 10:
+            analise += f"{numeros_aposta[:10]}..."
+        else:
+            analise += f"{numeros_aposta}"
         
         return analise
     
@@ -767,6 +777,7 @@ class EstrategiaTerminalUm:
         """Zera o histórico"""
         self.historico.clear()
         logging.info("🎯 Estatísticas do Terminal Um zeradas")
+    
 
 # ===== ANALISADOR DE ESTADO DA ROLETA =====
 class AnalisadorEstadoRoleta:
