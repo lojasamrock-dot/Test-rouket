@@ -601,13 +601,14 @@ class RoletaInteligente:
         return vizinhos
 
 # ===== NOVO: ESTRATÉGIA TERMINAL UM =====
+#class 
 class EstrategiaTerminalUm:
     """
     Estratégia Terminal Um:
-    - A cada novo número sorteado, analisa os 14 sorteios anteriores
-    - Se NENHUM dos 14 anteriores for do Terminal 1 (1,11,21,31)
-    - E o número atual (15º) for um dos gatilhos específicos
-    - GERA ENTRADA com: Terminal 1 + Terminal 2 + vizinhos
+    - A cada novo sorteio, verifica os últimos 14 números (o atual + 13 anteriores)
+    - Se NENHUM dos 14 for do Terminal 1, fica no estado "14 LIMPOS"
+    - No próximo sorteio (15º), se for um número GATILHO, GERA ENTRADA
+    - Se não for gatilho, não gera entrada e continua observando
     """
     
     def __init__(self):
@@ -620,11 +621,14 @@ class EstrategiaTerminalUm:
         self.terminal_1 = [1, 11, 21, 31]
         self.terminal_2 = [2, 12, 22, 32]
         
-        # Números que ativam o gatilho quando saem como 15º
+        # Números que ativam a entrada quando saem como 15º
         self.numeros_gatilho = [4, 0, 10, 27, 9, 14, 25, 19, 1, 2, 32, 16]
         
-        # Raio de vizinhos na roda física
+        # Raio de vizinhos
         self.raio_vizinhos = 2
+        
+        # Flag para controlar estado "14 LIMPOS"
+        self.quatorze_limpos = False
         
     def adicionar_numero(self, numero):
         """Adiciona número ao histórico"""
@@ -632,19 +636,30 @@ class EstrategiaTerminalUm:
         if 'sistema' in st.session_state:
             salvar_sessao()
     
+    def _verificar_14_limpos(self):
+        """Verifica se os últimos 14 números NÃO contêm Terminal 1"""
+        hist_list = list(self.historico)
+        
+        if len(hist_list) < 14:
+            return False
+        
+        # Últimos 14 números (o mais recente + 13 anteriores)
+        ultimos_14 = hist_list[-14:]
+        
+        # Verifica se NENHUM é Terminal 1
+        return not any(n in self.terminal_1 for n in ultimos_14)
+    
     def _get_vizinhos_numero(self, numero, raio=2):
-        """Retorna os vizinhos físicos de um número na roda (sem incluir o próprio número)"""
+        """Retorna os vizinhos físicos de um número na roda"""
         if numero not in self.roleta.race:
             return []
         
         posicao = self.roleta.race.index(numero)
         vizinhos = []
         
-        # 2 anteriores
         for offset in range(-raio, 0):
             vizinhos.append(self.roleta.race[(posicao + offset) % 37])
         
-        # 2 posteriores
         for offset in range(1, raio + 1):
             vizinhos.append(self.roleta.race[(posicao + offset) % 37])
         
@@ -654,11 +669,11 @@ class EstrategiaTerminalUm:
         """Gera o conjunto completo de números para apostar"""
         numeros_aposta = set()
         
-        # Adiciona Terminal 1 e Terminal 2
+        # Terminal 1 e Terminal 2
         numeros_aposta.update(self.terminal_1)
         numeros_aposta.update(self.terminal_2)
         
-        # Adiciona vizinhos de cada número do Terminal 1
+        # Vizinhos de cada Terminal 1
         for num in self.terminal_1:
             vizinhos = self._get_vizinhos_numero(num, self.raio_vizinhos)
             numeros_aposta.update(vizinhos)
@@ -667,43 +682,40 @@ class EstrategiaTerminalUm:
     
     def analisar(self):
         """
-        Analisa se as condições de entrada foram atendidas:
-        - 14 sorteios anteriores sem Terminal 1
-        - Último sorteio (15º) é um número gatilho
+        Lógica principal:
+        1. Verifica se os últimos 14 números estão LIMPOS (sem Terminal 1)
+        2. Se sim, verifica se o número ATUAL (15º) é um GATILHO
+        3. Se for, GERA ENTRADA
         """
         hist_list = list(self.historico)
         
-        # Precisa de pelo menos 15 números (14 anteriores + 1 atual)
+        # Precisa de pelo menos 15 números para fazer a verificação
         if len(hist_list) < 15:
+            # Atualiza flag dos 14 limpos
+            self.quatorze_limpos = self._verificar_14_limpos()
             return None
         
-        # 14 sorteios ANTERIORES ao último
+        # Verifica se os 14 anteriores (posições -15 até -2) estão limpos
         quatorze_anteriores = hist_list[-15:-1]
+        quatorze_limpos = not any(n in self.terminal_1 for n in quatorze_anteriores)
         
-        # Último número sorteado (15º da análise)
-        ultimo_numero = hist_list[-1]
+        # Número atual (15º)
+        numero_atual = hist_list[-1]
         
-        # VERIFICAÇÃO 1: Nenhum Terminal 1 nos 14 anteriores?
-        tem_terminal1_nos_14 = any(n in self.terminal_1 for n in quatorze_anteriores)
-        
-        # VERIFICAÇÃO 2: Último número é um dos gatilhos?
-        ultimo_eh_gatilho = ultimo_numero in self.numeros_gatilho
-        
-        # Se NÃO tem Terminal 1 nos 14 anteriores E o último é gatilho
-        if not tem_terminal1_nos_14 and ultimo_eh_gatilho:
+        # Só gera entrada se: 14 anteriores LIMPOS E número atual é GATILHO
+        if quatorze_limpos and numero_atual in self.numeros_gatilho:
             numeros_apostar = self._gerar_numeros_aposta()
             
-            # Aplica seleção inteligente se houver muitos números
+            # Seleção inteligente
             numeros_originais_qtd = len(numeros_apostar)
             if len(numeros_apostar) > 15:
                 numeros_apostar = self.sistema_selecao.selecionar_melhores_15_numeros(
                     numeros_apostar, self.historico, "TerminalUm"
                 )
             
-            # Mensagem de gatilho
             gatilho = (f"🎯 TERMINAL UM ATIVADO!\n"
-                      f"📊 14 anteriores sem Terminal 1\n"
-                      f"🔥 Gatilho no 15º: {ultimo_numero}")
+                      f"📊 14 anteriores LIMPOS (sem Terminal 1)\n"
+                      f"🔥 15º número (GATILHO): {numero_atual}")
             
             return {
                 'nome': 'Terminal Um Pro',
@@ -713,14 +725,17 @@ class EstrategiaTerminalUm:
                 'tipo': 'terminal_um',
                 'selecao_inteligente': len(numeros_apostar) < numeros_originais_qtd,
                 'numeros_originais_qtd': numeros_originais_qtd,
-                'numero_gatilho': ultimo_numero,
-                'janela_14': quatorze_anteriores[-5:]  # últimos 5 da janela
+                'numero_gatilho': numero_atual,
+                'quatorze_limpos': True
             }
+        
+        # Atualiza flag para próximo ciclo
+        self.quatorze_limpos = self._verificar_14_limpos()
         
         return None
     
     def get_analise(self):
-        """Retorna análise detalhada do estado atual para debug"""
+        """Retorna análise detalhada do estado atual"""
         if len(self.historico) < 5:
             return "🎯 Terminal Um: Aguardando mais dados..."
         
@@ -731,34 +746,43 @@ class EstrategiaTerminalUm:
         analise += f"📊 Total histórico: {len(self.historico)} números\n"
         analise += f"🎲 Últimos 10: {hist_list[-10:]}\n\n"
         
-        if len(hist_list) >= 15:
-            ultimo = hist_list[-1]
-            anteriores_14 = hist_list[-15:-1]
-            tem_t1 = any(n in self.terminal_1 for n in anteriores_14)
-            eh_gatilho = ultimo in self.numeros_gatilho
+        # Status dos últimos 14
+        if len(hist_list) >= 14:
+            ultimos_14 = hist_list[-14:]
+            tem_t1_14 = any(n in self.terminal_1 for n in ultimos_14)
             
-            analise += f"📈 15º NÚMERO (atual): {ultimo} "
-            analise += f"{'⚡ GATILHO!' if eh_gatilho else '⏳'}\n\n"
+            analise += f"📊 ÚLTIMOS 14 SORTEIOS: {ultimos_14}\n"
+            analise += f"   Terminal 1 nos 14? {'❌ SIM' if tem_t1_14 else '✅ NÃO'}\n"
             
-            analise += f"📊 14 ANTERIORES: {anteriores_14}\n"
-            analise += f"   Terminal 1 presente? {'❌ SIM' if tem_t1 else '✅ NÃO'}\n"
-            
-            if tem_t1:
-                encontrados = [n for n in anteriores_14 if n in self.terminal_1]
+            if tem_t1_14:
+                encontrados = [n for n in ultimos_14 if n in self.terminal_1]
                 analise += f"   Números: {encontrados}\n"
-            
-            analise += f"\n🎯 STATUS: "
-            if not tem_t1 and eh_gatilho:
-                analise += "🟢 ENTRADA ATIVADA!\n"
-            elif not tem_t1:
-                analise += "🟡 14 limpos, aguardando gatilho...\n"
-            elif eh_gatilho:
-                analise += "🟠 Gatilho ativado, mas Terminal 1 apareceu nos 14\n"
             else:
-                analise += "🔴 Aguardando condições...\n"
+                analise += f"   ✅ 14 LIMPOS! Aguardando 15º gatilho...\n"
+        
+        # Status do 15º (se existir)
+        if len(hist_list) >= 15:
+            numero_15 = hist_list[-1]
+            anteriores_14 = hist_list[-15:-1]
+            limpos = not any(n in self.terminal_1 for n in anteriores_14)
+            eh_gatilho = numero_15 in self.numeros_gatilho
+            
+            analise += f"\n📈 15º SORTEIO: {numero_15}\n"
+            analise += f"   14 anteriores LIMPOS? {'✅ SIM' if limpos else '❌ NÃO'}\n"
+            analise += f"   É GATILHO? {'✅ SIM' if eh_gatilho else '❌ NÃO'}\n"
+            
+            analise += f"\n🎯 RESULTADO: "
+            if limpos and eh_gatilho:
+                analise += "🟢🟢🟢 ENTRADA ATIVADA! 🟢🟢🟢\n"
+            elif limpos:
+                analise += "🟡 14 limpos, mas 15º não foi gatilho\n"
+            elif eh_gatilho:
+                analise += "🟠 15º é gatilho, mas 14 não estavam limpos\n"
+            else:
+                analise += "🔴 Nenhuma condição atendida\n"
         else:
             faltam = 15 - len(hist_list)
-            analise += f"⏳ Aguardando mais {faltam} números...\n"
+            analise += f"\n⏳ Aguardando mais {faltam} sorteios...\n"
         
         analise += f"\n🎯 Gatilhos: {sorted(self.numeros_gatilho)}\n"
         analise += f"💎 Terminal 1: {self.terminal_1}\n"
@@ -769,6 +793,7 @@ class EstrategiaTerminalUm:
     def zerar_estatisticas(self):
         """Zera o histórico"""
         self.historico.clear()
+        self.quatorze_limpos = False
         logging.info("🎯 Terminal Um zerado")
     
 
