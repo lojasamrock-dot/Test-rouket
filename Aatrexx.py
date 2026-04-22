@@ -640,11 +640,11 @@ class EstrategiaTerminalUm:
         """Verifica se os últimos 14 números NÃO contêm Terminal 1"""
         hist_list = list(self.historico)
         
-        if len(hist_list) < 14:
+        if len(hist_list) < 7:
             return False
         
         # Últimos 14 números (o mais recente + 13 anteriores)
-        ultimos_14 = hist_list[-14:]
+        ultimos_14 = hist_list[-7:]
         
         # Verifica se NENHUM é Terminal 1
         return not any(n in self.terminal_1 for n in ultimos_14)
@@ -690,7 +690,7 @@ class EstrategiaTerminalUm:
         hist_list = list(self.historico)
         
         # Precisa de pelo menos 15 números para fazer a verificação
-        if len(hist_list) < 15:
+        if len(hist_list) < 8:
             # Atualiza flag dos 14 limpos
             self.quatorze_limpos = self._verificar_14_limpos()
             return None
