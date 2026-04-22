@@ -55,7 +55,8 @@ def salvar_sessao():
             'score_engine_lucky_tracking': st.session_state.sistema.estrategia_score.lucky_tracking if hasattr(st.session_state.sistema, 'estrategia_score') else [],
             'hedge_historico': list(st.session_state.sistema.estrategia_hedge.historico) if hasattr(st.session_state.sistema, 'estrategia_hedge') else [],
             'hedge_lucky_tracking': st.session_state.sistema.estrategia_hedge.lucky_tracking if hasattr(st.session_state.sistema, 'estrategia_hedge') else [],
-            'hedge_transitions': dict(st.session_state.sistema.estrategia_hedge.transitions) if hasattr(st.session_state.sistema, 'estrategia_hedge') else {}
+            'hedge_transitions': dict(st.session_state.sistema.estrategia_hedge.transitions) if hasattr(st.session_state.sistema, 'estrategia_hedge') else {},
+            'terminalum_historico': list(st.session_state.sistema.estrategia_terminalum.historico) if hasattr(st.session_state.sistema, 'estrategia_terminalum') else []
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -147,6 +148,10 @@ def carregar_sessao():
                     st.session_state.sistema.estrategia_hedge.historico = deque(hedge_historico, maxlen=200)
                     st.session_state.sistema.estrategia_hedge.lucky_tracking = session_data.get('hedge_lucky_tracking', [])
                     st.session_state.sistema.estrategia_hedge.transitions = defaultdict(Counter, session_data.get('hedge_transitions', {}))
+                
+                terminalum_historico = session_data.get('terminalum_historico', [])
+                if hasattr(st.session_state.sistema, 'estrategia_terminalum'):
+                    st.session_state.sistema.estrategia_terminalum.historico = deque(terminalum_historico, maxlen=200)
             
             logging.info("✅ Sessão carregada com sucesso")
             return True
@@ -227,6 +232,8 @@ def enviar_previsao_super_simplificada(previsao):
             mensagem = f"🧠 Score Engine - Top {len(numeros_apostar)} números"
         elif 'Hedge Fund' in nome_estrategia:
             mensagem = f"🏦 Hedge Fund Pro - Sinal de alta confiança ({len(numeros_apostar)} números)"
+        elif 'Terminal Um' in nome_estrategia:
+            mensagem = f"🎯 Terminal Um - Gatilho ativado! ({len(numeros_apostar)} números)"
         else:
             mensagem = f"💰 {previsao['nome']}"
         
@@ -262,6 +269,8 @@ def enviar_alerta_numeros_simplificado(previsao):
             emoji = "🧠"
         elif 'Hedge Fund' in nome_estrategia:
             emoji = "🏦"
+        elif 'Terminal Um' in nome_estrategia:
+            emoji = "🎯"
         else:
             emoji = "💰"
             
@@ -591,7 +600,175 @@ class RoletaInteligente:
         
         return vizinhos
 
-# ===== NOVO: ANALISADOR DE ESTADO DA ROLETA (CORRIGIDO) =====
+# ===== NOVO: ESTRATÉGIA TERMINAL UM =====
+class EstrategiaTerminalUm:
+    """Estratégia Terminal Um: Gatilho após 14 sorteios sem Terminal 1 e 15º número específico"""
+    
+    def __init__(self):
+        self.roleta = RoletaInteligente()
+        self.historico = deque(maxlen=200)
+        self.nome = "Terminal Um Pro"
+        self.sistema_selecao = SistemaSelecaoInteligente()
+        
+        # Definição dos terminais
+        self.terminal_1 = [1, 11, 21, 31]
+        self.terminal_2 = [2, 12, 22, 32]
+        
+        # Lista de números gatilho (fornecida pelo usuário)
+        self.numeros_gatilho = [4, 0, 10, 27, 9, 14, 25, 19, 1, 2, 32, 16]
+        
+        # Janela de análise
+        self.janela_analise = 14
+        self.raio_vizinhos = 2  # 2 vizinhos antes e 2 depois
+        
+    def adicionar_numero(self, numero):
+        """Adiciona número ao histórico"""
+        self.historico.append(numero)
+        if 'sistema' in st.session_state:
+            salvar_sessao()
+    
+    def _verificar_ausencia_terminal1(self, sequencia):
+        """Verifica se nenhum número do Terminal 1 está presente na sequência"""
+        return not any(n in self.terminal_1 for n in sequencia)
+    
+    def _get_vizinhos_numero(self, numero, raio=2):
+        """Retorna os vizinhos físicos de um número na roda"""
+        if numero not in self.roleta.race:
+            return []
+        
+        posicao = self.roleta.race.index(numero)
+        vizinhos = []
+        
+        # Vizinhos anteriores
+        for offset in range(-raio, 0):
+            vizinho = self.roleta.race[(posicao + offset) % 37]
+            vizinhos.append(vizinho)
+        
+        # Vizinhos posteriores
+        for offset in range(1, raio + 1):
+            vizinho = self.roleta.race[(posicao + offset) % 37]
+            vizinhos.append(vizinho)
+        
+        return vizinhos
+    
+    def _gerar_numeros_aposta(self):
+        """Gera o conjunto completo de números para apostar"""
+        numeros_aposta = set()
+        
+        # Adiciona Terminal 1 e Terminal 2
+        numeros_aposta.update(self.terminal_1)
+        numeros_aposta.update(self.terminal_2)
+        
+        # Adiciona vizinhos de cada número do Terminal 1
+        for num in self.terminal_1:
+            vizinhos = self._get_vizinhos_numero(num, self.raio_vizinhos)
+            numeros_aposta.update(vizinhos)
+        
+        return sorted(list(numeros_aposta))
+    
+    def analisar(self):
+        """Analisa se as condições de gatilho foram atendidas"""
+        if len(self.historico) < self.janela_analise + 1:
+            return None
+        
+        hist_list = list(self.historico)
+        
+        # Últimos 14 números (índices -15 até -2)
+        ultimos_14 = hist_list[-15:-1] if len(hist_list) >= 15 else hist_list[:-1]
+        
+        # 15º número (o mais recente)
+        numero_gatilho = hist_list[-1]
+        
+        # Verifica condições
+        ausencia_terminal1 = self._verificar_ausencia_terminal1(ultimos_14)
+        gatilho_ativado = numero_gatilho in self.numeros_gatilho
+        
+        if ausencia_terminal1 and gatilho_ativado:
+            numeros_apostar = self._gerar_numeros_aposta()
+            
+            # Aplica seleção inteligente se houver muitos números
+            numeros_originais_qtd = len(numeros_apostar)
+            if len(numeros_apostar) > 15:
+                numeros_apostar = self.sistema_selecao.selecionar_melhores_15_numeros(
+                    numeros_apostar, self.historico, "TerminalUm"
+                )
+            
+            # Gera mensagem de gatilho detalhada
+            terminais_ausentes = [n for n in self.terminal_1]
+            gatilho = (f"🎯 TERMINAL UM ATIVADO!\n"
+                      f"📊 14 sorteios sem: {terminais_ausentes}\n"
+                      f"🔥 Gatilho no 15º: {numero_gatilho}")
+            
+            return {
+                'nome': 'Terminal Um Pro',
+                'numeros_apostar': numeros_apostar,
+                'gatilho': gatilho,
+                'confianca': 'Alta',
+                'tipo': 'terminal_um',
+                'selecao_inteligente': len(numeros_apostar) < numeros_originais_qtd,
+                'numeros_originais_qtd': numeros_originais_qtd,
+                'numero_gatilho': numero_gatilho,
+                'terminais_ausentes': terminais_ausentes,
+                'janela_14': ultimos_14[-5:] if len(ultimos_14) > 5 else ultimos_14  # últimos 5 da janela
+            }
+        
+        return None
+    
+    def get_analise(self):
+        """Retorna análise detalhada do estado atual"""
+        if len(self.historico) < 5:
+            return "🎯 Terminal Um: Aguardando mais dados (mínimo 5 números)"
+        
+        hist_list = list(self.historico)
+        ultimos = hist_list[-min(20, len(hist_list)):]
+        
+        analise = "🎯 ANÁLISE TERMINAL UM PRO\n"
+        analise += "=" * 45 + "\n"
+        analise += f"📊 Total histórico: {len(self.historico)} números\n"
+        analise += f"🎲 Últimos 10: {ultimos[-10:]}\n\n"
+        
+        # Status atual da janela de 14
+        if len(hist_list) >= 14:
+            janela_14 = hist_list[-15:-1] if len(hist_list) >= 15 else hist_list[-14:]
+            ausentes = not self._verificar_ausencia_terminal1(janela_14)
+            tem_terminal1 = any(n in self.terminal_1 for n in janela_14)
+            
+            analise += f"📈 Janela 14 sorteios: {len(janela_14)} números\n"
+            analise += f"❌ Terminal 1 presente? {'SIM' if tem_terminal1 else 'NÃO'}\n"
+            
+            if tem_terminal1:
+                terminais_encontrados = [n for n in janela_14 if n in self.terminal_1]
+                analise += f"   Números: {terminais_encontrados}\n"
+            else:
+                analise += f"   ✅ JANELA LIMPA! Aguardando gatilho...\n"
+        
+        # Status do último número
+        if len(hist_list) >= 1:
+            ultimo = hist_list[-1]
+            analise += f"\n🎲 Último número: {ultimo}\n"
+            if ultimo in self.numeros_gatilho:
+                analise += f"   ⚡ Número GATILHO! ({ultimo})\n"
+            else:
+                analise += f"   ⏳ Aguardando número gatilho...\n"
+        
+        # Lista de números gatilho
+        analise += f"\n🎯 Números Gatilho: {sorted(self.numeros_gatilho)}\n"
+        analise += f"💎 Terminal 1: {self.terminal_1}\n"
+        analise += f"💎 Terminal 2: {self.terminal_2}\n"
+        
+        # Números que seriam apostados se ativasse agora
+        numeros_aposta = self._gerar_numeros_aposta()
+        analise += f"\n📋 Aposta potencial ({len(numeros_aposta)} números):\n"
+        analise += f"{numeros_aposta[:10]}..." if len(numeros_aposta) > 10 else f"{numeros_aposta}"
+        
+        return analise
+    
+    def zerar_estatisticas(self):
+        """Zera o histórico"""
+        self.historico.clear()
+        logging.info("🎯 Estatísticas do Terminal Um zeradas")
+
+# ===== ANALISADOR DE ESTADO DA ROLETA =====
 class AnalisadorEstadoRoleta:
     """Classifica o momento atual da roleta e calcula entropia"""
     
@@ -601,11 +778,10 @@ class AnalisadorEstadoRoleta:
         
     def calcular_entropia(self, numeros, janela=15):
         """Calcula entropia de Shannon para medir aleatoriedade"""
-        # Converte para lista se for deque
         if isinstance(numeros, deque):
             numeros = list(numeros)
         if len(numeros) < janela:
-            return 5.0  # Alta entropia quando poucos dados
+            return 5.0
         
         seq = numeros[-janela:]
         counts = np.bincount(seq, minlength=37)
@@ -629,14 +805,11 @@ class AnalisadorEstadoRoleta:
             return 'RANDOM', 0.0
         
         ultimos_10 = hist[-10:]
-        ultimo = hist[-1]
         
-        # Verifica HOT_CLUSTER (repetições consecutivas)
         repeticoes = sum(1 for i in range(1, len(ultimos_10)) if ultimos_10[i] == ultimos_10[i-1])
         if repeticoes >= 2:
             return 'HOT_CLUSTER', 0.8
         
-        # Verifica SECTOR_RUN (movimento em vizinhança)
         vizinhos_sequencia = 0
         for i in range(1, len(ultimos_10)):
             atual = ultimos_10[i]
@@ -648,7 +821,6 @@ class AnalisadorEstadoRoleta:
         if vizinhos_sequencia >= 4:
             return 'SECTOR_RUN', 0.7
         
-        # Verifica DELAY_BREAK (número que não saía há muito tempo)
         if len(hist) > 30:
             for num in range(37):
                 if num not in hist[-20:] and num in hist[-5:]:
@@ -665,7 +837,7 @@ class AnalisadorEstadoRoleta:
         
         return favoravel, estado, entropia, confianca
 
-# ===== NOVO: FILTRO DE ENTRADA =====
+# ===== FILTRO DE ENTRADA =====
 class FiltroEntrada:
     """Decide se deve apostar com base no estado e força do sinal"""
     
@@ -692,7 +864,7 @@ class FiltroEntrada:
         
         return True, f"✅ SINAL FORTE | {estado} | Entropia {entropia:.2f}"
 
-# ===== NOVO: ESTRATÉGIA HEDGE FUND PRO (CORRIGIDO) =====
+# ===== ESTRATÉGIA HEDGE FUND PRO =====
 class EstrategiaHedgeFund:
     def __init__(self, top_k: int = 8):
         self.roleta = RoletaInteligente()
@@ -882,7 +1054,7 @@ class EstrategiaHedgeFund:
         self.transitions.clear()
         logging.info("🏦 Estatísticas do Hedge Fund zeradas")
 
-# ===== ESTRATÉGIA SCORE ENGINE (mantida) =====
+# ===== ESTRATÉGIA SCORE ENGINE =====
 class EstrategiaScoreEngine:
     def __init__(self, top_k: int = 12):
         self.roleta = RoletaInteligente()
@@ -1029,7 +1201,7 @@ class EstrategiaScoreEngine:
         self.lucky_tracking.clear()
         logging.info("🧠 Estatísticas do Score Engine zeradas")
 
-# ===== ESTRATÉGIA MARKOV (mantida) =====
+# ===== ESTRATÉGIA MARKOV =====
 class EstrategiaMarkov:
     def __init__(self, ordem: int = 2, top_k: int = 6):
         self.roleta = RoletaInteligente()
@@ -1174,7 +1346,7 @@ class EstrategiaMarkov:
         self.contador_sorteios = 0
         logging.info("🔄 Matriz Markov zerada")
 
-# ===== ESTRATÉGIA ZONAS (mantida) =====
+# ===== ESTRATÉGIA ZONAS =====
 class EstrategiaZonasOtimizada:
     def __init__(self):
         self.roleta = RoletaInteligente()
@@ -1310,7 +1482,7 @@ class EstrategiaZonasOtimizada:
         self.combinacao_atual = self.combinacoes_possiveis[0]
         self.ultima_combinacao_erro = ""
 
-# ===== ESTRATÉGIA MIDAS (mantida) =====
+# ===== ESTRATÉGIA MIDAS =====
 class EstrategiaMidas:
     def __init__(self):
         self.roleta = RoletaInteligente()
@@ -1360,7 +1532,6 @@ class MLRoletaOtimizada:
         hist = list(historico)
         N = len(hist)
         if N < 10: return None, None
-        # simplificado - retorna lista vazia para não quebrar
         return [], []
 
     def preparar_dados_treinamento(self, historico):
@@ -1413,12 +1584,13 @@ class SistemaRoletaCompleto:
         self.estrategia_markov = EstrategiaMarkov(ordem=2, top_k=6)
         self.estrategia_score = EstrategiaScoreEngine(top_k=12)
         self.estrategia_hedge = EstrategiaHedgeFund(top_k=8)
+        self.estrategia_terminalum = EstrategiaTerminalUm()  # NOVA ESTRATÉGIA
         self.previsao_ativa = None
         self.historico_desempenho = []
         self.acertos = 0
         self.erros = 0
         self.estrategias_contador = {}
-        self.estrategia_selecionada = "Zonas"
+        self.estrategia_selecionada = "TerminalUm"  # Default para a nova estratégia
         self.contador_sorteios_global = 0
         self.sequencia_erros = 0
         self.ultima_estrategia_erro = ""
@@ -1440,12 +1612,13 @@ class SistemaRoletaCompleto:
             self.ultima_estrategia_erro = nome_estrategia
             if self.sequencia_erros >= 2:
                 atual = self.estrategia_selecionada
-                if atual == "Zonas": nova = "ML"
-                elif atual == "ML": nova = "Markov"
-                elif atual == "Markov": nova = "ScoreEngine"
-                elif atual == "ScoreEngine": nova = "HedgeFund"
-                elif atual == "HedgeFund": nova = "Zonas"
-                else: nova = "Zonas"
+                # Ordem de rotação incluindo TerminalUm
+                ordem = ["TerminalUm", "Zonas", "ML", "Markov", "ScoreEngine", "HedgeFund"]
+                try:
+                    idx = ordem.index(atual)
+                    nova = ordem[(idx + 1) % len(ordem)]
+                except ValueError:
+                    nova = "TerminalUm"
                 self.estrategia_selecionada = nova
                 self.sequencia_erros = 0
                 enviar_rotacao_automatica(atual, nova, f"2 erros consecutivos em {atual}")
@@ -1503,12 +1676,14 @@ class SistemaRoletaCompleto:
             })
             self.previsao_ativa = None
 
+        # Adiciona número a TODAS as estratégias
         self.estrategia_zonas.adicionar_numero(numero_real)
         self.estrategia_midas.adicionar_numero(numero_real)
         self.estrategia_ml.adicionar_numero(numero_real)
         self.estrategia_markov.adicionar_numero(numero_real)
         self.estrategia_score.adicionar_numero(numero_real, lucky)
         self.estrategia_hedge.adicionar_numero(numero_real, lucky)
+        self.estrategia_terminalum.adicionar_numero(numero_real)  # NOVA ESTRATÉGIA
 
         nova = None
         if self.estrategia_selecionada == "Zonas":
@@ -1523,6 +1698,8 @@ class SistemaRoletaCompleto:
             nova = self.estrategia_score.analisar_score()
         elif self.estrategia_selecionada == "HedgeFund":
             nova = self.estrategia_hedge.analisar()
+        elif self.estrategia_selecionada == "TerminalUm":  # NOVA ESTRATÉGIA
+            nova = self.estrategia_terminalum.analisar()
 
         if nova:
             self.previsao_ativa = nova
@@ -1540,6 +1717,7 @@ class SistemaRoletaCompleto:
         self.estrategia_markov.zerar_matriz()
         self.estrategia_score.zerar_estatisticas()
         self.estrategia_hedge.zerar_estatisticas()
+        self.estrategia_terminalum.zerar_estatisticas()  # NOVA ESTRATÉGIA
         salvar_sessao()
 
     def reset_recente_estatisticas(self):
@@ -1610,7 +1788,7 @@ def fetch_latest_result():
         return None
 
 # ===== APLICAÇÃO STREAMLIT =====
-st.set_page_config(page_title="IA Roleta — Hedge Fund Pro", layout="centered")
+st.set_page_config(page_title="IA Roleta — Terminal Um Pro", layout="centered")
 st.title("🎯 IA Roleta — Sistema Multi-Estratégias PRO")
 
 if "sistema" not in st.session_state:
@@ -1677,7 +1855,7 @@ with st.sidebar.expander("🔔 Telegram", expanded=False):
 
 estrategia = st.sidebar.selectbox(
     "🎯 Estratégia:",
-    ["Zonas", "Midas", "ML", "Markov", "ScoreEngine", "HedgeFund"],
+    ["TerminalUm", "Zonas", "Midas", "ML", "Markov", "ScoreEngine", "HedgeFund"],  # TerminalUm adicionado
     key="estrategia_selecionada"
 )
 if estrategia != st.session_state.sistema.estrategia_selecionada:
@@ -1688,19 +1866,31 @@ with st.sidebar.expander("🔄 Rotação Automática", expanded=True):
     st.write(f"🎯 **Atual:** {status['estrategia_atual']}")
     st.write(f"❌ **Erros:** {status['sequencia_erros']}/2")
     st.write(f"🔄 **Próx. rot. em:** {status['proxima_rotacao_em']} erro(s)")
-    st.write("**Ordem:** Zonas → ML → Markov → ScoreEngine → HedgeFund → Zonas")
+    st.write("**Ordem:** TerminalUm → Zonas → ML → Markov → ScoreEngine → HedgeFund → TerminalUm")
     if st.button("🔄 Forçar Rotação", use_container_width=True):
         atual = st.session_state.sistema.estrategia_selecionada
-        if atual == "Zonas": nova = "ML"
-        elif atual == "ML": nova = "Markov"
-        elif atual == "Markov": nova = "ScoreEngine"
-        elif atual == "ScoreEngine": nova = "HedgeFund"
-        elif atual == "HedgeFund": nova = "Zonas"
-        else: nova = "Zonas"
+        ordem = ["TerminalUm", "Zonas", "ML", "Markov", "ScoreEngine", "HedgeFund"]
+        try:
+            idx = ordem.index(atual)
+            nova = ordem[(idx + 1) % len(ordem)]
+        except ValueError:
+            nova = "TerminalUm"
         st.session_state.sistema.estrategia_selecionada = nova
         st.session_state.sistema.sequencia_erros = 0
         st.success(f"🔄 {atual} → {nova}")
         st.rerun()
+
+with st.sidebar.expander("🎯 Terminal Um Config", expanded=False):
+    st.write("**Estratégia Terminal Um**")
+    st.write("- Analisa 14 sorteios sem Terminal 1")
+    st.write("- Gatilho no 15º com número específico")
+    st.write("- Aposta: Terminal 1 + Terminal 2 + Vizinhos")
+    st.write(f"**Terminal 1:** 1, 11, 21, 31")
+    st.write(f"**Terminal 2:** 2, 12, 22, 32")
+    st.write(f"**Gatilhos:** 4, 0, 10, 27, 9, 14, 25, 19, 1, 2, 32, 16")
+    if st.button("🧹 Zerar Terminal Um", use_container_width=True):
+        st.session_state.sistema.estrategia_terminalum.zerar_estatisticas()
+        st.success("✅ Zerado!")
 
 with st.sidebar.expander("🏦 Hedge Fund Config", expanded=False):
     st.write("**Filtro de Entrada**")
@@ -1723,6 +1913,8 @@ with st.sidebar.expander(f"🔍 Análise - {estrategia}", expanded=False):
         analise = st.session_state.sistema.estrategia_score.get_analise_score()
     elif estrategia == "HedgeFund":
         analise = st.session_state.sistema.estrategia_hedge.get_analise()
+    elif estrategia == "TerminalUm":
+        analise = st.session_state.sistema.estrategia_terminalum.get_analise()
     else:
         analise = "Estratégia Midas ativa"
     st.text(analise)
@@ -1790,11 +1982,15 @@ if sistema.previsao_ativa:
         st.info("🎯 Seleção Inteligente ativa")
     if 'Hedge Fund' in p['nome']:
         st.info(f"🏦 **Estado:** {p.get('estado', 'N/A')} | **Entropia:** {p.get('entropia', 0):.3f}")
+    if 'Terminal Um' in p['nome']:
+        st.info(f"🎯 **Gatilho:** {p.get('numero_gatilho')} | **Terminais ausentes:** {p.get('terminais_ausentes')}")
     st.write(f"**🔢 Números ({len(p['numeros_apostar'])}):**")
     st.write(", ".join(map(str, sorted(p['numeros_apostar']))))
 else:
     if sistema.estrategia_selecionada == "HedgeFund":
         st.info("🏦 **Hedge Fund Pro:** Aguardando momento oportuno (baixa entropia / sinal forte)...")
+    elif sistema.estrategia_selecionada == "TerminalUm":
+        st.info("🎯 **Terminal Um:** Aguardando 14 sorteios sem Terminal 1 + gatilho específico...")
     else:
         st.info(f"🎲 Analisando padrões ({estrategia})...")
 
