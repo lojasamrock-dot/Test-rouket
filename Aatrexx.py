@@ -36,13 +36,13 @@ def salvar_sessao():
             'estrategias_ativas': st.session_state.get('estrategias_ativas', {
                 'Dominante': True, 'Ruptura': True, 'CicloReal': True
             }),
-            'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 50),
+            'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 45),
             'expandir_com_vizinhos': st.session_state.get('expandir_com_vizinhos', True),
             'max_numeros_entrada': st.session_state.get('max_numeros_entrada', 15),
             'qtd_vizinhos_antes': st.session_state.get('qtd_vizinhos_antes', 3),
             'qtd_vizinhos_depois': st.session_state.get('qtd_vizinhos_depois', 3),
             'modo_adaptativo': st.session_state.get('modo_adaptativo', True),
-            'taxa_minima_estrategia': st.session_state.get('taxa_minima_estrategia', 25),
+            'taxa_minima_estrategia': st.session_state.get('taxa_minima_estrategia', 20),
             'intervalo_minimo_entradas': st.session_state.get('intervalo_minimo_entradas', 1)
         }
         
@@ -75,13 +75,13 @@ def carregar_sessao():
                 'Dominante': True, 'Ruptura': True, 'CicloReal': True
             })
             
-            st.session_state.forca_minima_sinal = session_data.get('forca_minima_sinal', 50)
+            st.session_state.forca_minima_sinal = session_data.get('forca_minima_sinal', 45)
             st.session_state.expandir_com_vizinhos = session_data.get('expandir_com_vizinhos', True)
             st.session_state.max_numeros_entrada = session_data.get('max_numeros_entrada', 15)
             st.session_state.qtd_vizinhos_antes = session_data.get('qtd_vizinhos_antes', 3)
             st.session_state.qtd_vizinhos_depois = session_data.get('qtd_vizinhos_depois', 3)
             st.session_state.modo_adaptativo = session_data.get('modo_adaptativo', True)
-            st.session_state.taxa_minima_estrategia = session_data.get('taxa_minima_estrategia', 25)
+            st.session_state.taxa_minima_estrategia = session_data.get('taxa_minima_estrategia', 20)
             st.session_state.intervalo_minimo_entradas = session_data.get('intervalo_minimo_entradas', 1)
             
             if 'sistema' in st.session_state:
@@ -317,7 +317,7 @@ class SeletorInteligente:
             
             if len(hist_list) >= 10:
                 recentes = hist_list[-20:]
-                freq = recentes.count(num) / len(recentes)
+                freq = recentes.count(num) / len(recentes) if recentes else 0
                 score += freq * 40
             
             if len(hist_list) >= 5:
@@ -344,7 +344,7 @@ class SeletorInteligente:
 
 
 # =============================
-# MOTOR DE PERFORMANCE (CORRIGIDO - MENOS RESTRITIVO)
+# MOTOR DE PERFORMANCE
 # =============================
 class MotorPerformance:
     """Gerencia a performance real de cada estratégia"""
@@ -355,46 +355,37 @@ class MotorPerformance:
             'Ruptura': {'wins': 0, 'losses': 0, 'historico': [], 'ultima_atualizacao': None},
             'Ciclo Real': {'wins': 0, 'losses': 0, 'historico': [], 'ultima_atualizacao': None}
         }
-        self.peso_performance = 0.50  # 50% peso da taxa histórica
-        self.peso_condicao = 0.50     # 50% peso das condições atuais
+        self.peso_performance = 0.50
+        self.peso_condicao = 0.50
     
     def get_taxa_real(self, estrategia):
-        """Retorna a taxa de acerto real da estratégia"""
         if estrategia not in self.performance:
-            return 0.5  # Neutro
+            return 0.5
         
         data = self.performance[estrategia]
         total = data['wins'] + data['losses']
         
         if total == 0:
-            return 0.5  # Sem dados = neutro (50%)
+            return 0.5
         
         return data['wins'] / total
     
     def get_total_tentativas(self, estrategia):
-        """Retorna o total de tentativas da estratégia"""
         if estrategia not in self.performance:
             return 0
         data = self.performance[estrategia]
         return data['wins'] + data['losses']
     
-    def is_estrategia_valida(self, estrategia, taxa_minima=0.25):
-        """
-        Verifica se a estratégia tem performance mínima para ser usada
-        CORRIGIDO: Mais permissivo com poucos dados
-        """
+    def is_estrategia_valida(self, estrategia, taxa_minima=0.20):
         total = self.get_total_tentativas(estrategia)
         
-        # FASE DE COLETA: Se tem menos de 5 tentativas, é válida
         if total < 5:
             return True
         
-        # FASE DE AVALIAÇÃO: Precisa ter taxa mínima
         taxa = self.get_taxa_real(estrategia)
         return taxa >= taxa_minima
     
     def atualizar_resultado(self, estrategia, acerto):
-        """Atualiza a performance após cada resultado"""
         if estrategia not in self.performance:
             return
         
@@ -411,7 +402,6 @@ class MotorPerformance:
         self.performance[estrategia]['ultima_atualizacao'] = datetime.now().isoformat()
     
     def get_taxa_recente(self, estrategia, ultimas_n=5):
-        """Taxa de acerto nas últimas N tentativas"""
         if estrategia not in self.performance:
             return 0.5
         
@@ -420,10 +410,9 @@ class MotorPerformance:
             return self.get_taxa_real(estrategia)
         
         recentes = historico[-ultimas_n:]
-        return sum(recentes) / len(recentes)
+        return sum(recentes) / len(recentes) if recentes else 0.5
     
     def get_tendencia(self, estrategia):
-        """Analisa se a estratégia está em tendência de alta ou baixa"""
         total = self.get_total_tentativas(estrategia)
         if total < 3:
             return 'neutra'
@@ -439,30 +428,19 @@ class MotorPerformance:
             return 'estavel'
     
     def calcular_forca_real(self, estrategia, forca_condicao):
-        """
-        Calcula a força real combinando:
-        - Taxa histórica (50%)
-        - Condições atuais (50%)
-        CORRIGIDO: Mais peso na condição quando há poucos dados
-        """
         taxa_real = self.get_taxa_real(estrategia)
         total = self.get_total_tentativas(estrategia)
         
-        # Ajusta pesos baseado na quantidade de dados
         if total < 3:
-            # Poucos dados: confia mais na condição
             peso_perf = 0.2
             peso_cond = 0.8
         elif total < 8:
-            # Dados moderados: equilibrado
             peso_perf = 0.4
             peso_cond = 0.6
         else:
-            # Muitos dados: confia mais na performance
             peso_perf = self.peso_performance
             peso_cond = self.peso_condicao
         
-        # Ajusta pela tendência
         tendencia = self.get_tendencia(estrategia)
         fator_tendencia = 1.0
         if tendencia == 'subindo':
@@ -476,7 +454,6 @@ class MotorPerformance:
         return min(100, max(0, forca_real))
     
     def get_status_formatado(self, estrategia):
-        """Retorna status formatado para exibição"""
         taxa = self.get_taxa_real(estrategia)
         total = self.get_total_tentativas(estrategia)
         tendencia = self.get_tendencia(estrategia)
@@ -530,13 +507,12 @@ class EstrategiaDominante:
     
     def detectar(self, hist_list, ultimo, matriz_transicao, expandir_vizinhos=True, 
                  max_numeros=15, qtd_antes=3, qtd_depois=3):
-        if len(hist_list) < 8:  # Reduzido de 10 para 8
+        if len(hist_list) < 8:
             return None, 0
         
         ultimas_6 = hist_list[-6:] if len(hist_list) >= 6 else hist_list
         ocorrencias_6 = ultimas_6.count(ultimo)
         
-        # Reduzido de 2 para 1 ocorrência (mais permissivo)
         if ocorrencias_6 < 1:
             return None, 0
         
@@ -596,23 +572,20 @@ class EstrategiaRuptura:
         
         ultimos_3 = hist_list[-3:]
         
-        # Repetição (mais permissivo)
         if len(set(ultimos_3)) <= 2:
             return True, ultimos_3
         
-        # Proximidade numérica (ampliado)
         ordenados = sorted(ultimos_3)
-        if ordenados[-1] - ordenados[0] <= 10:  # Aumentado de 6 para 10
+        if ordenados[-1] - ordenados[0] <= 10:
             return True, ultimos_3
         
-        # Proximidade na roda
         distancias = []
         for i in range(len(ultimos_3)):
             for j in range(i+1, len(ultimos_3)):
                 dist = self.roleta.get_distancia_roda(ultimos_3[i], ultimos_3[j])
                 distancias.append(dist)
         
-        if distancias and min(distancias) <= 6:  # Aumentado de 4 para 6
+        if distancias and min(distancias) <= 6:
             return True, ultimos_3
         
         return False, []
@@ -644,14 +617,14 @@ class EstrategiaRuptura:
             for i in range(1, min(5, len(hist_list))):
                 saltos.append(abs(hist_list[-i] - hist_list[-i-1]))
             if saltos:
-                saltos_curtos = sum(1 for s in saltos if s <= 8)  # Aumentado de 6 para 8
+                saltos_curtos = sum(1 for s in saltos if s <= 8)
                 forca += (saltos_curtos / len(saltos)) * 20
         
         return min(100, int(forca))
     
     def detectar(self, hist_list, ultimo, expandir_vizinhos=True, 
                  max_numeros=15, qtd_antes=3, qtd_depois=3):
-        if len(hist_list) < 4:  # Reduzido de 5 para 4
+        if len(hist_list) < 4:
             return None, 0
         
         tem_sequencia, sequencia = self._detectar_sequencia_proxima(hist_list)
@@ -669,7 +642,7 @@ class EstrategiaRuptura:
         
         if ultimo:
             for i in range(37):
-                if abs(i - ultimo) >= 15:  # Reduzido de 19 para 15
+                if abs(i - ultimo) >= 15:
                     numeros_base.add(i)
                     if len(numeros_base) >= 8:
                         break
@@ -701,13 +674,13 @@ class EstrategiaRuptura:
 
 
 # =============================
-# ESTRATÉGIA 3: CICLO REAL
+# ESTRATÉGIA 3: CICLO REAL (CORRIGIDA)
 # =============================
 class EstrategiaCicloReal:
     def __init__(self):
         self.roleta = RoletaBase()
         self.nome = "Ciclo Real"
-        self.tolerancia_janela = 3  # Aumentado de 2 para 3
+        self.tolerancia_janela = 3
         self.seletor = SeletorInteligente()
         
     def _encontrar_ciclos(self, hist_list):
@@ -716,16 +689,19 @@ class EstrategiaCicloReal:
         for num in range(37):
             posicoes = [i for i, n in enumerate(hist_list) if n == num]
             
-            if len(posicoes) >= 2:  # Reduzido de 3 para 2
+            if len(posicoes) >= 2:
                 intervalos = []
                 for i in range(1, len(posicoes)):
                     intervalos.append(posicoes[i] - posicoes[i-1])
                 
-                if len(intervalos) >= 1:  # Reduzido de 2 para 1
+                if len(intervalos) >= 1:
                     media = sum(intervalos) / len(intervalos)
-                    variancia = sum((i - media) ** 2 for i in intervalos) / len(intervalos) if len(intervalos) > 1 else 2
+                    if len(intervalos) > 1:
+                        variancia = sum((i - media) ** 2 for i in intervalos) / len(intervalos)
+                    else:
+                        variancia = 2
                     
-                    if variancia <= 6 and media >= 3:  # Mais permissivo
+                    if variancia <= 6 and media >= 3:
                         ciclos[num] = {
                             'media': media,
                             'ultimo_intervalo': intervalos[-1] if intervalos else media,
@@ -743,19 +719,26 @@ class EstrategiaCicloReal:
         rodadas_desde_ultimo = len(hist_list) - 1 - ciclo_info['posicao_ultimo']
         media = ciclo_info['media']
         
-        if rodadas_desde_ultimo >= media - 3:  # Mais permissivo            proximidade = 1 - abs(rodadas_desde_ultimo - media) / media
+        # CORREÇÃO: Define proximidade antes de usar
+        if media > 0:
+            proximidade = 1 - abs(rodadas_desde_ultimo - media) / media
+            proximidade = max(0, min(1, proximidade))  # Garante entre 0 e 1
+        else:
+            proximidade = 0.5
+        
+        if rodadas_desde_ultimo >= media - 3:
             forca += proximidade * 30
         
         if len(hist_list) > 0:
             ultimos_10 = hist_list[-10:]
-            freq_recente = ultimos_10.count(num) / 10
+            freq_recente = ultimos_10.count(num) / len(ultimos_10) if ultimos_10 else 0
             forca += freq_recente * 20
         
         return min(100, int(forca))
     
     def detectar(self, hist_list, ultimo, expandir_vizinhos=True, 
                  max_numeros=15, qtd_antes=3, qtd_depois=3):
-        if len(hist_list) < 10:  # Reduzido de 15 para 10
+        if len(hist_list) < 10:
             return None, 0
         
         ciclos = self._encontrar_ciclos(hist_list)
@@ -765,7 +748,7 @@ class EstrategiaCicloReal:
         
         ciclos_ordenados = sorted(ciclos.items(), key=lambda x: x[1]['consistencia'], reverse=True)
         
-        for num, info in ciclos_ordenados[:5]:  # Aumentado de 3 para 5
+        for num, info in ciclos_ordenados[:5]:
             rodadas_desde_ultimo = len(hist_list) - 1 - info['posicao_ultimo']
             media = info['media']
             
@@ -836,7 +819,6 @@ class DetectorGatilhosUnificado:
             if not estrategias_ativas.get(nome, True):
                 continue
             
-            # VERIFICA SE ESTRATÉGIA É VÁLIDA
             if not self.motor.is_estrategia_valida(nome, taxa_minima / 100):
                 continue
             
@@ -900,7 +882,7 @@ class SistemaAutoAdaptativo:
         
         self.rodadas_sem_entrada = 0
         self.ultima_entrada_rodada = -10
-        self.intervalo_minimo_entradas = 1  # Reduzido para 1
+        self.intervalo_minimo_entradas = 1
         
         self.estrategia_ativa_manual = False
         self.performance = self.motor_performance.performance
@@ -970,7 +952,6 @@ class SistemaAutoAdaptativo:
         if self.estrategia_ativa_manual:
             return
         
-        # Usa intervalo configurável
         intervalo = st.session_state.get('intervalo_minimo_entradas', 1)
         rodadas_desde_ultima = len(self.historico_numeros) - self.ultima_entrada_rodada
         if rodadas_desde_ultima < intervalo:
@@ -1038,7 +1019,7 @@ class SistemaAutoAdaptativo:
         analise = "🎯 ANÁLISE DE PERFORMANCE\n"
         analise += "=" * 40 + "\n\n"
         analise += f"🎲 Último: {ultimo}\n"
-        analise += f"📊 Últimos 8: {hist_list[-8:]}\n\n"
+        analise += f"📊 Últimos 8: {hist_list[-8:] if len(hist_list) >= 8 else hist_list}\n\n"
         
         for nome in ['Dominante', 'Ruptura', 'CicloReal']:
             status = self.motor_performance.get_status_formatado(nome)
@@ -1114,15 +1095,15 @@ st.title("🎯 IA Roleta — Motor com Aprendizado Real")
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaAutoAdaptativo()
 
-# Inicializa configurações com valores MAIS PERMISSIVOS
+# Inicializa configurações
 if "estrategias_ativas" not in st.session_state:
     st.session_state.estrategias_ativas = {'Dominante': True, 'Ruptura': True, 'CicloReal': True}
 
 if "forca_minima_sinal" not in st.session_state:
-    st.session_state.forca_minima_sinal = 45  # Reduzido de 65 para 45
+    st.session_state.forca_minima_sinal = 45
 
 if "taxa_minima_estrategia" not in st.session_state:
-    st.session_state.taxa_minima_estrategia = 20  # Reduzido de 40 para 20
+    st.session_state.taxa_minima_estrategia = 20
 
 if "expandir_com_vizinhos" not in st.session_state:
     st.session_state.expandir_com_vizinhos = True
@@ -1140,7 +1121,7 @@ if "modo_adaptativo" not in st.session_state:
     st.session_state.modo_adaptativo = True
 
 if "intervalo_minimo_entradas" not in st.session_state:
-    st.session_state.intervalo_minimo_entradas = 1  # Reduzido para 1
+    st.session_state.intervalo_minimo_entradas = 1
 
 sessao_carregada = carregar_sessao()
 
