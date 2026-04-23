@@ -36,13 +36,14 @@ def salvar_sessao():
             'estrategias_ativas': st.session_state.get('estrategias_ativas', {
                 'Dominante': True, 'Ruptura': True, 'CicloReal': True
             }),
-            'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 65),
+            'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 50),
             'expandir_com_vizinhos': st.session_state.get('expandir_com_vizinhos', True),
             'max_numeros_entrada': st.session_state.get('max_numeros_entrada', 15),
             'qtd_vizinhos_antes': st.session_state.get('qtd_vizinhos_antes', 3),
             'qtd_vizinhos_depois': st.session_state.get('qtd_vizinhos_depois', 3),
             'modo_adaptativo': st.session_state.get('modo_adaptativo', True),
-            'taxa_minima_estrategia': st.session_state.get('taxa_minima_estrategia', 40)
+            'taxa_minima_estrategia': st.session_state.get('taxa_minima_estrategia', 25),
+            'intervalo_minimo_entradas': st.session_state.get('intervalo_minimo_entradas', 1)
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -74,13 +75,14 @@ def carregar_sessao():
                 'Dominante': True, 'Ruptura': True, 'CicloReal': True
             })
             
-            st.session_state.forca_minima_sinal = session_data.get('forca_minima_sinal', 65)
+            st.session_state.forca_minima_sinal = session_data.get('forca_minima_sinal', 50)
             st.session_state.expandir_com_vizinhos = session_data.get('expandir_com_vizinhos', True)
             st.session_state.max_numeros_entrada = session_data.get('max_numeros_entrada', 15)
             st.session_state.qtd_vizinhos_antes = session_data.get('qtd_vizinhos_antes', 3)
             st.session_state.qtd_vizinhos_depois = session_data.get('qtd_vizinhos_depois', 3)
             st.session_state.modo_adaptativo = session_data.get('modo_adaptativo', True)
-            st.session_state.taxa_minima_estrategia = session_data.get('taxa_minima_estrategia', 40)
+            st.session_state.taxa_minima_estrategia = session_data.get('taxa_minima_estrategia', 25)
+            st.session_state.intervalo_minimo_entradas = session_data.get('intervalo_minimo_entradas', 1)
             
             if 'sistema' in st.session_state:
                 st.session_state.sistema.acertos = session_data.get('sistema_acertos', 0)
@@ -92,6 +94,7 @@ def carregar_sessao():
                 st.session_state.sistema.estrategia_ativa_manual = session_data.get('estrategia_ativa_manual', False)
                 st.session_state.sistema.matriz_transicao = defaultdict(Counter, session_data.get('matriz_transicao', {}))
                 st.session_state.sistema.ciclos_numeros = session_data.get('ciclos_numeros', {})
+                st.session_state.sistema.intervalo_minimo_entradas = session_data.get('intervalo_minimo_entradas', 1)
             
             # Carrega performance
             if os.path.exists(PERFORMANCE_PATH) and 'sistema' in st.session_state:
@@ -133,19 +136,14 @@ def enviar_previsao_auto(previsao):
         forca_condicao = previsao.get('forca_condicao', 0)
         taxa_real = previsao.get('taxa_real', 0)
         
-        emojis = {
-            'Dominante': '⚡',
-            'Ruptura': '💣',
-            'Ciclo Real': '🌀'
-        }
+        emojis = {'Dominante': '⚡', 'Ruptura': '💣', 'Ciclo Real': '🌀'}
         emoji = emojis.get(nome, '🎲')
         
-        # Barra de força visual
         barras = "█" * (int(forca_real) // 10) + "░" * (10 - int(forca_real) // 10)
         
         msg = f"{emoji} **{nome.upper()}** ATIVADA!\n"
-        msg += f"📊 Força REAL: {barras} {forca_real:.0f}%\n"
-        msg += f"📈 Taxa histórica: {taxa_real:.0f}% | Condição: {forca_condicao:.0f}%\n"
+        msg += f"📊 Força: {barras} {forca_real:.0f}%\n"
+        msg += f"📈 Taxa: {taxa_real:.0f}% | Cond: {forca_condicao:.0f}%\n"
         msg += f"📋 {gatilho}"
         
         if previsao.get('expandido'):
@@ -153,12 +151,10 @@ def enviar_previsao_auto(previsao):
         
         st.toast(f"🎯 {nome} - Força {forca_real:.0f}%", icon=emoji)
         
-        if forca_real >= 70:
-            st.success(f"🔔 **SINAL FORTE!** {msg}")
-        elif forca_real >= 55:
-            st.warning(f"🔔 {msg}")
+        if forca_real >= 60:
+            st.success(f"🔔 **SINAL!** {msg}")
         else:
-            st.info(f"🔔 {msg}")
+            st.warning(f"🔔 {msg}")
         
         if st.session_state.telegram_token and st.session_state.telegram_chat_id:
             enviar_telegram(f"🔔 GATILHO DETECTADO\n{msg}")
@@ -348,7 +344,7 @@ class SeletorInteligente:
 
 
 # =============================
-# MOTOR DE PERFORMANCE (APRENDIZADO REAL)
+# MOTOR DE PERFORMANCE (CORRIGIDO - MENOS RESTRITIVO)
 # =============================
 class MotorPerformance:
     """Gerencia a performance real de cada estratégia"""
@@ -359,19 +355,19 @@ class MotorPerformance:
             'Ruptura': {'wins': 0, 'losses': 0, 'historico': [], 'ultima_atualizacao': None},
             'Ciclo Real': {'wins': 0, 'losses': 0, 'historico': [], 'ultima_atualizacao': None}
         }
-        self.peso_performance = 0.60  # 60% peso da taxa histórica
-        self.peso_condicao = 0.40     # 40% peso das condições atuais
+        self.peso_performance = 0.50  # 50% peso da taxa histórica
+        self.peso_condicao = 0.50     # 50% peso das condições atuais
     
     def get_taxa_real(self, estrategia):
         """Retorna a taxa de acerto real da estratégia"""
         if estrategia not in self.performance:
-            return 0.5  # Neutro para novas estratégias
+            return 0.5  # Neutro
         
         data = self.performance[estrategia]
         total = data['wins'] + data['losses']
         
         if total == 0:
-            return 0.5  # Sem dados = neutro
+            return 0.5  # Sem dados = neutro (50%)
         
         return data['wins'] / total
     
@@ -382,14 +378,18 @@ class MotorPerformance:
         data = self.performance[estrategia]
         return data['wins'] + data['losses']
     
-    def is_estrategia_valida(self, estrategia, taxa_minima=0.40):
-        """Verifica se a estratégia tem performance mínima para ser usada"""
+    def is_estrategia_valida(self, estrategia, taxa_minima=0.25):
+        """
+        Verifica se a estratégia tem performance mínima para ser usada
+        CORRIGIDO: Mais permissivo com poucos dados
+        """
         total = self.get_total_tentativas(estrategia)
         
-        # Se tem poucas tentativas, considera válida (fase de coleta)
+        # FASE DE COLETA: Se tem menos de 5 tentativas, é válida
         if total < 5:
             return True
         
+        # FASE DE AVALIAÇÃO: Precisa ter taxa mínima
         taxa = self.get_taxa_real(estrategia)
         return taxa >= taxa_minima
     
@@ -405,13 +405,12 @@ class MotorPerformance:
             self.performance[estrategia]['losses'] += 1
             self.performance[estrategia]['historico'].append(0)
         
-        # Mantém apenas últimos 50 resultados
         if len(self.performance[estrategia]['historico']) > 50:
             self.performance[estrategia]['historico'] = self.performance[estrategia]['historico'][-50:]
         
         self.performance[estrategia]['ultima_atualizacao'] = datetime.now().isoformat()
     
-    def get_taxa_recente(self, estrategia, ultimas_n=10):
+    def get_taxa_recente(self, estrategia, ultimas_n=5):
         """Taxa de acerto nas últimas N tentativas"""
         if estrategia not in self.performance:
             return 0.5
@@ -426,11 +425,11 @@ class MotorPerformance:
     def get_tendencia(self, estrategia):
         """Analisa se a estratégia está em tendência de alta ou baixa"""
         total = self.get_total_tentativas(estrategia)
-        if total < 10:
+        if total < 3:
             return 'neutra'
         
         taxa_geral = self.get_taxa_real(estrategia)
-        taxa_recente = self.get_taxa_recente(estrategia, 5)
+        taxa_recente = self.get_taxa_recente(estrategia, 3)
         
         if taxa_recente > taxa_geral + 0.15:
             return 'subindo'
@@ -442,20 +441,24 @@ class MotorPerformance:
     def calcular_forca_real(self, estrategia, forca_condicao):
         """
         Calcula a força real combinando:
-        - Taxa histórica da estratégia (60%)
-        - Condições atuais do gatilho (40%)
+        - Taxa histórica (50%)
+        - Condições atuais (50%)
+        CORRIGIDO: Mais peso na condição quando há poucos dados
         """
         taxa_real = self.get_taxa_real(estrategia)
         total = self.get_total_tentativas(estrategia)
         
-        # Se tem poucos dados, confia mais na condição
-        if total < 5:
-            peso_perf = 0.3
-            peso_cond = 0.7
-        elif total < 10:
-            peso_perf = 0.5
-            peso_cond = 0.5
+        # Ajusta pesos baseado na quantidade de dados
+        if total < 3:
+            # Poucos dados: confia mais na condição
+            peso_perf = 0.2
+            peso_cond = 0.8
+        elif total < 8:
+            # Dados moderados: equilibrado
+            peso_perf = 0.4
+            peso_cond = 0.6
         else:
+            # Muitos dados: confia mais na performance
             peso_perf = self.peso_performance
             peso_cond = self.peso_condicao
         
@@ -463,9 +466,9 @@ class MotorPerformance:
         tendencia = self.get_tendencia(estrategia)
         fator_tendencia = 1.0
         if tendencia == 'subindo':
-            fator_tendencia = 1.1
+            fator_tendencia = 1.15
         elif tendencia == 'caindo':
-            fator_tendencia = 0.9
+            fator_tendencia = 0.85
         
         forca_real = (taxa_real * 100 * peso_perf) + (forca_condicao * peso_cond)
         forca_real = forca_real * fator_tendencia
@@ -478,18 +481,18 @@ class MotorPerformance:
         total = self.get_total_tentativas(estrategia)
         tendencia = self.get_tendencia(estrategia)
         
-        if taxa >= 0.45:
+        if total < 3:
+            return f"⚪ COLETANDO ({total} tentativas)"
+        
+        if taxa >= 0.40:
             cor = "🟢"
             status = "QUENTE"
-        elif taxa >= 0.35:
+        elif taxa >= 0.25:
             cor = "🟡"
             status = "MORNA"
-        elif taxa >= 0.25:
-            cor = "🟠"
-            status = "FRIA"
         else:
             cor = "🔴"
-            status = "RUIM"
+            status = "FRIA"
         
         tendencia_emoji = {'subindo': '📈', 'caindo': '📉', 'estavel': '➡️', 'neutra': '⚪'}.get(tendencia, '')
         
@@ -527,13 +530,14 @@ class EstrategiaDominante:
     
     def detectar(self, hist_list, ultimo, matriz_transicao, expandir_vizinhos=True, 
                  max_numeros=15, qtd_antes=3, qtd_depois=3):
-        if len(hist_list) < 10:
+        if len(hist_list) < 8:  # Reduzido de 10 para 8
             return None, 0
         
         ultimas_6 = hist_list[-6:] if len(hist_list) >= 6 else hist_list
         ocorrencias_6 = ultimas_6.count(ultimo)
         
-        if ocorrencias_6 < 2:
+        # Reduzido de 2 para 1 ocorrência (mais permissivo)
+        if ocorrencias_6 < 1:
             return None, 0
         
         if ultimo not in matriz_transicao:
@@ -565,7 +569,7 @@ class EstrategiaDominante:
         resultado = {
             'nome': self.nome,
             'numeros_apostar': sorted(numeros_final),
-            'gatilho': f"⚡ Dominante: {ultimo} (2x em 6 rodadas) → {top_transicoes[:2]}",
+            'gatilho': f"⚡ Dominante: {ultimo} ({ocorrencias_6}x em 6 rodadas) → {top_transicoes[:2]}",
             'forca_condicao': forca_condicao,
             'numero_dominante': ultimo,
             'transicoes': top_transicoes[:2],
@@ -592,20 +596,23 @@ class EstrategiaRuptura:
         
         ultimos_3 = hist_list[-3:]
         
+        # Repetição (mais permissivo)
         if len(set(ultimos_3)) <= 2:
             return True, ultimos_3
         
+        # Proximidade numérica (ampliado)
         ordenados = sorted(ultimos_3)
-        if ordenados[-1] - ordenados[0] <= 6:
+        if ordenados[-1] - ordenados[0] <= 10:  # Aumentado de 6 para 10
             return True, ultimos_3
         
+        # Proximidade na roda
         distancias = []
         for i in range(len(ultimos_3)):
             for j in range(i+1, len(ultimos_3)):
                 dist = self.roleta.get_distancia_roda(ultimos_3[i], ultimos_3[j])
                 distancias.append(dist)
         
-        if distancias and min(distancias) <= 4:
+        if distancias and min(distancias) <= 6:  # Aumentado de 4 para 6
             return True, ultimos_3
         
         return False, []
@@ -618,16 +625,16 @@ class EstrategiaRuptura:
             if len(set(ultimos_4)) <= 3:
                 forca += 40
             else:
-                forca += 20
+                forca += 25
         else:
-            forca += 20
+            forca += 25
         
         if len(sequencia) >= 3:
             ordenados = sorted(sequencia)
             amplitude = ordenados[-1] - ordenados[0]
-            if amplitude <= 4:
+            if amplitude <= 6:
                 forca += 40
-            elif amplitude <= 8:
+            elif amplitude <= 10:
                 forca += 30
             else:
                 forca += 20
@@ -637,14 +644,14 @@ class EstrategiaRuptura:
             for i in range(1, min(5, len(hist_list))):
                 saltos.append(abs(hist_list[-i] - hist_list[-i-1]))
             if saltos:
-                saltos_curtos = sum(1 for s in saltos if s <= 6)
+                saltos_curtos = sum(1 for s in saltos if s <= 8)  # Aumentado de 6 para 8
                 forca += (saltos_curtos / len(saltos)) * 20
         
         return min(100, int(forca))
     
     def detectar(self, hist_list, ultimo, expandir_vizinhos=True, 
                  max_numeros=15, qtd_antes=3, qtd_depois=3):
-        if len(hist_list) < 5:
+        if len(hist_list) < 4:  # Reduzido de 5 para 4
             return None, 0
         
         tem_sequencia, sequencia = self._detectar_sequencia_proxima(hist_list)
@@ -662,7 +669,7 @@ class EstrategiaRuptura:
         
         if ultimo:
             for i in range(37):
-                if abs(i - ultimo) >= 19:
+                if abs(i - ultimo) >= 15:  # Reduzido de 19 para 15
                     numeros_base.add(i)
                     if len(numeros_base) >= 8:
                         break
@@ -700,7 +707,7 @@ class EstrategiaCicloReal:
     def __init__(self):
         self.roleta = RoletaBase()
         self.nome = "Ciclo Real"
-        self.tolerancia_janela = 2
+        self.tolerancia_janela = 3  # Aumentado de 2 para 3
         self.seletor = SeletorInteligente()
         
     def _encontrar_ciclos(self, hist_list):
@@ -709,21 +716,21 @@ class EstrategiaCicloReal:
         for num in range(37):
             posicoes = [i for i, n in enumerate(hist_list) if n == num]
             
-            if len(posicoes) >= 3:
+            if len(posicoes) >= 2:  # Reduzido de 3 para 2
                 intervalos = []
                 for i in range(1, len(posicoes)):
                     intervalos.append(posicoes[i] - posicoes[i-1])
                 
-                if len(intervalos) >= 2:
+                if len(intervalos) >= 1:  # Reduzido de 2 para 1
                     media = sum(intervalos) / len(intervalos)
-                    variancia = sum((i - media) ** 2 for i in intervalos) / len(intervalos)
+                    variancia = sum((i - media) ** 2 for i in intervalos) / len(intervalos) if len(intervalos) > 1 else 2
                     
-                    if variancia <= 4 and media >= 4:
+                    if variancia <= 6 and media >= 3:  # Mais permissivo
                         ciclos[num] = {
                             'media': media,
-                            'ultimo_intervalo': intervalos[-1],
+                            'ultimo_intervalo': intervalos[-1] if intervalos else media,
                             'posicao_ultimo': posicoes[-1],
-                            'consistencia': 100 - min(100, variancia * 10)
+                            'consistencia': 100 - min(100, variancia * 8)
                         }
         
         return ciclos
@@ -736,8 +743,7 @@ class EstrategiaCicloReal:
         rodadas_desde_ultimo = len(hist_list) - 1 - ciclo_info['posicao_ultimo']
         media = ciclo_info['media']
         
-        if rodadas_desde_ultimo >= media - 2:
-            proximidade = 1 - abs(rodadas_desde_ultimo - media) / media
+        if rodadas_desde_ultimo >= media - 3:  # Mais permissivo            proximidade = 1 - abs(rodadas_desde_ultimo - media) / media
             forca += proximidade * 30
         
         if len(hist_list) > 0:
@@ -749,7 +755,7 @@ class EstrategiaCicloReal:
     
     def detectar(self, hist_list, ultimo, expandir_vizinhos=True, 
                  max_numeros=15, qtd_antes=3, qtd_depois=3):
-        if len(hist_list) < 15:
+        if len(hist_list) < 10:  # Reduzido de 15 para 10
             return None, 0
         
         ciclos = self._encontrar_ciclos(hist_list)
@@ -759,7 +765,7 @@ class EstrategiaCicloReal:
         
         ciclos_ordenados = sorted(ciclos.items(), key=lambda x: x[1]['consistencia'], reverse=True)
         
-        for num, info in ciclos_ordenados[:3]:
+        for num, info in ciclos_ordenados[:5]:  # Aumentado de 3 para 5
             rodadas_desde_ultimo = len(hist_list) - 1 - info['posicao_ultimo']
             media = info['media']
             
@@ -798,7 +804,7 @@ class EstrategiaCicloReal:
 
 
 # =============================
-# DETECTOR DE GATILHOS UNIFICADO (COM VALIDAÇÃO)
+# DETECTOR DE GATILHOS UNIFICADO
 # =============================
 class DetectorGatilhosUnificado:
     def __init__(self, motor_performance):
@@ -814,10 +820,10 @@ class DetectorGatilhosUnificado:
         self.ordem_prioridade = ['Dominante', 'Ruptura', 'CicloReal']
         
     def detectar(self, hist_list, hist_mult, ultimo, matriz_transicao, ciclos_numeros,
-                 estrategias_ativas=None, forca_minima=65, taxa_minima=40,
+                 estrategias_ativas=None, forca_minima=45, taxa_minima=20,
                  expandir_vizinhos=True, max_numeros=15, qtd_antes=3, qtd_depois=3):
         
-        if len(hist_list) < 10:
+        if len(hist_list) < 4:
             return None
         
         if estrategias_ativas is None:
@@ -830,9 +836,8 @@ class DetectorGatilhosUnificado:
             if not estrategias_ativas.get(nome, True):
                 continue
             
-            # VERIFICA SE ESTRATÉGIA É VÁLIDA (performance mínima)
+            # VERIFICA SE ESTRATÉGIA É VÁLIDA
             if not self.motor.is_estrategia_valida(nome, taxa_minima / 100):
-                logging.info(f"🚫 {nome} BLOQUEADA - Performance abaixo de {taxa_minima}%")
                 continue
             
             estrategia = self.estrategias_map[nome]
@@ -856,16 +861,14 @@ class DetectorGatilhosUnificado:
                 )
             
             if resultado:
-                # Calcula força REAL (combinando condição + performance histórica)
                 forca_real = self.motor.calcular_forca_real(nome, forca_condicao)
                 taxa_real = self.motor.get_taxa_real(nome)
                 
                 resultado['forca_real'] = forca_real
                 resultado['forca_condicao'] = forca_condicao
                 resultado['taxa_real'] = taxa_real * 100
-                resultado['confianca'] = 'Muito Alta' if forca_real >= 75 else 'Alta' if forca_real >= 60 else 'Média'
+                resultado['confianca'] = 'Alta' if forca_real >= 55 else 'Média'
                 
-                # Só considera se força real >= mínima
                 if forca_real >= forca_minima:
                     if forca_real > maior_forca:
                         maior_forca = forca_real
@@ -875,7 +878,7 @@ class DetectorGatilhosUnificado:
 
 
 # =============================
-# SISTEMA PRINCIPAL (COM APRENDIZADO)
+# SISTEMA PRINCIPAL
 # =============================
 class SistemaAutoAdaptativo:
     def __init__(self):
@@ -897,11 +900,9 @@ class SistemaAutoAdaptativo:
         
         self.rodadas_sem_entrada = 0
         self.ultima_entrada_rodada = -10
-        self.intervalo_minimo_entradas = 2
+        self.intervalo_minimo_entradas = 1  # Reduzido para 1
         
         self.estrategia_ativa_manual = False
-        
-        # Expor performance para a UI
         self.performance = self.motor_performance.performance
         
     def _atualizar_matriz_transicao(self, hist_list):
@@ -933,7 +934,6 @@ class SistemaAutoAdaptativo:
             acerto = numero_real in self.previsao_ativa.get('numeros_apostar', [])
             nome = self.previsao_ativa['nome']
             
-            # ATUALIZA PERFORMANCE DA ESTRATÉGIA
             self.motor_performance.atualizar_resultado(nome, acerto)
             
             if nome not in self.estrategias_contador:
@@ -970,8 +970,10 @@ class SistemaAutoAdaptativo:
         if self.estrategia_ativa_manual:
             return
         
+        # Usa intervalo configurável
+        intervalo = st.session_state.get('intervalo_minimo_entradas', 1)
         rodadas_desde_ultima = len(self.historico_numeros) - self.ultima_entrada_rodada
-        if rodadas_desde_ultima < self.intervalo_minimo_entradas:
+        if rodadas_desde_ultima < intervalo:
             return
         
         hist_list = list(self.historico_numeros)
@@ -982,8 +984,8 @@ class SistemaAutoAdaptativo:
                 'Dominante': True, 'Ruptura': True, 'CicloReal': True
             })
             
-            forca_minima = st.session_state.get('forca_minima_sinal', 65)
-            taxa_minima = st.session_state.get('taxa_minima_estrategia', 40)
+            forca_minima = st.session_state.get('forca_minima_sinal', 45)
+            taxa_minima = st.session_state.get('taxa_minima_estrategia', 20)
             expandir_vizinhos = st.session_state.get('expandir_com_vizinhos', True)
             max_numeros = st.session_state.get('max_numeros_entrada', 15)
             qtd_antes = st.session_state.get('qtd_vizinhos_antes', 3)
@@ -1020,7 +1022,6 @@ class SistemaAutoAdaptativo:
         self.rodadas_sem_entrada = 0
         self.ultima_entrada_rodada = -10
         
-        # Reseta performance
         self.motor_performance = MotorPerformance()
         self.performance = self.motor_performance.performance
         self.detector = DetectorGatilhosUnificado(self.motor_performance)
@@ -1028,42 +1029,24 @@ class SistemaAutoAdaptativo:
         salvar_sessao()
     
     def get_analise_completa(self):
-        if len(self.historico_numeros) < 5:
-            return "📊 Aguardando dados para análise..."
+        if len(self.historico_numeros) < 3:
+            return "📊 Aguardando dados..."
         
         hist_list = list(self.historico_numeros)
         ultimo = hist_list[-1]
         
-        analise = "🎯 ANÁLISE DE PERFORMANCE REAL\n"
-        analise += "=" * 50 + "\n\n"
+        analise = "🎯 ANÁLISE DE PERFORMANCE\n"
+        analise += "=" * 40 + "\n\n"
         analise += f"🎲 Último: {ultimo}\n"
-        analise += f"📊 Últimos 10: {hist_list[-10:]}\n\n"
-        
-        analise += "📈 STATUS DAS ESTRATÉGIAS (PERFORMANCE REAL):\n"
-        analise += "-" * 40 + "\n"
-        
-        estrategias_ativas = st.session_state.get('estrategias_ativas', {})
-        taxa_minima = st.session_state.get('taxa_minima_estrategia', 40)
+        analise += f"📊 Últimos 8: {hist_list[-8:]}\n\n"
         
         for nome in ['Dominante', 'Ruptura', 'CicloReal']:
-            ativa = estrategias_ativas.get(nome, True)
-            status_perf = self.motor_performance.get_status_formatado(nome)
-            valida = self.motor_performance.is_estrategia_valida(nome, taxa_minima / 100)
-            
+            status = self.motor_performance.get_status_formatado(nome)
             emoji = {'Dominante': '⚡', 'Ruptura': '💣', 'CicloReal': '🌀'}.get(nome, '🎲')
-            
-            if not ativa:
-                analise += f"{emoji} {nome}: ⚫ DESATIVADA\n"
-            elif not valida:
-                analise += f"{emoji} {nome}: 🚫 BLOQUEADA (taxa < {taxa_minima}%)\n"
-                analise += f"   └─ {status_perf}\n"
-            else:
-                analise += f"{emoji} {nome}: ✅ ATIVA\n"
-                analise += f"   └─ {status_perf}\n"
+            analise += f"{emoji} {nome}: {status}\n"
         
-        forca_minima = st.session_state.get('forca_minima_sinal', 65)
-        analise += f"\n⚙️ Força mínima: {forca_minima}%\n"
-        analise += f"⚙️ Taxa mínima: {taxa_minima}%\n"
+        forca_min = st.session_state.get('forca_minima_sinal', 45)
+        analise += f"\n⚙️ Força mín: {forca_min}%\n"
         analise += f"📊 Rodadas sem entrada: {self.rodadas_sem_entrada}\n"
         
         return analise
@@ -1131,17 +1114,15 @@ st.title("🎯 IA Roleta — Motor com Aprendizado Real")
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaAutoAdaptativo()
 
-# Inicializa configurações
+# Inicializa configurações com valores MAIS PERMISSIVOS
 if "estrategias_ativas" not in st.session_state:
-    st.session_state.estrategias_ativas = {
-        'Dominante': True, 'Ruptura': True, 'CicloReal': True
-    }
+    st.session_state.estrategias_ativas = {'Dominante': True, 'Ruptura': True, 'CicloReal': True}
 
 if "forca_minima_sinal" not in st.session_state:
-    st.session_state.forca_minima_sinal = 65
+    st.session_state.forca_minima_sinal = 45  # Reduzido de 65 para 45
 
 if "taxa_minima_estrategia" not in st.session_state:
-    st.session_state.taxa_minima_estrategia = 40
+    st.session_state.taxa_minima_estrategia = 20  # Reduzido de 40 para 20
 
 if "expandir_com_vizinhos" not in st.session_state:
     st.session_state.expandir_com_vizinhos = True
@@ -1157,6 +1138,9 @@ if "qtd_vizinhos_depois" not in st.session_state:
 
 if "modo_adaptativo" not in st.session_state:
     st.session_state.modo_adaptativo = True
+
+if "intervalo_minimo_entradas" not in st.session_state:
+    st.session_state.intervalo_minimo_entradas = 1  # Reduzido para 1
 
 sessao_carregada = carregar_sessao()
 
@@ -1180,51 +1164,41 @@ st.sidebar.title("⚙️ Configurações")
 
 # ===== MODO ADAPTATIVO =====
 with st.sidebar.expander("🧠 Motor Adaptativo", expanded=True):
-    st.write("**Aprendizado com Performance Real:**")
-    
     st.session_state.modo_adaptativo = st.checkbox(
-        "🔄 Modo Adaptativo (aprende com erros/acertos)",
-        value=st.session_state.modo_adaptativo,
-        help="Ajusta força baseado na performance real da estratégia"
+        "🔄 Modo Adaptativo", value=st.session_state.modo_adaptativo
     )
     
     st.session_state.taxa_minima_estrategia = st.slider(
-        "📊 Taxa mínima da estratégia",
-        min_value=20,
-        max_value=50,
-        value=st.session_state.taxa_minima_estrategia,
-        step=5,
-        help="Estratégia com taxa abaixo disso é BLOQUEADA"
+        "📊 Taxa mínima p/ bloquear",
+        min_value=10, max_value=40, value=st.session_state.taxa_minima_estrategia, step=5,
+        help="Estratégia com taxa abaixo disso é BLOQUEADA (após 5+ tentativas)"
     )
     
-    st.caption(f"💡 Estratégias com taxa < {st.session_state.taxa_minima_estrategia}% são bloqueadas automaticamente")
+    st.session_state.intervalo_minimo_entradas = st.slider(
+        "⏱️ Intervalo entre entradas",
+        min_value=0, max_value=5, value=st.session_state.intervalo_minimo_entradas, step=1,
+        help="0 = pode entrar toda rodada"
+    )
 
 # ===== FILTRO DE FORÇA =====
 with st.sidebar.expander("🎚️ Filtro de Força", expanded=True):
-    st.write("**Força Mínima para Entrar:**")
-    
     st.session_state.forca_minima_sinal = st.slider(
-        "Só entrar com força ≥",
-        min_value=50,
-        max_value=80,
-        value=st.session_state.forca_minima_sinal,
-        step=5,
-        help="Força REAL = (Taxa histórica × 60%) + (Condição × 40%)"
+        "Força mínima para entrar",
+        min_value=35, max_value=70, value=st.session_state.forca_minima_sinal, step=5
     )
     
     forca = st.session_state.forca_minima_sinal
-    if forca >= 70:
-        st.success(f"🔒 RESTRITIVO ({forca}%)")
-    elif forca >= 60:
-        st.warning(f"⚖️ EQUILIBRADO ({forca}%)")
+    if forca <= 45:
+        st.success(f"🟢 PERMISSIVO ({forca}%) - Mais entradas")
+    elif forca <= 55:
+        st.warning(f"🟡 EQUILIBRADO ({forca}%)")
     else:
-        st.error(f"⚠️ PERMISSIVO ({forca}%)")
+        st.error(f"🔴 RESTRITIVO ({forca}%) - Menos entradas")
 
 # ===== CONFIGURAÇÕES DE EXPANSÃO =====
 with st.sidebar.expander("🔧 Expansão com Vizinhos", expanded=False):
     st.session_state.expandir_com_vizinhos = st.checkbox(
-        "🔄 Expandir com vizinhos", 
-        value=st.session_state.expandir_com_vizinhos
+        "🔄 Expandir com vizinhos", value=st.session_state.expandir_com_vizinhos
     )
     
     col1, col2 = st.columns(2)
@@ -1260,10 +1234,6 @@ with st.sidebar.expander("💾 Gerenciamento", expanded=False):
     if st.button("💾 Salvar Sessão", use_container_width=True):
         salvar_sessao()
         st.success("✅ Sessão salva!")
-    if st.button("🔄 Carregar Sessão", use_container_width=True):
-        if carregar_sessao():
-            st.success("✅ Sessão carregada!")
-            st.rerun()
     if st.button("🗑️ Zerar Tudo", type="secondary", use_container_width=True):
         if st.checkbox("Confirmar"):
             st.session_state.sistema.zerar_estatisticas()
@@ -1285,11 +1255,6 @@ modo_auto = st.sidebar.checkbox("🔄 Automático", value=not st.session_state.s
 if st.sidebar.button("Atualizar Modo"):
     st.session_state.sistema.estrategia_ativa_manual = not modo_auto
     st.rerun()
-
-if st.session_state.sistema.estrategia_ativa_manual:
-    st.sidebar.warning("⚠️ MANUAL")
-else:
-    st.sidebar.success("✅ AUTO")
 
 # Análise
 with st.sidebar.expander("🔍 Análise", expanded=True):
@@ -1358,13 +1323,6 @@ col4.metric("⏳ Sem Entrada", status['rodadas_sem_entrada'])
 if status['total'] > 0:
     taxa = status['acertos'] / status['total'] * 100
     st.caption(f"🎯 Taxa de Acerto: {taxa:.1f}%")
-    
-    if taxa >= 35:
-        st.success(f"✅ EXCELENTE! {taxa:.1f}%")
-    elif taxa >= 25:
-        st.warning(f"📊 DENTRO DO ESPERADO: {taxa:.1f}%")
-    else:
-        st.error(f"⚠️ ABAIXO: {taxa:.1f}%")
 
 # Previsão Ativa
 st.subheader("🎯 Previsão Ativa")
@@ -1381,50 +1339,21 @@ elif sistema.previsao_ativa:
     
     barras = "█" * (int(forca_real) // 10) + "░" * (10 - int(forca_real) // 10)
     
-    if forca_real >= 70:
-        st.success(f"{emoji} **{p['nome'].upper()}** - FORÇA REAL {forca_real:.0f}% {barras}")
-    elif forca_real >= 55:
-        st.warning(f"{emoji} **{p['nome'].upper()}** - FORÇA REAL {forca_real:.0f}% {barras}")
-    else:
-        st.info(f"{emoji} **{p['nome'].upper()}** - FORÇA REAL {forca_real:.0f}% {barras}")
-    
-    st.caption(f"📊 Taxa histórica: {taxa_real:.0f}% | Condição: {forca_cond:.0f}%")
+    st.success(f"{emoji} **{p['nome'].upper()}** - FORÇA {forca_real:.0f}% {barras}")
+    st.caption(f"📊 Taxa: {taxa_real:.0f}% | Cond: {forca_cond:.0f}%")
     st.info(f"📋 **Gatilho:** {p['gatilho']}")
     
-    if p.get('expandido'):
-        st.caption(f"📈 Expandido: {p.get('num_originais', '?')} → {len(p['numeros_apostar'])} números")
-    
     st.write(f"**🔢 Números ({len(p['numeros_apostar'])}):**")
-    
     nums = sorted(p['numeros_apostar'])
     colunas = st.columns(5)
     for i, num in enumerate(nums):
         colunas[i % 5].write(f"**{num}**")
 else:
-    ativas = sum(1 for v in st.session_state.estrategias_ativas.values() if v)
-    if ativas == 0:
-        st.warning("⚠️ Nenhuma estratégia ativa!")
-    else:
-        rodadas = status['rodadas_sem_entrada']
-        
-        # Verifica se há estratégias bloqueadas
-        bloqueadas = []
-        for nome in ['Dominante', 'Ruptura', 'CicloReal']:
-            if not sistema.motor_performance.is_estrategia_valida(nome, st.session_state.taxa_minima_estrategia / 100):
-                bloqueadas.append(nome)
-        
-        if bloqueadas:
-            st.warning(f"🚫 Estratégias bloqueadas (taxa < {st.session_state.taxa_minima_estrategia}%): {', '.join(bloqueadas)}")
-        
-        if rodadas > 5:
-            st.info(f"🎲 Aguardando gatilho forte... ({rodadas} rodadas sem entrada)")
-        else:
-            st.info("🎲 Analisando padrões...")
+    st.info(f"🎲 Aguardando gatilho... ({status['rodadas_sem_entrada']} rodadas sem entrada)")
 
 # Performance das Estratégias
 st.subheader("📈 Performance por Estratégia")
 
-# Mostra performance detalhada
 for nome in ['Dominante', 'Ruptura', 'CicloReal']:
     taxa = sistema.motor_performance.get_taxa_real(nome)
     total = sistema.motor_performance.get_total_tentativas(nome)
@@ -1434,18 +1363,21 @@ for nome in ['Dominante', 'Ruptura', 'CicloReal']:
     emoji = {'Dominante': '⚡', 'Ruptura': '💣', 'CicloReal': '🌀'}.get(nome, '🎲')
     tendencia_emoji = {'subindo': '📈', 'caindo': '📉', 'estavel': '➡️', 'neutra': '⚪'}.get(tendencia, '')
     
-    if taxa >= 0.45:
+    if total < 3:
+        cor = "⚪"
+        status_str = f"{cor} {emoji} **{nome}**: COLETANDO ({total} tentativas)"
+    elif taxa >= 0.40:
         cor = "🟢"
-    elif taxa >= 0.35:
-        cor = "🟡"
+        status_str = f"{cor} {emoji} **{nome}**: {taxa:.0%} ({total} tentativas) {tendencia_emoji}"
     elif taxa >= 0.25:
-        cor = "🟠"
+        cor = "🟡"
+        status_str = f"{cor} {emoji} **{nome}**: {taxa:.0%} ({total} tentativas) {tendencia_emoji}"
     else:
         cor = "🔴"
+        status_str = f"{cor} {emoji} **{nome}**: {taxa:.0%} ({total} tentativas) {tendencia_emoji}"
     
-    status_str = f"{cor} {emoji} **{nome}**: {taxa:.0%} ({total} tentativas) {tendencia_emoji}"
     if not valida and total >= 5:
-        status_str += f" 🚫 BLOQUEADA"
+        status_str += f" 🚫"
     
     st.write(status_str)
 
@@ -1457,10 +1389,5 @@ if sistema.historico_desempenho:
         mult = f" ⚡{r['multiplicador']}x" if r.get('multiplicador') and r['acerto'] else ""
         forca = r.get('forca', 0)
         st.write(f"{emoji_result} {r['estrategia']} ({forca:.0f}%): {r['numero']}{mult}")
-
-# Download
-if os.path.exists(HISTORICO_PATH):
-    with open(HISTORICO_PATH, "r") as f:
-        st.download_button("📥 Baixar histórico", data=f.read(), file_name="historico_roleta.json")
 
 salvar_sessao()
