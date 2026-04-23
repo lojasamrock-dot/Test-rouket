@@ -3,6 +3,7 @@ import json
 import os
 import requests
 import logging
+import numpy as np
 from collections import Counter, deque, defaultdict
 from streamlit_autorefresh import st_autorefresh
 import pickle
@@ -128,6 +129,7 @@ def enviar_previsao_auto(previsao):
         tipo_entrada = previsao.get('tipo_entrada', 'normal')
         num_originais = previsao.get('num_originais', len(numeros))
         qualidade = previsao.get('score_qualidade', 0)
+        criterios_ativos = previsao.get('criterios_ativos', [])
         
         emoji = "🎯" if tipo_entrada == 'sniper' else "🛡️" if tipo_entrada == 'seguro' else "🎲"
         barras = "█" * (forca // 10) + "░" * (10 - forca // 10)
@@ -135,6 +137,8 @@ def enviar_previsao_auto(previsao):
         msg = f"{emoji} **ENTRADA**\n"
         msg += f"⚡ Força: {barras} {forca}%\n"
         msg += f"📊 Qualidade: {qualidade:.0f}%\n"
+        if criterios_ativos:
+            msg += f"🔍 Critérios: {', '.join(criterios_ativos)}\n"
         msg += f"📈 {num_originais} → {len(numeros)} números\n"
         msg += f"📋 {gatilho}"
         
@@ -288,11 +292,11 @@ class SeletorInteligente:
         for num in numeros_candidatos:
             score = 0
             
-            # Frequência recente (20 rodadas)
+            # Frequência recente
             freq_20 = ultimos_20.count(num) / len(ultimos_20) if ultimos_20 else 0
             score += freq_20 * 30
             
-            # Frequência curta (5 rodadas)
+            # Frequência curta
             freq_5 = ultimos_5.count(num) / len(ultimos_5) if ultimos_5 else 0
             score += freq_5 * 20
             
@@ -322,12 +326,272 @@ class SeletorInteligente:
 
 
 # =============================
-# MOTOR IA COM BASE 100% DINÂMICA (CORRIGIDO)
+# ANALISADOR AVANÇADO (NOVOS CRITÉRIOS)
+# =============================
+class AnalisadorAvancado:
+    """Analisa múltiplos critérios avançados da roleta"""
+    
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar_transicoes(self, hist_list):
+        """O que mais sai DEPOIS de cada número (Markov)"""
+        if len(hist_list) < 10:
+            return None
+        
+        ultimo = hist_list[-1]
+        transicoes = defaultdict(Counter)
+        
+        for i in range(len(hist_list) - 1):
+            transicoes[hist_list[i]][hist_list[i+1]] += 1
+        
+        if ultimo in transicoes and transicoes[ultimo]:
+            top_seguidores = [n for n, _ in transicoes[ultimo].most_common(3)]
+            total_trans = sum(transicoes[ultimo].values())
+            confianca = min(100, total_trans * 15)
+            
+            return {
+                'seguidores': top_seguidores,
+                'confianca': confianca,
+                'total_transicoes': total_trans
+            }
+        return None
+    
+    def calcular_entropia(self, hist_list, janela=15):
+        """Mede o nível de aleatoriedade da sequência"""
+        if len(hist_list) < janela:
+            return None
+        
+        sequencia = hist_list[-janela:]
+        contagem = Counter(sequencia)
+        total = len(sequencia)
+        
+        entropia = 0
+        for count in contagem.values():
+            prob = count / total
+            entropia -= prob * math.log2(prob)
+        
+        entropia_max = math.log2(min(37, total))
+        entropia_norm = entropia / entropia_max if entropia_max > 0 else 1.0
+        
+        return {
+            'valor': entropia_norm,
+            'status': 'previsivel' if entropia_norm < 0.35 else 'normal' if entropia_norm < 0.60 else 'aleatorio'
+        }
+    
+    def analisar_ciclos_temporais(self, hist_list):
+        """Tempo médio entre aparições de cada número"""
+        if len(hist_list) < 15:
+            return None
+        
+        ciclos = {}
+        for num in range(37):
+            posicoes = [i for i, n in enumerate(hist_list) if n == num]
+            if len(posicoes) >= 3:
+                intervalos = [posicoes[i+1] - posicoes[i] for i in range(len(posicoes)-1)]
+                media = sum(intervalos) / len(intervalos)
+                desvio = (sum((i - media)**2 for i in intervalos) / len(intervalos)) ** 0.5
+                
+                if desvio < media * 0.3 and media >= 4:
+                    ciclos[num] = {
+                        'media': media,
+                        'desvio': desvio,
+                        'consistencia': 100 - min(100, (desvio/media)*100),
+                        'ultimo': len(hist_list) - 1 - posicoes[-1]
+                    }
+        
+        if ciclos:
+            melhor = max(ciclos.items(), key=lambda x: x[1]['consistencia'])
+            return {
+                'numero': melhor[0],
+                'info': melhor[1],
+                'total_ciclos': len(ciclos)
+            }
+        return None
+    
+    def analisar_terminais(self, hist_list):
+        """Agrupa números pelo último dígito"""
+        if len(hist_list) < 10:
+            return None
+        
+        terminais = defaultdict(list)
+        for n in hist_list[-15:]:
+            terminais[n % 10].append(n)
+        
+        quentes = []
+        for terminal, numeros in terminais.items():
+            if len(numeros) >= 2:
+                quentes.append({
+                    'terminal': terminal,
+                    'numeros': list(set(numeros)),
+                    'frequencia': len(numeros)
+                })
+        
+        if quentes:
+            quentes.sort(key=lambda x: x['frequencia'], reverse=True)
+            return quentes[:3]
+        return None
+    
+    def analisar_ondas(self, hist_list):
+        """Detecta padrões de alternância alto/baixo"""
+        if len(hist_list) < 10:
+            return None
+        
+        onda = ['A' if n > 18 else 'B' for n in hist_list[-20:]]
+        
+        alternancias = sum(1 for i in range(len(onda)-1) if onda[i] != onda[i+1])
+        sequencias = len(onda) - 1 - alternancias
+        total = alternancias + sequencias
+        
+        if total > 0:
+            tendencia = 'alternancia' if alternancias > sequencias else 'sequencia'
+            forca = max(alternancias, sequencias) / total
+            
+            return {
+                'tendencia': tendencia,
+                'forca': forca * 100,
+                'ultimos_5': onda[-5:]
+            }
+        return None
+    
+    def analisar_setores(self, hist_list):
+        """Divide a roda em setores e analisa atividade"""
+        if len(hist_list) < 10:
+            return None
+        
+        setores = {'C1 (1-12)': [], 'C2 (13-24)': [], 'C3 (25-36)': []}
+        
+        for n in hist_list[-15:]:
+            if n == 0:
+                continue
+            elif n <= 12:
+                setores['C1 (1-12)'].append(n)
+            elif n <= 24:
+                setores['C2 (13-24)'].append(n)
+            else:
+                setores['C3 (25-36)'].append(n)
+        
+        ativo = max(setores, key=lambda s: len(setores[s]))
+        
+        return {
+            'setor_ativo': ativo,
+            'distribuicao': {s: len(nums) for s, nums in setores.items()},
+            'numeros_setor': list(set(setores[ativo]))
+        }
+    
+    def analisar_paridade(self, hist_list):
+        """Analisa distribuição de pares e ímpares"""
+        if len(hist_list) < 10:
+            return None
+        
+        ultimos_20 = hist_list[-20:] if len(hist_list) >= 20 else hist_list
+        
+        pares = sum(1 for n in ultimos_20 if n % 2 == 0 and n != 0)
+        impares = sum(1 for n in ultimos_20 if n % 2 == 1)
+        zeros = sum(1 for n in ultimos_20 if n == 0)
+        total = len(ultimos_20)
+        
+        return {
+            'tendencia': 'par' if pares > impares else 'impar',
+            'forca': abs(pares - impares) / total * 100,
+            'pares_pct': pares/total * 100,
+            'impares_pct': impares/total * 100
+        }
+    
+    def detectar_gaps(self, hist_list):
+        """Encontra números que não saem há muito tempo"""
+        if len(hist_list) < 20:
+            return None
+        
+        gaps = {}
+        for num in range(37):
+            if num in hist_list:
+                ultima_pos = max(i for i, n in enumerate(hist_list) if n == num)
+                gaps[num] = len(hist_list) - 1 - ultima_pos
+            else:
+                gaps[num] = len(hist_list)
+        
+        mais_atrasados = sorted(gaps.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        return {
+            'atrasados': mais_atrasados,
+            'maior_gap': max(gaps.values()),
+            'sugestao': [n for n, _ in mais_atrasados[:3]]
+        }
+    
+    def analisar_tudo(self, hist_list):
+        """Executa todas as análises e retorna resultados combinados"""
+        return {
+            'transicoes': self.analisar_transicoes(hist_list),
+            'entropia': self.calcular_entropia(hist_list),
+            'ciclos': self.analisar_ciclos_temporais(hist_list),
+            'terminais': self.analisar_terminais(hist_list),
+            'ondas': self.analisar_ondas(hist_list),
+            'setores': self.analisar_setores(hist_list),
+            'paridade': self.analisar_paridade(hist_list),
+            'gaps': self.detectar_gaps(hist_list)
+        }
+    
+    def calcular_forca_avancada(self, hist_list, forca_base=40):
+        """Combina todos os critérios em uma força ajustada"""
+        analise = self.analisar_tudo(hist_list)
+        forca = forca_base
+        criterios_ativos = []
+        
+        # Entropia baixa = mais previsível
+        if analise['entropia'] and analise['entropia']['status'] == 'previsivel':
+            forca += 15
+            criterios_ativos.append('entropia↓')
+        
+        # Transições fortes
+        if analise['transicoes'] and analise['transicoes']['confianca'] > 40:
+            forca += 12
+            criterios_ativos.append('markov')
+        
+        # Ciclos consistentes
+        if analise['ciclos'] and analise['ciclos']['info']['consistencia'] > 60:
+            forca += 10
+            criterios_ativos.append('ciclo')
+        
+        # Terminais concentrados
+        if analise['terminais'] and len(analise['terminais']) >= 2:
+            forca += 8
+            criterios_ativos.append('terminais')
+        
+        # Ondas fortes
+        if analise['ondas'] and analise['ondas']['forca'] > 65:
+            forca += 7
+            criterios_ativos.append('ondas')
+        
+        # Setor concentrado
+        if analise['setores']:
+            max_dist = max(analise['setores']['distribuicao'].values())
+            if max_dist >= 8:
+                forca += 6
+                criterios_ativos.append('setor')
+        
+        # Paridade definida
+        if analise['paridade'] and analise['paridade']['forca'] > 20:
+            forca += 5
+            criterios_ativos.append('paridade')
+        
+        # Gaps grandes = cautela
+        if analise['gaps'] and analise['gaps']['maior_gap'] > 35:
+            forca -= 8
+        
+        forca = min(100, max(20, int(forca)))
+        
+        return forca, criterios_ativos
+
+
+# =============================
+# MOTOR IA COM BASE 100% DINÂMICA
 # =============================
 class RoletaIA:
     def __init__(self):
         self.roleta = RoletaBase()
         self.seletor = SeletorInteligente()
+        self.analisador = AnalisadorAvancado(self.roleta)
         self.historico = deque(maxlen=100)
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
         self.ultima_analise = None
@@ -408,7 +672,10 @@ class RoletaIA:
                         regiao_ativa.append(n)
                 regiao_ativa = list(set(regiao_ativa))
         
-        # Força do sinal
+        # Análise avançada
+        analise_avancada = self.analisador.analisar_tudo(hist_list)
+        
+        # Força base
         forca = 40
         if sequencia_ativa:
             forca += 30
@@ -426,16 +693,19 @@ class RoletaIA:
         if bloco_15 == bloco_5:
             forca += 10
         
+        # Ajuste pela análise avançada
+        forca_avancada, criterios_ativos = self.analisador.calcular_forca_avancada(hist_list, forca)
+        
         # Ajuste pela performance recente
         taxa_rec = self.get_taxa_recente(5)
         if taxa_rec >= 0.4:
-            forca += 10
+            forca_avancada += 10
         elif taxa_rec <= 0.15:
-            forca -= 15
+            forca_avancada -= 15
         
-        forca = min(100, max(25, int(forca)))
+        forca_final = min(100, max(25, forca_avancada))
         
-        # Score de qualidade (baseado em quantos critérios atende)
+        # Score de qualidade
         qualidade = 50
         if sequencia_ativa:
             qualidade += 25
@@ -443,6 +713,8 @@ class RoletaIA:
             qualidade += 15
         if cluster_fisico:
             qualidade += 10
+        if criterios_ativos:
+            qualidade += len(criterios_ativos) * 5
         qualidade = min(100, qualidade)
         
         self.ultima_analise = {
@@ -456,10 +728,12 @@ class RoletaIA:
             "numero_sequencia": numero_sequencia,
             "cluster_fisico": cluster_fisico,
             "regiao_ativa": regiao_ativa,
-            "forca_sinal": forca,
+            "forca_sinal": forca_final,
             "score_qualidade": qualidade,
+            "criterios_ativos": criterios_ativos,
             "ultimo": ultimo,
-            "ultimos_3": ultimos_3
+            "ultimos_3": ultimos_3,
+            "analise_avancada": analise_avancada
         }
         
         return self.ultima_analise
@@ -474,6 +748,7 @@ class RoletaIA:
             return None
         
         ultimo = dados["ultimo"]
+        analise_avancada = dados.get("analise_avancada", {})
         
         # BASE DINÂMICA
         base = set()
@@ -492,6 +767,15 @@ class RoletaIA:
             for n in dados["regiao_ativa"][:4]:
                 base.add(n)
         
+        # Transições Markov
+        if analise_avancada.get('transicoes') and analise_avancada['transicoes']['confianca'] > 40:
+            for n in analise_avancada['transicoes']['seguidores'][:2]:
+                base.add(n)
+        
+        # Ciclos consistentes
+        if analise_avancada.get('ciclos') and analise_avancada['ciclos']['info']['consistencia'] > 60:
+            base.add(analise_avancada['ciclos']['numero'])
+        
         # Quentes
         for n in dados["quentes"][:4]:
             base.add(n)
@@ -499,6 +783,11 @@ class RoletaIA:
         # Últimos 3
         for n in dados["ultimos_3"]:
             base.add(n)
+        
+        # Gaps (números atrasados)
+        if analise_avancada.get('gaps'):
+            for n in analise_avancada['gaps']['sugestao'][:2]:
+                base.add(n)
         
         numeros_base = list(base)
         num_originais = len(numeros_base)
@@ -521,9 +810,18 @@ class RoletaIA:
             if len(numeros_baixos) >= 5:
                 numeros_final = numeros_baixos
         
-        # Filtro de qualidade (NOVO)
+        # Ajuste por setor ativo
+        if analise_avancada.get('setores'):
+            setor = analise_avancada['setores']['setor_ativo']
+            if 'C1' in setor:
+                numeros_final = [n for n in numeros_final if n <= 12 or n == 0]
+            elif 'C2' in setor:
+                numeros_final = [n for n in numeros_final if 13 <= n <= 24]
+            elif 'C3' in setor:
+                numeros_final = [n for n in numeros_final if n >= 25]
+        
+        # Filtro de qualidade
         if filtro_qualidade and dados['score_qualidade'] < 50:
-            # Reduz para números com maior score
             numeros_final = self.seletor.selecionar_melhores(
                 numeros_final, self.historico, min(len(numeros_final), 8)
             )
@@ -552,14 +850,17 @@ class RoletaIA:
             parts.append(f"seq={dados['numero_sequencia']}")
         if dados["cluster_fisico"]:
             parts.append("cluster")
+        if dados.get("criterios_ativos"):
+            parts.append(f"crit={len(dados['criterios_ativos'])}")
         parts.append(f"b={dados['bloco_5']}")
         
         return {
-            'nome': 'IA Dinâmica',
+            'nome': 'IA Dinâmica Avançada',
             'numeros_apostar': sorted(numeros_final),
             'gatilho': ", ".join(parts),
             'forca_sinal': dados['forca_sinal'],
             'score_qualidade': dados['score_qualidade'],
+            'criterios_ativos': dados.get('criterios_ativos', []),
             'confianca': 'Alta' if dados['forca_sinal'] >= 65 else 'Média',
             'tipo_entrada': tipo_entrada,
             'num_originais': num_originais,
@@ -578,10 +879,12 @@ class RoletaIA:
         taxa = self.get_taxa_acerto()
         taxa_rec = self.get_taxa_recente(5)
         total = self.get_total_tentativas()
+        avancada = dados.get('analise_avancada', {})
         
-        analise = "🎯 ANÁLISE IA\n" + "="*35 + "\n\n"
+        analise = "🎯 ANÁLISE IA AVANÇADA\n" + "="*40 + "\n\n"
         analise += f"🎲 Último: {dados['ultimo']}\n"
         analise += f"📊 10 últimos: {hist_list[-10:]}\n\n"
+        
         analise += f"🔥 Quentes: {dados['quentes'][:5]}\n"
         analise += f"🔁 Repetidos: {dados['repetidos']}\n"
         
@@ -590,7 +893,26 @@ class RoletaIA:
         if dados['cluster_fisico']:
             analise += f"🎰 Cluster: {dados['regiao_ativa'][:4]}\n"
         
-        analise += f"🌊 Bloco: {dados['bloco_15']} (A:{dados['altos_15']} B:{dados['baixos_15']})\n"
+        # Critérios avançados
+        if dados.get('criterios_ativos'):
+            analise += f"\n🔍 Critérios ativos: {', '.join(dados['criterios_ativos'])}\n"
+        
+        if avancada.get('entropia'):
+            analise += f"📐 Entropia: {avancada['entropia']['valor']:.2f} ({avancada['entropia']['status']})\n"
+        
+        if avancada.get('transicoes') and avancada['transicoes']['confianca'] > 40:
+            analise += f"🧠 Markov: {avancada['transicoes']['seguidores']}\n"
+        
+        if avancada.get('ciclos'):
+            analise += f"🌀 Ciclo: {avancada['ciclos']['numero']} ({avancada['ciclos']['info']['consistencia']:.0f}%)\n"
+        
+        if avancada.get('ondas'):
+            analise += f"🌊 Ondas: {avancada['ondas']['tendencia']} ({avancada['ondas']['forca']:.0f}%)\n"
+        
+        if avancada.get('setores'):
+            analise += f"📊 Setor: {avancada['setores']['setor_ativo']}\n"
+        
+        analise += f"\n🌊 Bloco: {dados['bloco_15']} (A:{dados['altos_15']} B:{dados['baixos_15']})\n"
         analise += f"⚡ Força: {dados['forca_sinal']}%\n"
         analise += f"📊 Qualidade: {dados['score_qualidade']}%\n"
         
@@ -749,12 +1071,29 @@ def fetch_latest_result():
     except:
         return None
 
+def exportar_historico_csv(historico):
+    """Exporta histórico em formato CSV"""
+    linhas = ["numero,timestamp,multiplicador"]
+    for item in historico:
+        if isinstance(item, dict):
+            n = item.get('number', '')
+            ts = item.get('timestamp', '')
+            mult = item.get('luckyMultipliers', {}).get(n, '') if isinstance(item.get('luckyMultipliers'), dict) else ''
+            linhas.append(f"{n},{ts},{mult}")
+        else:
+            linhas.append(f"{item},,")
+    return "\n".join(linhas)
+
+def exportar_historico_json(historico):
+    """Exporta histórico em JSON formatado"""
+    return json.dumps(historico, indent=2, ensure_ascii=False)
+
 
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 IA Roleta — Base Dinâmica", layout="centered")
-st.title("🎯 IA Roleta — Motor IA Dinâmica")
+st.set_page_config(page_title="🎯 IA Roleta — Análise Avançada", layout="centered")
+st.title("🎯 IA Roleta — Motor IA com Análise Avançada")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaIA()
@@ -813,7 +1152,7 @@ with st.sidebar.expander("⚡ Força", expanded=True):
     st.session_state.forca_minima_sinal = st.slider("Força mínima", 30, 70, st.session_state.forca_minima_sinal, 5)
     st.session_state.intervalo_minimo_entradas = st.slider("⏱️ Intervalo", 0, 3, st.session_state.intervalo_minimo_entradas)
 
-with st.sidebar.expander("🧠 Análise IA", expanded=True):
+with st.sidebar.expander("🧠 Análise IA Avançada", expanded=True):
     st.text(st.session_state.sistema.ia.get_analise_completa())
 
 with st.sidebar.expander("💾 Geral", expanded=False):
@@ -909,9 +1248,12 @@ elif sis.previsao_ativa:
     p = sis.previsao_ativa
     f = p.get('forca_sinal', 0)
     q = p.get('score_qualidade', 0)
+    crit = p.get('criterios_ativos', [])
     barras = "█"*(f//10) + "░"*(10-f//10)
     
     st.success(f"🎯 **ENTRADA** - F:{f}% Q:{q:.0f}% {barras}")
+    if crit:
+        st.caption(f"🔍 Critérios: {', '.join(crit)}")
     st.caption(f"📋 {p['gatilho']}")
     st.write(f"**🔢 {len(p['numeros_apostar'])} números:**")
     
@@ -949,5 +1291,53 @@ if sis.historico_desempenho:
         e = "🎉" if r['acerto'] else "❌"
         m = f" ⚡{r['multiplicador']}x" if r.get('multiplicador') and r['acerto'] else ""
         st.write(f"{e} IA ({r.get('forca',0)}%): {r['numero']}{m}")
+
+# ===== BOTÃO DE DOWNLOAD DO HISTÓRICO =====
+st.subheader("📥 Download do Histórico")
+
+col_d1, col_d2, col_d3 = st.columns(3)
+
+with col_d1:
+    if st.button("📥 Baixar JSON", use_container_width=True):
+        if st.session_state.historico:
+            json_data = exportar_historico_json(st.session_state.historico)
+            st.download_button(
+                label="⬇️ Clique para baixar",
+                data=json_data,
+                file_name=f"historico_roleta_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json"
+            )
+        else:
+            st.warning("Sem dados")
+
+with col_d2:
+    if st.button("📥 Baixar CSV", use_container_width=True):
+        if st.session_state.historico:
+            csv_data = exportar_historico_csv(st.session_state.historico)
+            st.download_button(
+                label="⬇️ Clique para baixar",
+                data=csv_data,
+                file_name=f"historico_roleta_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("Sem dados")
+
+with col_d3:
+    # Mostra total de registros
+    total_registros = len(st.session_state.historico)
+    st.metric("📊 Registros", total_registros)
+
+# Informações adicionais
+with st.expander("ℹ️ Sobre o Histórico"):
+    st.write(f"""
+    **Total de números capturados:** {total_registros}
+    
+    **Formatos disponíveis:**
+    - **JSON**: Formato completo com todos os campos (number, timestamp, luckyNumbers, luckyMultipliers)
+    - **CSV**: Formato tabular (numero, timestamp, multiplicador)
+    
+    **Dica:** Use o JSON para análise completa ou o CSV para importar em Excel/Google Sheets.
+    """)
 
 salvar_sessao()
