@@ -25,7 +25,6 @@ def salvar_sessao():
             'telegram_chat_id': st.session_state.telegram_chat_id,
             'sistema_acertos': st.session_state.sistema.acertos,
             'sistema_erros': st.session_state.sistema.erros,
-            'sistema_estrategias_contador': st.session_state.sistema.estrategias_contador,
             'sistema_historico_desempenho': st.session_state.sistema.historico_desempenho,
             'historico_numeros': list(st.session_state.sistema.historico_numeros),
             'historico_multiplicadores': list(st.session_state.sistema.historico_multiplicadores),
@@ -34,7 +33,10 @@ def salvar_sessao():
             'modo_seguro': st.session_state.get('modo_seguro', True),
             'intervalo_minimo_entradas': st.session_state.get('intervalo_minimo_entradas', 1),
             'expandir_com_vizinhos': st.session_state.get('expandir_com_vizinhos', True),
-            'max_numeros_entrada': st.session_state.get('max_numeros_entrada', 12)
+            'max_numeros_entrada': st.session_state.get('max_numeros_entrada', 15),
+            'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 40),
+            'qtd_vizinhos_antes': st.session_state.get('qtd_vizinhos_antes', 2),
+            'qtd_vizinhos_depois': st.session_state.get('qtd_vizinhos_depois', 2)
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -66,12 +68,14 @@ def carregar_sessao():
             st.session_state.modo_seguro = session_data.get('modo_seguro', True)
             st.session_state.intervalo_minimo_entradas = session_data.get('intervalo_minimo_entradas', 1)
             st.session_state.expandir_com_vizinhos = session_data.get('expandir_com_vizinhos', True)
-            st.session_state.max_numeros_entrada = session_data.get('max_numeros_entrada', 12)
+            st.session_state.max_numeros_entrada = session_data.get('max_numeros_entrada', 15)
+            st.session_state.forca_minima_sinal = session_data.get('forca_minima_sinal', 40)
+            st.session_state.qtd_vizinhos_antes = session_data.get('qtd_vizinhos_antes', 2)
+            st.session_state.qtd_vizinhos_depois = session_data.get('qtd_vizinhos_depois', 2)
             
             if 'sistema' in st.session_state:
                 st.session_state.sistema.acertos = session_data.get('sistema_acertos', 0)
                 st.session_state.sistema.erros = session_data.get('sistema_erros', 0)
-                st.session_state.sistema.estrategias_contador = session_data.get('sistema_estrategias_contador', {})
                 st.session_state.sistema.historico_desempenho = session_data.get('sistema_historico_desempenho', [])
                 st.session_state.sistema.historico_numeros = deque(session_data.get('historico_numeros', []), maxlen=200)
                 st.session_state.sistema.historico_multiplicadores = deque(session_data.get('historico_multiplicadores', []), maxlen=200)
@@ -115,6 +119,7 @@ def enviar_previsao_auto(previsao):
         gatilho = previsao['gatilho']
         forca = previsao.get('forca_sinal', 0)
         tipo_entrada = previsao.get('tipo_entrada', 'normal')
+        num_originais = previsao.get('num_originais', len(numeros))
         
         emoji = "🎯" if tipo_entrada == 'sniper' else "🛡️" if tipo_entrada == 'seguro' else "🎲"
         
@@ -122,6 +127,7 @@ def enviar_previsao_auto(previsao):
         
         msg = f"{emoji} **ENTRADA DINÂMICA**\n"
         msg += f"📊 Força: {barras} {forca}%\n"
+        msg += f"📈 Expandido: {num_originais} → {len(numeros)} números\n"
         msg += f"📋 {gatilho}"
         
         st.toast(f"🎯 Entrada - Força {forca}%", icon=emoji)
@@ -212,11 +218,131 @@ class RoletaBase:
                 vizinhos.append(self.race[(posicao + offset) % 37])
         return vizinhos
     
-    def get_posicao(self, numero):
-        """Retorna posição na roda"""
+    def get_vizinhos_anteriores(self, numero, quantidade=2):
+        """Retorna vizinhos anteriores (esquerda) na roda"""
         if numero not in self.race:
-            return -1
-        return self.race.index(numero)
+            return []
+        posicao = self.race.index(numero)
+        vizinhos = []
+        for i in range(1, quantidade + 1):
+            vizinhos.append(self.race[(posicao - i) % 37])
+        return vizinhos
+    
+    def get_vizinhos_posteriores(self, numero, quantidade=2):
+        """Retorna vizinhos posteriores (direita) na roda"""
+        if numero not in self.race:
+            return []
+        posicao = self.race.index(numero)
+        vizinhos = []
+        for i in range(1, quantidade + 1):
+            vizinhos.append(self.race[(posicao + i) % 37])
+        return vizinhos
+    
+    def get_distancia_roda(self, num1, num2):
+        """Calcula distância entre dois números na roda"""
+        if num1 not in self.race or num2 not in self.race:
+            return 37
+        p1 = self.race.index(num1)
+        p2 = self.race.index(num2)
+        dist = abs(p1 - p2)
+        return min(dist, 37 - dist)
+
+
+# =============================
+# SELETOR INTELIGENTE (EXPANSÃO COM VIZINHOS)
+# =============================
+class SeletorInteligente:
+    """Expande e seleciona os melhores números"""
+    
+    def __init__(self):
+        self.roleta = RoletaBase()
+    
+    def expandir_com_vizinhos(self, numeros_base, historico, max_numeros=15,
+                              qtd_antes=2, qtd_depois=2):
+        """Expande cada número com vizinhos antes e depois"""
+        if len(numeros_base) == 0:
+            return [], 0
+        
+        num_originais = len(numeros_base)
+        numeros_expandidos = set(numeros_base)
+        
+        for num in numeros_base:
+            # Adiciona vizinhos anteriores
+            anteriores = self.roleta.get_vizinhos_anteriores(num, qtd_antes)
+            numeros_expandidos.update(anteriores)
+            
+            # Adiciona vizinhos posteriores
+            posteriores = self.roleta.get_vizinhos_posteriores(num, qtd_depois)
+            numeros_expandidos.update(posteriores)
+        
+        lista_expandida = list(numeros_expandidos)
+        
+        if len(lista_expandida) <= max_numeros:
+            return sorted(lista_expandida), num_originais
+        
+        # Seleciona os melhores
+        selecionados = self.selecionar_melhores(lista_expandida, historico, max_numeros)
+        return selecionados, num_originais
+    
+    def selecionar_melhores(self, numeros_candidatos, historico, max_numeros=15):
+        """Seleciona os melhores números baseado em múltiplos critérios"""
+        if len(numeros_candidatos) <= max_numeros:
+            return sorted(numeros_candidatos)
+        
+        hist_list = list(historico)
+        scores = {}
+        
+        # Peso dos critérios
+        PESO_FREQ_RECENTE = 0.30      # Frequência nos últimos 20
+        PESO_FREQ_CURTA = 0.20        # Frequência nos últimos 5
+        PESO_REPETICAO = 0.20         # Repetiu recentemente?
+        PESO_PROXIMIDADE = 0.15       # Proximidade com últimos números
+        PESO_ATRASO = 0.10            # Não saiu há tempo?
+        PESO_ZERO = 0.05              # Bônus para o 0
+        
+        ultimos_5 = hist_list[-5:] if len(hist_list) >= 5 else hist_list
+        ultimos_20 = hist_list[-20:] if len(hist_list) >= 20 else hist_list
+        ultimo = hist_list[-1] if hist_list else None
+        
+        for num in numeros_candidatos:
+            score = 0
+            
+            # 1. Frequência recente (30%)
+            freq_20 = ultimos_20.count(num) / len(ultimos_20) if ultimos_20 else 0
+            score += freq_20 * PESO_FREQ_RECENTE * 100
+            
+            # 2. Frequência curta (20%)
+            freq_5 = ultimos_5.count(num) / len(ultimos_5) if ultimos_5 else 0
+            score += freq_5 * PESO_FREQ_CURTA * 100
+            
+            # 3. Repetição (20%)
+            if len(hist_list) >= 2 and num == ultimo:
+                score += PESO_REPETICAO * 100
+            elif num in ultimos_5 and ultimos_5.count(num) >= 2:
+                score += PESO_REPETICAO * 70
+            
+            # 4. Proximidade com últimos números (15%)
+            if ultimos_5:
+                for recente in ultimos_5[-3:]:
+                    dist = self.roleta.get_distancia_roda(num, recente)
+                    if dist <= 3:
+                        score += PESO_PROXIMIDADE * 100 * (1 - dist/4)
+            
+            # 5. Atraso (10%) - números que não saem há tempo
+            if num not in ultimos_20:
+                score += PESO_ATRASO * 50
+            
+            # 6. Bônus para o 0 (5%)
+            if num == 0:
+                score += PESO_ZERO * 100
+            
+            scores[num] = score
+        
+        # Ordena por score
+        ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        selecionados = [num for num, _ in ordenados[:max_numeros]]
+        
+        return sorted(selecionados)
 
 
 # =============================
@@ -230,12 +356,19 @@ class RoletaIA:
     
     def __init__(self):
         self.roleta = RoletaBase()
+        self.seletor = SeletorInteligente()
         self.historico = deque(maxlen=100)
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
+        
+        # Cache de análise para evitar recalcular
+        self.ultima_analise = None
+        self.ultimo_numero = None
         
     def atualizar(self, numero):
         """Atualiza histórico com novo número"""
         self.historico.append(numero)
+        self.ultimo_numero = numero
+        self.ultima_analise = None  # Invalida cache
         
     def atualizar_resultado(self, acerto):
         """Atualiza performance"""
@@ -255,67 +388,128 @@ class RoletaIA:
             return 0.5
         return self.performance['acertos'] / total
     
+    def get_taxa_recente(self, ultimas=10):
+        """Taxa de acerto nas últimas N tentativas"""
+        if len(self.performance['historico']) < ultimas:
+            return self.get_taxa_acerto()
+        recentes = self.performance['historico'][-ultimas:]
+        return sum(recentes) / len(recentes) if recentes else 0.5
+    
     def analisar(self):
         """
         Analisa o estado atual da roleta
-        Retorna: quentes, repetidos, bloco, forca_sinal
+        Retorna: quentes, repetidos, bloco, forca_sinal, padroes
         """
-        if len(self.historico) < 10:
+        # Usa cache se disponível
+        if self.ultima_analise is not None:
+            return self.ultima_analise
+        
+        if len(self.historico) < 8:
             return None
         
         hist_list = list(self.historico)
         ultimos_15 = hist_list[-15:] if len(hist_list) >= 15 else hist_list
         ultimos_5 = hist_list[-5:] if len(hist_list) >= 5 else hist_list
+        ultimos_3 = hist_list[-3:] if len(hist_list) >= 3 else hist_list
         ultimo = hist_list[-1]
         
-        # 1. Frequência recente (peso alto)
-        freq = Counter(ultimos_15)
-        quentes = [n for n, _ in freq.most_common(5)]
+        # 1. Frequência recente
+        freq_15 = Counter(ultimos_15)
+        quentes = [n for n, _ in freq_15.most_common(6)]
         
-        # 2. Repetição (peso altíssimo)
+        # 2. Repetição (prioridade máxima)
         repetidos = [n for n in ultimos_5 if ultimos_5.count(n) >= 2]
         
-        # 3. Bloco (alto/baixo)
-        altos = sum(1 for n in ultimos_15 if n > 18)
-        baixos = len(ultimos_15) - altos
-        bloco = "alto" if altos > baixos else "baixo"
+        # 3. Padrão de sequência (números consecutivos iguais)
+        sequencia_ativa = False
+        numero_sequencia = None
+        if len(hist_list) >= 3:
+            if hist_list[-1] == hist_list[-2] == hist_list[-3]:
+                sequencia_ativa = True
+                numero_sequencia = ultimo
         
-        # 4. Força do sinal (calculada dinamicamente)
-        forca = 50  # Base
+        # 4. Bloco (alto/baixo)
+        altos_15 = sum(1 for n in ultimos_15 if n > 18)
+        baixos_15 = len(ultimos_15) - altos_15
         
-        # Repetição aumenta força
-        if ultimo in repetidos:
+        altos_5 = sum(1 for n in ultimos_5 if n > 18)
+        baixos_5 = len(ultimos_5) - altos_5
+        
+        bloco_15 = "alto" if altos_15 > baixos_15 else "baixo"
+        bloco_5 = "alto" if altos_5 > baixos_5 else "baixo"
+        
+        # 5. Análise de vizinhança (cluster físico)
+        cluster_fisico = False
+        regiao_ativa = []
+        if len(ultimos_5) >= 3:
+            distancias = []
+            for i in range(len(ultimos_5)):
+                for j in range(i+1, len(ultimos_5)):
+                    dist = self.roleta.get_distancia_roda(ultimos_5[i], ultimos_5[j])
+                    distancias.append(dist)
+            if distancias and min(distancias) <= 4:
+                cluster_fisico = True
+                # Encontra números da região
+                for n in ultimos_5:
+                    if any(self.roleta.get_distancia_roda(n, m) <= 4 for m in ultimos_5 if m != n):
+                        regiao_ativa.append(n)
+        
+        # 6. Força do sinal (calculada dinamicamente)
+        forca = 40  # Base
+        
+        # Repetição aumenta MUITO a força
+        if sequencia_ativa:
+            forca += 30
+        elif len(repetidos) >= 2:
             forca += 20
-        if len(repetidos) >= 2:
+        elif len(repetidos) >= 1:
             forca += 10
         
         # Frequência do último número
-        freq_ultimo = ultimos_15.count(ultimo)
-        forca += freq_ultimo * 5
+        freq_ultimo_15 = ultimos_15.count(ultimo)
+        forca += freq_ultimo_15 * 5
+        
+        # Cluster físico aumenta força
+        if cluster_fisico:
+            forca += 15
         
         # Consistência do bloco
-        if bloco == "alto" and altos >= 10:
-            forca += 10
-        elif bloco == "baixo" and baixos >= 10:
+        if bloco_15 == bloco_5:
             forca += 10
         
-        forca = min(100, max(30, forca))
+        # Performance recente da IA
+        taxa_recente = self.get_taxa_recente(5)
+        if taxa_recente >= 0.4:
+            forca += 10
+        elif taxa_recente <= 0.2:
+            forca -= 10
         
-        return {
+        forca = min(100, max(25, int(forca)))
+        
+        self.ultima_analise = {
             "quentes": quentes,
             "repetidos": list(set(repetidos)),
-            "bloco": bloco,
-            "altos": altos,
-            "baixos": baixos,
+            "bloco_15": bloco_15,
+            "bloco_5": bloco_5,
+            "altos_15": altos_15,
+            "baixos_15": baixos_15,
+            "sequencia_ativa": sequencia_ativa,
+            "numero_sequencia": numero_sequencia,
+            "cluster_fisico": cluster_fisico,
+            "regiao_ativa": list(set(regiao_ativa)),
             "forca_sinal": forca,
-            "ultimo": ultimo
+            "ultimo": ultimo,
+            "ultimos_3": ultimos_3
         }
+        
+        return self.ultima_analise
     
-    def prever(self, modo_sniper=False, modo_seguro=False, max_numeros=12):
+    def prever(self, modo_sniper=False, modo_seguro=False, max_numeros=15,
+               expandir_vizinhos=True, qtd_antes=2, qtd_depois=2):
         """
         Gera previsão com base 100% dinâmica
         """
-        if len(self.historico) < 10:
+        if len(self.historico) < 8:
             return None
         
         dados = self.analisar()
@@ -327,85 +521,96 @@ class RoletaIA:
         # BASE DINÂMICA (construída do zero a cada rodada)
         base = set()
         
-        # 🔥 Último número + vizinhos (sempre inclui)
+        # 🔥 Último número (sempre inclui)
         base.add(ultimo)
-        vizinhos_ultimo = self.roleta.get_vizinhos(ultimo, raio=2)
-        base.update(vizinhos_ultimo)
         
         # 🔁 Repetição tem PRIORIDADE MÁXIMA
         for n in dados["repetidos"]:
             base.add(n)
-            vizinhos_rep = self.roleta.get_vizinhos(n, raio=2)
-            base.update(vizinhos_rep)
+        
+        # 🔥 Número em sequência (máxima prioridade)
+        if dados["sequencia_ativa"] and dados["numero_sequencia"]:
+            base.add(dados["numero_sequencia"])
+        
+        # 🎰 Cluster físico - adiciona região ativa
+        if dados["cluster_fisico"]:
+            for n in dados["regiao_ativa"][:4]:
+                base.add(n)
         
         # 🔥 Números quentes (frequência recente)
         for n in dados["quentes"][:4]:
             base.add(n)
         
-        # 🌊 Ajuste de bloco (contexto do ciclo atual)
-        if dados["bloco"] == "alto":
-            base = {n for n in base if n >= 19}
+        # Últimos 3 números
+        for n in dados["ultimos_3"]:
+            base.add(n)
+        
+        # Números base originais (antes da expansão)
+        numeros_base = list(base)
+        num_originais = len(numeros_base)
+        
+        # 🌊 EXPANSÃO COM VIZINHOS
+        if expandir_vizinhos:
+            numeros_final, _ = self.seletor.expandir_com_vizinhos(
+                numeros_base, self.historico, max_numeros, qtd_antes, qtd_depois
+            )
         else:
-            base = {n for n in base if n <= 18}
-        
-        # Se base ficou muito pequena, expande
-        if len(base) < 5:
-            # Adiciona mais números do bloco
-            if dados["bloco"] == "alto":
-                for i in range(19, 37):
-                    base.add(i)
-                    if len(base) >= 8:
-                        break
+            if len(numeros_base) > max_numeros:
+                numeros_final = self.seletor.selecionar_melhores(numeros_base, self.historico, max_numeros)
             else:
-                for i in range(0, 19):
-                    base.add(i)
-                    if len(base) >= 8:
-                        break
+                numeros_final = sorted(numeros_base)
         
-        # Converte para lista ordenada
-        base_list = sorted(list(base))
+        # 🌊 Ajuste de bloco (filtrar por contexto)
+        if dados["bloco_5"] == "alto" and dados["bloco_15"] == "alto":
+            # Bloco forte de altos - favorece altos
+            numeros_altos = [n for n in numeros_final if n > 18]
+            if len(numeros_altos) >= 5:
+                numeros_final = numeros_altos
+        elif dados["bloco_5"] == "baixo" and dados["bloco_15"] == "baixo":
+            # Bloco forte de baixos - favorece baixos
+            numeros_baixos = [n for n in numeros_final if n <= 18]
+            if len(numeros_baixos) >= 5:
+                numeros_final = numeros_baixos
         
         # Aplica modos
         if modo_sniper:
-            # Modo agressivo: 5-7 números
-            if len(base_list) > 7:
-                # Prioriza: último, repetidos, mais frequentes
-                prioridade = [ultimo] + dados["repetidos"] + dados["quentes"][:3]
-                base_list = [n for n in base_list if n in prioridade][:7]
             tipo_entrada = "sniper"
-            max_numeros = 7
+            max_final = 7
         elif modo_seguro:
-            # Modo seguro: 10-12 números
             tipo_entrada = "seguro"
-            max_numeros = min(12, max_numeros)
+            max_final = 12
         else:
             tipo_entrada = "normal"
-            max_numeros = min(10, max_numeros)
+            max_final = 10
         
-        # Limita ao máximo configurado
-        if len(base_list) > max_numeros:
-            # Seleciona os melhores baseado em prioridade
-            prioridade = [ultimo] + dados["repetidos"] + dados["quentes"]
-            base_list = [n for n in base_list if n in prioridade][:max_numeros]
+        # Limita ao máximo
+        if len(numeros_final) > max_final:
+            numeros_final = self.seletor.selecionar_melhores(numeros_final, self.historico, max_final)
         
         # Gera descrição do gatilho
-        gatilho = f"🎯 Base dinâmica: último={ultimo}"
+        gatilho_parts = [f"último={ultimo}"]
         if dados["repetidos"]:
-            gatilho += f", repetidos={dados['repetidos']}"
-        gatilho += f", bloco={dados['bloco']}"
+            gatilho_parts.append(f"repetidos={dados['repetidos']}")
+        if dados["sequencia_ativa"]:
+            gatilho_parts.append(f"sequência={dados['numero_sequencia']}")
+        if dados["cluster_fisico"]:
+            gatilho_parts.append("cluster físico")
+        gatilho_parts.append(f"bloco={dados['bloco_5']}")
         
         return {
             'nome': 'IA Dinâmica',
-            'numeros_apostar': sorted(base_list),
-            'gatilho': gatilho,
+            'numeros_apostar': sorted(numeros_final),
+            'gatilho': f"🎯 " + ", ".join(gatilho_parts),
             'forca_sinal': dados['forca_sinal'],
             'confianca': 'Alta' if dados['forca_sinal'] >= 70 else 'Média',
             'tipo_entrada': tipo_entrada,
-            'dados_analise': dados
+            'dados_analise': dados,
+            'num_originais': num_originais,
+            'expandido': expandir_vizinhos
         }
     
     def get_analise_completa(self):
-        """Retorna análise detalhada para debug"""
+        """Retorna análise detalhada"""
         if len(self.historico) < 5:
             return "📊 Aguardando dados..."
         
@@ -420,14 +625,23 @@ class RoletaIA:
         analise += f"🎲 Último: {dados['ultimo']}\n"
         analise += f"📊 Últimos 10: {hist_list[-10:]}\n\n"
         
-        analise += f"🔥 Quentes: {dados['quentes'][:5]}\n"
-        analise += f"🔁 Repetidos: {dados['repetidos']}\n"
-        analise += f"🌊 Bloco: {dados['bloco']} (Altos: {dados['altos']}, Baixos: {dados['baixos']})\n"
+        analise += f"🔥 Quentes (15): {dados['quentes'][:5]}\n"
+        analise += f"🔁 Repetidos (5): {dados['repetidos']}\n"
+        
+        if dados['sequencia_ativa']:
+            analise += f"💥 SEQUÊNCIA ATIVA: {dados['numero_sequencia']}\n"
+        
+        if dados['cluster_fisico']:
+            analise += f"🎰 Cluster físico: {dados['regiao_ativa'][:4]}\n"
+        
+        analise += f"🌊 Bloco (15): {dados['bloco_15']} (A:{dados['altos_15']} B:{dados['baixos_15']})\n"
         analise += f"⚡ Força: {dados['forca_sinal']}%\n"
         
         taxa = self.get_taxa_acerto()
+        taxa_rec = self.get_taxa_recente(5)
         total = self.performance['acertos'] + self.performance['erros']
-        analise += f"\n📈 Performance: {taxa:.0%} ({self.performance['acertos']}/{total})\n"
+        analise += f"\n📈 Performance: {taxa:.0%} ({self.performance['acertos']}/{total})"
+        analise += f"\n📊 Recente (5): {taxa_rec:.0%}\n"
         
         return analise
     
@@ -435,6 +649,8 @@ class RoletaIA:
         """Zera estatísticas"""
         self.historico.clear()
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
+        self.ultima_analise = None
+        self.ultimo_numero = None
 
 
 # =============================
@@ -515,15 +731,20 @@ class SistemaIA:
             return
         
         # Gera nova previsão com IA dinâmica
-        if len(self.historico_numeros) >= 10:
+        if len(self.historico_numeros) >= 8:
             modo_sniper = st.session_state.get('modo_sniper', False)
             modo_seguro = st.session_state.get('modo_seguro', True)
-            max_numeros = st.session_state.get('max_numeros_entrada', 12)
+            max_numeros = st.session_state.get('max_numeros_entrada', 15)
+            expandir = st.session_state.get('expandir_com_vizinhos', True)
+            qtd_antes = st.session_state.get('qtd_vizinhos_antes', 2)
+            qtd_depois = st.session_state.get('qtd_vizinhos_depois', 2)
             
-            nova = self.ia.prever(modo_sniper, modo_seguro, max_numeros)
+            nova = self.ia.prever(
+                modo_sniper, modo_seguro, max_numeros,
+                expandir, qtd_antes, qtd_depois
+            )
             
             if nova:
-                # Só entra se força mínima atingida
                 forca_minima = st.session_state.get('forca_minima_sinal', 40)
                 if nova['forca_sinal'] >= forca_minima:
                     self.previsao_ativa = nova
@@ -599,7 +820,7 @@ def fetch_latest_result():
 # APLICAÇÃO STREAMLIT
 # =============================
 st.set_page_config(page_title="🎯 IA Roleta — Base 100% Dinâmica", layout="centered")
-st.title("🎯 IA Roleta — Motor com Base Dinâmica")
+st.title("🎯 IA Roleta — Motor com Expansão Inteligente")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaIA()
@@ -614,7 +835,13 @@ if "forca_minima_sinal" not in st.session_state:
 if "intervalo_minimo_entradas" not in st.session_state:
     st.session_state.intervalo_minimo_entradas = 1
 if "max_numeros_entrada" not in st.session_state:
-    st.session_state.max_numeros_entrada = 12
+    st.session_state.max_numeros_entrada = 15
+if "expandir_com_vizinhos" not in st.session_state:
+    st.session_state.expandir_com_vizinhos = True
+if "qtd_vizinhos_antes" not in st.session_state:
+    st.session_state.qtd_vizinhos_antes = 2
+if "qtd_vizinhos_depois" not in st.session_state:
+    st.session_state.qtd_vizinhos_depois = 2
 
 sessao_carregada = carregar_sessao()
 
@@ -648,11 +875,33 @@ with st.sidebar.expander("🎯 Modo de Entrada", expanded=True):
     else:
         st.session_state.modo_sniper = modo_sniper
         st.session_state.modo_seguro = modo_seguro
+
+# ===== EXPANSÃO COM VIZINHOS =====
+with st.sidebar.expander("🔧 Expansão com Vizinhos", expanded=True):
+    st.session_state.expandir_com_vizinhos = st.checkbox(
+        "🔄 Expandir com vizinhos", 
+        value=st.session_state.expandir_com_vizinhos,
+        help="Adiciona vizinhos antes e depois de cada número"
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.session_state.qtd_vizinhos_antes = st.number_input(
+            "⬅️ Vizinhos antes", 
+            min_value=1, max_value=4, value=st.session_state.qtd_vizinhos_antes
+        )
+    with col2:
+        st.session_state.qtd_vizinhos_depois = st.number_input(
+            "➡️ Vizinhos depois", 
+            min_value=1, max_value=4, value=st.session_state.qtd_vizinhos_depois
+        )
     
     st.session_state.max_numeros_entrada = st.slider(
         "📊 Máximo de números",
-        min_value=5, max_value=15, value=st.session_state.max_numeros_entrada
+        min_value=5, max_value=18, value=st.session_state.max_numeros_entrada
     )
+    
+    st.caption(f"💡 Cada número gera +{st.session_state.qtd_vizinhos_antes} antes +{st.session_state.qtd_vizinhos_depois} depois")
 
 # ===== FILTRO DE FORÇA =====
 with st.sidebar.expander("⚡ Força do Sinal", expanded=True):
@@ -783,11 +1032,14 @@ elif sistema.previsao_ativa:
     p = sistema.previsao_ativa
     forca = p.get('forca_sinal', 0)
     tipo = p.get('tipo_entrada', 'normal')
+    num_orig = p.get('num_originais', 0)
     
     emoji = "🎯" if tipo == 'sniper' else "🛡️" if tipo == 'seguro' else "🎲"
     barras = "█" * (forca // 10) + "░" * (10 - forca // 10)
     
     st.success(f"{emoji} **ENTRADA DINÂMICA** - FORÇA {forca}% {barras}")
+    if p.get('expandido'):
+        st.caption(f"📈 Expandido: {num_orig} → {len(p['numeros_apostar'])} números")
     st.info(f"📋 **Gatilho:** {p['gatilho']}")
     
     st.write(f"**🔢 Números ({len(p['numeros_apostar'])}):**")
@@ -801,18 +1053,30 @@ else:
 # Performance da IA
 st.subheader("📈 Performance da IA")
 taxa_ia = sistema.ia.get_taxa_acerto()
+taxa_rec = sistema.ia.get_taxa_recente(5)
 total_ia = sistema.ia.performance['acertos'] + sistema.ia.performance['erros']
 
-if total_ia > 0:
-    if taxa_ia >= 0.40:
-        cor = "🟢"
-    elif taxa_ia >= 0.25:
-        cor = "🟡"
+col1, col2 = st.columns(2)
+with col1:
+    if total_ia > 0:
+        if taxa_ia >= 0.40:
+            st.success(f"🟢 **Geral**: {taxa_ia:.0%} ({sistema.ia.performance['acertos']}/{total_ia})")
+        elif taxa_ia >= 0.25:
+            st.warning(f"🟡 **Geral**: {taxa_ia:.0%} ({sistema.ia.performance['acertos']}/{total_ia})")
+        else:
+            st.error(f"🔴 **Geral**: {taxa_ia:.0%} ({sistema.ia.performance['acertos']}/{total_ia})")
     else:
-        cor = "🔴"
-    st.write(f"{cor} **IA Dinâmica**: {taxa_ia:.0%} ({sistema.ia.performance['acertos']}/{total_ia})")
-else:
-    st.write("⚪ **IA Dinâmica**: Coletando dados...")
+        st.info("⚪ **Geral**: Coletando...")
+with col2:
+    if len(sistema.ia.performance['historico']) >= 5:
+        if taxa_rec >= 0.40:
+            st.success(f"🟢 **Recente (5)**: {taxa_rec:.0%}")
+        elif taxa_rec >= 0.25:
+            st.warning(f"🟡 **Recente (5)**: {taxa_rec:.0%}")
+        else:
+            st.error(f"🔴 **Recente (5)**: {taxa_rec:.0%}")
+    else:
+        st.info("⚪ **Recente**: Coletando...")
 
 # Histórico recente
 if sistema.historico_desempenho:
