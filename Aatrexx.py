@@ -9,27 +9,37 @@ import pickle
 from datetime import datetime
 
 # =============================
-# CONFIGURAÇÕES DE PERSISTÊNCIA
+# CONFIGURAÇÕES DE PERSISTÊNCIA (CORRIGIDO)
 # =============================
 SESSION_DATA_PATH = "session_data.pkl"
 HISTORICO_PATH = "historico_roleta.json"
 PERFORMANCE_PATH = "performance_bot.json"
 
+# Força inicialização da sessão
+if "sistema" not in st.session_state:
+    # Tenta carregar dados salvos antes de criar novo sistema
+    st.session_state.sistema = None  # Será inicializado depois
+
 def salvar_sessao():
+    """Salva TODOS os dados da sessão em arquivo - PERSISTÊNCIA GARANTIDA"""
     try:
-        if 'sistema' in st.session_state:
-            performance_data = {
-                'acertos': st.session_state.sistema.bot.performance['acertos'],
-                'erros': st.session_state.sistema.bot.performance['erros'],
-                'historico': st.session_state.sistema.bot.performance['historico']
-            }
-            with open(PERFORMANCE_PATH, 'w') as f:
-                json.dump(performance_data, f)
+        if 'sistema' not in st.session_state or st.session_state.sistema is None:
+            return False
         
+        # Salva performance
+        performance_data = {
+            'acertos': st.session_state.sistema.bot.performance['acertos'],
+            'erros': st.session_state.sistema.bot.performance['erros'],
+            'historico': st.session_state.sistema.bot.performance['historico']
+        }
+        with open(PERFORMANCE_PATH, 'w') as f:
+            json.dump(performance_data, f)
+        
+        # Salva estado completo
         session_data = {
-            'historico': st.session_state.historico,
-            'telegram_token': st.session_state.telegram_token,
-            'telegram_chat_id': st.session_state.telegram_chat_id,
+            'historico': st.session_state.get('historico', []),
+            'telegram_token': st.session_state.get('telegram_token', ''),
+            'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
             'sistema_acertos': st.session_state.sistema.acertos,
             'sistema_erros': st.session_state.sistema.erros,
             'sistema_historico_desempenho': st.session_state.sistema.historico_desempenho,
@@ -42,60 +52,80 @@ def salvar_sessao():
             'modo_automatico': st.session_state.get('modo_automatico', True),
             'modo_conservador': st.session_state.get('modo_conservador', True),
             'janela_analise': st.session_state.get('janela_analise', 50),
-            'usar_mineracao': st.session_state.get('usar_mineracao', True)
+            'usar_mineracao': st.session_state.get('usar_mineracao', True),
+            'usar_leque_dinamico': st.session_state.get('usar_leque_dinamico', True),
+            'janela_leque': st.session_state.get('janela_leque', 20)
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
             pickle.dump(session_data, f)
         
-        logging.info("✅ Sessão salva")
+        logging.info("✅ Sessão salva com sucesso")
         return True
     except Exception as e:
-        logging.error(f"❌ Erro ao salvar: {e}")
+        logging.error(f"❌ Erro ao salvar sessão: {e}")
         return False
 
-def carregar_sessao():
+def carregar_dados_persistidos():
+    """Carrega dados salvos ou retorna None se não existirem"""
     try:
         if os.path.exists(SESSION_DATA_PATH):
             with open(SESSION_DATA_PATH, 'rb') as f:
                 session_data = pickle.load(f)
-            
-            st.session_state.historico = session_data.get('historico', [])
-            st.session_state.telegram_token = session_data.get('telegram_token', '')
-            st.session_state.telegram_chat_id = session_data.get('telegram_chat_id', '')
-            
-            st.session_state.top_n_apostas = session_data.get('top_n_apostas', 5)
-            st.session_state.forca_minima_sinal = session_data.get('forca_minima_sinal', 40)
-            st.session_state.intervalo_minimo_entradas = session_data.get('intervalo_minimo_entradas', 0)
-            st.session_state.modo_automatico = session_data.get('modo_automatico', True)
-            st.session_state.modo_conservador = session_data.get('modo_conservador', True)
-            st.session_state.janela_analise = session_data.get('janela_analise', 50)
-            st.session_state.usar_mineracao = session_data.get('usar_mineracao', True)
-            
-            if 'sistema' in st.session_state:
-                st.session_state.sistema.acertos = session_data.get('sistema_acertos', 0)
-                st.session_state.sistema.erros = session_data.get('sistema_erros', 0)
-                st.session_state.sistema.historico_desempenho = session_data.get('sistema_historico_desempenho', [])
-                st.session_state.sistema.historico_numeros = deque(session_data.get('historico_numeros', []), maxlen=200)
-                st.session_state.sistema.historico_lucky = deque(session_data.get('historico_lucky', []), maxlen=100)
-                st.session_state.sistema.estrategia_ativa_manual = session_data.get('estrategia_ativa_manual', False)
-            
-            if os.path.exists(PERFORMANCE_PATH) and 'sistema' in st.session_state:
-                with open(PERFORMANCE_PATH, 'r') as f:
-                    perf = json.load(f)
-                    st.session_state.sistema.bot.performance = {
-                        'acertos': perf.get('acertos', 0),
-                        'erros': perf.get('erros', 0),
-                        'historico': perf.get('historico', [])
-                    }
-            
-            logging.info("✅ Sessão carregada")
-            return True
+            logging.info("✅ Dados persistidos carregados")
+            return session_data
     except Exception as e:
-        logging.error(f"❌ Erro ao carregar: {e}")
-    return False
+        logging.error(f"❌ Erro ao carregar dados: {e}")
+    return None
+
+def inicializar_sistema():
+    """Inicializa o sistema com dados persistidos ou do zero"""
+    from collections import deque
+    
+    # Tenta carregar dados salvos
+    dados = carregar_dados_persistidos()
+    
+    # Cria novo sistema
+    from types import SimpleNamespace
+    sis = SimpleNamespace()
+    sis.bot = None  # Será inicializado pelo SistemaBot
+    sis.historico_numeros = deque(maxlen=200)
+    sis.historico_lucky = deque(maxlen=100)
+    sis.previsao_ativa = None
+    sis.historico_desempenho = []
+    sis.acertos = 0
+    sis.erros = 0
+    sis.rodadas_sem_entrada = 0
+    sis.ultima_entrada_rodada = -10
+    sis.estrategia_ativa_manual = False
+    
+    # Recupera dados persistidos
+    if dados:
+        st.session_state.historico = dados.get('historico', [])
+        st.session_state.telegram_token = dados.get('telegram_token', '')
+        st.session_state.telegram_chat_id = dados.get('telegram_chat_id', '')
+        
+        st.session_state.top_n_apostas = dados.get('top_n_apostas', 5)
+        st.session_state.forca_minima_sinal = dados.get('forca_minima_sinal', 40)
+        st.session_state.intervalo_minimo_entradas = dados.get('intervalo_minimo_entradas', 0)
+        st.session_state.modo_automatico = dados.get('modo_automatico', True)
+        st.session_state.modo_conservador = dados.get('modo_conservador', True)
+        st.session_state.janela_analise = dados.get('janela_analise', 50)
+        st.session_state.usar_mineracao = dados.get('usar_mineracao', True)
+        st.session_state.usar_leque_dinamico = dados.get('usar_leque_dinamico', True)
+        st.session_state.janela_leque = dados.get('janela_leque', 20)
+        
+        sis.acertos = dados.get('sistema_acertos', 0)
+        sis.erros = dados.get('sistema_erros', 0)
+        sis.historico_desempenho = dados.get('sistema_historico_desempenho', [])
+        sis.historico_numeros = deque(dados.get('historico_numeros', []), maxlen=200)
+        sis.historico_lucky = deque(dados.get('historico_lucky', []), maxlen=100)
+        sis.estrategia_ativa_manual = dados.get('estrategia_ativa_manual', False)
+    
+    return sis
 
 def limpar_sessao():
+    """Limpa todos os dados da sessão"""
     try:
         for path in [SESSION_DATA_PATH, HISTORICO_PATH, PERFORMANCE_PATH]:
             if os.path.exists(path):
@@ -116,25 +146,23 @@ def enviar_previsao_auto(previsao):
         estrategias = previsao.get('estrategias_ativas', [])
         forca = previsao.get('forca_real', 0)
         gatilho = previsao.get('gatilho', '')
-        mineracao = previsao.get('mineracao', {})
+        leque_info = previsao.get('leque_dinamico', {})
         
         emoji = "🟢" if confianca == "Alta" else "🟡" if confianca == "Média" else "🔴"
         
-        msg = f"{emoji} **ENTRADA SNIPER** - Força: {forca}%\n"
+        msg = f"{emoji} **ENTRADA** - Força: {forca}%\n"
         msg += f"📋 {gatilho}\n"
         if estrategias:
             msg += f"🎯 Estratégias: {', '.join(estrategias)}\n"
-        if mineracao.get('markov'):
-            msg += f"🤖 Markov: {mineracao['markov']}\n"
-        if mineracao.get('lucky_cross'):
-            msg += f"⚡ Lucky Cross: {mineracao['lucky_cross']}\n"
+        if leque_info.get('status'):
+            msg += f"🪭 Leque: {leque_info['status']} ({leque_info.get('leque', '?')} vizinhos)\n"
         msg += f"🔢 {len(numeros)} números: {numeros}"
         
         st.toast(f"🎯 Entrada - {confianca}", icon=emoji)
         st.success(f"🔔 {msg}")
         
-        if st.session_state.telegram_token and st.session_state.telegram_chat_id:
-            enviar_telegram(f"🔔 ENTRADA SNIPER [{confianca}]\n{msg}")
+        if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
+            enviar_telegram(f"🔔 ENTRADA [{confianca}]\n{msg}")
         
         salvar_sessao()
     except Exception as e:
@@ -151,7 +179,7 @@ def enviar_resultado_auto(numero_real, acerto, multiplicador=None):
         
         st.toast(f"{'✅' if acerto else '❌'} {numero_real}", icon="✅" if acerto else "❌")
         
-        if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+        if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
             enviar_telegram(f"📢 {msg}")
         
         salvar_sessao()
@@ -160,8 +188,8 @@ def enviar_resultado_auto(numero_real, acerto, multiplicador=None):
 
 def enviar_telegram(mensagem):
     try:
-        token = st.session_state.telegram_token
-        chat_id = st.session_state.telegram_chat_id
+        token = st.session_state.get('telegram_token', '')
+        chat_id = st.session_state.get('telegram_chat_id', '')
         if not token or not chat_id:
             return
         url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -177,50 +205,97 @@ API_URL = "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremeli
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # =============================
+# LEQUE DINÂMICO (NOVA ESTRATÉGIA)
+# =============================
+class RoletaLequeDinamico:
+    """Estratégia de vizinhos com leque ajustável conforme calor da região"""
+    
+    def __init__(self):
+        self.roda = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
+    
+    def obter_vizinhos(self, numero_alvo, tamanho_leque):
+        """Busca os vizinhos físicos do número na roda"""
+        if numero_alvo not in self.roda:
+            return []
+        
+        idx = self.roda.index(numero_alvo)
+        total_numeros = len(self.roda)
+        vizinhos = []
+        
+        for i in range(-tamanho_leque, tamanho_leque + 1):
+            indice_vizinho = (idx + i) % total_numeros
+            vizinhos.append(self.roda[indice_vizinho])
+        
+        return vizinhos
+    
+    def analisar(self, historico_numeros, janela_tempo=20):
+        """Ajusta o tamanho da aposta com base no calor da região"""
+        if len(historico_numeros) < 10:
+            return None
+        
+        recorte_recente = historico_numeros[-janela_tempo:]
+        ultimo_sorteado = recorte_recente[-1]
+        
+        # Mede o "calor" da macro-região (5 vizinhos pra cada lado)
+        macro_regiao = self.obter_vizinhos(ultimo_sorteado, 5)
+        acertos_na_regiao = sum(1 for num in recorte_recente if num in macro_regiao)
+        
+        # Lógica do Leque Dinâmico
+        if acertos_na_regiao >= 6:
+            leque = 4
+            status = "🔥 SETOR MUITO QUENTE"
+            forca = 70
+        elif acertos_na_regiao >= 3:
+            leque = 2
+            status = "🟡 SETOR MORNO"
+            forca = 50
+        else:
+            leque = 1
+            status = "🧊 SETOR FRIO"
+            forca = 30
+        
+        alvos_apostas = self.obter_vizinhos(ultimo_sorteado, leque)
+        
+        return {
+            'alvos': alvos_apostas,
+            'leque': leque,
+            'status': status,
+            'forca': forca,
+            'acertos_regiao': acertos_na_regiao,
+            'ultimo': ultimo_sorteado,
+            'vizinhos_leque': leque
+        }
+
+
+# =============================
 # MINERADOR DE PADRÕES OCULTOS
 # =============================
 class MineradorPadroesOcultos:
-    """Mineração de micro-padrões: Markov, Lucky Cross, N-Gramas"""
-    
     def __init__(self):
         self.transicoes = defaultdict(list)
         self.ngramas_3 = Counter()
-        self.ngramas_4 = Counter()
         
-    def atualizar(self, historico_numeros, historico_lucky):
-        """Atualiza todas as estruturas de mineração"""
+    def atualizar(self, historico_numeros):
         self.transicoes.clear()
         self.ngramas_3.clear()
-        self.ngramas_4.clear()
         
         if len(historico_numeros) < 2:
             return
         
-        # Markov: transições de 1ª ordem
         for i in range(len(historico_numeros) - 1):
-            atual = historico_numeros[i]
-            proximo = historico_numeros[i + 1]
-            self.transicoes[atual].append(proximo)
+            self.transicoes[historico_numeros[i]].append(historico_numeros[i + 1])
         
-        # N-Gramas: sequências de 3
         for i in range(len(historico_numeros) - 2):
             bloco = tuple(historico_numeros[i:i+3])
             self.ngramas_3[bloco] += 1
-        
-        # N-Gramas: sequências de 4
-        for i in range(len(historico_numeros) - 3):
-            bloco = tuple(historico_numeros[i:i+4])
-            self.ngramas_4[bloco] += 1
     
     def markov_primeira_ordem(self, ultimo_numero, top_n=3):
-        """O que acontece logo após um número específico"""
         se_ocorreu = self.transicoes.get(ultimo_numero, [])
         if not se_ocorreu:
             return []
         return Counter(se_ocorreu).most_common(top_n)
     
     def padrao_lucky_cross(self, historico_numeros, historico_lucky):
-        """Número atual estava nos lucky numbers da rodada anterior?"""
         if len(historico_numeros) < 2 or len(historico_lucky) < 2:
             return 0, 0, 0
         
@@ -237,73 +312,34 @@ class MineradorPadroesOcultos:
         taxa = (acertos / total * 100) if total > 0 else 0
         return acertos, total, taxa
     
-    def sequencias_ngramas_repetidas(self, tamanho=3):
-        """Busca sequências exatas que se repetem"""
-        if tamanho == 3:
-            return {seq: count for seq, count in self.ngramas_3.items() if count > 1}
-        else:
-            return {seq: count for seq, count in self.ngramas_4.items() if count > 1}
-    
-    def prever_proximo_ngrama(self, historico_numeros):
-        """Tenta prever próximo número baseado em N-Gramas"""
-        if len(historico_numeros) < 2:
-            return []
-        
-        # Últimos 2 números para formar contexto
-        contexto = tuple(historico_numeros[-2:])
-        
-        # Busca todas as ocorrências desse contexto nos N-Gramas de 3
-        proximos = []
-        for bloco, count in self.ngramas_3.items():
-            if bloco[:2] == contexto:
-                proximos.append((bloco[2], count))
-        
-        return sorted(proximos, key=lambda x: x[1], reverse=True)[:3]
-    
     def analisar_tudo(self, historico_numeros, historico_lucky):
-        """Análise completa de mineração"""
         if len(historico_numeros) < 10:
             return None
         
-        self.atualizar(historico_numeros, historico_lucky)
+        self.atualizar(historico_numeros)
         
         ultimo = historico_numeros[-1]
         
         resultado = {
             'markov': [],
             'lucky_cross': {'acertos': 0, 'total': 0, 'taxa': 0},
-            'ngramas_repetidos': {},
-            'previsao_ngrama': [],
             'forca_mineracao': 0,
             'numeros_minerados': set()
         }
         
-        # 1. Markov
         resultado['markov'] = self.markov_primeira_ordem(ultimo, 3)
         if resultado['markov']:
             for num, _ in resultado['markov']:
                 resultado['numeros_minerados'].add(num)
         
-        # 2. Lucky Cross
         acertos, total, taxa = self.padrao_lucky_cross(historico_numeros, historico_lucky)
         resultado['lucky_cross'] = {'acertos': acertos, 'total': total, 'taxa': taxa}
         
-        # 3. N-Gramas repetidos
-        resultado['ngramas_repetidos'] = self.sequencias_ngramas_repetidas(3)
-        
-        # 4. Previsão por N-Grama
-        resultado['previsao_ngrama'] = self.prever_proximo_ngrama(historico_numeros)
-        for num, _ in resultado['previsao_ngrama']:
-            resultado['numeros_minerados'].add(num)
-        
-        # Força da mineração
         forca = 0
         if resultado['markov'] and len(resultado['markov']) >= 2:
             forca += 30
         if taxa > 18:
-            forca += 35  # Alerta de viés
-        if resultado['ngramas_repetidos']:
-            forca += 20
+            forca += 35
         
         resultado['forca_mineracao'] = min(100, forca)
         
@@ -381,7 +417,7 @@ class AnalisadorRoletaVersatil:
             if hits_na_zona >= 5:
                 forca += 50
                 if not gatilho_principal:
-                    gatilho_principal = f"Zona da Roda alvo: {zona_quente}"
+                    gatilho_principal = f"Zona da Roda: {zona_quente}"
                 estrategia.append("Cluster Físico")
         
         lucky_quentes = []
@@ -409,12 +445,13 @@ class AnalisadorRoletaVersatil:
 
 
 # =============================
-# BOT V3 SNIPER + MINERADOR
+# BOT V3 SNIPER + LEQUE DINÂMICO + MINERADOR
 # =============================
 class RoletaBotV3:
     def __init__(self, janela_analise=50):
         self.analisador = AnalisadorRoletaVersatil(janela_analise)
         self.minerador = MineradorPadroesOcultos()
+        self.leque = RoletaLequeDinamico()
         self.historico = []
         self.lucky = []
         self.lucky_mult = []
@@ -445,7 +482,8 @@ class RoletaBotV3:
     def get_total_tentativas(self):
         return self.performance['acertos'] + self.performance['erros']
     
-    def sugerir_aposta(self, top_n=5, forca_minima=40, modo_conservador=True, usar_mineracao=True):
+    def sugerir_aposta(self, top_n=5, forca_minima=40, modo_conservador=True, 
+                       usar_mineracao=True, usar_leque=True, janela_leque=20):
         if len(self.historico) < 15:
             return None
         
@@ -456,26 +494,33 @@ class RoletaBotV3:
         # Análise versátil
         analise = self.analisador.analisar(list(self.historico), lucky_recentes)
         
-        # Mineração de padrões ocultos
+        # Mineração
         mineracao = None
         if usar_mineracao:
             mineracao = self.minerador.analisar_tudo(list(self.historico), list(self.lucky))
         
+        # Leque Dinâmico
+        leque_resultado = None
+        if usar_leque:
+            leque_resultado = self.leque.analisar(list(self.historico), janela_leque)
+        
         # Combina forças
         forca_versatil = analise['forca_sinal'] if analise else 0
         forca_mineracao = mineracao['forca_mineracao'] if mineracao else 0
+        forca_leque = leque_resultado['forca'] if leque_resultado else 0
         
-        # Força combinada (média ponderada)
-        forca_total = max(forca_versatil, forca_mineracao)
-        if forca_versatil > 0 and forca_mineracao > 0:
-            forca_total = int(forca_versatil * 0.6 + forca_mineracao * 0.4)
+        forca_total = max(forca_versatil, forca_mineracao, forca_leque)
+        if forca_versatil > 0 and forca_mineracao > 0 and forca_leque > 0:
+            forca_total = int(forca_versatil * 0.4 + forca_mineracao * 0.3 + forca_leque * 0.3)
+        elif forca_versatil > 0 and forca_leque > 0:
+            forca_total = int(forca_versatil * 0.5 + forca_leque * 0.5)
         
         if forca_total < forca_minima:
             return None
         
         base = set()
         estrategias_ativas = []
-        info_mineracao = {}
+        info_leque = {}
         
         # Estratégias Versáteis
         if analise:
@@ -492,43 +537,37 @@ class RoletaBotV3:
                 base.update(analise['vizinhos_zona'])
                 estrategias_ativas.append("Cluster Físico")
             
-            if "Raios Quentes" in analise['estrategia']:
-                estrategias_ativas.append("Raios Quentes")
-            
-            # Quentes e Lucky
             for n in analise['quentes'][:3]:
                 base.add(n)
             for n in analise['lucky_quentes'][:2]:
                 base.add(n)
         
-        # Mineração de Padrões Ocultos
+        # Leque Dinâmico
+        if leque_resultado:
+            base.update(leque_resultado['alvos'])
+            estrategias_ativas.append("Leque Dinâmico")
+            info_leque = {
+                'status': leque_resultado['status'],
+                'leque': leque_resultado['leque'],
+                'acertos_regiao': leque_resultado['acertos_regiao']
+            }
+        
+        # Mineração
+        info_mineracao = {}
         if mineracao:
-            # Markov
             if mineracao['markov']:
                 for num, _ in mineracao['markov'][:2]:
                     base.add(num)
-                info_mineracao['markov'] = [n for n, _ in mineracao['markov'][:2]]
                 estrategias_ativas.append("Markov")
             
-            # Lucky Cross
             if mineracao['lucky_cross']['taxa'] > 18:
                 info_mineracao['lucky_cross'] = f"Taxa {mineracao['lucky_cross']['taxa']:.1f}%"
                 estrategias_ativas.append("Lucky Cross")
             
-            # N-Gramas
-            if mineracao['previsao_ngrama']:
-                for num, _ in mineracao['previsao_ngrama'][:2]:
-                    base.add(num)
-                estrategias_ativas.append("N-Grama")
-            
-            # Números minerados
             for n in mineracao['numeros_minerados']:
                 base.add(n)
         
-        # Prioridade
         prioridade = list(base)
-        
-        # Completa com analise se necessário
         if analise:
             for n in analise['quentes']:
                 if n not in prioridade:
@@ -543,26 +582,24 @@ class RoletaBotV3:
             if taxa_recente <= 0.10:
                 return None
         
-        # Gatilho
         gatilho = ""
+        if leque_resultado:
+            gatilho = f"Leque: {leque_resultado['status']}"
         if analise and analise['gatilho']:
-            gatilho = analise['gatilho']
-        if mineracao and mineracao['markov']:
-            markov_str = f"Markov: {[n for n, _ in mineracao['markov'][:2]]}"
-            gatilho = f"{gatilho} | {markov_str}" if gatilho else markov_str
+            gatilho = f"{gatilho} | {analise['gatilho']}" if gatilho else analise['gatilho']
         
         return {
-            'nome': 'Bot V3 Sniper + Mineração',
+            'nome': 'Bot V3 Completo',
             'numeros_apostar': sorted(base_list),
             'gatilho': gatilho or "Sinais combinados",
             'forca_real': forca_total,
             'confianca': confianca,
             'estrategias_ativas': estrategias_ativas,
-            'analise': analise,
+            'leque_dinamico': info_leque,
             'mineracao': info_mineracao
         }
     
-    def get_analise_completa(self):
+    def get_analise_completa(self, janela_leque=20):
         if len(self.historico) < 10:
             return "📊 Aguardando dados (mínimo 10)..."
         
@@ -572,37 +609,37 @@ class RoletaBotV3:
         
         analise = self.analisador.analisar(list(self.historico), lucky_recentes)
         mineracao = self.minerador.analisar_tudo(list(self.historico), list(self.lucky))
+        leque_resultado = self.leque.analisar(list(self.historico), janela_leque)
         
         taxa = self.get_taxa_acerto()
         total = self.get_total_tentativas()
         
-        txt = "🎯 BOT V3 SNIPER + MINERAÇÃO\n" + "="*40 + "\n\n"
+        txt = "🎯 BOT V3 COMPLETO\n" + "="*40 + "\n\n"
+        
+        # Leque Dinâmico
+        if leque_resultado:
+            txt += f"🪭 LEQUE DINÂMICO:\n"
+            txt += f"   Status: {leque_resultado['status']}\n"
+            txt += f"   Leque: {leque_resultado['leque']} vizinhos ({len(leque_resultado['alvos'])} números)\n"
+            txt += f"   Acertos na região: {leque_resultado['acertos_regiao']}\n"
+            txt += f"   Força: {leque_resultado['forca']}%\n\n"
         
         if analise:
             txt += f"🎲 Último: {analise['ultimo']}\n"
-            txt += f"📊 Janela: {self.analisador.janela_analise} giros\n"
             txt += f"⚡ Força Versátil: {analise['forca_sinal']}%\n"
             if analise['estrategia']:
                 txt += f"🎯 Estratégias: {', '.join(analise['estrategia'])}\n"
         
         if mineracao:
-            txt += f"\n🤖 MINERAÇÃO DE PADRÕES:\n"
-            txt += f"⚡ Força Mineração: {mineracao['forca_mineracao']}%\n"
-            
+            txt += f"\n🤖 MINERAÇÃO:\n"
+            txt += f"⚡ Força: {mineracao['forca_mineracao']}%\n"
             if mineracao['markov']:
                 txt += f"🔗 Markov: {mineracao['markov']}\n"
-            
             lc = mineracao['lucky_cross']
             txt += f"⚡ Lucky Cross: {lc['acertos']}/{lc['total']} ({lc['taxa']:.1f}%)"
             if lc['taxa'] > 18:
-                txt += " ⚠️ VIÉS DETECTADO!"
+                txt += " ⚠️"
             txt += "\n"
-            
-            if mineracao['ngramas_repetidos']:
-                txt += f"🧬 N-Gramas repetidos: {len(mineracao['ngramas_repetidos'])} padrões\n"
-            
-            if mineracao['previsao_ngrama']:
-                txt += f"🔮 Previsão N-Grama: {mineracao['previsao_ngrama']}\n"
         
         if total > 0:
             txt += f"\n📈 Perf: {taxa:.0%} ({self.performance['acertos']}/{total})\n"
@@ -621,7 +658,8 @@ class RoletaBotV3:
 # =============================
 class SistemaBot:
     def __init__(self):
-        self.bot = RoletaBotV3(janela_analise=50)
+        janela = st.session_state.get('janela_analise', 50) if 'janela_analise' in st.session_state else 50
+        self.bot = RoletaBotV3(janela_analise=janela)
         self.historico_numeros = deque(maxlen=200)
         self.historico_lucky = deque(maxlen=100)
         self.previsao_ativa = None
@@ -684,8 +722,13 @@ class SistemaBot:
             forca_minima = st.session_state.get('forca_minima_sinal', 40)
             conservador = st.session_state.get('modo_conservador', True)
             usar_mineracao = st.session_state.get('usar_mineracao', True)
+            usar_leque = st.session_state.get('usar_leque_dinamico', True)
+            janela_leque = st.session_state.get('janela_leque', 20)
             
-            nova = self.bot.sugerir_aposta(top_n, forca_minima, conservador, usar_mineracao)
+            nova = self.bot.sugerir_aposta(
+                top_n, forca_minima, conservador, 
+                usar_mineracao, usar_leque, janela_leque
+            )
             
             if nova is not None:
                 self.previsao_ativa = nova
@@ -773,24 +816,76 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🤖 Bot Sniper + Mineração", layout="centered")
-st.title("🤖 Bot V3 Sniper + Mineração de Padrões Ocultos")
+st.set_page_config(page_title="🎯 Bot Completo — Leque Dinâmico", layout="centered")
+st.title("🎯 Bot V3 — Leque Dinâmico + Mineração")
 
-if "sistema" not in st.session_state:
+# INICIALIZAÇÃO COM PERSISTÊNCIA
+if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
 
+# Carrega dados persistidos se disponíveis
+dados_persistidos = carregar_dados_persistidos()
+if dados_persistidos:
+    # Recupera histórico
+    if not st.session_state.get('historico'):
+        st.session_state.historico = dados_persistidos.get('historico', [])
+    
+    # Recupera configurações
+    for key in ['telegram_token', 'telegram_chat_id', 'top_n_apostas', 'forca_minima_sinal',
+                'intervalo_minimo_entradas', 'modo_automatico', 'modo_conservador',
+                'janela_analise', 'usar_mineracao', 'usar_leque_dinamico', 'janela_leque']:
+        if key not in st.session_state:
+            st.session_state[key] = dados_persistidos.get(key, 
+                {'top_n_apostas': 5, 'forca_minima_sinal': 40, 'intervalo_minimo_entradas': 0,
+                 'modo_automatico': True, 'modo_conservador': True, 'janela_analise': 50,
+                 'usar_mineracao': True, 'usar_leque_dinamico': True, 'janela_leque': 20}.get(key))
+    
+    # Recupera estado do sistema
+    sis = st.session_state.sistema
+    sis.acertos = dados_persistidos.get('sistema_acertos', 0)
+    sis.erros = dados_persistidos.get('sistema_erros', 0)
+    sis.historico_desempenho = dados_persistidos.get('sistema_historico_desempenho', [])
+    sis.estrategia_ativa_manual = dados_persistidos.get('estrategia_ativa_manual', False)
+    
+    # Recupera históricos da IA
+    for num in dados_persistidos.get('historico_numeros', []):
+        sis.historico_numeros.append(num)
+    for lucky in dados_persistidos.get('historico_lucky', []):
+        sis.historico_lucky.append(lucky)
+    
+    # Recupera performance
+    if os.path.exists(PERFORMANCE_PATH):
+        try:
+            with open(PERFORMANCE_PATH, 'r') as f:
+                perf = json.load(f)
+                sis.bot.performance = {
+                    'acertos': perf.get('acertos', 0),
+                    'erros': perf.get('erros', 0),
+                    'historico': perf.get('historico', [])
+                }
+        except:
+            pass
+    
+    # Reconstrói histórico do bot
+    for num, lucky in zip(
+        dados_persistidos.get('historico_numeros', []),
+        dados_persistidos.get('historico_lucky', [])
+    ):
+        sis.bot.atualizar(num, lucky)
+
+# Garante valores padrão
 defaults = {
     'top_n_apostas': 5, 'forca_minima_sinal': 40,
     'intervalo_minimo_entradas': 0, 'modo_automatico': True,
     'modo_conservador': True, 'janela_analise': 50,
-    'usar_mineracao': True
+    'usar_mineracao': True, 'usar_leque_dinamico': True,
+    'janela_leque': 20
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-carregar_sessao()
-
+# Garante histórico
 if "historico" not in st.session_state:
     if os.path.exists(HISTORICO_PATH):
         try:
@@ -809,15 +904,19 @@ if "telegram_chat_id" not in st.session_state:
 # Sidebar
 st.sidebar.title("⚙️ Configurações")
 
-with st.sidebar.expander("🤖 Mineração", expanded=True):
-    st.session_state.usar_mineracao = st.checkbox("🔬 Ativar Mineração de Padrões", value=st.session_state.usar_mineracao,
-        help="Markov, Lucky Cross, N-Gramas")
+with st.sidebar.expander("🪭 Leque Dinâmico", expanded=True):
+    st.session_state.usar_leque_dinamico = st.checkbox("🪭 Ativar Leque Dinâmico", value=st.session_state.usar_leque_dinamico)
+    st.session_state.janela_leque = st.slider("Janela do Leque (giros)", 10, 50, st.session_state.janela_leque, 5,
+        help="Quantos giros analisar para medir o calor da região")
     st.info("""
-    **Técnicas de Mineração:**
-    - 🔗 Markov: Transições após cada número
-    - ⚡ Lucky Cross: Viés entre Lucky e resultado
-    - 🧬 N-Gramas: Sequências exatas repetidas
+    **Leque Dinâmico:**
+    - 🔥 Setor Quente → 4 vizinhos (9 números)
+    - 🟡 Setor Morno → 2 vizinhos (5 números)
+    - 🧊 Setor Frio → 1 vizinho (3 números)
     """)
+
+with st.sidebar.expander("🤖 Mineração", expanded=True):
+    st.session_state.usar_mineracao = st.checkbox("🔬 Mineração de Padrões", value=st.session_state.usar_mineracao)
 
 with st.sidebar.expander("🎯 Sniper", expanded=True):
     st.session_state.janela_analise = st.slider("🪟 Janela longa", 20, 100, st.session_state.janela_analise, 10)
@@ -832,13 +931,14 @@ if st.sidebar.button("Atualizar"):
     st.rerun()
 
 with st.sidebar.expander("🧠 Análise Completa", expanded=True):
-    st.text(st.session_state.sistema.bot.get_analise_completa())
+    st.text(st.session_state.sistema.bot.get_analise_completa(st.session_state.janela_leque))
 
 with st.sidebar.expander("💾 Geral", expanded=False):
-    if st.button("💾 Salvar", use_container_width=True):
+    if st.button("💾 Salvar Agora", use_container_width=True):
+        salvar_resultado_em_arquivo(st.session_state.historico)
         salvar_sessao()
-        st.success("✅")
-    if st.button("🗑️ Zerar", use_container_width=True):
+        st.success("✅ Dados salvos!")
+    if st.button("🗑️ Zerar Tudo", use_container_width=True):
         if st.checkbox("Confirmar"):
             st.session_state.sistema.zerar_estatisticas()
             st.rerun()
@@ -846,7 +946,7 @@ with st.sidebar.expander("💾 Geral", expanded=False):
 with st.sidebar.expander("🔔 Telegram", expanded=False):
     st.session_state.telegram_token = st.text_input("Token:", value=st.session_state.telegram_token, type="password")
     st.session_state.telegram_chat_id = st.text_input("Chat ID:", value=st.session_state.telegram_chat_id)
-    if st.button("Salvar"):
+    if st.button("Salvar Telegram"):
         salvar_sessao()
         st.success("✅")
 
@@ -930,7 +1030,7 @@ elif sis.previsao_ativa:
     f = p.get('forca_real', 0)
     c = p.get('confianca', 'Média')
     estrategias = p.get('estrategias_ativas', [])
-    mineracao = p.get('mineracao', {})
+    leque_info = p.get('leque_dinamico', {})
     
     if f >= 70:
         st.success(f"🟢 **ALTA CONFIANÇA** ({f}%)")
@@ -940,13 +1040,10 @@ elif sis.previsao_ativa:
         st.info(f"🔵 **CONFIANÇA** ({f}%)")
     
     st.caption(f"📋 {p['gatilho']}")
+    if leque_info:
+        st.caption(f"🪭 {leque_info.get('status', '')} - {leque_info.get('leque', '?')} vizinhos")
     if estrategias:
         st.caption(f"🎯 Estratégias: {', '.join(estrategias)}")
-    if mineracao:
-        if mineracao.get('markov'):
-            st.caption(f"🔗 Markov: {mineracao['markov']}")
-        if mineracao.get('lucky_cross'):
-            st.caption(f"⚡ Lucky Cross: {mineracao['lucky_cross']}")
     
     st.write(f"**🔢 {len(p['numeros_apostar'])} números:**")
     nums = sorted(p['numeros_apostar'])
@@ -954,7 +1051,7 @@ elif sis.previsao_ativa:
     for i, num in enumerate(nums):
         cols[i].write(f"**{num}**")
 else:
-    st.info(f"🎲 Aguardando sinais fortes... ({status['rodadas_sem_entrada']} rodadas)")
+    st.info(f"🎲 Aguardando sinais... ({status['rodadas_sem_entrada']} rodadas)")
 
 # Performance
 st.subheader("📈 Performance")
@@ -985,4 +1082,5 @@ with col_d2:
         st.download_button("⬇️ Baixar", exportar_historico(st.session_state.historico, 'csv'),
                           f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
 
+# Salva automaticamente ao final
 salvar_sessao()
