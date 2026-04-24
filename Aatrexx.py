@@ -164,14 +164,13 @@ API_URL = "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremeli
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # =============================
-# RoletaBase (roda europeia)
+# ROLETA BASE
 # =============================
 class RoletaBase:
     def __init__(self):
         self.race = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
     
     def get_vizinhos(self, numero, raio=1):
-        """Retorna vizinhos próximos na roda"""
         if numero not in self.race:
             return []
         posicao = self.race.index(numero)
@@ -183,45 +182,23 @@ class RoletaBase:
 
 
 # =============================
-# BOT V3 ADAPTATIVO (MOTOR PRINCIPAL)
+# BOT V3 ADAPTATIVO
 # =============================
 class RoletaBotV3:
-    """
-    Bot V3 Adaptativo
-    - Detecta modo do mercado (REPETICAO, DISPERSAO, NORMAL)
-    - Calcula score dinâmico por número
-    - Ajusta pesos automaticamente
-    - Sugere TOP N números
-    """
-    
     def __init__(self):
         self.roleta = RoletaBase()
         self.historico = []
-        self.lucky = []  # Lista de listas de lucky numbers
+        self.lucky = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
         
-        # Pesos base (serão ajustados dinamicamente)
-        self.pesos = {
-            'freq_10': 2.0,
-            'freq_20': 1.5,
-            'lucky': 1.8,
-            'repeticao': 3.0,
-            'atraso': 0.7,
-            'cluster': 1.2
-        }
-        
     def atualizar(self, numero, lucky_nums=None):
-        """Atualiza histórico com novo número e lucky numbers"""
         self.historico.append(numero)
         self.lucky.append(lucky_nums if lucky_nums else [])
-        
-        # Mantém janela de 50
         if len(self.historico) > 50:
             self.historico = self.historico[-50:]
             self.lucky = self.lucky[-50:]
     
     def atualizar_resultado(self, acerto):
-        """Atualiza performance"""
         self.performance['historico'].append(1 if acerto else 0)
         if len(self.performance['historico']) > 50:
             self.performance['historico'] = self.performance['historico'][-50:]
@@ -245,14 +222,12 @@ class RoletaBotV3:
         return self.performance['acertos'] + self.performance['erros']
     
     def get_atraso(self, n):
-        """Calcula há quantas rodadas um número não sai"""
         for i, val in enumerate(reversed(self.historico)):
             if val == n:
                 return i
-        return 50  # Nunca saiu
+        return 50
     
     def cluster_bonus(self, n):
-        """Bônus para números na dezena dominante"""
         if len(self.historico) < 10:
             return 0
         ultimos = self.historico[-10:]
@@ -261,19 +236,10 @@ class RoletaBotV3:
         return 1 if n // 10 == dezena_dominante else 0
     
     def detectar_modo(self):
-        """
-        Detecta o modo do mercado:
-        - REPETICAO: muitas repetições recentes
-        - DISPERSAO: muitos números diferentes
-        - NORMAL: comportamento padrão
-        """
         if len(self.historico) < 10:
             return "NORMAL"
         
-        # Conta repetições diretas
         repeticoes = sum(1 for i in range(1, len(self.historico)) if self.historico[i] == self.historico[i-1])
-        
-        # Variedade nos últimos 10
         variedade = len(set(self.historico[-10:]))
         
         if repeticoes >= 2:
@@ -284,43 +250,27 @@ class RoletaBotV3:
             return "NORMAL"
     
     def ajustar_pesos(self, modo):
-        """
-        Ajusta pesos conforme o modo detectado
-        REPETICAO: aumenta peso de repetição, diminui atraso
-        DISPERSAO: aumenta peso de atraso, diminui repetição
-        """
         if modo == "REPETICAO":
             return {
-                'freq_10': 2.5,
-                'freq_20': 1.5,
-                'lucky': 1.8,
-                'repeticao': 5.0,   # AUMENTADO
-                'atraso': 0.3,       # DIMINUÍDO
-                'cluster': 1.5
+                'freq_10': 2.5, 'freq_20': 1.5, 'lucky': 1.8,
+                'repeticao': 5.0, 'atraso': 0.3, 'cluster': 1.5
             }
         elif modo == "DISPERSAO":
             return {
-                'freq_10': 1.5,
-                'freq_20': 2.0,
-                'lucky': 2.0,
-                'repeticao': 1.5,   # DIMINUÍDO
-                'atraso': 1.5,       # AUMENTADO
-                'cluster': 1.0
+                'freq_10': 1.5, 'freq_20': 2.0, 'lucky': 2.0,
+                'repeticao': 1.5, 'atraso': 1.5, 'cluster': 1.0
             }
-        else:  # NORMAL
+        else:
             return {
-                'freq_10': 2.0,
-                'freq_20': 1.5,
-                'lucky': 1.8,
-                'repeticao': 3.0,
-                'atraso': 0.7,
-                'cluster': 1.2
+                'freq_10': 2.0, 'freq_20': 1.5, 'lucky': 1.8,
+                'repeticao': 3.0, 'atraso': 0.7, 'cluster': 1.2
             }
     
     def calcular_score(self):
-        """Calcula score dinâmico para cada número (0-36)"""
-        if len(self.historico) < 10:
-            return {}, {}
+        """Retorna scores, detalhes, modo, pesos"""
+        if len(self.historico) < 5:
+            # Retorna valores vazios mas com a estrutura correta
+            return {}, {}, "NORMAL", self.ajustar_pesos("NORMAL")
         
         scores = {}
         detalhes = {}
@@ -331,13 +281,13 @@ class RoletaBotV3:
         freq10 = Counter(ult_10)
         freq20 = Counter(ult_20)
         
-        # Lucky numbers recentes (últimas 10 rodadas)
+        # Lucky numbers recentes
         lucky_flat = []
         for sub in self.lucky[-10:]:
-            lucky_flat.extend(sub)
+            if sub:
+                lucky_flat.extend(sub)
         lucky_count = Counter(lucky_flat)
         
-        # Detecta modo e ajusta pesos
         modo = self.detectar_modo()
         pesos = self.ajustar_pesos(modo)
         
@@ -346,7 +296,6 @@ class RoletaBotV3:
             repeticao = 1 if len(self.historico) > 1 and self.historico[-1] == n else 0
             cluster = self.cluster_bonus(n)
             
-            # Score dinâmico com pesos ajustados
             score = (
                 freq10[n] * pesos['freq_10'] +
                 freq20[n] * pesos['freq_20'] +
@@ -370,42 +319,37 @@ class RoletaBotV3:
         return scores, detalhes, modo, pesos
     
     def sugerir_aposta(self, top_n=5, forca_minima=30):
-        """
-        Sugere os melhores números para aposta
-        """
-        if len(self.historico) < 10:
+        if len(self.historico) < 5:
             return None
         
         scores, detalhes, modo, pesos = self.calcular_score()
         
-        # Ordena por score
-        top = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        if not scores:
+            return None
         
-        # Seleciona TOP N números
+        top = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         picks = [n for n, s in top[:top_n]]
         
-        # Adiciona vizinhos dos top picks (expansão inteligente)
+        # Expansão com vizinhos
         numeros_final = set(picks)
-        for pick in picks[:3]:  # Apenas para os top 3
+        for pick in picks[:3]:
             vizinhos = self.roleta.get_vizinhos(pick, raio=1)
-            numeros_final.update(vizinhos[:1])  # Apenas 1 vizinho
+            numeros_final.update(vizinhos[:1])
         
-        numeros_final = list(numeros_final)[:top_n + 2]  # Limita
+        numeros_final = list(numeros_final)[:top_n + 2]
         
-        # Calcula força do sinal
-        if picks:
+        # Força do sinal
+        if picks and scores:
+            score_max = max(scores.values())
             score_medio = sum(scores[n] for n in picks[:3]) / min(3, len(picks))
-            score_max = max(scores.values()) if scores else 0
             forca = min(100, max(20, int(score_medio / (score_max + 1) * 100) if score_max > 0 else 40))
         else:
             forca = 20
         
-        # Gatilho descritivo
+        # Gatilho
         gatilho = f"Modo: {modo}"
-        if self.historico:
-            ultimo = self.historico[-1]
-            if len(self.historico) >= 2 and self.historico[-1] == self.historico[-2]:
-                gatilho += f" | REPETIU {ultimo}"
+        if len(self.historico) >= 2 and self.historico[-1] == self.historico[-2]:
+            gatilho += f" | REPETIU {self.historico[-1]}"
         
         return {
             'nome': f'Bot V3 ({modo})',
@@ -415,20 +359,24 @@ class RoletaBotV3:
             'modo': modo,
             'pesos': pesos,
             'scores': top[:10],
-            'detalhes': {n: detalhes[n] for n in picks}
+            'detalhes': {n: detalhes[n] for n in picks if n in detalhes}
         }
     
     def get_analise_completa(self):
         if len(self.historico) < 5:
-            return "📊 Aguardando dados..."
+            return "📊 Aguardando dados (mínimo 5 números)..."
         
         scores, detalhes, modo, pesos = self.calcular_score()
+        
+        if not scores:
+            return "📊 Calculando scores..."
+        
         taxa = self.get_taxa_acerto()
         total = self.get_total_tentativas()
         
         analise = "🎯 BOT V3 ADAPTATIVO\n" + "="*40 + "\n\n"
-        analise += f"🎲 Último: {self.historico[-1]}\n"
-        analise += f"📊 10 últimos: {self.historico[-10:]}\n\n"
+        analise += f"🎲 Último: {self.historico[-1] if self.historico else '?'}\n"
+        analise += f"📊 10 últimos: {self.historico[-10:] if len(self.historico) >= 10 else self.historico}\n\n"
         
         analise += f"🔍 MODO: {modo}\n"
         analise += f"⚖️ Pesos: R={pesos['repeticao']:.1f} A={pesos['atraso']:.1f} F10={pesos['freq_10']:.1f}\n\n"
@@ -436,8 +384,8 @@ class RoletaBotV3:
         analise += "🏆 TOP 5 Scores:\n"
         top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:5]
         for i, (n, s) in enumerate(top, 1):
-            det = detalhes[n]
-            analise += f"  {i}. {n:2d}: {s:.1f} (F10:{det['freq10']} F20:{det['freq20']} L:{det['lucky']} R:{det['repeticao']} A:{det['atraso']})\n"
+            det = detalhes.get(n, {})
+            analise += f"  {i}. {n:2d}: {s:.1f} (F10:{det.get('freq10',0)} F20:{det.get('freq20',0)} L:{det.get('lucky',0)} R:{det.get('repeticao',0)} A:{det.get('atraso',0)})\n"
         
         if total > 0:
             analise += f"\n📈 Perf: {taxa:.0%} ({self.performance['acertos']}/{total})\n"
@@ -476,7 +424,6 @@ class SistemaBot:
             lucky = []
             mult = None
         
-        # Atualiza bot
         self.bot.atualizar(numero_real, lucky)
         self.historico_numeros.append(numero_real)
         self.historico_lucky.append(lucky)
@@ -509,13 +456,11 @@ class SistemaBot:
         if self.estrategia_ativa_manual:
             return
         
-        # Intervalo mínimo
         intervalo = st.session_state.get('intervalo_minimo_entradas', 0)
         if len(self.historico_numeros) - self.ultima_entrada_rodada < intervalo:
             return
         
-        # Gera previsão com Bot V3
-        if len(self.historico_numeros) >= 10:
+        if len(self.historico_numeros) >= 5:
             top_n = st.session_state.get('top_n_apostas', 5)
             forca_minima = st.session_state.get('forca_minima_sinal', 30)
             
@@ -725,6 +670,8 @@ if st.session_state.historico:
         else:
             fmt.append(str(n))
     st.write(" ".join(fmt))
+else:
+    st.write("Nenhum número")
 
 # Status
 status = st.session_state.sistema.get_status()
