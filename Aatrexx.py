@@ -36,11 +36,12 @@ def salvar_sessao():
             'historico_numeros': list(st.session_state.sistema.historico_numeros),
             'historico_lucky': list(st.session_state.sistema.historico_lucky),
             'estrategia_ativa_manual': st.session_state.sistema.estrategia_ativa_manual,
-            'top_n_apostas': st.session_state.get('top_n_apostas', 4),
+            'top_n_apostas': st.session_state.get('top_n_apostas', 5),
             'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 20),
             'intervalo_minimo_entradas': st.session_state.get('intervalo_minimo_entradas', 0),
             'modo_automatico': st.session_state.get('modo_automatico', True),
-            'modo_conservador': st.session_state.get('modo_conservador', True)
+            'modo_conservador': st.session_state.get('modo_conservador', True),
+            'janela_analise': st.session_state.get('janela_analise', 20)
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -62,11 +63,12 @@ def carregar_sessao():
             st.session_state.telegram_token = session_data.get('telegram_token', '')
             st.session_state.telegram_chat_id = session_data.get('telegram_chat_id', '')
             
-            st.session_state.top_n_apostas = session_data.get('top_n_apostas', 4)
+            st.session_state.top_n_apostas = session_data.get('top_n_apostas', 5)
             st.session_state.forca_minima_sinal = session_data.get('forca_minima_sinal', 20)
             st.session_state.intervalo_minimo_entradas = session_data.get('intervalo_minimo_entradas', 0)
             st.session_state.modo_automatico = session_data.get('modo_automatico', True)
             st.session_state.modo_conservador = session_data.get('modo_conservador', True)
+            st.session_state.janela_analise = session_data.get('janela_analise', 20)
             
             if 'sistema' in st.session_state:
                 st.session_state.sistema.acertos = session_data.get('sistema_acertos', 0)
@@ -108,13 +110,15 @@ def limpar_sessao():
 def enviar_previsao_auto(previsao):
     try:
         numeros = sorted(previsao['numeros_apostar'])
-        forca = previsao.get('forca_real', 0)
         confianca = previsao.get('confianca', 'Média')
+        estrategias = previsao.get('estrategias_ativas', [])
         
         emoji = "🟢" if confianca == "Alta" else "🟡" if confianca == "Média" else "🔴"
         
         msg = f"{emoji} **ENTRADA** - Confiança: {confianca}\n"
         msg += f"📋 {previsao['gatilho']}\n"
+        if estrategias:
+            msg += f"🎯 Estratégias: {', '.join(estrategias)}\n"
         msg += f"🔢 {len(numeros)} números"
         
         st.toast(f"🎯 Entrada - {confianca}", icon=emoji)
@@ -168,53 +172,178 @@ API_URL = "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremeli
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # =============================
-# ROLETA BASE
+# ANALISADOR ROLETA VERSÁTIL (JANELA DESLIZANTE)
 # =============================
-class RoletaBase:
-    def __init__(self):
-        self.race = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
+class AnalisadorRoletaVersatil:
+    """
+    Analisador com janela deslizante que se adapta ao momento atual da mesa.
+    Estratégias: Frequência, Setores, Vizinhos, Cores, Lucky Numbers
+    """
     
-    def get_vizinhos(self, numero, raio=1):
-        if numero not in self.race:
+    def __init__(self, janela_analise=20):
+        self.janela_analise = janela_analise
+        # Layout da Roleta Europeia (ordem física na roda)
+        self.layout_roda = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 
+                           11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 
+                           9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
+        
+        # Propriedades dos números
+        self.vermelhos = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+        self.pretos = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
+        
+    def mapear_propriedades(self, n):
+        """Mapeia todas as propriedades de um número"""
+        if n == 0:
+            return {
+                'cor': 'Verde', 'duzia': 0, 'coluna': 0, 
+                'paridade': 'Zero', 'alto_baixo': 'Zero'
+            }
+        
+        return {
+            'cor': 'Vermelho' if n in self.vermelhos else 'Preto',
+            'duzia': (n-1)//12 + 1,  # 1, 2 ou 3
+            'coluna': (n-1)%3 + 1,   # 1, 2 ou 3
+            'paridade': 'Par' if n % 2 == 0 else 'Ímpar',
+            'alto_baixo': 'Alto' if n >= 19 else 'Baixo'
+        }
+    
+    def get_vizinhos_roda(self, numero, raio=2):
+        """Retorna vizinhos físicos na roda (raio para cada lado)"""
+        if numero not in self.layout_roda:
             return []
-        posicao = self.race.index(numero)
+        idx = self.layout_roda.index(numero)
         vizinhos = []
-        for offset in range(-raio, raio + 1):
-            if offset != 0:
-                vizinhos.append(self.race[(posicao + offset) % 37])
+        for i in range(-raio, raio + 1):
+            vizinhos.append(self.layout_roda[(idx + i) % 37])
         return vizinhos
+    
+    def get_setor_dominante(self, numeros):
+        """Identifica qual setor da roda está mais ativo"""
+        if len(numeros) < 5:
+            return None, []
+        
+        # Divide a roda em 3 setores
+        setores = {
+            'Setor 1 (0-12)': range(0, 13),
+            'Setor 2 (13-24)': range(13, 25),
+            'Setor 3 (25-36)': range(25, 37)
+        }
+        
+        contagem = {}
+        for nome, numeros_setor in setores.items():
+            contagem[nome] = sum(1 for n in numeros if n in numeros_setor)
+        
+        setor_dominante = max(contagem, key=contagem.get)
+        numeros_setor = [n for n in setores[setor_dominante]]
+        
+        return setor_dominante, numeros_setor
+    
+    def analisar(self, historico_numeros, lucky_recentes=None):
+        """
+        Análise completa usando janela deslizante
+        """
+        if len(historico_numeros) < 5:
+            return None
+        
+        # Aplica janela deslizante (últimos N giros)
+        recentes = historico_numeros[-self.janela_analise:]
+        dados_recentes = [self.mapear_propriedades(n) for n in recentes]
+        
+        ultimo = recentes[-1] if recentes else None
+        
+        # 1. FREQUÊNCIA - Números Quentes do Momento
+        frequencia = Counter(recentes)
+        quentes = [num for num, _ in frequencia.most_common(5)]
+        
+        # 2. SETOR DOMINANTE (Dúzias e Colunas)
+        duzias = Counter([d['duzia'] for d in dados_recentes if d['duzia'] != 0])
+        colunas = Counter([c['coluna'] for c in dados_recentes if c['coluna'] != 0])
+        melhor_duzia = duzias.most_common(1)[0][0] if duzias else None
+        melhor_coluna = colunas.most_common(1)[0][0] if colunas else None
+        
+        # 3. SETOR DA RODA
+        setor_nome, numeros_setor = self.get_setor_dominante(recentes)
+        
+        # 4. VIZINHOS DO ÚLTIMO GIRO
+        vizinhos = self.get_vizinhos_roda(ultimo, raio=2) if ultimo else []
+        
+        # 5. TENDÊNCIA DE COR
+        cores = Counter([d['cor'] for d in dados_recentes])
+        cor_dominante = cores.most_common(1)[0][0] if cores else 'Verde'
+        
+        # 6. TENDÊNCIA ALTO/BAIXO
+        altos = sum(1 for d in dados_recentes if d['alto_baixo'] == 'Alto')
+        baixos = sum(1 for d in dados_recentes if d['alto_baixo'] == 'Baixo')
+        tendencia_altura = 'Alto' if altos > baixos else 'Baixo'
+        
+        # 7. TENDÊNCIA PAR/ÍMPAR
+        pares = sum(1 for d in dados_recentes if d['paridade'] == 'Par')
+        impares = sum(1 for d in dados_recentes if d['paridade'] == 'Ímpar')
+        tendencia_paridade = 'Par' if pares > impares else 'Ímpar'
+        
+        # 8. REPETIÇÕES
+        repeticoes = []
+        for i in range(1, len(recentes)):
+            if recentes[i] == recentes[i-1]:
+                repeticoes.append(recentes[i])
+        
+        # 9. LUCKY NUMBERS (se fornecidos)
+        lucky_quentes = []
+        if lucky_recentes:
+            lucky_contagem = Counter(lucky_recentes)
+            lucky_quentes = [n for n, _ in lucky_contagem.most_common(5)]
+        
+        # 10. FORÇA DO SINAL
+        forca = 30
+        if repeticoes:
+            forca += 25
+        if len(set(recentes[-5:])) <= 3:
+            forca += 15
+        if cor_dominante != 'Verde' and cores[cor_dominante] >= len(recentes) * 0.6:
+            forca += 10
+        if duzias and duzias[melhor_duzia] >= len(recentes) * 0.5:
+            forca += 10
+        
+        forca = min(100, max(15, forca))
+        
+        return {
+            'quentes': quentes,
+            'melhor_duzia': melhor_duzia,
+            'melhor_coluna': melhor_coluna,
+            'setor_roda': setor_nome,
+            'numeros_setor': numeros_setor[:6],
+            'vizinhos_ultimo': vizinhos,
+            'cor_dominante': cor_dominante,
+            'tendencia_altura': tendencia_altura,
+            'tendencia_paridade': tendencia_paridade,
+            'repeticoes': list(set(repeticoes)),
+            'lucky_quentes': lucky_quentes,
+            'forca_sinal': forca,
+            'ultimo': ultimo
+        }
 
 
 # =============================
-# BOT V3 REFORMULADO
+# BOT V3 COM ANALISADOR VERSÁTIL
 # =============================
 class RoletaBotV3:
-    """
-    Bot V3 Reformulado - Mais Assertivo
-    - Menos números (3-5)
-    - Prioridade máxima para repetições e lucky
-    - Força baseada em acerto real
-    """
-    
-    def __init__(self):
-        self.roleta = RoletaBase()
+    def __init__(self, janela_analise=20):
+        self.analisador = AnalisadorRoletaVersatil(janela_analise)
         self.historico = []
         self.lucky = []
         self.lucky_mult = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
-        self.ultimo_acerto = None
         
     def atualizar(self, numero, lucky_nums=None, lucky_mults=None):
         self.historico.append(numero)
         self.lucky.append(lucky_nums if lucky_nums else [])
         self.lucky_mult.append(lucky_mults if lucky_mults else {})
-        if len(self.historico) > 50:
-            self.historico = self.historico[-50:]
-            self.lucky = self.lucky[-50:]
-            self.lucky_mult = self.lucky_mult[-50:]
+        if len(self.historico) > 100:
+            self.historico = self.historico[-100:]
+            self.lucky = self.lucky[-100:]
+            self.lucky_mult = self.lucky_mult[-100:]
     
     def atualizar_resultado(self, acerto):
-        self.ultimo_acerto = acerto
         self.performance['historico'].append(1 if acerto else 0)
         if len(self.performance['historico']) > 50:
             self.performance['historico'] = self.performance['historico'][-50:]
@@ -236,209 +365,185 @@ class RoletaBotV3:
     def get_total_tentativas(self):
         return self.performance['acertos'] + self.performance['erros']
     
-    def get_atraso(self, n):
-        for i, val in enumerate(reversed(self.historico)):
-            if val == n:
-                return i
-        return 50
-    
-    def sugerir_aposta(self, top_n=4, forca_minima=20, modo_conservador=True):
-        """
-        Estratégia reformulada:
-        - Foco em REPETIÇÃO e LUCKY NUMBERS
-        - Máximo 3-5 números
-        - Só entra com confiança real
-        """
+    def sugerir_aposta(self, top_n=5, forca_minima=20, modo_conservador=True):
         if len(self.historico) < 5:
             return None
         
-        hist = self.historico
-        ultimo = hist[-1]
-        penultimo = hist[-2] if len(hist) >= 2 else None
-        ultimos_5 = hist[-5:] if len(hist) >= 5 else hist
-        ultimos_10 = hist[-10:] if len(hist) >= 10 else hist
+        # Prepara lucky numbers recentes
+        lucky_recentes = []
+        for sub in self.lucky[-10:]:
+            lucky_recentes.extend(sub)
         
-        # Detecta repetição
-        repeticao_direta = (ultimo == penultimo) if penultimo else False
-        repeticoes_5 = [n for n in ultimos_5 if ultimos_5.count(n) >= 2]
-        repeticoes_10 = [n for n in ultimos_10 if ultimos_10.count(n) >= 3]
+        # Análise versátil com janela deslizante
+        analise = self.analisador.analisar(list(self.historico), lucky_recentes)
         
-        # Lucky numbers recentes com peso
-        lucky_pesos = Counter()
-        for i, (lucky_list, mult_dict) in enumerate(zip(self.lucky[-5:], self.lucky_mult[-5:])):
-            peso_tempo = 1.5 - (i * 0.1)  # Mais recente = mais peso
-            for n in lucky_list:
-                mult = mult_dict.get(n, 0)
-                peso_mult = 1.0
-                if mult >= 1000:
-                    peso_mult = 4.0
-                elif mult >= 500:
-                    peso_mult = 2.5
-                elif mult >= 200:
-                    peso_mult = 1.8
-                elif mult >= 100:
-                    peso_mult = 1.3
-                lucky_pesos[n] += peso_tempo * peso_mult
+        if not analise:
+            return None
         
-        # Top lucky numbers
-        top_lucky = [n for n, _ in lucky_pesos.most_common(5)]
-        
-        # Frequência recente
-        freq_5 = Counter(ultimos_5)
-        freq_10 = Counter(ultimos_10)
-        
-        # 🎯 CONSTRUÇÃO DA BASE (máximo 5 números)
+        # 🎯 CONSTRUÇÃO DA BASE (múltiplas estratégias combinadas)
         base = set()
+        estrategias_ativas = []
         
-        # 1. Número que repetiu (MÁXIMA prioridade)
-        if repeticao_direta:
-            base.add(ultimo)
+        # 1. Números quentes (frequência recente)
+        for n in analise['quentes'][:3]:
+            base.add(n)
+        if analise['quentes']:
+            estrategias_ativas.append('Quentes')
         
-        # 2. Números que repetiram nas últimas 5
-        for n in repeticoes_5[:2]:
+        # 2. Repetições (máxima prioridade)
+        for n in analise['repeticoes']:
+            base.add(n)
+        if analise['repeticoes']:
+            estrategias_ativas.append('Repetição')
+        
+        # 3. Vizinhos do último (setor físico)
+        for n in analise['vizinhos_ultimo'][:3]:
+            base.add(n)
+        estrategias_ativas.append('Vizinhos')
+        
+        # 4. Lucky numbers
+        for n in analise['lucky_quentes'][:3]:
+            base.add(n)
+        if analise['lucky_quentes']:
+            estrategias_ativas.append('Lucky')
+        
+        # 5. Último número
+        if analise['ultimo'] is not None:
+            base.add(analise['ultimo'])
+        
+        # 6. Números do setor dominante
+        for n in analise['numeros_setor'][:3]:
             base.add(n)
         
-        # 3. Top lucky numbers
-        for n in top_lucky[:3]:
-            base.add(n)
+        # 7. Filtro por cor dominante
+        if analise['cor_dominante'] == 'Vermelho':
+            base = {n for n in base if n in self.analisador.vermelhos or n == 0}
+            estrategias_ativas.append('Cor')
+        elif analise['cor_dominante'] == 'Preto':
+            base = {n for n in base if n in self.analisador.pretos or n == 0}
+            estrategias_ativas.append('Cor')
         
-        # 4. Último número (sempre)
-        base.add(ultimo)
+        # 8. Filtro por altura
+        if analise['tendencia_altura'] == 'Alto':
+            numeros_altos = {n for n in base if n >= 19}
+            if len(numeros_altos) >= 3:
+                base = numeros_altos
+                estrategias_ativas.append('Alto')
+        else:
+            numeros_baixos = {n for n in base if n <= 18}
+            if len(numeros_baixos) >= 3:
+                base = numeros_baixos
+                estrategias_ativas.append('Baixo')
         
-        # 5. Mais frequente nos últimos 5
-        top_freq_5 = [n for n, _ in freq_5.most_common(2)]
-        for n in top_freq_5:
-            if n in top_lucky or n in repeticoes_5:
-                base.add(n)
-        
-        # 6. Vizinho do último (apenas 1)
-        vizinhos = self.roleta.get_vizinhos(ultimo, raio=1)
-        if vizinhos and len(base) < 4:
-            base.add(vizinhos[0])
-        
-        # Converte para lista
-        base_list = list(base)
-        
-        # Ordena por prioridade: repetidos > lucky > frequentes
+        # Ordena por prioridade: repetidos > quentes > lucky > vizinhos
         prioridade = []
-        if repeticao_direta:
-            prioridade.append(ultimo)
-        for n in repeticoes_5:
-            if n not in prioridade:
+        for n in analise['repeticoes']:
+            if n in base and n not in prioridade:
                 prioridade.append(n)
-        for n in top_lucky:
-            if n not in prioridade:
+        for n in analise['quentes']:
+            if n in base and n not in prioridade:
                 prioridade.append(n)
-        for n in base_list:
+        for n in analise['lucky_quentes']:
+            if n in base and n not in prioridade:
+                prioridade.append(n)
+        for n in analise['vizinhos_ultimo']:
+            if n in base and n not in prioridade:
+                prioridade.append(n)
+        for n in base:
             if n not in prioridade:
                 prioridade.append(n)
         
         # Limita ao máximo
         base_list = prioridade[:top_n]
         
-        # Se tem menos de 3, completa com frequentes
+        # Se menos de 3, completa com quentes
         if len(base_list) < 3:
-            for n, _ in freq_10.most_common(5):
+            for n in analise['quentes']:
                 if n not in base_list:
                     base_list.append(n)
                     if len(base_list) >= 3:
                         break
         
-        # 🎯 CÁLCULO DE CONFIANÇA REAL
-        confianca = "Baixa"
-        forca_real = 20
+        # 🎯 CONFIANÇA
+        forca = analise['forca_sinal']
         
-        # Fatores que aumentam confiança
-        if repeticao_direta:
-            forca_real += 40
-        if len(repeticoes_5) >= 2:
-            forca_real += 25
-        elif len(repeticoes_5) >= 1:
-            forca_real += 15
-        
-        # Lucky numbers fortes
-        lucky_altos = sum(1 for n in base_list if lucky_pesos[n] >= 2.0)
-        forca_real += lucky_altos * 10
-        
-        # Performance recente
+        # Performance recente ajusta força
         taxa_recente = self.get_taxa_recente(5)
         if taxa_recente >= 0.4:
-            forca_real += 15
+            forca += 15
         elif taxa_recente <= 0.1:
+            forca -= 15
             if modo_conservador:
-                return None  # Não entra se performance muito ruim
+                return None
         
-        # Ajusta confiança
-        if forca_real >= 60:
+        if forca >= 60:
             confianca = "Alta"
-        elif forca_real >= 35:
+        elif forca >= 35:
             confianca = "Média"
         else:
             confianca = "Baixa"
             if modo_conservador and len(base_list) > 3:
-                base_list = base_list[:3]  # Reduz para 3 números
+                base_list = base_list[:3]
         
         # Gatilho descritivo
-        partes = []
-        if repeticao_direta:
-            partes.append(f"REPETIU {ultimo}")
-        if repeticoes_5:
-            partes.append(f"rep={repeticoes_5[:2]}")
-        if top_lucky:
-            partes.append(f"lucky={top_lucky[:2]}")
+        partes = [f"u={analise['ultimo']}"]
+        if analise['repeticoes']:
+            partes.append(f"rep={analise['repeticoes']}")
+        if analise['cor_dominante'] != 'Verde':
+            partes.append(analise['cor_dominante'])
+        partes.append(analise['tendencia_altura'])
         
         return {
-            'nome': 'Bot V3 Reformulado',
+            'nome': 'Bot V3 Versátil',
             'numeros_apostar': sorted(base_list),
-            'gatilho': ", ".join(partes) if partes else f"u={ultimo}",
-            'forca_real': forca_real,
+            'gatilho': ", ".join(partes),
+            'forca_real': forca,
             'confianca': confianca,
-            'modo': 'REPETICAO' if repeticao_direta else 'NORMAL'
+            'estrategias_ativas': estrategias_ativas,
+            'analise': analise
         }
     
     def get_analise_completa(self):
         if len(self.historico) < 5:
             return "📊 Aguardando dados (mínimo 5)..."
         
-        hist = self.historico
-        ultimo = hist[-1]
+        lucky_recentes = []
+        for sub in self.lucky[-10:]:
+            lucky_recentes.extend(sub)
         
-        # Lucky recentes
-        lucky_flat = []
-        for sub in self.lucky[-5:]:
-            lucky_flat.extend(sub)
-        top_lucky = [n for n, _ in Counter(lucky_flat).most_common(5)]
+        analise = self.analisador.analisar(list(self.historico), lucky_recentes)
         
-        # Repetições
-        ultimos_5 = hist[-5:]
-        repeticoes = [n for n in ultimos_5 if ultimos_5.count(n) >= 2]
+        if not analise:
+            return "📊 Analisando..."
         
         taxa = self.get_taxa_acerto()
-        taxa_rec = self.get_taxa_recente(5)
         total = self.get_total_tentativas()
         
-        analise = "🎯 BOT V3 REFORMULADO\n" + "="*35 + "\n\n"
-        analise += f"🎲 Último: {ultimo}\n"
-        analise += f"📊 10 últimos: {hist[-10:]}\n\n"
+        txt = "🎯 ANÁLISE VERSÁTIL\n" + "="*35 + "\n\n"
+        txt += f"🎲 Último: {analise['ultimo']}\n"
+        txt += f"📊 Janela: {self.analisador.janela_analise} giros\n\n"
         
-        if hist[-1] == hist[-2] if len(hist) >= 2 else False:
-            analise += f"🔥 REPETIU! {ultimo}→{ultimo}\n"
+        txt += f"🔥 Quentes: {analise['quentes'][:5]}\n"
+        txt += f"🔁 Repetições: {analise['repeticoes']}\n"
+        txt += f"📍 Vizinhos: {analise['vizinhos_ultimo'][:5]}\n"
+        txt += f"🍀 Lucky: {analise['lucky_quentes'][:5]}\n\n"
         
-        analise += f"🔁 Repetições (5): {list(set(repeticoes))}\n"
-        analise += f"🍀 Top Lucky (5): {top_lucky}\n"
+        txt += f"📊 Dúzia: {analise['melhor_duzia']} | Coluna: {analise['melhor_coluna']}\n"
+        txt += f"🎨 Cor: {analise['cor_dominante']}\n"
+        txt += f"📏 Altura: {analise['tendencia_altura']}\n"
+        txt += f"🔢 Paridade: {analise['tendencia_paridade']}\n"
+        txt += f"⚡ Força: {analise['forca_sinal']}%\n"
         
         if total > 0:
-            analise += f"\n📈 Perf: {taxa:.0%} ({self.performance['acertos']}/{total})\n"
-            analise += f"📊 Rec(5): {taxa_rec:.0%}\n"
+            txt += f"\n📈 Perf: {taxa:.0%} ({self.performance['acertos']}/{total})\n"
         
-        return analise
+        return txt
     
     def zerar(self):
         self.historico = []
         self.lucky = []
         self.lucky_mult = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
-        self.ultimo_acerto = None
 
 
 # =============================
@@ -446,7 +551,7 @@ class RoletaBotV3:
 # =============================
 class SistemaBot:
     def __init__(self):
-        self.bot = RoletaBotV3()
+        self.bot = RoletaBotV3(janela_analise=20)
         self.historico_numeros = deque(maxlen=200)
         self.historico_lucky = deque(maxlen=100)
         self.previsao_ativa = None
@@ -506,7 +611,7 @@ class SistemaBot:
             return
         
         if len(self.historico_numeros) >= 5:
-            top_n = st.session_state.get('top_n_apostas', 4)
+            top_n = st.session_state.get('top_n_apostas', 5)
             forca_minima = st.session_state.get('forca_minima_sinal', 20)
             conservador = st.session_state.get('modo_conservador', True)
             
@@ -598,16 +703,16 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🤖 Bot V3 — Assertivo", layout="centered")
-st.title("🤖 Bot V3 — Reformulado")
+st.set_page_config(page_title="🤖 Bot V3 — Analisador Versátil", layout="centered")
+st.title("🤖 Bot V3 — Analisador Versátil (Janela Deslizante)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
 
 defaults = {
-    'top_n_apostas': 4, 'forca_minima_sinal': 20,
+    'top_n_apostas': 5, 'forca_minima_sinal': 20,
     'intervalo_minimo_entradas': 0, 'modo_automatico': True,
-    'modo_conservador': True
+    'modo_conservador': True, 'janela_analise': 20
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -634,18 +739,19 @@ if "telegram_chat_id" not in st.session_state:
 st.sidebar.title("⚙️ Configurações")
 
 with st.sidebar.expander("🤖 Bot V3", expanded=True):
-    st.session_state.modo_conservador = st.checkbox("🛡️ Modo Conservador", value=st.session_state.modo_conservador,
-        help="Não entra quando performance está ruim")
-    st.session_state.top_n_apostas = st.slider("📊 Números por aposta", 3, 6, st.session_state.top_n_apostas)
-    st.session_state.forca_minima_sinal = st.slider("⚡ Força mínima", 10, 40, st.session_state.forca_minima_sinal, 5)
-    st.session_state.intervalo_minimo_entradas = st.slider("⏱️ Intervalo", 0, 2, st.session_state.intervalo_minimo_entradas)
+    st.session_state.janela_analise = st.slider("🪟 Janela de Análise (giros)", 5, 50, st.session_state.janela_analise, 5,
+        help="Quantos giros recentes analisar. Menor = mais reativo, Maior = mais estável")
+    st.session_state.modo_conservador = st.checkbox("🛡️ Modo Conservador", value=st.session_state.modo_conservador)
+    st.session_state.top_n_apostas = st.slider("📊 Números por aposta", 3, 8, st.session_state.top_n_apostas)
+    st.session_state.forca_minima_sinal = st.slider("⚡ Força mínima", 10, 50, st.session_state.forca_minima_sinal, 5)
+    st.session_state.intervalo_minimo_entradas = st.slider("⏱️ Intervalo", 0, 3, st.session_state.intervalo_minimo_entradas)
 
 st.session_state.modo_automatico = st.sidebar.checkbox("🔄 Automático", value=st.session_state.modo_automatico)
 if st.sidebar.button("Atualizar"):
     st.session_state.sistema.estrategia_ativa_manual = not st.session_state.modo_automatico
     st.rerun()
 
-with st.sidebar.expander("🧠 Análise", expanded=True):
+with st.sidebar.expander("🧠 Análise Versátil", expanded=True):
     st.text(st.session_state.sistema.bot.get_analise_completa())
 
 with st.sidebar.expander("💾 Geral", expanded=False):
@@ -666,23 +772,20 @@ with st.sidebar.expander("🔔 Telegram", expanded=False):
 
 # Inserção manual
 st.subheader("✍️ Inserir Sorteios")
-c1, c2 = st.columns([3, 1])
-with c1:
-    entrada = st.text_input("Números (0-36):", key="entrada_numeros")
-with c2:
-    if st.button("Adicionar", use_container_width=True) and entrada:
-        try:
-            nums = [int(n) for n in entrada.split() if n.isdigit() and 0 <= int(n) <= 36]
-            for n in nums:
-                item = {"number": n, "timestamp": f"m{len(st.session_state.historico)}", "luckyNumbers": [], "luckyMultipliers": {}}
-                st.session_state.historico.append(item)
-                st.session_state.sistema.processar_novo_numero(item)
-            salvar_resultado_em_arquivo(st.session_state.historico)
-            salvar_sessao()
-            st.success(f"{len(nums)} adicionados!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Erro: {e}")
+entrada = st.text_input("Números (0-36):")
+if st.button("Adicionar") and entrada:
+    try:
+        nums = [int(n) for n in entrada.split() if n.isdigit() and 0 <= int(n) <= 36]
+        for n in nums:
+            item = {"number": n, "timestamp": f"m{len(st.session_state.historico)}", "luckyNumbers": [], "luckyMultipliers": {}}
+            st.session_state.historico.append(item)
+            st.session_state.sistema.processar_novo_numero(item)
+        salvar_resultado_em_arquivo(st.session_state.historico)
+        salvar_sessao()
+        st.success(f"{len(nums)} adicionados!")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Erro: {e}")
 
 # Auto-refresh
 st_autorefresh(interval=3000, key="refresh")
@@ -743,6 +846,7 @@ elif sis.previsao_ativa:
     p = sis.previsao_ativa
     f = p.get('forca_real', 0)
     c = p.get('confianca', 'Média')
+    estrategias = p.get('estrategias_ativas', [])
     
     if c == "Alta":
         st.success(f"🟢 **CONFIANÇA ALTA** - {p['gatilho']}")
@@ -750,6 +854,9 @@ elif sis.previsao_ativa:
         st.warning(f"🟡 **CONFIANÇA MÉDIA** - {p['gatilho']}")
     else:
         st.error(f"🔴 **CONFIANÇA BAIXA** - {p['gatilho']}")
+    
+    if estrategias:
+        st.caption(f"🎯 Estratégias: {', '.join(estrategias)}")
     
     st.write(f"**🔢 {len(p['numeros_apostar'])} números:**")
     nums = sorted(p['numeros_apostar'])
@@ -763,7 +870,6 @@ else:
 st.subheader("📈 Performance")
 taxa_bot = sis.bot.get_taxa_acerto()
 total_bot = sis.bot.get_total_tentativas()
-
 if total_bot > 0:
     emoji = "🟢" if taxa_bot >= 0.30 else "🟡" if taxa_bot >= 0.20 else "🔴"
     st.write(f"{emoji} **Bot**: {taxa_bot:.0%} ({sis.bot.performance['acertos']}/{total_bot})")
@@ -774,22 +880,19 @@ if sis.historico_desempenho:
     for r in sis.historico_desempenho[-5:]:
         e = "🎉" if r['acerto'] else "❌"
         m = f" ⚡{r['multiplicador']}x" if r.get('multiplicador') and r['acerto'] else ""
-        c = r.get('confianca', '')[0] if r.get('confianca') else ''
-        st.write(f"{e} [{c}] ({r.get('forca',0)}%): {r['numero']}{m}")
+        st.write(f"{e} ({r.get('forca',0)}%): {r['numero']}{m}")
 
 # Download
 st.subheader("📥 Download")
-total_registros = len(st.session_state.historico)
-st.metric("📊 Registros", total_registros)
-
+st.metric("📊 Registros", len(st.session_state.historico))
 col_d1, col_d2 = st.columns(2)
 with col_d1:
     if st.button("📥 JSON", use_container_width=True):
-        json_data = exportar_historico(st.session_state.historico, 'json')
-        st.download_button("⬇️ Baixar", json_data, f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "application/json")
+        st.download_button("⬇️ Baixar", exportar_historico(st.session_state.historico, 'json'),
+                          f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "application/json")
 with col_d2:
     if st.button("📥 CSV", use_container_width=True):
-        csv_data = exportar_historico(st.session_state.historico, 'csv')
-        st.download_button("⬇️ Baixar", csv_data, f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
+        st.download_button("⬇️ Baixar", exportar_historico(st.session_state.historico, 'csv'),
+                          f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
 
 salvar_sessao()
