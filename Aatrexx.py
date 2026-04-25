@@ -58,7 +58,7 @@ def salvar_sessao():
             'repetir_entrada': st.session_state.get('repetir_entrada', True),
             'repetir_acerto': st.session_state.get('repetir_acerto', True),
             'max_repeticoes_acerto': st.session_state.get('max_repeticoes_acerto', 3),
-            # Novo controle de estado
+            # Estado da máquina de repetição
             'modo_repeticao_erro': st.session_state.sistema.modo_repeticao_erro,
             'modo_espera_pos_erro': st.session_state.sistema.modo_espera_pos_erro,
             'giros_espera_restantes': st.session_state.sistema.giros_espera_restantes,
@@ -66,7 +66,8 @@ def salvar_sessao():
             'ultima_entrada_numeros': st.session_state.sistema.ultima_entrada_numeros,
             'ultima_entrada_forca': st.session_state.sistema.ultima_entrada_forca,
             'ultima_entrada_motor': st.session_state.sistema.ultima_entrada_motor,
-            'ultima_entrada_green': st.session_state.sistema.ultima_entrada_green
+            'ultima_entrada_green': st.session_state.sistema.ultima_entrada_green,
+            'entrada_era_repeticao_erro': st.session_state.sistema.entrada_era_repeticao_erro
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -820,21 +821,29 @@ class RoletaBotUnificado:
 
 
 # =============================
-# 🆕 SISTEMA PRINCIPAL (NOVA REGRA DE ERRO)
+# 🆕 SISTEMA PRINCIPAL (CORRIGIDO)
 # =============================
 class SistemaBot:
     """
-    FLUXO DE REPETIÇÃO:
+    MÁQUINA DE ESTADOS DA REPETIÇÃO:
     
-    APÓS ERRO (Entrada Normal):
-    ❌ Errou → Repete MESMA entrada 1x no próximo giro
-    ✅ Acertou na repetição → Volta análise normal
-    ❌ Errou na repetição → Espera 2 giros, depois volta normal
+    ESTADOS POSSÍVEIS:
+    - NORMAL: Fazendo análises normais
+    - REPETIR_ERRO: Vai repetir a entrada após erro (1x)
+    - ESPERAR: Aguardando 2 giros após errar na repetição
     
-    APÓS ACERTO (Green):
-    ✅ Acertou → Repete MESMA entrada (até max_repeticoes_acerto vezes)
-    ✅ Acertou de novo → Repete de novo
-    ❌ Errou no green → Volta análise normal
+    FLUXO APÓS ERRO (Entrada Normal):
+    1. ❌ Errou → Estado: REPETIR_ERRO (armazena números)
+    2. Gera previsão repetida no próximo giro
+    3a. ✅ Acertou na repetição → Estado: NORMAL
+    3b. ❌ Errou na repetição → Estado: ESPERAR (2 giros)
+    4. Após 2 giros → Estado: NORMAL
+    
+    FLUXO APÓS ACERTO (Green):
+    1. ✅ Acertou → Estado: GREEN (armazena números)
+    2. Gera previsão green no próximo giro
+    3a. ✅ Acertou de novo → Continua GREEN (até max)
+    3b. ❌ Errou → Estado: NORMAL
     """
     def __init__(self):
         self.bot = RoletaBotUnificado()
@@ -848,18 +857,18 @@ class SistemaBot:
         self.ultima_entrada_rodada = -10
         self.estrategia_ativa_manual = False
         
-        # 🆕 NOVOS CONTROLES DE ESTADO
+        # 🆕 ESTADOS DA MÁQUINA DE REPETIÇÃO
+        self.modo_repeticao_erro = False       # Vai repetir após erro (1x)
+        self.modo_espera_pos_erro = False       # Aguardando 2 giros
+        self.giros_espera_restantes = 0         # Contador de giros de espera
         
-        # Modo: repetindo entrada após erro (1x apenas)
-        self.modo_repeticao_erro = False
-        
-        # Modo: esperando após erro na repetição (2 giros)
-        self.modo_espera_pos_erro = False
-        self.giros_espera_restantes = 0
-        
-        # Green: repetindo após acerto
+        # Controle de Green (repetir após acerto)
         self.repeticoes_acerto_consecutivas = 0
         self.ultima_entrada_green = False
+        
+        # 🆕 NOVA FLAG: Indica se a previsão atual é uma repetição de erro
+        # Isso é crucial para saber se deve ativar espera ou não
+        self.entrada_era_repeticao_erro = False
         
         # Armazena última entrada
         self.ultima_entrada_numeros = []
@@ -887,26 +896,30 @@ class SistemaBot:
         if self.modo_espera_pos_erro and self.giros_espera_restantes > 0:
             self.giros_espera_restantes -= 1
             if self.giros_espera_restantes <= 0:
+                # Terminou a espera, volta ao normal
                 self.modo_espera_pos_erro = False
+                self.modo_repeticao_erro = False
+                self.ultima_entrada_numeros = []
+                self.entrada_era_repeticao_erro = False
         
         if self.previsao_ativa:
             acerto = numero_real in self.previsao_ativa.get('numeros_apostar', [])
             self.bot.atualizar_resultado(acerto)
             
+            # Guarda se esta entrada era repetição de erro ANTES de processar
+            era_repeticao = self.entrada_era_repeticao_erro
+            
             if acerto:
                 self.acertos += 1
                 
-                # ✅ ACERTOU!
+                # ✅ ACERTOU! Reseta TUDO relacionado a erro
+                self.modo_repeticao_erro = False
+                self.modo_espera_pos_erro = False
+                self.giros_espera_restantes = 0
+                self.entrada_era_repeticao_erro = False
                 
-                # Se estava em modo repetição erro e acertou → volta normal
-                if self.modo_repeticao_erro:
-                    self.modo_repeticao_erro = False
-                    self.modo_espera_pos_erro = False
-                    self.giros_espera_restantes = 0
-                    self.ultima_entrada_numeros = []
-                
-                # Se estava em modo green → continua green se ainda tem repetições
-                if st.session_state.get('repetir_acerto', True) and not self.modo_repeticao_erro:
+                # Se NÃO era repetição de erro, ativa Green
+                if not era_repeticao and st.session_state.get('repetir_acerto', True):
                     max_rep = st.session_state.get('max_repeticoes_acerto', 3)
                     if self.repeticoes_acerto_consecutivas < max_rep:
                         self.repeticoes_acerto_consecutivas += 1
@@ -915,11 +928,12 @@ class SistemaBot:
                         self.ultima_entrada_forca = self.previsao_ativa.get('forca_real', 0)
                         self.ultima_entrada_motor = self.previsao_ativa.get('motor', '')
                     else:
+                        # Atingiu limite de green
                         self.repeticoes_acerto_consecutivas = 0
                         self.ultima_entrada_green = False
                         self.ultima_entrada_numeros = []
-                elif not self.modo_repeticao_erro:
-                    # Acerto normal, reseta tudo
+                else:
+                    # Era repetição de erro e acertou → volta normal
                     self.repeticoes_acerto_consecutivas = 0
                     self.ultima_entrada_green = False
                     self.ultima_entrada_numeros = []
@@ -929,29 +943,32 @@ class SistemaBot:
                 
                 # ❌ ERROU!
                 
-                if self.modo_repeticao_erro:
-                    # Errou na repetição pós-erro → ativa espera de 2 giros
+                if era_repeticao:
+                    # 🔴 Errou na REPETIÇÃO → ATIVA ESPERA DE 2 GIROS
                     self.modo_repeticao_erro = False
                     self.modo_espera_pos_erro = True
                     self.giros_espera_restantes = 2
-                    self.ultima_entrada_numeros = []
+                    self.entrada_era_repeticao_erro = False
+                    self.ultima_entrada_numeros = []  # Limpa para não repetir mais
                     self.repeticoes_acerto_consecutivas = 0
                     self.ultima_entrada_green = False
                     
                 elif self.previsao_ativa.get('green', False):
-                    # Errou no green → volta análise normal
+                    # 🔴 Errou no GREEN → volta análise normal
                     self.repeticoes_acerto_consecutivas = 0
                     self.ultima_entrada_green = False
                     self.ultima_entrada_numeros = []
                     self.modo_repeticao_erro = False
                     self.modo_espera_pos_erro = False
+                    self.entrada_era_repeticao_erro = False
                     
                 else:
-                    # Erro em entrada normal → ativa repetição 1x
+                    # 🔴 Erro em entrada NORMAL → ativa repetição 1x
                     if st.session_state.get('repetir_entrada', True):
                         self.modo_repeticao_erro = True
                         self.modo_espera_pos_erro = False
                         self.giros_espera_restantes = 0
+                        self.entrada_era_repeticao_erro = False
                         self.ultima_entrada_numeros = self.previsao_ativa.get('numeros_apostar', [])
                         self.ultima_entrada_forca = self.previsao_ativa.get('forca_real', 0)
                         self.ultima_entrada_motor = self.previsao_ativa.get('motor', '')
@@ -999,7 +1016,8 @@ class SistemaBot:
                     }
                     
                     self.previsao_ativa = previsao_green
-                    self.ultima_entrada_green = False
+                    self.ultima_entrada_green = False  # Já gerou a previsão green
+                    self.entrada_era_repeticao_erro = False  # Não é repetição de erro
                     enviar_previsao_auto(previsao_green)
                 
                 # 🔁 PRIORIDADE 2: Repetição pós-erro (1x)
@@ -1007,7 +1025,7 @@ class SistemaBot:
                     previsao_repetida = {
                         'nome': 'Bot Unificado',
                         'numeros_apostar': sorted(self.ultima_entrada_numeros),
-                        'gatilho': '🔁 REPETINDO ENTRADA APÓS ERRO!',
+                        'gatilho': '🔁 REPETINDO ENTRADA APÓS ERRO! (1ª repetição)',
                         'forca_real': self.ultima_entrada_forca,
                         'confianca': 'Repetição Erro',
                         'motor': self.ultima_entrada_motor,
@@ -1019,31 +1037,35 @@ class SistemaBot:
                     }
                     
                     self.previsao_ativa = previsao_repetida
-                    self.modo_repeticao_erro = False  # Já vai usar a repetição
+                    self.modo_repeticao_erro = False  # Já gerou a repetição
+                    self.entrada_era_repeticao_erro = True  # 🆕 MARCA que esta entrada É repetição
                     enviar_previsao_auto(previsao_repetida)
                 
-                # ⏳ Se está em espera pós-erro, não faz nada
+                # ⏳ Se está em espera pós-erro, NÃO FAZ NADA (não gera previsão)
                 elif self.modo_espera_pos_erro:
                     pass
                 
                 # 🆕 NOVA ANÁLISE NORMAL
                 else:
-                    top_n = st.session_state.get('top_n_apostas', 5)
-                    
-                    motores_ativos = {
-                        'sniper': st.session_state.get('usar_sniper', True),
-                        'mineracao': st.session_state.get('usar_mineracao', True),
-                        'leque': st.session_state.get('usar_leque', True),
-                        'giro': st.session_state.get('usar_giro', True),
-                        'gap': st.session_state.get('usar_gap', True),
-                        'sequencia': st.session_state.get('usar_sequencia', True)
-                    }
-                    
-                    nova = self.bot.analisar_e_prever(top_n, motores_ativos)
-                    
-                    if nova is not None:
-                        self.previsao_ativa = nova
-                        enviar_previsao_auto(nova)
+                    # Só faz nova análise se não estiver em nenhum modo especial
+                    if not self.modo_repeticao_erro and not self.modo_espera_pos_erro and not self.ultima_entrada_green:
+                        top_n = st.session_state.get('top_n_apostas', 5)
+                        
+                        motores_ativos = {
+                            'sniper': st.session_state.get('usar_sniper', True),
+                            'mineracao': st.session_state.get('usar_mineracao', True),
+                            'leque': st.session_state.get('usar_leque', True),
+                            'giro': st.session_state.get('usar_giro', True),
+                            'gap': st.session_state.get('usar_gap', True),
+                            'sequencia': st.session_state.get('usar_sequencia', True)
+                        }
+                        
+                        nova = self.bot.analisar_e_prever(top_n, motores_ativos)
+                        
+                        if nova is not None:
+                            self.previsao_ativa = nova
+                            self.entrada_era_repeticao_erro = False  # Não é repetição
+                            enviar_previsao_auto(nova)
     
     def zerar_estatisticas(self):
         self.acertos = 0
@@ -1058,6 +1080,7 @@ class SistemaBot:
         self.giros_espera_restantes = 0
         self.repeticoes_acerto_consecutivas = 0
         self.ultima_entrada_green = False
+        self.entrada_era_repeticao_erro = False
         self.ultima_entrada_numeros = []
         self.bot.zerar()
         salvar_sessao()
@@ -1134,7 +1157,7 @@ def exportar_historico(historico, formato='json'):
 # APLICAÇÃO STREAMLIT
 # =============================
 st.set_page_config(page_title="🎯 Bot Unificado — 6 Motores", layout="centered")
-st.title("🎯 Bot Unificado — 6 Motores + Green + Erro(1x)")
+st.title("🎯 Bot Unificado — 6 Motores + Green + Erro(1x→Espera2)")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -1157,6 +1180,7 @@ if dados:
     sis.ultima_entrada_forca = dados.get('ultima_entrada_forca', 0)
     sis.ultima_entrada_motor = dados.get('ultima_entrada_motor', '')
     sis.ultima_entrada_green = dados.get('ultima_entrada_green', False)
+    sis.entrada_era_repeticao_erro = dados.get('entrada_era_repeticao_erro', False)
     
     for num in dados.get('historico_numeros', []):
         sis.historico_numeros.append(num)
@@ -1244,14 +1268,14 @@ with st.sidebar.expander("🟢 Green (Repetir após Acerto)", expanded=True):
     ❌ Errou → volta análise normal
     """)
 
-with st.sidebar.expander("🔁 Repetição pós-Erro (NOVA REGRA)", expanded=True):
-    st.session_state.repetir_entrada = st.checkbox("🔁 Repetir 1x após erro", value=st.session_state.repetir_entrada)
+with st.sidebar.expander("🔁 Repetição pós-Erro", expanded=True):
+    st.session_state.repetir_entrada = st.checkbox("🔁 Repetir 1x após erro + espera 2 giros", value=st.session_state.repetir_entrada)
     st.info("""
-    **NOVA REGRA:**
-    - ❌ Errou → repete MESMA entrada 1x
-    - ✅ Acertou na repetição → volta normal
+    **REGRAS DO ERRO:**
+    - ❌ Errou (normal) → repete 1x
+    - ✅ Acertou na repetição → normal
     - ❌ Errou na repetição → espera 2 giros
-    - ⏳ Após 2 giros → volta análise normal
+    - ⏳ Após 2 giros → volta normal
     """)
 
 with st.sidebar.expander("⚙️ Ajustes", expanded=True):
@@ -1356,12 +1380,12 @@ if status['total'] > 0:
         st.error(f"🎯 Taxa: {taxa:.1f}%")
 
 # Indicadores de estado
-if sis.modo_repeticao_erro and not sis.previsao_ativa:
-    st.warning("🔁 **Modo Repetição:** Vai repetir entrada após erro no próximo giro")
-elif sis.modo_espera_pos_erro:
+if sis.modo_espera_pos_erro:
     st.warning(f"⏳ **Aguardando {sis.giros_espera_restantes} giro(s) após erro na repetição**")
-elif sis.repeticoes_acerto_consecutivas > 0 and not sis.previsao_ativa:
-    st.success(f"🟢 **Green Ativo!** Repetindo após acerto ({sis.repeticoes_acerto_consecutivas}/{st.session_state.max_repeticoes_acerto})")
+elif sis.entrada_era_repeticao_erro and sis.previsao_ativa:
+    st.warning("🔁 **Entrada atual é REPETIÇÃO pós-erro**")
+elif sis.repeticoes_acerto_consecutivas > 0 and not sis.previsao_ativa and sis.ultima_entrada_green:
+    st.success(f"🟢 **Green Ativo!** ({sis.repeticoes_acerto_consecutivas}/{st.session_state.max_repeticoes_acerto})")
 
 # Previsão
 st.subheader("🎯 Previsão Ativa")
