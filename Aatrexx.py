@@ -49,8 +49,11 @@ def salvar_sessao():
             'janela_leque': st.session_state.get('janela_leque', 20),
             'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 40),
             'repetir_entrada': st.session_state.get('repetir_entrada', True),
-            'repeticoes_restantes': st.session_state.sistema.repeticoes_restantes,
-            'ultima_entrada_numeros': st.session_state.sistema.ultima_entrada_numeros
+            'giros_espera_repeticao': st.session_state.sistema.giros_espera_repeticao,
+            'giros_restantes_espera': st.session_state.sistema.giros_restantes_espera,
+            'ultima_entrada_numeros': st.session_state.sistema.ultima_entrada_numeros,
+            'ultima_entrada_forca': st.session_state.sistema.ultima_entrada_forca,
+            'ultima_entrada_motor': st.session_state.sistema.ultima_entrada_motor
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -92,14 +95,14 @@ def enviar_previsao_auto(previsao):
         confianca = previsao.get('confianca', 'Média')
         motor = previsao.get('motor', '')
         repeticao = previsao.get('repeticao', False)
-        rep_restantes = previsao.get('repeticoes_restantes', 0)
+        giros_esperados = previsao.get('giros_esperados', 0)
         
-        emoji = "🔄" if repeticao else "🔥" if forca >= 60 else "🎯" if forca >= 40 else "📊"
+        emoji = "⏳" if repeticao else "🔥" if forca >= 60 else "🎯" if forca >= 40 else "📊"
         
         msg = f"{emoji} **ENTRADA** - Força: {forca}%\n"
         
         if repeticao:
-            msg += f"🔄 REPETINDO ENTRADA ANTERIOR! ({rep_restantes} giros restantes)\n"
+            msg += f"⏳ REPETINDO ENTRADA ANTERIOR! (após espera de {giros_esperados} giros)\n"
         else:
             msg += f"📋 {previsao['gatilho']}\n"
             if motor:
@@ -109,7 +112,7 @@ def enviar_previsao_auto(previsao):
         
         msg += f"🔢 {len(numeros)} números: {numeros}"
         
-        st.toast(f"{'🔄 Repetindo' if repeticao else '🎯 ' + motor} - {forca}%", icon=emoji)
+        st.toast(f"{'⏳ Repetindo' if repeticao else '🎯 ' + motor} - {forca}%", icon=emoji)
         st.success(f"🔔 {msg}")
         
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
@@ -594,7 +597,7 @@ class RoletaBotUnificado:
             'estrategias_ativas': list(set(todas_estrategias))[:5],
             'qtd_motores': len(resultados),
             'repeticao': False,
-            'repeticoes_restantes': 0
+            'giros_esperados': 0
         }
     
     def get_analise_completa(self):
@@ -630,7 +633,7 @@ class RoletaBotUnificado:
         txt += f"  🔄 Giro: {'✅' if st.session_state.get('usar_giro', True) else '❌'}\n"
         
         if st.session_state.get('repetir_entrada', True):
-            txt += f"\n🔄 Repetição após erro: ATIVADA (2 giros)\n"
+            txt += f"\n⏳ Repetição após erro: ATIVADA (espera 2 giros, depois repete)\n"
         
         if total > 0:
             txt += f"\n📈 Perf: {taxa:.0%} ({self.performance['acertos']}/{total})\n"
@@ -645,7 +648,7 @@ class RoletaBotUnificado:
 
 
 # =============================
-# SISTEMA PRINCIPAL (COM REPETIÇÃO APÓS ERRO)
+# SISTEMA PRINCIPAL (COM REPETIÇÃO APÓS ERRO - AGUARDA 2 GIROS)
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -660,8 +663,9 @@ class SistemaBot:
         self.ultima_entrada_rodada = -10
         self.estrategia_ativa_manual = False
         
-        # NOVO: Controle de repetição após erro
-        self.repeticoes_restantes = 0
+        # NOVO: Controle de repetição após erro com espera de 2 giros
+        self.giros_espera_repeticao = 0  # Contador de giros de espera (0, 1, 2)
+        self.giros_restantes_espera = 0  # Quantos giros ainda faltam esperar
         self.ultima_entrada_numeros = []
         self.ultima_entrada_forca = 0
         self.ultima_entrada_motor = ""
@@ -683,21 +687,27 @@ class SistemaBot:
         self.historico_lucky.append(lucky)
         self.rodadas_sem_entrada += 1
         
+        # Se está em modo de espera, decrementa o contador
+        if self.giros_restantes_espera > 0:
+            self.giros_restantes_espera -= 1
+        
         if self.previsao_ativa:
             acerto = numero_real in self.previsao_ativa.get('numeros_apostar', [])
             self.bot.atualizar_resultado(acerto)
             
             if acerto:
                 self.acertos += 1
-                # ACERTOU! Reseta repetições
-                self.repeticoes_restantes = 0
+                # ACERTOU! Reseta repetições e espera
+                self.giros_restantes_espera = 0
+                self.giros_espera_repeticao = 0
                 self.ultima_entrada_numeros = []
             else:
                 self.erros += 1
-                # ERROU! Ativa repetição se configurado
+                # ERROU! Ativa espera de 2 giros se configurado
                 if st.session_state.get('repetir_entrada', True) and not self.previsao_ativa.get('repeticao', False):
-                    # Só ativa repetição se NÃO for já uma entrada repetida
-                    self.repeticoes_restantes = 2  # Repetir por mais 2 giros
+                    # Só ativa espera se NÃO for já uma entrada repetida
+                    self.giros_restantes_espera = 2  # Esperar 2 giros
+                    self.giros_espera_repeticao = 2
                     self.ultima_entrada_numeros = self.previsao_ativa.get('numeros_apostar', [])
                     self.ultima_entrada_forca = self.previsao_ativa.get('forca_real', 0)
                     self.ultima_entrada_motor = self.previsao_ativa.get('motor', '')
@@ -724,27 +734,33 @@ class SistemaBot:
             
             if len(self.historico_numeros) - self.ultima_entrada_rodada >= intervalo:
                 
-                # VERIFICA SE DEVE REPETIR ENTRADA ANTERIOR
-                if self.repeticoes_restantes > 0 and self.ultima_entrada_numeros:
-                    self.repeticoes_restantes -= 1
+                # VERIFICA SE DEVE REPETIR ENTRADA ANTERIOR (após espera de 2 giros)
+                if self.giros_restantes_espera == 0 and self.ultima_entrada_numeros:
+                    # Passaram os 2 giros de espera, agora repete a entrada
+                    self.giros_espera_repeticao = 0
                     
                     previsao_repetida = {
                         'nome': 'Bot Unificado',
                         'numeros_apostar': sorted(self.ultima_entrada_numeros),
-                        'gatilho': 'REPETINDO ENTRADA ANTERIOR',
+                        'gatilho': 'REPETINDO ENTRADA ANTERIOR (após 2 giros)',
                         'forca_real': self.ultima_entrada_forca,
                         'confianca': 'Repetição',
                         'motor': self.ultima_entrada_motor,
-                        'estrategias_ativas': ['Repetição pós-erro'],
+                        'estrategias_ativas': ['Repetição pós-erro (2 giros)'],
                         'qtd_motores': 1,
                         'repeticao': True,
-                        'repeticoes_restantes': self.repeticoes_restantes
+                        'giros_esperados': 2
                     }
                     
                     self.previsao_ativa = previsao_repetida
+                    # Limpa para não repetir de novo
+                    self.ultima_entrada_numeros = []
                     enviar_previsao_auto(previsao_repetida)
+                elif self.giros_restantes_espera > 0:
+                    # Ainda está esperando, não gera previsão
+                    pass
                 else:
-                    # Gera nova análise
+                    # Gera nova análise normalmente
                     top_n = st.session_state.get('top_n_apostas', 5)
                     
                     motores_ativos = {
@@ -768,7 +784,8 @@ class SistemaBot:
         self.historico_lucky.clear()
         self.rodadas_sem_entrada = 0
         self.ultima_entrada_rodada = -10
-        self.repeticoes_restantes = 0
+        self.giros_restantes_espera = 0
+        self.giros_espera_repeticao = 0
         self.ultima_entrada_numeros = []
         self.bot.zerar()
         salvar_sessao()
@@ -860,8 +877,11 @@ if dados:
     sis.erros = dados.get('sistema_erros', 0)
     sis.historico_desempenho = dados.get('sistema_historico_desempenho', [])
     sis.estrategia_ativa_manual = dados.get('estrategia_ativa_manual', False)
-    sis.repeticoes_restantes = dados.get('repeticoes_restantes', 0)
+    sis.giros_espera_repeticao = dados.get('giros_espera_repeticao', 0)
+    sis.giros_restantes_espera = dados.get('giros_restantes_espera', 0)
     sis.ultima_entrada_numeros = dados.get('ultima_entrada_numeros', [])
+    sis.ultima_entrada_forca = dados.get('ultima_entrada_forca', 0)
+    sis.ultima_entrada_motor = dados.get('ultima_entrada_motor', '')
     
     for num in dados.get('historico_numeros', []):
         sis.historico_numeros.append(num)
@@ -925,14 +945,15 @@ with st.sidebar.expander("🤖 Motores Ativos", expanded=True):
                   st.session_state.usar_leque, st.session_state.usar_giro])
     st.caption(f"📊 {ativos}/4 motores ativos")
 
-with st.sidebar.expander("🔄 Repetição pós-Erro", expanded=True):
-    st.session_state.repetir_entrada = st.checkbox("🔄 Repetir entrada após erro (2 giros)", value=st.session_state.repetir_entrada,
-        help="Quando errar, repete a mesma entrada por mais 2 giros consecutivos")
+with st.sidebar.expander("⏳ Repetição pós-Erro", expanded=True):
+    st.session_state.repetir_entrada = st.checkbox("⏳ Repetir entrada após erro (espera 2 giros)", value=st.session_state.repetir_entrada,
+        help="Quando errar, ESPERA 2 giros e depois repete a mesma entrada")
     st.info("""
     **Como funciona:**
-    - ❌ Erro → repete mesma entrada por +2 giros
+    - ❌ Erro → espera 2 giros
+    - ⏳ Após 2 giros → repete a entrada
     - ✅ Acerto → reseta e volta análise normal
-    - 🔄 Entradas repetidas mostram emoji especial
+    - ⏳ Entradas repetidas mostram emoji especial
     """)
 
 with st.sidebar.expander("⚙️ Ajustes", expanded=True):
@@ -1035,9 +1056,11 @@ if status['total'] > 0:
     else:
         st.error(f"🎯 Taxa: {taxa:.1f}%")
 
-# Indicador de repetição ativa
-if st.session_state.sistema.repeticoes_restantes > 0:
-    st.warning(f"🔄 **Repetindo entrada anterior!** Faltam {st.session_state.sistema.repeticoes_restantes} giro(s)")
+# Indicador de espera/repetição ativa
+if st.session_state.sistema.giros_restantes_espera > 0:
+    st.warning(f"⏳ **Aguardando {st.session_state.sistema.giros_restantes_espera} giro(s) para repetir entrada anterior**")
+elif st.session_state.sistema.ultima_entrada_numeros and st.session_state.sistema.giros_restantes_espera == 0 and st.session_state.sistema.giros_espera_repeticao > 0:
+    st.info(f"⏳ **Pronto para repetir entrada no próximo giro!** (espera de 2 giros concluída)")
 
 # Previsão
 st.subheader("🎯 Previsão Ativa")
@@ -1053,10 +1076,10 @@ elif sis.previsao_ativa:
     estrategias = p.get('estrategias_ativas', [])
     qtd = p.get('qtd_motores', 1)
     repeticao = p.get('repeticao', False)
-    rep_restantes = p.get('repeticoes_restantes', 0)
+    giros_esperados = p.get('giros_esperados', 0)
     
     if repeticao:
-        st.success(f"🔄 **REPETINDO ENTRADA!** Faltam {rep_restantes} giros")
+        st.success(f"⏳ **REPETINDO ENTRADA!** (após espera de {giros_esperados} giros)")
     elif f >= 55:
         st.success(f"🔥 **FORÇA {f}%** - {c} ({qtd} motores)")
     elif f >= 35:
@@ -1072,9 +1095,8 @@ elif sis.previsao_ativa:
     
     st.write(f"**🔢 {len(p['numeros_apostar'])} números:**")
     nums = sorted(p['numeros_apostar'])
-    cols = st.columns(len(nums))
-    for i, num in enumerate(nums):
-        cols[i].write(f"**{num}**")
+    # Exibe números lado a lado separados por vírgula
+    st.markdown(f"### {', '.join(map(str, nums))}")
 else:
     st.info(f"🎲 Iniciando análise...")
 
