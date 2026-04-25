@@ -14,6 +14,7 @@ from datetime import datetime
 SESSION_DATA_PATH = "session_data.pkl"
 HISTORICO_PATH = "historico_roleta.json"
 PERFORMANCE_PATH = "performance_bot.json"
+PADROES_PATH = "padroes_sequencia.json"
 
 def salvar_sessao():
     try:
@@ -27,6 +28,11 @@ def salvar_sessao():
         }
         with open(PERFORMANCE_PATH, 'w') as f:
             json.dump(performance_data, f)
+        
+        # Salva padrões de sequência
+        if hasattr(st.session_state.sistema.bot, 'padroes_sequencia'):
+            with open(PADROES_PATH, 'w') as f:
+                json.dump(st.session_state.sistema.bot.padroes_sequencia, f)
         
         session_data = {
             'historico': st.session_state.get('historico', []),
@@ -45,6 +51,8 @@ def salvar_sessao():
             'usar_mineracao': st.session_state.get('usar_mineracao', True),
             'usar_leque': st.session_state.get('usar_leque', True),
             'usar_giro': st.session_state.get('usar_giro', True),
+            'usar_gap': st.session_state.get('usar_gap', True),
+            'usar_sequencia': st.session_state.get('usar_sequencia', True),
             'janela_analise': st.session_state.get('janela_analise', 50),
             'janela_leque': st.session_state.get('janela_leque', 20),
             'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 40),
@@ -75,7 +83,7 @@ def carregar_dados_persistidos():
 
 def limpar_sessao():
     try:
-        for path in [SESSION_DATA_PATH, HISTORICO_PATH, PERFORMANCE_PATH]:
+        for path in [SESSION_DATA_PATH, HISTORICO_PATH, PERFORMANCE_PATH, PADROES_PATH]:
             if os.path.exists(path):
                 os.remove(path)
         for key in list(st.session_state.keys()):
@@ -466,7 +474,133 @@ class EstrategiaPorGiro:
 
 
 # =============================
-# BOT UNIFICADO
+# 🆕 ESTRATÉGIA 5: REPETIÇÃO COM GAP (espaçamento)
+# =============================
+class EstrategiaGap:
+    def __init__(self):
+        pass
+    
+    def analisar(self, historico):
+        """
+        Detecta padrões de repetição com gap (ex: 5, 33, 5)
+        Gap 1 = repete após 1 número
+        Gap 2 = repete após 2 números
+        """
+        if len(historico) < 5:
+            return None
+        
+        ultimo = historico[-1]
+        
+        # Procura repetições com gap 1 (mais comum no histórico)
+        # Ex: 5, X, 5 -> gap 1
+        if len(historico) >= 3:
+            if historico[-3] == ultimo:
+                # Encontrou repetição com gap 1!
+                return {
+                    'base': {ultimo, historico[-2]},
+                    'forca': 55,
+                    'estrategias': [f'Repetição Gap1: {historico[-3]}→{historico[-2]}→{ultimo}'],
+                    'gap': 1
+                }
+        
+        # Procura repetições com gap 2
+        # Ex: 5, X, Y, 5 -> gap 2
+        if len(historico) >= 4:
+            if historico[-4] == ultimo:
+                return {
+                    'base': {ultimo, historico[-2], historico[-3]},
+                    'forca': 45,
+                    'estrategias': [f'Repetição Gap2: {historico[-4]}→...→{ultimo}'],
+                    'gap': 2
+                }
+        
+        # Procura repetições com gap 3
+        if len(historico) >= 5:
+            if historico[-5] == ultimo:
+                return {
+                    'base': {ultimo, historico[-2], historico[-3], historico[-4]},
+                    'forca': 35,
+                    'estrategias': [f'Repetição Gap3: {historico[-5]}→...→{ultimo}'],
+                    'gap': 3
+                }
+        
+        # Verifica se houve repetições com gap nos últimos 20 giros
+        recentes = historico[-20:]
+        gaps_encontrados = []
+        for i in range(len(recentes) - 2):
+            for gap in [1, 2, 3]:
+                if i + gap + 1 < len(recentes) and recentes[i] == recentes[i + gap + 1]:
+                    gaps_encontrados.append(recentes[i])
+        
+        if gaps_encontrados:
+            # Se há muitas repetições com gap, os números que repetem são quentes
+            top_gap = [n for n, c in Counter(gaps_encontrados).most_common(3)]
+            return {
+                'base': set(top_gap),
+                'forca': 40,
+                'estrategias': ['Gap Quente: ' + ', '.join(map(str, top_gap))],
+                'gap': 0
+            }
+        
+        return None
+
+
+# =============================
+# 🆕 ESTRATÉGIA 6: SEQUÊNCIA PADRÃO (O que vem depois de X)
+# =============================
+class EstrategiaSequencia:
+    def __init__(self):
+        self.padroes = defaultdict(list)  # {numero: [numeros_que_aparecem_depois]}
+        self.atualizado = False
+    
+    def treinar(self, historico):
+        """Analisa todo histórico e constrói padrões de sequência"""
+        self.padroes.clear()
+        for i in range(len(historico) - 1):
+            atual = historico[i]
+            proximo = historico[i + 1]
+            self.padroes[atual].append(proximo)
+        self.atualizado = True
+    
+    def prever(self, numero, top_n=10):
+        """Retorna os top_n números mais frequentes após 'numero'"""
+        if numero not in self.padroes or not self.padroes[numero]:
+            return []
+        contagem = Counter(self.padroes[numero])
+        return [n for n, _ in contagem.most_common(top_n)]
+    
+    def analisar(self, historico):
+        if len(historico) < 10:
+            return None
+        
+        # Treina com todo histórico disponível
+        self.treinar(historico)
+        
+        ultimo = historico[-1]
+        previsao = self.prever(ultimo, 10)
+        
+        if len(previsao) < 3:
+            return None
+        
+        # Calcula força baseado na frequência do padrão
+        total_ocorrencias = len(self.padroes.get(ultimo, []))
+        if total_ocorrencias >= 10:
+            forca = 60
+        elif total_ocorrencias >= 5:
+            forca = 45
+        else:
+            forca = 30
+        
+        return {
+            'base': set(previsao[:5]),  # Top 5 mais prováveis
+            'forca': forca,
+            'estrategias': [f'Sequência após {ultimo} ({total_ocorrencias} ocorrências)'],
+            'top10': previsao
+        }
+
+
+# =============================
+# BOT UNIFICADO (ATUALIZADO COM NOVAS ESTRATÉGIAS)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
@@ -475,20 +609,27 @@ class RoletaBotUnificado:
         self.mineracao = EstrategiaMineracao()
         self.leque = EstrategiaLeque(self.roleta)
         self.giro = EstrategiaPorGiro(self.roleta)
+        self.gap = EstrategiaGap()  # 🆕
+        self.sequencia = EstrategiaSequencia()  # 🆕
         
         self.historico = []
         self.lucky = []
         self.lucky_mult = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
+        self.padroes_sequencia = {}  # Para persistência
         
     def atualizar(self, numero, lucky_nums=None, lucky_mults=None):
         self.historico.append(numero)
         self.lucky.append(lucky_nums if lucky_nums else [])
         self.lucky_mult.append(lucky_mults if lucky_mults else {})
-        if len(self.historico) > 100:
-            self.historico = self.historico[-100:]
-            self.lucky = self.lucky[-100:]
-            self.lucky_mult = self.lucky_mult[-100:]
+        if len(self.historico) > 200:
+            self.historico = self.historico[-200:]
+            self.lucky = self.lucky[-200:]
+            self.lucky_mult = self.lucky_mult[-200:]
+        
+        # Atualiza padrões de sequência
+        if len(self.historico) >= 2:
+            self.sequencia.treinar(self.historico)
     
     def atualizar_resultado(self, acerto):
         self.performance['historico'].append(1 if acerto else 0)
@@ -511,7 +652,10 @@ class RoletaBotUnificado:
             return None
         
         if motores_ativos is None:
-            motores_ativos = {'sniper': True, 'mineracao': True, 'leque': True, 'giro': True}
+            motores_ativos = {
+                'sniper': True, 'mineracao': True, 'leque': True, 
+                'giro': True, 'gap': True, 'sequencia': True
+            }
         
         lucky_recentes = []
         for sub in self.lucky[-10:]:
@@ -539,6 +683,18 @@ class RoletaBotUnificado:
             r = self.giro.analisar(list(self.historico), lucky_recentes)
             if r:
                 resultados.append(('Análise Giro', r))
+        
+        # 🆕 Estratégia Gap
+        if motores_ativos.get('gap', True):
+            r = self.gap.analisar(list(self.historico))
+            if r:
+                resultados.append(('Gap', r))
+        
+        # 🆕 Estratégia Sequência
+        if motores_ativos.get('sequencia', True):
+            r = self.sequencia.analisar(list(self.historico))
+            if r:
+                resultados.append(('Sequência', r))
         
         if not resultados:
             return None
@@ -584,8 +740,10 @@ class RoletaBotUnificado:
         base_list = prioridade[:top_n]
         
         gatilho = f"u={self.historico[-1]}"
-        if self.historico[-1] == self.historico[-2] if len(self.historico) >= 2 else False:
+        if len(self.historico) >= 2 and self.historico[-1] == self.historico[-2]:
             gatilho = f"REPETIU {self.historico[-1]}!"
+        elif len(self.historico) >= 3 and self.historico[-1] == self.historico[-3]:
+            gatilho = f"REPETIU COM GAP! {self.historico[-3]}→{self.historico[-2]}→{self.historico[-1]}"
         
         return {
             'nome': 'Bot Unificado',
@@ -626,11 +784,19 @@ class RoletaBotUnificado:
         txt += f"🔥 Quentes: {quentes}\n"
         txt += f"🍀 Lucky: {top_lucky}\n"
         
+        # 🆕 Mostra previsão de sequência
+        if len(hist) >= 10:
+            seq = self.sequencia.prever(ultimo, 5)
+            if seq:
+                txt += f"\n🔄 Após {ultimo}, mais prováveis: {seq}\n"
+        
         txt += f"\n🤖 MOTORES ATIVOS:\n"
         txt += f"  🎯 Sniper: {'✅' if st.session_state.get('usar_sniper', True) else '❌'}\n"
         txt += f"  🔬 Mineração: {'✅' if st.session_state.get('usar_mineracao', True) else '❌'}\n"
         txt += f"  🪭 Leque: {'✅' if st.session_state.get('usar_leque', True) else '❌'}\n"
         txt += f"  🔄 Giro: {'✅' if st.session_state.get('usar_giro', True) else '❌'}\n"
+        txt += f"  🔁 Gap: {'✅' if st.session_state.get('usar_gap', True) else '❌'}\n"
+        txt += f"  📊 Sequência: {'✅' if st.session_state.get('usar_sequencia', True) else '❌'}\n"
         
         if st.session_state.get('repetir_entrada', True):
             txt += f"\n⏳ Repetição após erro: ATIVADA (espera 2 giros, depois repete)\n"
@@ -645,6 +811,7 @@ class RoletaBotUnificado:
         self.lucky = []
         self.lucky_mult = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
+        self.padroes_sequencia = {}
 
 
 # =============================
@@ -663,9 +830,9 @@ class SistemaBot:
         self.ultima_entrada_rodada = -10
         self.estrategia_ativa_manual = False
         
-        # NOVO: Controle de repetição após erro com espera de 2 giros
-        self.giros_espera_repeticao = 0  # Contador de giros de espera (0, 1, 2)
-        self.giros_restantes_espera = 0  # Quantos giros ainda faltam esperar
+        # Controle de repetição após erro com espera de 2 giros
+        self.giros_espera_repeticao = 0
+        self.giros_restantes_espera = 0
         self.ultima_entrada_numeros = []
         self.ultima_entrada_forca = 0
         self.ultima_entrada_motor = ""
@@ -697,16 +864,13 @@ class SistemaBot:
             
             if acerto:
                 self.acertos += 1
-                # ACERTOU! Reseta repetições e espera
                 self.giros_restantes_espera = 0
                 self.giros_espera_repeticao = 0
                 self.ultima_entrada_numeros = []
             else:
                 self.erros += 1
-                # ERROU! Ativa espera de 2 giros se configurado
                 if st.session_state.get('repetir_entrada', True) and not self.previsao_ativa.get('repeticao', False):
-                    # Só ativa espera se NÃO for já uma entrada repetida
-                    self.giros_restantes_espera = 2  # Esperar 2 giros
+                    self.giros_restantes_espera = 2
                     self.giros_espera_repeticao = 2
                     self.ultima_entrada_numeros = self.previsao_ativa.get('numeros_apostar', [])
                     self.ultima_entrada_forca = self.previsao_ativa.get('forca_real', 0)
@@ -734,9 +898,7 @@ class SistemaBot:
             
             if len(self.historico_numeros) - self.ultima_entrada_rodada >= intervalo:
                 
-                # VERIFICA SE DEVE REPETIR ENTRADA ANTERIOR (após espera de 2 giros)
                 if self.giros_restantes_espera == 0 and self.ultima_entrada_numeros:
-                    # Passaram os 2 giros de espera, agora repete a entrada
                     self.giros_espera_repeticao = 0
                     
                     previsao_repetida = {
@@ -753,21 +915,20 @@ class SistemaBot:
                     }
                     
                     self.previsao_ativa = previsao_repetida
-                    # Limpa para não repetir de novo
                     self.ultima_entrada_numeros = []
                     enviar_previsao_auto(previsao_repetida)
                 elif self.giros_restantes_espera > 0:
-                    # Ainda está esperando, não gera previsão
                     pass
                 else:
-                    # Gera nova análise normalmente
                     top_n = st.session_state.get('top_n_apostas', 5)
                     
                     motores_ativos = {
                         'sniper': st.session_state.get('usar_sniper', True),
                         'mineracao': st.session_state.get('usar_mineracao', True),
                         'leque': st.session_state.get('usar_leque', True),
-                        'giro': st.session_state.get('usar_giro', True)
+                        'giro': st.session_state.get('usar_giro', True),
+                        'gap': st.session_state.get('usar_gap', True),  # 🆕
+                        'sequencia': st.session_state.get('usar_sequencia', True)  # 🆕
                     }
                     
                     nova = self.bot.analisar_e_prever(top_n, motores_ativos)
@@ -861,8 +1022,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Bot Unificado — Todos os Motores", layout="centered")
-st.title("🎯 Bot Unificado — Sniper + Mineração + Leque + Giro")
+st.set_page_config(page_title="🎯 Bot Unificado — 6 Motores", layout="centered")
+st.title("🎯 Bot Unificado — Sniper + Mineração + Leque + Giro + Gap + Sequência")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -903,6 +1064,16 @@ if dados:
                 }
         except:
             pass
+    
+    # Carrega padrões de sequência salvos
+    if os.path.exists(PADROES_PATH):
+        try:
+            with open(PADROES_PATH, 'r') as f:
+                padroes = json.load(f)
+                sis.bot.sequencia.padroes = defaultdict(list, {int(k): v for k, v in padroes.items()})
+                sis.bot.sequencia.atualizado = True
+        except:
+            pass
 
 defaults = {
     'modo_automatico': True, 'top_n_apostas': 5,
@@ -910,6 +1081,7 @@ defaults = {
     'janela_leque': 20, 'forca_minima_sinal': 40,
     'usar_sniper': True, 'usar_mineracao': True,
     'usar_leque': True, 'usar_giro': True,
+    'usar_gap': True, 'usar_sequencia': True,  # 🆕
     'repetir_entrada': True
 }
 for k, v in defaults.items():
@@ -936,30 +1108,32 @@ st.sidebar.title("⚙️ Configurações")
 
 with st.sidebar.expander("🤖 Motores Ativos", expanded=True):
     st.write("**Selecione os motores:**")
-    st.session_state.usar_sniper = st.checkbox("🎯 Sniper (Interseção D/C + Cluster)", value=st.session_state.usar_sniper)
-    st.session_state.usar_mineracao = st.checkbox("🔬 Mineração (Markov + Lucky Cross)", value=st.session_state.usar_mineracao)
+    st.session_state.usar_sniper = st.checkbox("🎯 Sniper", value=st.session_state.usar_sniper)
+    st.session_state.usar_mineracao = st.checkbox("🔬 Mineração", value=st.session_state.usar_mineracao)
     st.session_state.usar_leque = st.checkbox("🪭 Leque Dinâmico", value=st.session_state.usar_leque)
-    st.session_state.usar_giro = st.checkbox("🔄 Análise por Giro (SEMPRE ativo)", value=st.session_state.usar_giro)
+    st.session_state.usar_giro = st.checkbox("🔄 Análise por Giro", value=st.session_state.usar_giro)
+    st.session_state.usar_gap = st.checkbox("🔁 Gap (Repetição espaçada)", value=st.session_state.usar_gap, 
+        help="Detecta repetições com 1, 2 ou 3 números de intervalo")
+    st.session_state.usar_sequencia = st.checkbox("📊 Sequência (Após X, vem Y)", value=st.session_state.usar_sequencia,
+        help="Analisa quais números mais saem após cada número")
     
     ativos = sum([st.session_state.usar_sniper, st.session_state.usar_mineracao, 
-                  st.session_state.usar_leque, st.session_state.usar_giro])
-    st.caption(f"📊 {ativos}/4 motores ativos")
+                  st.session_state.usar_leque, st.session_state.usar_giro,
+                  st.session_state.usar_gap, st.session_state.usar_sequencia])
+    st.caption(f"📊 {ativos}/6 motores ativos")
 
 with st.sidebar.expander("⏳ Repetição pós-Erro", expanded=True):
-    st.session_state.repetir_entrada = st.checkbox("⏳ Repetir entrada após erro (espera 2 giros)", value=st.session_state.repetir_entrada,
-        help="Quando errar, ESPERA 2 giros e depois repete a mesma entrada")
+    st.session_state.repetir_entrada = st.checkbox("⏳ Repetir entrada após erro (espera 2 giros)", value=st.session_state.repetir_entrada)
     st.info("""
     **Como funciona:**
     - ❌ Erro → espera 2 giros
     - ⏳ Após 2 giros → repete a entrada
-    - ✅ Acerto → reseta e volta análise normal
-    - ⏳ Entradas repetidas mostram emoji especial
+    - ✅ Acerto → reseta
     """)
 
 with st.sidebar.expander("⚙️ Ajustes", expanded=True):
     st.session_state.top_n_apostas = st.slider("📊 Números por aposta", 3, 15, st.session_state.top_n_apostas)
-    st.session_state.intervalo_minimo_entradas = st.slider("⏱️ Intervalo entre entradas", 0, 3, st.session_state.intervalo_minimo_entradas,
-        help="0 = entrada todo giro")
+    st.session_state.intervalo_minimo_entradas = st.slider("⏱️ Intervalo entre entradas", 0, 3, st.session_state.intervalo_minimo_entradas)
     st.session_state.janela_leque = st.slider("🪭 Janela do Leque", 10, 50, st.session_state.janela_leque, 5)
 
 st.session_state.modo_automatico = st.sidebar.checkbox("🔄 Modo Automático", value=st.session_state.modo_automatico)
@@ -1095,7 +1269,6 @@ elif sis.previsao_ativa:
     
     st.write(f"**🔢 {len(p['numeros_apostar'])} números:**")
     nums = sorted(p['numeros_apostar'])
-    # Exibe números lado a lado separados por vírgula
     st.markdown(f"### {', '.join(map(str, nums))}")
 else:
     st.info(f"🎲 Iniciando análise...")
