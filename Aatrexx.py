@@ -936,7 +936,7 @@ with st.sidebar.expander("🔄 Repetição pós-Erro", expanded=True):
     """)
 
 with st.sidebar.expander("⚙️ Ajustes", expanded=True):
-    st.session_state.top_n_apostas = st.slider("📊 Números por aposta", 3, 8, st.session_state.top_n_apostas)
+    st.session_state.top_n_apostas = st.slider("📊 Números por aposta", 3, 15, st.session_state.top_n_apostas)
     st.session_state.intervalo_minimo_entradas = st.slider("⏱️ Intervalo entre entradas", 0, 3, st.session_state.intervalo_minimo_entradas,
         help="0 = entrada todo giro")
     st.session_state.janela_leque = st.slider("🪭 Janela do Leque", 10, 50, st.session_state.janela_leque, 5)
