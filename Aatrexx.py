@@ -15,6 +15,7 @@ SESSION_DATA_PATH = "session_data.pkl"
 HISTORICO_PATH = "historico_roleta.json"
 PERFORMANCE_PATH = "performance_bot.json"
 PADROES_PATH = "padroes_sequencia.json"
+PERFORMANCE_MOTORES_PATH = "performance_motores.json"  # 🆕
 
 def salvar_sessao():
     try:
@@ -32,6 +33,10 @@ def salvar_sessao():
         if hasattr(st.session_state.sistema.bot, 'padroes_sequencia'):
             with open(PADROES_PATH, 'w') as f:
                 json.dump(st.session_state.sistema.bot.padroes_sequencia, f)
+        
+        # 🆕 Salvar performance individual dos motores
+        with open(PERFORMANCE_MOTORES_PATH, 'w') as f:
+            json.dump(st.session_state.sistema.bot.performance_motores, f)
         
         session_data = {
             'historico': st.session_state.get('historico', []),
@@ -89,7 +94,7 @@ def carregar_dados_persistidos():
 
 def limpar_sessao():
     try:
-        for path in [SESSION_DATA_PATH, HISTORICO_PATH, PERFORMANCE_PATH, PADROES_PATH]:
+        for path in [SESSION_DATA_PATH, HISTORICO_PATH, PERFORMANCE_PATH, PADROES_PATH, PERFORMANCE_MOTORES_PATH]:
             if os.path.exists(path):
                 os.remove(path)
         for key in list(st.session_state.keys()):
@@ -134,7 +139,7 @@ def enviar_previsao_auto(previsao):
         if green:
             msg += f"🟢 REPETINDO APÓS ACERTO! (Green #{green_count}/3)\n"
         elif repeticao:
-            msg += f"⏳ REPETINDO ENTRADA ANTERIOR! (após espera de {giros_esperados} giros)\n"
+            msg += f"⏳ REPETINDO ENTRADA ANTERIOR! (após espera de {giros_esperados} giro)\n"
         else:
             msg += f"📋 {previsao['gatilho']}\n"
             if motor:
@@ -608,7 +613,7 @@ class EstrategiaSequencia:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 7: CICLOS DE QUADRANTES
+# ESTRATÉGIA 7: CICLOS DE QUADRANTES
 # =============================
 class EstrategiaCiclosQuadrantes:
     def __init__(self):
@@ -652,7 +657,7 @@ class EstrategiaCiclosQuadrantes:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 8: TERMINAIS (FINAIS)
+# ESTRATÉGIA 8: TERMINAIS (FINAIS)
 # =============================
 class EstrategiaTerminais:
     def __init__(self):
@@ -678,7 +683,7 @@ class EstrategiaTerminais:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 9: SIMETRIA (ESPELHAMENTO)
+# ESTRATÉGIA 9: SIMETRIA (ESPELHAMENTO)
 # =============================
 class EstrategiaSimetria:
     def __init__(self):
@@ -715,7 +720,7 @@ class RoletaBotUnificado:
         self.gap = EstrategiaGap()
         self.sequencia = EstrategiaSequencia()
         
-        # 🆕 Novas estratégias
+        # Novas estratégias
         self.quadrantes_strat = EstrategiaCiclosQuadrantes()
         self.terminais_strat = EstrategiaTerminais()
         self.simetria_strat = EstrategiaSimetria()
@@ -725,6 +730,102 @@ class RoletaBotUnificado:
         self.lucky_mult = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
         self.padroes_sequencia = {}
+        
+        # 🆕 Performance individual por motor
+        self.performance_motores = {}
+        self._init_performance_motores()
+    
+    def _init_performance_motores(self):
+        """Inicializa estrutura de performance para cada motor"""
+        motores = ['Sniper', 'Mineração', 'Leque', 'Análise Giro', 'Gap', 'Sequência', 
+                   'CicloQuadrantes', 'Terminais', 'Simetria', 'Green_Repeat', 'Erro_Repeat']
+        for m in motores:
+            self.performance_motores[m] = {
+                'acertos': 0,
+                'erros': 0,
+                'total': 0,
+                'historico': [],  # últimos 20 resultados (True=acerto, False=erro)
+                'forca_media': 0,
+                'ultima_forca': 0
+            }
+    
+    def _get_motor_from_result(self, motor_name, estrategias_ativas):
+        """Mapeia o motor principal para o nome de performance"""
+        mapping = {
+            'Sniper': 'Sniper',
+            'Mineração': 'Mineração',
+            'Leque': 'Leque',
+            'Análise Giro': 'Análise Giro',
+            'Gap': 'Gap',
+            'Sequência': 'Sequência',
+            'CicloQuadrantes': 'CicloQuadrantes',
+            'Terminais': 'Terminais',
+            'Simetria': 'Simetria'
+        }
+        
+        # Se for green ou repetição, usa esses nomes
+        if 'Green Repeat' in estrategias_ativas:
+            return 'Green_Repeat'
+        if 'Repetição pós-erro' in estrategias_ativas:
+            return 'Erro_Repeat'
+        
+        return mapping.get(motor_name, motor_name)
+    
+    def atualizar_performance_motor(self, motor_nome, acerto, forca=0, estrategias_ativas=None):
+        """Atualiza performance individual de um motor"""
+        if motor_nome not in self.performance_motores:
+            self.performance_motores[motor_nome] = {
+                'acertos': 0, 'erros': 0, 'total': 0,
+                'historico': [], 'forca_media': 0, 'ultima_forca': 0
+            }
+        
+        perf = self.performance_motores[motor_nome]
+        perf['total'] += 1
+        if acerto:
+            perf['acertos'] += 1
+        else:
+            perf['erros'] += 1
+        
+        perf['historico'].append(acerto)
+        if len(perf['historico']) > 20:
+            perf['historico'] = perf['historico'][-20:]
+        
+        perf['ultima_forca'] = forca
+        if perf['total'] > 0:
+            perf['forca_media'] = (perf['forca_media'] * (perf['total'] - 1) + forca) / perf['total']
+    
+    def get_taxa_motor(self, motor_nome):
+        """Retorna taxa de acerto de um motor específico"""
+        if motor_nome not in self.performance_motores:
+            return 0, 0, 0
+        perf = self.performance_motores[motor_nome]
+        total = perf['total']
+        if total == 0:
+            return 0, 0, 0
+        taxa = perf['acertos'] / total
+        return taxa, perf['acertos'], total
+    
+    def get_melhores_motores(self, top_n=5):
+        """Retorna ranking dos melhores motores"""
+        ranking = []
+        for nome, perf in self.performance_motores.items():
+            if perf['total'] >= 3:  # mínimo 3 tentativas para aparecer
+                taxa = perf['acertos'] / perf['total'] if perf['total'] > 0 else 0
+                ranking.append((nome, taxa, perf['acertos'], perf['total'], perf['forca_media']))
+        
+        ranking.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        return ranking[:top_n]
+    
+    def get_piores_motores(self, top_n=3):
+        """Retorna ranking dos piores motores"""
+        ranking = []
+        for nome, perf in self.performance_motores.items():
+            if perf['total'] >= 3:
+                taxa = perf['acertos'] / perf['total'] if perf['total'] > 0 else 0
+                ranking.append((nome, taxa, perf['acertos'], perf['total']))
+        
+        ranking.sort(key=lambda x: x[1])
+        return ranking[:top_n]
         
     def atualizar(self, numero, lucky_nums=None, lucky_mults=None):
         self.historico.append(numero)
@@ -762,7 +863,7 @@ class RoletaBotUnificado:
             motores_ativos = {
                 'sniper': True, 'mineracao': True, 'leque': True, 
                 'giro': True, 'gap': True, 'sequencia': True,
-                'quadrantes': True, 'terminais': True, 'simetria': True  # 🆕
+                'quadrantes': True, 'terminais': True, 'simetria': True
             }
         
         lucky_recentes = []
@@ -802,7 +903,7 @@ class RoletaBotUnificado:
             if r:
                 resultados.append(('Sequência', r))
         
-        # 🆕 Novas estratégias
+        # Novas estratégias
         if motores_ativos.get('quadrantes', True):
             r = self.quadrantes_strat.analisar(self.historico)
             if r:
@@ -920,17 +1021,25 @@ class RoletaBotUnificado:
         txt += f"  🔄 Giro: {'✅' if st.session_state.get('usar_giro', True) else '❌'}\n"
         txt += f"  🔁 Gap: {'✅' if st.session_state.get('usar_gap', True) else '❌'}\n"
         txt += f"  📊 Sequência: {'✅' if st.session_state.get('usar_sequencia', True) else '❌'}\n"
-        txt += f"  🟩 Quadrantes: {'✅' if st.session_state.get('usar_quadrantes', True) else '❌'}\n"  # 🆕
-        txt += f"  🔢 Terminais: {'✅' if st.session_state.get('usar_terminais', True) else '❌'}\n"   # 🆕
-        txt += f"  🔄 Simetria: {'✅' if st.session_state.get('usar_simetria', True) else '❌'}\n"     # 🆕
+        txt += f"  🟩 Quadrantes: {'✅' if st.session_state.get('usar_quadrantes', True) else '❌'}\n"
+        txt += f"  🔢 Terminais: {'✅' if st.session_state.get('usar_terminais', True) else '❌'}\n"
+        txt += f"  🔄 Simetria: {'✅' if st.session_state.get('usar_simetria', True) else '❌'}\n"
         
         if st.session_state.get('repetir_acerto', True):
             txt += f"\n🟢 Repetir após Acerto: ATIVADA (máx 3x)\n"
         if st.session_state.get('repetir_entrada', True):
-            txt += f"⏳ Repetir após Erro: ATIVADA (espera 2 giros)\n"
+            txt += f"⏳ Repetir após Erro: ATIVADA (espera 1 giro)\n"
         
         if total > 0:
             txt += f"\n📈 Perf: {taxa:.0%} ({self.performance['acertos']}/{total})\n"
+        
+        # 🆕 Ranking de performance dos motores
+        melhores = self.get_melhores_motores(5)
+        if melhores:
+            txt += f"\n🏆 RANKING MOTORES:\n"
+            for i, (nome, taxa_m, acertos_m, total_m, _) in enumerate(melhores, 1):
+                emoji = "🟢" if taxa_m >= 0.30 else "🟡" if taxa_m >= 0.20 else "🔴"
+                txt += f"  {i}. {emoji} {nome}: {taxa_m:.0%} ({acertos_m}/{total_m})\n"
         
         return txt
     
@@ -940,10 +1049,11 @@ class RoletaBotUnificado:
         self.lucky_mult = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
         self.padroes_sequencia = {}
+        self._init_performance_motores()  # 🆕
 
 
 # =============================
-# 🆕 SISTEMA PRINCIPAL (COM GREEN REPEAT + ERRO ESPERA)
+# SISTEMA PRINCIPAL (COM GREEN REPEAT + ERRO ESPERA)
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -958,18 +1068,19 @@ class SistemaBot:
         self.ultima_entrada_rodada = -10
         self.estrategia_ativa_manual = False
         
-        # Controle de repetição após ERRO (espera 2 giros)
+        # Controle de repetição após ERRO (🆕 ALTERADO: espera 1 giro)
         self.giros_espera_repeticao = 0
         self.giros_restantes_espera = 0
         
-        # 🆕 Controle de repetição após ACERTO (Green - até 3x seguidas)
-        self.repeticoes_acerto_consecutivas = 0  # Quantas vezes já repetiu após acerto
-        self.ultima_entrada_green = False  # Flag: última entrada foi green?
+        # Controle de repetição após ACERTO (Green - até 3x seguidas)
+        self.repeticoes_acerto_consecutivas = 0
+        self.ultima_entrada_green = False
         
         # Armazena última entrada para repetição
         self.ultima_entrada_numeros = []
         self.ultima_entrada_forca = 0
         self.ultima_entrada_motor = ""
+        self.ultima_entrada_estrategias = []  # 🆕 Para performance individual
         
     def processar_novo_numero(self, numero_data):
         if isinstance(numero_data, dict):
@@ -996,22 +1107,34 @@ class SistemaBot:
             acerto = numero_real in self.previsao_ativa.get('numeros_apostar', [])
             self.bot.atualizar_resultado(acerto)
             
+            # 🆕 Atualizar performance individual do motor
+            motor_principal = self.previsao_ativa.get('motor', '')
+            estrategias = self.previsao_ativa.get('estrategias_ativas', [])
+            forca = self.previsao_ativa.get('forca_real', 0)
+            
+            if self.previsao_ativa.get('green', False):
+                motor_perf = 'Green_Repeat'
+            elif self.previsao_ativa.get('repeticao', False):
+                motor_perf = 'Erro_Repeat'
+            else:
+                motor_perf = motor_principal
+            
+            self.bot.atualizar_performance_motor(motor_perf, acerto, forca, estrategias)
+            
             if acerto:
                 self.acertos += 1
                 
                 # 🟢 ACERTOU! Verifica regra GREEN
                 if st.session_state.get('repetir_acerto', True):
-                    # Verifica se já atingiu o limite de repetições green
                     max_rep = st.session_state.get('max_repeticoes_acerto', 3)
                     if self.repeticoes_acerto_consecutivas < max_rep:
-                        # Pode repetir mais uma vez
                         self.repeticoes_acerto_consecutivas += 1
                         self.ultima_entrada_green = True
                         self.ultima_entrada_numeros = self.previsao_ativa.get('numeros_apostar', [])
                         self.ultima_entrada_forca = self.previsao_ativa.get('forca_real', 0)
                         self.ultima_entrada_motor = self.previsao_ativa.get('motor', '')
+                        self.ultima_entrada_estrategias = self.previsao_ativa.get('estrategias_ativas', [])
                     else:
-                        # Atingiu limite de 3 greens, reseta
                         self.repeticoes_acerto_consecutivas = 0
                         self.ultima_entrada_green = False
                         self.ultima_entrada_numeros = []
@@ -1025,19 +1148,19 @@ class SistemaBot:
             else:
                 self.erros += 1
                 
-                # ❌ ERROU! Reseta green e ativa espera de erro
+                # ❌ ERROU! Reseta green e ativa espera de erro (🆕 1 giro)
                 self.repeticoes_acerto_consecutivas = 0
                 self.ultima_entrada_green = False
                 
                 if st.session_state.get('repetir_entrada', True) and not self.previsao_ativa.get('repeticao', False) and not self.previsao_ativa.get('green', False):
-                    # Só ativa espera de erro se NÃO era green nem repetição
-                    self.giros_restantes_espera = 2
-                    self.giros_espera_repeticao = 2
+                    # 🆕 ALTERADO: espera 1 giro (antes era 2)
+                    self.giros_restantes_espera = 1
+                    self.giros_espera_repeticao = 1
                     self.ultima_entrada_numeros = self.previsao_ativa.get('numeros_apostar', [])
                     self.ultima_entrada_forca = self.previsao_ativa.get('forca_real', 0)
                     self.ultima_entrada_motor = self.previsao_ativa.get('motor', '')
+                    self.ultima_entrada_estrategias = self.previsao_ativa.get('estrategias_ativas', [])
                 elif self.previsao_ativa.get('green', False):
-                    # Se era green e errou, limpa para nova análise
                     self.ultima_entrada_numeros = []
             
             enviar_resultado_auto(numero_real, acerto, mult)
@@ -1047,7 +1170,8 @@ class SistemaBot:
                 'acerto': acerto,
                 'multiplicador': mult,
                 'forca': self.previsao_ativa.get('forca_real', 0),
-                'green': self.previsao_ativa.get('green', False)
+                'green': self.previsao_ativa.get('green', False),
+                'motor': motor_perf  # 🆕
             })
             
             self.previsao_ativa = None
@@ -1069,7 +1193,7 @@ class SistemaBot:
                         'nome': 'Bot Unificado',
                         'numeros_apostar': sorted(self.ultima_entrada_numeros),
                         'gatilho': f'🟢 GREEN! Repetindo após acerto ({self.repeticoes_acerto_consecutivas}/3)',
-                        'forca_real': self.ultima_entrada_forca + 10,  # Bônus por ser green
+                        'forca_real': self.ultima_entrada_forca + 10,
                         'confianca': 'Green',
                         'motor': self.ultima_entrada_motor,
                         'estrategias_ativas': [f'Green Repeat #{self.repeticoes_acerto_consecutivas}'],
@@ -1081,26 +1205,26 @@ class SistemaBot:
                     }
                     
                     self.previsao_ativa = previsao_green
-                    self.ultima_entrada_green = False  # Já usou o green
+                    self.ultima_entrada_green = False
                     enviar_previsao_auto(previsao_green)
                 
-                # ⏳ PRIORIDADE 2: Repetir após ERRO (espera 2 giros)
+                # ⏳ PRIORIDADE 2: Repetir após ERRO (🆕 espera 1 giro)
                 elif self.giros_restantes_espera == 0 and self.ultima_entrada_numeros and not self.ultima_entrada_green:
                     self.giros_espera_repeticao = 0
                     
                     previsao_repetida = {
                         'nome': 'Bot Unificado',
                         'numeros_apostar': sorted(self.ultima_entrada_numeros),
-                        'gatilho': 'REPETINDO ENTRADA ANTERIOR (após 2 giros)',
+                        'gatilho': 'REPETINDO ENTRADA ANTERIOR (após 1 giro)',
                         'forca_real': self.ultima_entrada_forca,
                         'confianca': 'Repetição',
                         'motor': self.ultima_entrada_motor,
-                        'estrategias_ativas': ['Repetição pós-erro (2 giros)'],
+                        'estrategias_ativas': ['Repetição pós-erro (1 giro)'],
                         'qtd_motores': 1,
                         'repeticao': True,
                         'green': False,
                         'green_count': 0,
-                        'giros_esperados': 2
+                        'giros_esperados': 1  # 🆕
                     }
                     
                     self.previsao_ativa = previsao_repetida
@@ -1122,9 +1246,9 @@ class SistemaBot:
                         'giro': st.session_state.get('usar_giro', True),
                         'gap': st.session_state.get('usar_gap', True),
                         'sequencia': st.session_state.get('usar_sequencia', True),
-                        'quadrantes': st.session_state.get('usar_quadrantes', True),  # 🆕
-                        'terminais': st.session_state.get('usar_terminais', True),    # 🆕
-                        'simetria': st.session_state.get('usar_simetria', True)       # 🆕
+                        'quadrantes': st.session_state.get('usar_quadrantes', True),
+                        'terminais': st.session_state.get('usar_terminais', True),
+                        'simetria': st.session_state.get('usar_simetria', True)
                     }
                     
                     nova = self.bot.analisar_e_prever(top_n, motores_ativos)
@@ -1220,8 +1344,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Bot Unificado — 9 Motores + Green", layout="centered")
-st.title("🎯 Bot Unificado — 9 Motores + Green Repeat + Erro Espera")
+st.set_page_config(page_title="🎯 Bot Unificado — 9 Motores + Perf Individual", layout="centered")
+st.title("🎯 Bot Unificado — 9 Motores + Perf Individual + Erro 1 Giro")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -1273,6 +1397,16 @@ if dados:
                 sis.bot.sequencia.atualizado = True
         except:
             pass
+    
+    # 🆕 Carregar performance dos motores
+    if os.path.exists(PERFORMANCE_MOTORES_PATH):
+        try:
+            with open(PERFORMANCE_MOTORES_PATH, 'r') as f:
+                perf_motores = json.load(f)
+                for motor, dados_motor in perf_motores.items():
+                    sis.bot.performance_motores[motor] = dados_motor
+        except:
+            pass
 
 defaults = {
     'modo_automatico': True, 'top_n_apostas': 5,
@@ -1281,7 +1415,7 @@ defaults = {
     'usar_sniper': True, 'usar_mineracao': True,
     'usar_leque': True, 'usar_giro': True,
     'usar_gap': True, 'usar_sequencia': True,
-    'usar_quadrantes': True, 'usar_terminais': True, 'usar_simetria': True,  # 🆕
+    'usar_quadrantes': True, 'usar_terminais': True, 'usar_simetria': True,
     'repetir_entrada': True,
     'repetir_acerto': True,
     'max_repeticoes_acerto': 3
@@ -1316,15 +1450,15 @@ with st.sidebar.expander("🤖 Motores Ativos", expanded=True):
     st.session_state.usar_giro = st.checkbox("🔄 Análise por Giro", value=st.session_state.usar_giro)
     st.session_state.usar_gap = st.checkbox("🔁 Gap (Repetição espaçada)", value=st.session_state.usar_gap)
     st.session_state.usar_sequencia = st.checkbox("📊 Sequência (Após X, vem Y)", value=st.session_state.usar_sequencia)
-    st.session_state.usar_quadrantes = st.checkbox("🟩 Quadrantes (Atraso de zona)", value=st.session_state.usar_quadrantes)  # 🆕
-    st.session_state.usar_terminais = st.checkbox("🔢 Terminais (Finais quentes)", value=st.session_state.usar_terminais)    # 🆕
-    st.session_state.usar_simetria = st.checkbox("🔄 Simetria (Espelhamento)", value=st.session_state.usar_simetria)          # 🆕
+    st.session_state.usar_quadrantes = st.checkbox("🟩 Quadrantes (Atraso de zona)", value=st.session_state.usar_quadrantes)
+    st.session_state.usar_terminais = st.checkbox("🔢 Terminais (Finais quentes)", value=st.session_state.usar_terminais)
+    st.session_state.usar_simetria = st.checkbox("🔄 Simetria (Espelhamento)", value=st.session_state.usar_simetria)
     
     ativos = sum([st.session_state.usar_sniper, st.session_state.usar_mineracao, 
                   st.session_state.usar_leque, st.session_state.usar_giro,
                   st.session_state.usar_gap, st.session_state.usar_sequencia,
                   st.session_state.usar_quadrantes, st.session_state.usar_terminais,
-                  st.session_state.usar_simetria])  # 🆕
+                  st.session_state.usar_simetria])
     st.caption(f"📊 {ativos}/9 motores ativos")
 
 with st.sidebar.expander("🟢 Green (Repetir após Acerto)", expanded=True):
@@ -1341,11 +1475,11 @@ with st.sidebar.expander("🟢 Green (Repetir após Acerto)", expanded=True):
     """)
 
 with st.sidebar.expander("⏳ Repetição pós-Erro", expanded=True):
-    st.session_state.repetir_entrada = st.checkbox("⏳ Repetir entrada após erro (espera 2 giros)", value=st.session_state.repetir_entrada)
+    st.session_state.repetir_entrada = st.checkbox("⏳ Repetir entrada após erro (espera 1 giro)", value=st.session_state.repetir_entrada)
     st.info("""
-    **Erro Repeat:**
-    - ❌ Erro → espera 2 giros
-    - ⏳ Após 2 giros → repete a entrada
+    **Erro Repeat (🆕 1 giro):**
+    - ❌ Erro → espera 1 giro
+    - ⏳ Após 1 giro → repete a entrada
     - ✅ Acerto → reseta
     """)
 
@@ -1361,6 +1495,22 @@ if st.sidebar.button("Atualizar"):
 
 with st.sidebar.expander("🧠 Análise", expanded=True):
     st.text(st.session_state.sistema.bot.get_analise_completa())
+
+# 🆕 Seção de Performance dos Motores na Sidebar
+with st.sidebar.expander("🏆 Performance Motores", expanded=False):
+    sis = st.session_state.sistema
+    ranking = sis.bot.get_melhores_motores(9)
+    
+    if ranking:
+        st.write("**Ranking de Acerto:**")
+        for i, (nome, taxa, acertos_m, total_m, forca_m) in enumerate(ranking, 1):
+            emoji = "🟢" if taxa >= 0.30 else "🟡" if taxa >= 0.20 else "🔴" if total_m >= 3 else "⚪"
+            st.write(f"{i}. {emoji} **{nome}**: {taxa:.0%} ({acertos_m}/{total_m})")
+            
+            # Barra de progresso
+            st.progress(min(taxa, 1.0) if taxa > 0 else 0)
+    else:
+        st.write("Aguardando dados...")
 
 with st.sidebar.expander("💾 Geral", expanded=False):
     if st.button("💾 Salvar", use_container_width=True):
@@ -1476,7 +1626,7 @@ elif sis.previsao_ativa:
     if green:
         st.success(f"🟢 **GREEN #{green_count}!** Repetindo após acerto")
     elif repeticao:
-        st.success(f"⏳ **REPETINDO ENTRADA!** (após espera de {giros_esperados} giros)")
+        st.success(f"⏳ **REPETINDO ENTRADA!** (após espera de {giros_esperados} giro)")
     elif f >= 55:
         st.success(f"🔥 **FORÇA {f}%** - {c} ({qtd} motores)")
     elif f >= 35:
@@ -1487,6 +1637,13 @@ elif sis.previsao_ativa:
     st.caption(f"📋 {p['gatilho']}")
     if not repeticao and not green:
         st.caption(f"🤖 Motor principal: {motor}")
+        
+        # 🆕 Mostrar performance do motor principal
+        taxa_motor, acertos_motor, total_motor = sis.bot.get_taxa_motor(motor)
+        if total_motor > 0:
+            emoji_m = "🟢" if taxa_motor >= 0.30 else "🟡" if taxa_motor >= 0.20 else "🔴"
+            st.caption(f"{emoji_m} Perf. {motor}: {taxa_motor:.0%} ({acertos_motor}/{total_motor})")
+        
         if estrategias:
             st.caption(f"🎯 {', '.join(estrategias[:4])}")
     
@@ -1496,8 +1653,27 @@ elif sis.previsao_ativa:
 else:
     st.info(f"🎲 Aguardando próxima análise...")
 
-# Performance
-st.subheader("📈 Performance")
+# 🆕 Performance detalhada dos motores
+st.subheader("🏆 Performance Individual dos Motores")
+sis = st.session_state.sistema
+ranking = sis.bot.get_melhores_motores(9)
+
+if ranking:
+    # Criar colunas para o grid
+    cols = st.columns(3)
+    for i, (nome, taxa, acertos_m, total_m, forca_m) in enumerate(ranking):
+        with cols[i % 3]:
+            emoji = "🟢" if taxa >= 0.30 else "🟡" if taxa >= 0.20 else "🔴" if total_m >= 3 else "⚪"
+            st.metric(
+                f"{emoji} {nome}",
+                f"{taxa:.0%}",
+                f"{acertos_m}/{total_m} | Força média: {forca_m:.0f}"
+            )
+else:
+    st.info("Aguardando dados de performance... (mínimo 3 tentativas por motor)")
+
+# Performance geral
+st.subheader("📈 Performance Geral")
 taxa_bot = sis.bot.get_taxa_acerto()
 total_bot = sis.bot.get_total_tentativas()
 if total_bot > 0:
@@ -1511,7 +1687,8 @@ if sis.historico_desempenho:
         e = "🎉" if r['acerto'] else "❌"
         g = " 🟢" if r.get('green') else ""
         m = f" ⚡{r['multiplicador']}x" if r.get('multiplicador') and r['acerto'] else ""
-        st.write(f"{e}{g} ({r.get('forca',0)}%): {r['numero']}{m}")
+        motor_h = r.get('motor', '')
+        st.write(f"{e}{g} ({r.get('forca',0)}%) [{motor_h}]: {r['numero']}{m}")
 
 # Download
 st.subheader("📥 Download")
