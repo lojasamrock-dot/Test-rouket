@@ -24,8 +24,7 @@ def salvar_sessao():
         performance_data = {
             'acertos': st.session_state.sistema.bot.performance['acertos'],
             'erros': st.session_state.sistema.bot.performance['erros'],
-            'historico': st.session_state.sistema.bot.performance['historico'],
-            'perf_motores': st.session_state.sistema.bot.perf_motores
+            'historico': st.session_state.sistema.bot.performance['historico']
         }
         with open(PERFORMANCE_PATH, 'w') as f:
             json.dump(performance_data, f)
@@ -53,26 +52,19 @@ def salvar_sessao():
             'usar_giro': st.session_state.get('usar_giro', True),
             'usar_gap': st.session_state.get('usar_gap', True),
             'usar_sequencia': st.session_state.get('usar_sequencia', True),
-            'usar_vizinhos_roda': st.session_state.get('usar_vizinhos_roda', True),
-            'usar_terminais': st.session_state.get('usar_terminais', True),
-            'usar_setor_quente': st.session_state.get('usar_setor_quente', True),
-            'usar_vizinhos_num': st.session_state.get('usar_vizinhos_num', True),
-            'usar_espelho': st.session_state.get('usar_espelho', True),
             'janela_analise': st.session_state.get('janela_analise', 50),
             'janela_leque': st.session_state.get('janela_leque', 20),
             'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 40),
             'repetir_entrada': st.session_state.get('repetir_entrada', True),
             'repetir_acerto': st.session_state.get('repetir_acerto', True),
             'max_repeticoes_acerto': st.session_state.get('max_repeticoes_acerto', 3),
-            'modo_repeticao_erro': st.session_state.sistema.modo_repeticao_erro,
-            'modo_espera_pos_erro': st.session_state.sistema.modo_espera_pos_erro,
-            'giros_espera_restantes': st.session_state.sistema.giros_espera_restantes,
+            'giros_espera_repeticao': st.session_state.sistema.giros_espera_repeticao,
+            'giros_restantes_espera': st.session_state.sistema.giros_restantes_espera,
             'repeticoes_acerto_consecutivas': st.session_state.sistema.repeticoes_acerto_consecutivas,
             'ultima_entrada_numeros': st.session_state.sistema.ultima_entrada_numeros,
             'ultima_entrada_forca': st.session_state.sistema.ultima_entrada_forca,
             'ultima_entrada_motor': st.session_state.sistema.ultima_entrada_motor,
-            'ultima_entrada_green': st.session_state.sistema.ultima_entrada_green,
-            'entrada_era_repeticao_erro': st.session_state.sistema.entrada_era_repeticao_erro
+            'ultima_entrada_green': st.session_state.sistema.ultima_entrada_green
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -115,14 +107,15 @@ def enviar_previsao_auto(previsao):
         motor = previsao.get('motor', '')
         repeticao = previsao.get('repeticao', False)
         green = previsao.get('green', False)
+        giros_esperados = previsao.get('giros_esperados', 0)
         green_count = previsao.get('green_count', 0)
         
         if green:
             emoji = "🟢"
             tipo = f"GREEN #{green_count}"
         elif repeticao:
-            emoji = "🔁"
-            tipo = "REPETINDO (erro)"
+            emoji = "⏳"
+            tipo = "REPETINDO"
         elif forca >= 60:
             emoji = "🔥"
             tipo = motor
@@ -136,9 +129,9 @@ def enviar_previsao_auto(previsao):
         msg = f"{emoji} **ENTRADA** - Força: {forca}%\n"
         
         if green:
-            msg += f"🟢 REPETINDO APÓS ACERTO! (Green #{green_count}/{st.session_state.get('max_repeticoes_acerto', 3)})\n"
+            msg += f"🟢 REPETINDO APÓS ACERTO! (Green #{green_count}/3)\n"
         elif repeticao:
-            msg += f"🔁 REPETINDO ENTRADA APÓS ERRO! (1ª repetição)\n"
+            msg += f"⏳ REPETINDO ENTRADA ANTERIOR! (após espera de {giros_esperados} giros)\n"
         else:
             msg += f"📋 {previsao['gatilho']}\n"
             if motor:
@@ -148,7 +141,7 @@ def enviar_previsao_auto(previsao):
         
         msg += f"🔢 {len(numeros)} números: {numeros}"
         
-        st.toast(f"{'🟢 Green' if green else '🔁 Repetindo' if repeticao else '🎯 ' + motor} - {forca}%", icon=emoji)
+        st.toast(f"{'🟢 Green' if green else '⏳ Repetindo' if repeticao else '🎯 ' + motor} - {forca}%", icon=emoji)
         st.success(f"🔔 {msg}")
         
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
@@ -219,9 +212,6 @@ class RoletaBase:
         if numero == 0:
             return 0
         return (numero - 1) % 3 + 1
-    
-    def get_terminacao(self, numero):
-        return numero % 10
 
 
 # =============================
@@ -531,7 +521,7 @@ class EstrategiaGap:
             if historico[-4] == ultimo:
                 return {
                     'base': {ultimo, historico[-2], historico[-3]},
-                    'forca': 50,
+                    'forca': 45,
                     'estrategias': [f'Repetição Gap2: {historico[-4]}→...→{ultimo}'],
                     'gap': 2
                 }
@@ -540,7 +530,7 @@ class EstrategiaGap:
             if historico[-5] == ultimo:
                 return {
                     'base': {ultimo, historico[-2], historico[-3], historico[-4]},
-                    'forca': 40,
+                    'forca': 35,
                     'estrategias': [f'Repetição Gap3: {historico[-5]}→...→{ultimo}'],
                     'gap': 3
                 }
@@ -615,212 +605,7 @@ class EstrategiaSequencia:
 
 
 # =============================
-# ESTRATÉGIA 7: VIZINHOS DIRETOS NA RODA
-# =============================
-class EstrategiaVizinhosRoda:
-    def __init__(self, roleta):
-        self.roleta = roleta
-    
-    def analisar(self, historico):
-        if len(historico) < 5:
-            return None
-        
-        ultimo = historico[-1]
-        ultimos_5 = historico[-5:]
-        
-        vizinhos_proximos = self.roleta.get_vizinhos(ultimo, 3)
-        ultimos_10 = historico[-10:]
-        vizinhos_que_sairam = [n for n in ultimos_10 if n in vizinhos_proximos]
-        
-        sequencia_vizinhos = 0
-        for i in range(len(ultimos_5) - 1):
-            if ultimos_5[i+1] in self.roleta.get_vizinhos(ultimos_5[i], 1):
-                sequencia_vizinhos += 1
-        
-        forca = 0
-        estrategias = []
-        
-        if sequencia_vizinhos >= 2:
-            forca += 45
-            estrategias.append(f"Vizinhos consecutivos ({sequencia_vizinhos}x)")
-        
-        if len(vizinhos_que_sairam) >= 4:
-            forca += 40
-            estrategias.append(f"Cluster vizinhos ({len(vizinhos_que_sairam)} nos últimos 10)")
-        
-        if forca == 0:
-            return None
-        
-        base = set(self.roleta.get_vizinhos(ultimo, 2))
-        for n in historico[-3:]:
-            base.update(self.roleta.get_vizinhos(n, 1))
-        
-        return {
-            'base': base,
-            'forca': min(100, forca),
-            'estrategias': estrategias
-        }
-
-
-# =============================
-# ESTRATÉGIA 8: PADRÃO DE TERMINAIS
-# =============================
-class EstrategiaTerminais:
-    def __init__(self, roleta):
-        self.roleta = roleta
-    
-    def analisar(self, historico):
-        if len(historico) < 5:
-            return None
-        
-        ultimo = historico[-1]
-        terminacao_ultimo = self.roleta.get_terminacao(ultimo)
-        mesma_terminacao = [n for n in range(37) if self.roleta.get_terminacao(n) == terminacao_ultimo and n != ultimo]
-        
-        ultimos_15 = historico[-15:]
-        term_na_mesma = [n for n in ultimos_15 if self.roleta.get_terminacao(n) == terminacao_ultimo]
-        
-        freq_terminais = Counter([self.roleta.get_terminacao(n) for n in ultimos_15])
-        top_terminais = freq_terminais.most_common(3)
-        
-        forca = 0
-        estrategias = []
-        base = set()
-        
-        if len(term_na_mesma) >= 3:
-            forca += 35
-            estrategias.append(f"Terminal {terminacao_ultimo} quente ({len(term_na_mesma)}x)")
-            base.update(mesma_terminacao[:6])
-        
-        if top_terminais and top_terminais[0][1] >= 4:
-            terminal_dom = top_terminais[0][0]
-            if terminal_dom != terminacao_ultimo:
-                forca += 25
-                estrategias.append(f"Terminal {terminal_dom} dominante ({top_terminais[0][1]}x)")
-                nums_dom = [n for n in range(37) if self.roleta.get_terminacao(n) == terminal_dom]
-                base.update(nums_dom[:4])
-        
-        if forca == 0:
-            return None
-        
-        return {
-            'base': base,
-            'forca': min(100, forca),
-            'estrategias': estrategias
-        }
-
-
-# =============================
-# ESTRATÉGIA 9: SETOR QUENTE
-# =============================
-class EstrategiaSetorQuente:
-    def __init__(self, roleta):
-        self.roleta = roleta
-    
-    def analisar(self, historico):
-        if len(historico) < 10:
-            return None
-        
-        ultimos_10 = historico[-10:]
-        ultimos_20 = historico[-20:] if len(historico) >= 20 else historico
-        
-        setores_10 = Counter([self.roleta.get_setor(n) for n in ultimos_10 if n != 0])
-        setores_20 = Counter([self.roleta.get_setor(n) for n in ultimos_20 if n != 0])
-        
-        setor_dom_10 = setores_10.most_common(1)[0] if setores_10 else None
-        setor_dom_20 = setores_20.most_common(1)[0] if setores_20 else None
-        
-        forca = 0
-        estrategias = []
-        base = set()
-        
-        if setor_dom_10 and setor_dom_10[1] >= 6:
-            s = setor_dom_10[0]
-            forca += 50
-            estrategias.append(f"Setor {s} dominante ({setor_dom_10[1]}/10)")
-            inicio = (s - 1) * 12 + 1
-            fim = s * 12
-            base.update(range(inicio, fim + 1))
-        elif setor_dom_20 and setor_dom_20[1] >= 10:
-            s = setor_dom_20[0]
-            forca += 35
-            estrategias.append(f"Setor {s} quente ({setor_dom_20[1]}/20)")
-            inicio = (s - 1) * 12 + 1
-            fim = s * 12
-            base.update(range(inicio, fim + 1))
-        
-        if forca == 0:
-            return None
-        
-        ultimos_5 = set(historico[-5:])
-        base = base - ultimos_5
-        
-        return {
-            'base': base,
-            'forca': min(100, forca),
-            'estrategias': estrategias
-        }
-
-# =============================
-# ESTRATÉGIA 10: VIZINHOS NUMÉRICOS (NOVA)
-# =============================
-class EstrategiaVizinhosNum:
-    def __init__(self):
-        pass
-    
-    def analisar(self, historico):
-        if len(historico) < 3:
-            return None
-        
-        ultimo = historico[-1]
-        penultimo = historico[-2]
-        
-        forca = 0
-        estrategias = []
-        base = set()
-        
-        # Se os dois últimos números forem terminais iguais, buscar vizinhos numéricos
-        if ultimo % 10 == penultimo % 10:
-            forca += 45
-            estrategias.append(f"Vizinhos de Terminal {ultimo % 10}")
-            v1 = (ultimo - 1) % 37
-            v2 = (ultimo + 1) % 37
-            v3 = (penultimo - 1) % 37
-            v4 = (penultimo + 1) % 37
-            base.update([v1, v2, v3, v4])
-            
-        if forca == 0: return None
-        return {'base': base, 'forca': forca, 'estrategias': estrategias}
-
-# =============================
-# ESTRATÉGIA 11: ESPELHAMENTO (NOVA)
-# =============================
-class EstrategiaEspelho:
-    def __init__(self):
-        pass
-    
-    def analisar(self, historico):
-        if len(historico) < 5:
-            return None
-        
-        ultimo = str(historico[-1]).zfill(2)
-        espelho = int(ultimo[::-1])
-        
-        if espelho > 36:
-            return None
-            
-        ultimos_10 = historico[-10:]
-        if espelho in ultimos_10:
-            return {
-                'base': {int(ultimo), espelho},
-                'forca': 50,
-                'estrategias': [f"Espelhamento {ultimo}↔{espelho}"]
-            }
-        return None
-
-
-# =============================
-# BOT UNIFICADO COM PERFORMANCE DE MOTORES
+# BOT UNIFICADO
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
@@ -831,22 +616,12 @@ class RoletaBotUnificado:
         self.giro = EstrategiaPorGiro(self.roleta)
         self.gap = EstrategiaGap()
         self.sequencia = EstrategiaSequencia()
-        self.vizinhos_roda = EstrategiaVizinhosRoda(self.roleta)
-        self.terminais = EstrategiaTerminais(self.roleta)
-        self.setor_quente = EstrategiaSetorQuente(self.roleta)
-        self.vizinhos_num = EstrategiaVizinhosNum() # Adicionado
-        self.espelho = EstrategiaEspelho() # Adicionado
         
         self.historico = []
         self.lucky = []
         self.lucky_mult = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
         self.padroes_sequencia = {}
-        
-        # Performance Individual dos Motores
-        self.motores_nomes = ['Sniper', 'Mineração', 'Leque', 'Análise Giro', 'Gap', 'Sequência', 'Vizinhos Roda', 'Terminais', 'Setor Quente', 'Vizinhos Num', 'Espelhamento']
-        self.perf_motores = {m: {'acertos': 0, 'erros': 0} for m in self.motores_nomes}
-        self.ultimas_previsoes_motores = {}
         
     def atualizar(self, numero, lucky_nums=None, lucky_mults=None):
         self.historico.append(numero)
@@ -860,7 +635,7 @@ class RoletaBotUnificado:
         if len(self.historico) >= 2:
             self.sequencia.treinar(self.historico)
     
-    def atualizar_resultado(self, acerto, numero_real):
+    def atualizar_resultado(self, acerto):
         self.performance['historico'].append(1 if acerto else 0)
         if len(self.performance['historico']) > 50:
             self.performance['historico'] = self.performance['historico'][-50:]
@@ -868,15 +643,6 @@ class RoletaBotUnificado:
             self.performance['acertos'] += 1
         else:
             self.performance['erros'] += 1
-            
-        # Atualiza a performance de cada motor individualmente
-        if self.ultimas_previsoes_motores:
-            for motor, base in self.ultimas_previsoes_motores.items():
-                if numero_real in base:
-                    self.perf_motores[motor]['acertos'] += 1
-                else:
-                    self.perf_motores[motor]['erros'] += 1
-            self.ultimas_previsoes_motores.clear()
     
     def get_taxa_acerto(self):
         total = self.performance['acertos'] + self.performance['erros']
@@ -892,9 +658,7 @@ class RoletaBotUnificado:
         if motores_ativos is None:
             motores_ativos = {
                 'sniper': True, 'mineracao': True, 'leque': True, 
-                'giro': True, 'gap': True, 'sequencia': True,
-                'vizinhos_roda': True, 'terminais': True, 'setor_quente': True,
-                'vizinhos_num': True, 'espelho': True
+                'giro': True, 'gap': True, 'sequencia': True
             }
         
         lucky_recentes = []
@@ -905,78 +669,48 @@ class RoletaBotUnificado:
         
         if motores_ativos.get('sniper', True) and len(self.historico) >= 15:
             r = self.sniper.analisar(list(self.historico), lucky_recentes)
-            if r: resultados.append(('Sniper', r))
+            if r:
+                resultados.append(('Sniper', r))
         
         if motores_ativos.get('mineracao', True) and len(self.historico) >= 10:
             r = self.mineracao.analisar(list(self.historico), list(self.lucky))
-            if r: resultados.append(('Mineração', r))
+            if r:
+                resultados.append(('Mineração', r))
         
         if motores_ativos.get('leque', True):
             janela = st.session_state.get('janela_leque', 20)
             r = self.leque.analisar(list(self.historico), janela)
-            if r: resultados.append(('Leque', r))
+            if r:
+                resultados.append(('Leque', r))
         
         if motores_ativos.get('giro', True):
             r = self.giro.analisar(list(self.historico), lucky_recentes)
-            if r: resultados.append(('Análise Giro', r))
+            if r:
+                resultados.append(('Análise Giro', r))
         
         if motores_ativos.get('gap', True):
             r = self.gap.analisar(list(self.historico))
-            if r: resultados.append(('Gap', r))
+            if r:
+                resultados.append(('Gap', r))
         
         if motores_ativos.get('sequencia', True):
             r = self.sequencia.analisar(list(self.historico))
-            if r: resultados.append(('Sequência', r))
-        
-        if motores_ativos.get('vizinhos_roda', True) and len(self.historico) >= 5:
-            r = self.vizinhos_roda.analisar(list(self.historico))
-            if r: resultados.append(('Vizinhos Roda', r))
-        
-        if motores_ativos.get('terminais', True) and len(self.historico) >= 5:
-            r = self.terminais.analisar(list(self.historico))
-            if r: resultados.append(('Terminais', r))
-        
-        if motores_ativos.get('setor_quente', True) and len(self.historico) >= 10:
-            r = self.setor_quente.analisar(list(self.historico))
-            if r: resultados.append(('Setor Quente', r))
-            
-        if motores_ativos.get('vizinhos_num', True):
-            r = self.vizinhos_num.analisar(list(self.historico))
-            if r: resultados.append(('Vizinhos Num', r))
-            
-        if motores_ativos.get('espelho', True):
-            r = self.espelho.analisar(list(self.historico))
-            if r: resultados.append(('Espelhamento', r))
+            if r:
+                resultados.append(('Sequência', r))
         
         if not resultados:
             return None
-        
-        # Guarda as bases para avaliar acerto/erro depois
-        self.ultimas_previsoes_motores = {motor: r['base'] for motor, r in resultados}
         
         base_final = set()
         todas_estrategias = []
         forca_total = 0
         motor_principal = ""
-        maior_forca = -100
+        maior_forca = 0
         
-        # Ajusta a Força baseada na PERFORMANCE HISTÓRICA do motor
         for motor, r in resultados:
-            perf = self.perf_motores.get(motor, {'acertos': 0, 'erros': 0})
-            total_entradas = perf['acertos'] + perf['erros']
-            
-            if total_entradas >= 5:
-                win_rate = perf['acertos'] / total_entradas
-                if win_rate > 0.30:  # Estratégia mandando bem
-                    r['forca'] += 15
-                elif win_rate < 0.15: # Estratégia em má fase
-                    r['forca'] -= 10
-            
             base_final.update(r['base'])
             todas_estrategias.extend(r['estrategias'])
             forca_total += r['forca']
-            
-            # Define o motor principal pelo que tem maior força (já ajustada)
             if r['forca'] > maior_forca:
                 maior_forca = r['forca']
                 motor_principal = motor
@@ -1024,7 +758,8 @@ class RoletaBotUnificado:
             'qtd_motores': len(resultados),
             'repeticao': False,
             'green': False,
-            'green_count': 0
+            'green_count': 0,
+            'giros_esperados': 0
         }
     
     def get_analise_completa(self):
@@ -1046,11 +781,9 @@ class RoletaBotUnificado:
         taxa = self.get_taxa_acerto()
         total = self.get_total_tentativas()
         
-        txt = "🎯 BOT UNIFICADO (11 MOTORES)\n" + "="*35 + "\n\n"
+        txt = "🎯 BOT UNIFICADO\n" + "="*35 + "\n\n"
         txt += f"🎲 Último: {ultimo}\n"
-        txt += f"📊 10 últimos: {hist[-10:]}\n"
-        txt += f"🔢 Terminação: {self.roleta.get_terminacao(ultimo)}\n"
-        txt += f"📍 Setor: {self.roleta.get_setor(ultimo)}\n\n"
+        txt += f"📊 10 últimos: {hist[-10:]}\n\n"
         
         txt += f"🔥 Quentes: {quentes}\n"
         txt += f"🍀 Lucky: {top_lucky}\n"
@@ -1058,24 +791,7 @@ class RoletaBotUnificado:
         if len(hist) >= 10:
             seq = self.sequencia.prever(ultimo, 5)
             if seq:
-                txt += f"\n🔄 Após {ultimo}: {seq}\n"
-        
-        vizinhos = self.roleta.get_vizinhos(ultimo, 2)
-        txt += f"🎯 Vizinhos de {ultimo}: {vizinhos}\n"
-        
-        txt += f"\n🏆 PERFORMANCE DAS ESTRATÉGIAS:\n"
-        # Ordena para exibir as melhores primeiro
-        motores_ordenados = sorted(self.perf_motores.items(), 
-                                   key=lambda x: (x[1]['acertos']/(x[1]['acertos']+x[1]['erros']) if (x[1]['acertos']+x[1]['erros'])>0 else 0), 
-                                   reverse=True)
-        for m, p in motores_ordenados:
-            t = p['acertos'] + p['erros']
-            if t > 0:
-                tx = p['acertos'] / t
-                emoji = "🔥" if tx >= 0.3 else "🟢" if tx >= 0.2 else "🔴"
-                txt += f"  {emoji} {m}: {tx:.0%} ({p['acertos']}/{t})\n"
-            else:
-                txt += f"  ⚪ {m}: Sem dados\n"
+                txt += f"\n🔄 Após {ultimo}, mais prováveis: {seq}\n"
         
         txt += f"\n🤖 MOTORES ATIVOS:\n"
         txt += f"  🎯 Sniper: {'✅' if st.session_state.get('usar_sniper', True) else '❌'}\n"
@@ -1084,14 +800,14 @@ class RoletaBotUnificado:
         txt += f"  🔄 Giro: {'✅' if st.session_state.get('usar_giro', True) else '❌'}\n"
         txt += f"  🔁 Gap: {'✅' if st.session_state.get('usar_gap', True) else '❌'}\n"
         txt += f"  📊 Sequência: {'✅' if st.session_state.get('usar_sequencia', True) else '❌'}\n"
-        txt += f"  🎰 Vizinhos Roda: {'✅' if st.session_state.get('usar_vizinhos_roda', True) else '❌'}\n"
-        txt += f"  🔢 Terminais: {'✅' if st.session_state.get('usar_terminais', True) else '❌'}\n"
-        txt += f"  📍 Setor Quente: {'✅' if st.session_state.get('usar_setor_quente', True) else '❌'}\n"
-        txt += f"  📏 Vizinhos Num: {'✅' if st.session_state.get('usar_vizinhos_num', True) else '❌'}\n"
-        txt += f"  🪞 Espelhamento: {'✅' if st.session_state.get('usar_espelho', True) else '❌'}\n"
+        
+        if st.session_state.get('repetir_acerto', True):
+            txt += f"\n🟢 Repetir após Acerto: ATIVADA (máx 3x)\n"
+        if st.session_state.get('repetir_entrada', True):
+            txt += f"⏳ Repetir após Erro: ATIVADA (espera 2 giros)\n"
         
         if total > 0:
-            txt += f"\n📈 Perf. Geral: {taxa:.0%} ({self.performance['acertos']}/{total})\n"
+            txt += f"\n📈 Perf: {taxa:.0%} ({self.performance['acertos']}/{total})\n"
         
         return txt
     
@@ -1100,13 +816,11 @@ class RoletaBotUnificado:
         self.lucky = []
         self.lucky_mult = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
-        self.perf_motores = {m: {'acertos': 0, 'erros': 0} for m in self.motores_nomes}
-        self.ultimas_previsoes_motores.clear()
         self.padroes_sequencia = {}
 
 
 # =============================
-# SISTEMA PRINCIPAL
+# 🆕 SISTEMA PRINCIPAL (COM GREEN REPEAT + ERRO ESPERA)
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -1121,13 +835,15 @@ class SistemaBot:
         self.ultima_entrada_rodada = -10
         self.estrategia_ativa_manual = False
         
-        self.modo_repeticao_erro = False
-        self.modo_espera_pos_erro = False
-        self.giros_espera_restantes = 0
-        self.repeticoes_acerto_consecutivas = 0
-        self.ultima_entrada_green = False
-        self.entrada_era_repeticao_erro = False
+        # Controle de repetição após ERRO (espera 2 giros)
+        self.giros_espera_repeticao = 0
+        self.giros_restantes_espera = 0
         
+        # 🆕 Controle de repetição após ACERTO (Green - até 3x seguidas)
+        self.repeticoes_acerto_consecutivas = 0  # Quantas vezes já repetiu após acerto
+        self.ultima_entrada_green = False  # Flag: última entrada foi green?
+        
+        # Armazena última entrada para repetição
         self.ultima_entrada_numeros = []
         self.ultima_entrada_forca = 0
         self.ultima_entrada_motor = ""
@@ -1149,73 +865,57 @@ class SistemaBot:
         self.historico_lucky.append(lucky)
         self.rodadas_sem_entrada += 1
         
-        if self.modo_espera_pos_erro and self.giros_espera_restantes > 0:
-            self.giros_espera_restantes -= 1
-            if self.giros_espera_restantes <= 0:
-                self.modo_espera_pos_erro = False
-                self.modo_repeticao_erro = False
-                self.ultima_entrada_numeros = []
-                self.entrada_era_repeticao_erro = False
+        # Decrementa espera de erro se estiver ativa
+        if self.giros_restantes_espera > 0:
+            self.giros_restantes_espera -= 1
         
         if self.previsao_ativa:
             acerto = numero_real in self.previsao_ativa.get('numeros_apostar', [])
-            
-            # Passa o acerto e o numero_real para alimentar as estatísticas dos motores
-            self.bot.atualizar_resultado(acerto, numero_real)
-            
-            era_repeticao = self.entrada_era_repeticao_erro
+            self.bot.atualizar_resultado(acerto)
             
             if acerto:
                 self.acertos += 1
-                self.modo_repeticao_erro = False
-                self.modo_espera_pos_erro = False
-                self.giros_espera_restantes = 0
-                self.entrada_era_repeticao_erro = False
                 
-                if not era_repeticao and st.session_state.get('repetir_acerto', True):
+                # 🟢 ACERTOU! Verifica regra GREEN
+                if st.session_state.get('repetir_acerto', True):
+                    # Verifica se já atingiu o limite de repetições green
                     max_rep = st.session_state.get('max_repeticoes_acerto', 3)
                     if self.repeticoes_acerto_consecutivas < max_rep:
+                        # Pode repetir mais uma vez
                         self.repeticoes_acerto_consecutivas += 1
                         self.ultima_entrada_green = True
                         self.ultima_entrada_numeros = self.previsao_ativa.get('numeros_apostar', [])
                         self.ultima_entrada_forca = self.previsao_ativa.get('forca_real', 0)
                         self.ultima_entrada_motor = self.previsao_ativa.get('motor', '')
                     else:
+                        # Atingiu limite de 3 greens, reseta
                         self.repeticoes_acerto_consecutivas = 0
                         self.ultima_entrada_green = False
                         self.ultima_entrada_numeros = []
                 else:
-                    self.repeticoes_acerto_consecutivas = 0
                     self.ultima_entrada_green = False
                     self.ultima_entrada_numeros = []
+                
+                # Reseta espera de erro
+                self.giros_restantes_espera = 0
+                self.giros_espera_repeticao = 0
             else:
                 self.erros += 1
-                if era_repeticao:
-                    self.modo_repeticao_erro = False
-                    self.modo_espera_pos_erro = True
-                    self.giros_espera_restantes = 2
-                    self.entrada_era_repeticao_erro = False
-                    self.ultima_entrada_numeros = []
-                    self.repeticoes_acerto_consecutivas = 0
-                    self.ultima_entrada_green = False
+                
+                # ❌ ERROU! Reseta green e ativa espera de erro
+                self.repeticoes_acerto_consecutivas = 0
+                self.ultima_entrada_green = False
+                
+                if st.session_state.get('repetir_entrada', True) and not self.previsao_ativa.get('repeticao', False) and not self.previsao_ativa.get('green', False):
+                    # Só ativa espera de erro se NÃO era green nem repetição
+                    self.giros_restantes_espera = 2
+                    self.giros_espera_repeticao = 2
+                    self.ultima_entrada_numeros = self.previsao_ativa.get('numeros_apostar', [])
+                    self.ultima_entrada_forca = self.previsao_ativa.get('forca_real', 0)
+                    self.ultima_entrada_motor = self.previsao_ativa.get('motor', '')
                 elif self.previsao_ativa.get('green', False):
-                    self.repeticoes_acerto_consecutivas = 0
-                    self.ultima_entrada_green = False
+                    # Se era green e errou, limpa para nova análise
                     self.ultima_entrada_numeros = []
-                    self.modo_repeticao_erro = False
-                    self.modo_espera_pos_erro = False
-                    self.entrada_era_repeticao_erro = False
-                else:
-                    if st.session_state.get('repetir_entrada', True):
-                        self.modo_repeticao_erro = True
-                        self.modo_espera_pos_erro = False
-                        self.giros_espera_restantes = 0
-                        self.entrada_era_repeticao_erro = False
-                        self.ultima_entrada_numeros = self.previsao_ativa.get('numeros_apostar', [])
-                        self.ultima_entrada_forca = self.previsao_ativa.get('forca_real', 0)
-                        self.ultima_entrada_motor = self.previsao_ativa.get('motor', '')
-                        self.repeticoes_acerto_consecutivas = 0
-                        self.ultima_entrada_green = False
             
             enviar_resultado_auto(numero_real, acerto, mult)
             
@@ -1224,8 +924,7 @@ class SistemaBot:
                 'acerto': acerto,
                 'multiplicador': mult,
                 'forca': self.previsao_ativa.get('forca_real', 0),
-                'green': self.previsao_ativa.get('green', False),
-                'repeticao_erro': self.previsao_ativa.get('repeticao', False)
+                'green': self.previsao_ativa.get('green', False)
             })
             
             self.previsao_ativa = None
@@ -1235,73 +934,78 @@ class SistemaBot:
         if self.estrategia_ativa_manual:
             return
         
+        # GERA PREVISÃO A CADA GIRO
         if len(self.historico_numeros) >= 5:
             intervalo = st.session_state.get('intervalo_minimo_entradas', 0)
             
             if len(self.historico_numeros) - self.ultima_entrada_rodada >= intervalo:
+                
+                # 🟢 PRIORIDADE 1: Repetir após ACERTO (Green)
                 if self.ultima_entrada_green and self.ultima_entrada_numeros and self.repeticoes_acerto_consecutivas > 0:
                     previsao_green = {
                         'nome': 'Bot Unificado',
                         'numeros_apostar': sorted(self.ultima_entrada_numeros),
-                        'gatilho': f'🟢 GREEN! ({self.repeticoes_acerto_consecutivas}/{st.session_state.get("max_repeticoes_acerto", 3)})',
-                        'forca_real': min(100, self.ultima_entrada_forca + 10),
+                        'gatilho': f'🟢 GREEN! Repetindo após acerto ({self.repeticoes_acerto_consecutivas}/3)',
+                        'forca_real': self.ultima_entrada_forca + 10,  # Bônus por ser green
                         'confianca': 'Green',
                         'motor': self.ultima_entrada_motor,
-                        'estrategias_ativas': [f'Green #{self.repeticoes_acerto_consecutivas}'],
+                        'estrategias_ativas': [f'Green Repeat #{self.repeticoes_acerto_consecutivas}'],
                         'qtd_motores': 1,
                         'repeticao': False,
                         'green': True,
-                        'green_count': self.repeticoes_acerto_consecutivas
+                        'green_count': self.repeticoes_acerto_consecutivas,
+                        'giros_esperados': 0
                     }
+                    
                     self.previsao_ativa = previsao_green
-                    self.ultima_entrada_green = False
-                    self.entrada_era_repeticao_erro = False
+                    self.ultima_entrada_green = False  # Já usou o green
                     enviar_previsao_auto(previsao_green)
                 
-                elif self.modo_repeticao_erro and self.ultima_entrada_numeros:
+                # ⏳ PRIORIDADE 2: Repetir após ERRO (espera 2 giros)
+                elif self.giros_restantes_espera == 0 and self.ultima_entrada_numeros and not self.ultima_entrada_green:
+                    self.giros_espera_repeticao = 0
+                    
                     previsao_repetida = {
                         'nome': 'Bot Unificado',
                         'numeros_apostar': sorted(self.ultima_entrada_numeros),
-                        'gatilho': '🔁 REPETINDO APÓS ERRO! (1x)',
+                        'gatilho': 'REPETINDO ENTRADA ANTERIOR (após 2 giros)',
                         'forca_real': self.ultima_entrada_forca,
-                        'confianca': 'Repetição Erro',
+                        'confianca': 'Repetição',
                         'motor': self.ultima_entrada_motor,
-                        'estrategias_ativas': ['Repetição pós-erro (1x)'],
+                        'estrategias_ativas': ['Repetição pós-erro (2 giros)'],
                         'qtd_motores': 1,
                         'repeticao': True,
                         'green': False,
-                        'green_count': 0
+                        'green_count': 0,
+                        'giros_esperados': 2
                     }
+                    
                     self.previsao_ativa = previsao_repetida
-                    self.modo_repeticao_erro = False
-                    self.entrada_era_repeticao_erro = True
+                    self.ultima_entrada_numeros = []
                     enviar_previsao_auto(previsao_repetida)
                 
-                elif self.modo_espera_pos_erro:
+                # 🕐 Se está esperando (giros_restantes > 0), não faz nada
+                elif self.giros_restantes_espera > 0:
                     pass
                 
+                # 🆕 NOVA ANÁLISE
                 else:
-                    if not self.modo_repeticao_erro and not self.modo_espera_pos_erro and not self.ultima_entrada_green:
-                        top_n = st.session_state.get('top_n_apostas', 5)
-                        motores_ativos = {
-                            'sniper': st.session_state.get('usar_sniper', True),
-                            'mineracao': st.session_state.get('usar_mineracao', True),
-                            'leque': st.session_state.get('usar_leque', True),
-                            'giro': st.session_state.get('usar_giro', True),
-                            'gap': st.session_state.get('usar_gap', True),
-                            'sequencia': st.session_state.get('usar_sequencia', True),
-                            'vizinhos_roda': st.session_state.get('usar_vizinhos_roda', True),
-                            'terminais': st.session_state.get('usar_terminais', True),
-                            'setor_quente': st.session_state.get('usar_setor_quente', True),
-                            'vizinhos_num': st.session_state.get('usar_vizinhos_num', True),
-                            'espelho': st.session_state.get('usar_espelho', True)
-                        }
-                        
-                        nova = self.bot.analisar_e_prever(top_n, motores_ativos)
-                        if nova is not None:
-                            self.previsao_ativa = nova
-                            self.entrada_era_repeticao_erro = False
-                            enviar_previsao_auto(nova)
+                    top_n = st.session_state.get('top_n_apostas', 5)
+                    
+                    motores_ativos = {
+                        'sniper': st.session_state.get('usar_sniper', True),
+                        'mineracao': st.session_state.get('usar_mineracao', True),
+                        'leque': st.session_state.get('usar_leque', True),
+                        'giro': st.session_state.get('usar_giro', True),
+                        'gap': st.session_state.get('usar_gap', True),
+                        'sequencia': st.session_state.get('usar_sequencia', True)
+                    }
+                    
+                    nova = self.bot.analisar_e_prever(top_n, motores_ativos)
+                    
+                    if nova is not None:
+                        self.previsao_ativa = nova
+                        enviar_previsao_auto(nova)
     
     def zerar_estatisticas(self):
         self.acertos = 0
@@ -1311,12 +1015,10 @@ class SistemaBot:
         self.historico_lucky.clear()
         self.rodadas_sem_entrada = 0
         self.ultima_entrada_rodada = -10
-        self.modo_repeticao_erro = False
-        self.modo_espera_pos_erro = False
-        self.giros_espera_restantes = 0
+        self.giros_restantes_espera = 0
+        self.giros_espera_repeticao = 0
         self.repeticoes_acerto_consecutivas = 0
         self.ultima_entrada_green = False
-        self.entrada_era_repeticao_erro = False
         self.ultima_entrada_numeros = []
         self.bot.zerar()
         salvar_sessao()
@@ -1383,4 +1085,313 @@ def exportar_historico(historico, formato='json'):
                 n = item.get('number', '')
                 ts = item.get('timestamp', '')
                 mult = item.get('luckyMultipliers', {}).get(n, '')
-                linhas.append(f"{n
+                linhas.append(f"{n},{ts},{mult}")
+            else:
+                linhas.append(f"{item},,")
+        return "\n".join(linhas)
+
+
+# =============================
+# APLICAÇÃO STREAMLIT
+# =============================
+st.set_page_config(page_title="🎯 Bot Unificado — 6 Motores + Green", layout="centered")
+st.title("🎯 Bot Unificado — 6 Motores + Green Repeat + Erro Espera")
+
+if "sistema" not in st.session_state or st.session_state.sistema is None:
+    st.session_state.sistema = SistemaBot()
+
+dados = carregar_dados_persistidos()
+if dados:
+    if not st.session_state.get('historico'):
+        st.session_state.historico = dados.get('historico', [])
+    
+    sis = st.session_state.sistema
+    sis.acertos = dados.get('sistema_acertos', 0)
+    sis.erros = dados.get('sistema_erros', 0)
+    sis.historico_desempenho = dados.get('sistema_historico_desempenho', [])
+    sis.estrategia_ativa_manual = dados.get('estrategia_ativa_manual', False)
+    sis.giros_espera_repeticao = dados.get('giros_espera_repeticao', 0)
+    sis.giros_restantes_espera = dados.get('giros_restantes_espera', 0)
+    sis.repeticoes_acerto_consecutivas = dados.get('repeticoes_acerto_consecutivas', 0)
+    sis.ultima_entrada_numeros = dados.get('ultima_entrada_numeros', [])
+    sis.ultima_entrada_forca = dados.get('ultima_entrada_forca', 0)
+    sis.ultima_entrada_motor = dados.get('ultima_entrada_motor', '')
+    sis.ultima_entrada_green = dados.get('ultima_entrada_green', False)
+    
+    for num in dados.get('historico_numeros', []):
+        sis.historico_numeros.append(num)
+    for lucky in dados.get('historico_lucky', []):
+        sis.historico_lucky.append(lucky)
+    
+    for num, lucky in zip(dados.get('historico_numeros', []), dados.get('historico_lucky', [])):
+        sis.bot.historico.append(num)
+        sis.bot.lucky.append(lucky)
+    
+    if os.path.exists(PERFORMANCE_PATH):
+        try:
+            with open(PERFORMANCE_PATH, 'r') as f:
+                perf = json.load(f)
+                sis.bot.performance = {
+                    'acertos': perf.get('acertos', 0),
+                    'erros': perf.get('erros', 0),
+                    'historico': perf.get('historico', [])
+                }
+        except:
+            pass
+    
+    if os.path.exists(PADROES_PATH):
+        try:
+            with open(PADROES_PATH, 'r') as f:
+                padroes = json.load(f)
+                sis.bot.sequencia.padroes = defaultdict(list, {int(k): v for k, v in padroes.items()})
+                sis.bot.sequencia.atualizado = True
+        except:
+            pass
+
+defaults = {
+    'modo_automatico': True, 'top_n_apostas': 5,
+    'intervalo_minimo_entradas': 0, 'janela_analise': 50,
+    'janela_leque': 20, 'forca_minima_sinal': 40,
+    'usar_sniper': True, 'usar_mineracao': True,
+    'usar_leque': True, 'usar_giro': True,
+    'usar_gap': True, 'usar_sequencia': True,
+    'repetir_entrada': True,
+    'repetir_acerto': True,
+    'max_repeticoes_acerto': 3
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+if "historico" not in st.session_state:
+    if os.path.exists(HISTORICO_PATH):
+        try:
+            with open(HISTORICO_PATH, "r") as f:
+                st.session_state.historico = json.load(f)
+        except:
+            st.session_state.historico = []
+    else:
+        st.session_state.historico = []
+
+if "telegram_token" not in st.session_state:
+    st.session_state.telegram_token = ""
+if "telegram_chat_id" not in st.session_state:
+    st.session_state.telegram_chat_id = ""
+
+# Sidebar
+st.sidebar.title("⚙️ Configurações")
+
+with st.sidebar.expander("🤖 Motores Ativos", expanded=True):
+    st.write("**Selecione os motores:**")
+    st.session_state.usar_sniper = st.checkbox("🎯 Sniper", value=st.session_state.usar_sniper)
+    st.session_state.usar_mineracao = st.checkbox("🔬 Mineração", value=st.session_state.usar_mineracao)
+    st.session_state.usar_leque = st.checkbox("🪭 Leque Dinâmico", value=st.session_state.usar_leque)
+    st.session_state.usar_giro = st.checkbox("🔄 Análise por Giro", value=st.session_state.usar_giro)
+    st.session_state.usar_gap = st.checkbox("🔁 Gap (Repetição espaçada)", value=st.session_state.usar_gap)
+    st.session_state.usar_sequencia = st.checkbox("📊 Sequência (Após X, vem Y)", value=st.session_state.usar_sequencia)
+    
+    ativos = sum([st.session_state.usar_sniper, st.session_state.usar_mineracao, 
+                  st.session_state.usar_leque, st.session_state.usar_giro,
+                  st.session_state.usar_gap, st.session_state.usar_sequencia])
+    st.caption(f"📊 {ativos}/6 motores ativos")
+
+with st.sidebar.expander("🟢 Green (Repetir após Acerto)", expanded=True):
+    st.session_state.repetir_acerto = st.checkbox("🟢 Repetir entrada após ACERTO", value=st.session_state.repetir_acerto,
+        help="Quando acertar, repete a mesma entrada no próximo giro")
+    st.session_state.max_repeticoes_acerto = st.slider("🔄 Máx. repetições green", 1, 5, st.session_state.max_repeticoes_acerto,
+        help="Quantas vezes seguidas pode repetir após acerto")
+    st.info(f"""
+    **Green Repeat:**
+    - ✅ Acertou → repete mesma entrada
+    - ✅ Acertou de novo → repete de novo
+    - Máximo: {st.session_state.max_repeticoes_acerto}x seguidas
+    - ❌ Errou → volta análise normal
+    """)
+
+with st.sidebar.expander("⏳ Repetição pós-Erro", expanded=True):
+    st.session_state.repetir_entrada = st.checkbox("⏳ Repetir entrada após erro (espera 2 giros)", value=st.session_state.repetir_entrada)
+    st.info("""
+    **Erro Repeat:**
+    - ❌ Erro → espera 2 giros
+    - ⏳ Após 2 giros → repete a entrada
+    - ✅ Acerto → reseta
+    """)
+
+with st.sidebar.expander("⚙️ Ajustes", expanded=True):
+    st.session_state.top_n_apostas = st.slider("📊 Números por aposta", 3, 15, st.session_state.top_n_apostas)
+    st.session_state.intervalo_minimo_entradas = st.slider("⏱️ Intervalo entre entradas", 0, 3, st.session_state.intervalo_minimo_entradas)
+    st.session_state.janela_leque = st.slider("🪭 Janela do Leque", 10, 50, st.session_state.janela_leque, 5)
+
+st.session_state.modo_automatico = st.sidebar.checkbox("🔄 Modo Automático", value=st.session_state.modo_automatico)
+if st.sidebar.button("Atualizar"):
+    st.session_state.sistema.estrategia_ativa_manual = not st.session_state.modo_automatico
+    st.rerun()
+
+with st.sidebar.expander("🧠 Análise", expanded=True):
+    st.text(st.session_state.sistema.bot.get_analise_completa())
+
+with st.sidebar.expander("💾 Geral", expanded=False):
+    if st.button("💾 Salvar", use_container_width=True):
+        salvar_resultado_em_arquivo(st.session_state.historico)
+        salvar_sessao()
+        st.success("✅")
+    if st.button("🗑️ Zerar", use_container_width=True):
+        if st.checkbox("Confirmar"):
+            st.session_state.sistema.zerar_estatisticas()
+            st.rerun()
+
+with st.sidebar.expander("🔔 Telegram", expanded=False):
+    st.session_state.telegram_token = st.text_input("Token:", value=st.session_state.telegram_token, type="password")
+    st.session_state.telegram_chat_id = st.text_input("Chat ID:", value=st.session_state.telegram_chat_id)
+    if st.button("Salvar"):
+        salvar_sessao()
+        st.success("✅")
+
+# Inserção manual
+st.subheader("✍️ Inserir Sorteios")
+c1, c2 = st.columns([3, 1])
+with c1:
+    entrada = st.text_input("Números (0-36):")
+with c2:
+    if st.button("Adicionar", use_container_width=True) and entrada:
+        try:
+            nums = [int(n) for n in entrada.split() if n.isdigit() and 0 <= int(n) <= 36]
+            for n in nums:
+                item = {"number": n, "timestamp": f"m{len(st.session_state.historico)}", "luckyNumbers": [], "luckyMultipliers": {}}
+                st.session_state.historico.append(item)
+                st.session_state.sistema.processar_novo_numero(item)
+            salvar_resultado_em_arquivo(st.session_state.historico)
+            salvar_sessao()
+            st.success(f"{len(nums)} adicionados!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro: {e}")
+
+# Auto-refresh
+st_autorefresh(interval=3000, key="refresh")
+
+# API
+resultado = fetch_latest_result()
+if st.session_state.historico:
+    ultimo_ts = st.session_state.historico[-1].get("timestamp") if st.session_state.historico else None
+else:
+    ultimo_ts = None
+
+if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo_ts:
+    n = resultado.get("number")
+    if n is not None:
+        st.session_state.historico.append(resultado)
+        st.session_state.sistema.processar_novo_numero(resultado)
+        salvar_resultado_em_arquivo(st.session_state.historico)
+        salvar_sessao()
+
+# Últimos números
+st.subheader("🔁 Últimos Números")
+if st.session_state.historico:
+    ultimos = st.session_state.historico[-10:]
+    fmt = []
+    for item in ultimos:
+        n = item['number'] if isinstance(item, dict) else item
+        if isinstance(item, dict) and n in item.get('luckyNumbers', []):
+            mult = item.get('luckyMultipliers', {}).get(n, '')
+            fmt.append(f"⚡**{n}**({mult}x)" if mult else f"⚡**{n}**")
+        else:
+            fmt.append(str(n))
+    st.write(" ".join(fmt))
+
+# Status
+status = st.session_state.sistema.get_status()
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("🟢 Acertos", status['acertos'])
+c2.metric("🔴 Erros", status['erros'])
+c3.metric("📊 Total", status['total'])
+c4.metric("⏳ Sem Entrada", status['rodadas_sem_entrada'])
+c5.metric("🟢 Green #", st.session_state.sistema.repeticoes_acerto_consecutivas)
+
+if status['total'] > 0:
+    taxa = status['acertos'] / status['total'] * 100
+    if taxa >= 30:
+        st.success(f"🎯 Taxa: {taxa:.1f}%")
+    elif taxa >= 20:
+        st.warning(f"🎯 Taxa: {taxa:.1f}%")
+    else:
+        st.error(f"🎯 Taxa: {taxa:.1f}%")
+
+# Indicadores de estado
+sis = st.session_state.sistema
+if sis.repeticoes_acerto_consecutivas > 0 and not sis.previsao_ativa:
+    st.success(f"🟢 **Green Ativo!** Repetindo entrada após acerto ({sis.repeticoes_acerto_consecutivas}/{st.session_state.max_repeticoes_acerto})")
+elif sis.giros_restantes_espera > 0:
+    st.warning(f"⏳ **Aguardando {sis.giros_restantes_espera} giro(s) para repetir entrada anterior**")
+
+# Previsão
+st.subheader("🎯 Previsão Ativa")
+
+if sis.estrategia_ativa_manual:
+    st.warning("⚠️ MANUAL")
+elif sis.previsao_ativa:
+    p = sis.previsao_ativa
+    f = p.get('forca_real', 0)
+    c = p.get('confianca', 'Média')
+    motor = p.get('motor', '')
+    estrategias = p.get('estrategias_ativas', [])
+    qtd = p.get('qtd_motores', 1)
+    repeticao = p.get('repeticao', False)
+    green = p.get('green', False)
+    green_count = p.get('green_count', 0)
+    giros_esperados = p.get('giros_esperados', 0)
+    
+    if green:
+        st.success(f"🟢 **GREEN #{green_count}!** Repetindo após acerto")
+    elif repeticao:
+        st.success(f"⏳ **REPETINDO ENTRADA!** (após espera de {giros_esperados} giros)")
+    elif f >= 55:
+        st.success(f"🔥 **FORÇA {f}%** - {c} ({qtd} motores)")
+    elif f >= 35:
+        st.warning(f"🎯 **FORÇA {f}%** - {c} ({qtd} motores)")
+    else:
+        st.info(f"📊 **FORÇA {f}%** - {c} ({qtd} motores)")
+    
+    st.caption(f"📋 {p['gatilho']}")
+    if not repeticao and not green:
+        st.caption(f"🤖 Motor principal: {motor}")
+        if estrategias:
+            st.caption(f"🎯 {', '.join(estrategias[:4])}")
+    
+    st.write(f"**🔢 {len(p['numeros_apostar'])} números:**")
+    nums = sorted(p['numeros_apostar'])
+    st.markdown(f"### {', '.join(map(str, nums))}")
+else:
+    st.info(f"🎲 Aguardando próxima análise...")
+
+# Performance
+st.subheader("📈 Performance")
+taxa_bot = sis.bot.get_taxa_acerto()
+total_bot = sis.bot.get_total_tentativas()
+if total_bot > 0:
+    emoji = "🟢" if taxa_bot >= 0.30 else "🟡" if taxa_bot >= 0.20 else "🔴"
+    st.write(f"{emoji} **Bot**: {taxa_bot:.0%} ({sis.bot.performance['acertos']}/{total_bot})")
+
+# Histórico
+if sis.historico_desempenho:
+    st.write("**🔍 Últimas:**")
+    for r in sis.historico_desempenho[-5:]:
+        e = "🎉" if r['acerto'] else "❌"
+        g = " 🟢" if r.get('green') else ""
+        m = f" ⚡{r['multiplicador']}x" if r.get('multiplicador') and r['acerto'] else ""
+        st.write(f"{e}{g} ({r.get('forca',0)}%): {r['numero']}{m}")
+
+# Download
+st.subheader("📥 Download")
+st.metric("📊 Registros", len(st.session_state.historico))
+col_d1, col_d2 = st.columns(2)
+with col_d1:
+    if st.button("📥 JSON", use_container_width=True):
+        st.download_button("⬇️ Baixar", exportar_historico(st.session_state.historico, 'json'),
+                          f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "application/json")
+with col_d2:
+    if st.button("📥 CSV", use_container_width=True):
+        st.download_button("⬇️ Baixar", exportar_historico(st.session_state.historico, 'csv'),
+                          f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
+
+salvar_sessao()
