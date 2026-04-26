@@ -1938,7 +1938,7 @@ with st.sidebar.expander("🟢 Green / ⏳ Erro", expanded=True):
     st.session_state.repetir_entrada = st.checkbox("⏳ Repetir após erro (força≥50%)", value=st.session_state.repetir_entrada)
 
 with st.sidebar.expander("⚙️ Ajustes", expanded=True):
-    st.session_state.top_n_apostas = st.slider("📊 Números por aposta", 3, 8, st.session_state.top_n_apostas)
+    st.session_state.top_n_apostas = st.slider("📊 Números por aposta", 12, 15, st.session_state.top_n_apostas)
     st.session_state.intervalo_minimo_entradas = st.slider("⏱️ Intervalo entre entradas", 0, 3, st.session_state.intervalo_minimo_entradas)
     st.session_state.janela_leque = st.slider("🪭 Janela do Leque", 10, 50, st.session_state.janela_leque, 5)
 
