@@ -52,6 +52,9 @@ def salvar_sessao():
             'usar_giro': st.session_state.get('usar_giro', True),
             'usar_gap': st.session_state.get('usar_gap', True),
             'usar_sequencia': st.session_state.get('usar_sequencia', True),
+            'usar_quadrantes': st.session_state.get('usar_quadrantes', True),
+            'usar_terminais': st.session_state.get('usar_terminais', True),
+            'usar_simetria': st.session_state.get('usar_simetria', True),
             'janela_analise': st.session_state.get('janela_analise', 50),
             'janela_leque': st.session_state.get('janela_leque', 20),
             'forca_minima_sinal': st.session_state.get('forca_minima_sinal', 40),
@@ -605,6 +608,101 @@ class EstrategiaSequencia:
 
 
 # =============================
+# 🆕 ESTRATÉGIA 7: CICLOS DE QUADRANTES
+# =============================
+class EstrategiaCiclosQuadrantes:
+    def __init__(self):
+        # Divisão da mesa em 4 quadrantes de 9 números cada
+        self.quadrantes = {
+            1: set([1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            2: set([10, 11, 12, 13, 14, 15, 16, 17, 18]),
+            3: set([19, 20, 21, 22, 23, 24, 25, 26, 27]),
+            4: set([28, 29, 30, 31, 32, 33, 34, 35, 36])
+        }
+
+    def analisar(self, historico, janela=8):
+        """
+        Analisa se um quadrante está ausente há mais de 'janela' giros.
+        Um quadrante que não sai há 8 giros tem alta probabilidade de retorno.
+        """
+        if len(historico) < janela:
+            return None
+        
+        recentes = list(historico)[-janela:]
+        vistos = set()
+        
+        for n in recentes:
+            for q_id, nums in self.quadrantes.items():
+                if n in nums:
+                    vistos.add(q_id)
+                    break
+        
+        # Identifica quadrantes que NÃO saíram na janela de tempo
+        ausentes = set(self.quadrantes.keys()) - vistos
+        
+        if len(ausentes) >= 1:
+            # Seleciona o primeiro quadrante ausente para aposta
+            q_alvo = list(ausentes)[0]
+            return {
+                'base': self.quadrantes[q_alvo],
+                'forca': 55 + (janela * 2), # A força aumenta conforme o atraso
+                'estrategias': [f"Atraso no Quadrante {q_alvo} ({janela} giros)"]
+            }
+        return None
+
+
+# =============================
+# 🆕 ESTRATÉGIA 8: TERMINAIS (FINAIS)
+# =============================
+class EstrategiaTerminais:
+    def __init__(self):
+        self.terminais = {i: [n for n in range(37) if n % 10 == i] for i in range(10)}
+
+    def analisar(self, historico, janela=15):
+        if len(historico) < janela:
+            return None
+        
+        recentes = historico[-janela:]
+        finais_contagem = Counter([n % 10 for n in recentes])
+        
+        # Se um final apareceu 3 ou mais vezes na janela
+        final_quente, freq = finais_contagem.most_common(1)[0]
+        
+        if freq >= 3:
+            return {
+                'base': set(self.terminais[final_quente]),
+                'forca': 40 + (freq * 5),
+                'estrategias': [f"Terminal {final_quente} Quente ({freq}x)"]
+            }
+        return None
+
+
+# =============================
+# 🆕 ESTRATÉGIA 9: SIMETRIA (ESPELHAMENTO)
+# =============================
+class EstrategiaSimetria:
+    def __init__(self):
+        self.espelhos = {
+            12: 21, 21: 12, 13: 31, 31: 13, 23: 32, 32: 23,
+            1: 10, 10: 1, 2: 20, 20: 2, 3: 30, 30: 3
+        }
+
+    def analisar(self, historico):
+        ultimo = historico[-1]
+        base = set()
+        
+        if ultimo in self.espelhos:
+            base.add(self.espelhos[ultimo])
+            # Também adiciona vizinhos do espelho para cobertura
+            return {
+                'base': base,
+                'forca': 45,
+                'estrategias': [f"Simetria de {ultimo} -> {self.espelhos[ultimo]}"]
+            }
+        return None
+
+
+# =============================
 # BOT UNIFICADO
 # =============================
 class RoletaBotUnificado:
@@ -616,6 +714,11 @@ class RoletaBotUnificado:
         self.giro = EstrategiaPorGiro(self.roleta)
         self.gap = EstrategiaGap()
         self.sequencia = EstrategiaSequencia()
+        
+        # 🆕 Novas estratégias
+        self.quadrantes_strat = EstrategiaCiclosQuadrantes()
+        self.terminais_strat = EstrategiaTerminais()
+        self.simetria_strat = EstrategiaSimetria()
         
         self.historico = []
         self.lucky = []
@@ -658,7 +761,8 @@ class RoletaBotUnificado:
         if motores_ativos is None:
             motores_ativos = {
                 'sniper': True, 'mineracao': True, 'leque': True, 
-                'giro': True, 'gap': True, 'sequencia': True
+                'giro': True, 'gap': True, 'sequencia': True,
+                'quadrantes': True, 'terminais': True, 'simetria': True  # 🆕
             }
         
         lucky_recentes = []
@@ -697,6 +801,22 @@ class RoletaBotUnificado:
             r = self.sequencia.analisar(list(self.historico))
             if r:
                 resultados.append(('Sequência', r))
+        
+        # 🆕 Novas estratégias
+        if motores_ativos.get('quadrantes', True):
+            r = self.quadrantes_strat.analisar(self.historico)
+            if r:
+                resultados.append(('CicloQuadrantes', r))
+        
+        if motores_ativos.get('terminais', True):
+            r = self.terminais_strat.analisar(list(self.historico))
+            if r:
+                resultados.append(('Terminais', r))
+        
+        if motores_ativos.get('simetria', True):
+            r = self.simetria_strat.analisar(list(self.historico))
+            if r:
+                resultados.append(('Simetria', r))
         
         if not resultados:
             return None
@@ -800,6 +920,9 @@ class RoletaBotUnificado:
         txt += f"  🔄 Giro: {'✅' if st.session_state.get('usar_giro', True) else '❌'}\n"
         txt += f"  🔁 Gap: {'✅' if st.session_state.get('usar_gap', True) else '❌'}\n"
         txt += f"  📊 Sequência: {'✅' if st.session_state.get('usar_sequencia', True) else '❌'}\n"
+        txt += f"  🟩 Quadrantes: {'✅' if st.session_state.get('usar_quadrantes', True) else '❌'}\n"  # 🆕
+        txt += f"  🔢 Terminais: {'✅' if st.session_state.get('usar_terminais', True) else '❌'}\n"   # 🆕
+        txt += f"  🔄 Simetria: {'✅' if st.session_state.get('usar_simetria', True) else '❌'}\n"     # 🆕
         
         if st.session_state.get('repetir_acerto', True):
             txt += f"\n🟢 Repetir após Acerto: ATIVADA (máx 3x)\n"
@@ -998,7 +1121,10 @@ class SistemaBot:
                         'leque': st.session_state.get('usar_leque', True),
                         'giro': st.session_state.get('usar_giro', True),
                         'gap': st.session_state.get('usar_gap', True),
-                        'sequencia': st.session_state.get('usar_sequencia', True)
+                        'sequencia': st.session_state.get('usar_sequencia', True),
+                        'quadrantes': st.session_state.get('usar_quadrantes', True),  # 🆕
+                        'terminais': st.session_state.get('usar_terminais', True),    # 🆕
+                        'simetria': st.session_state.get('usar_simetria', True)       # 🆕
                     }
                     
                     nova = self.bot.analisar_e_prever(top_n, motores_ativos)
@@ -1094,8 +1220,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Bot Unificado — 6 Motores + Green", layout="centered")
-st.title("🎯 Bot Unificado — 6 Motores + Green Repeat + Erro Espera")
+st.set_page_config(page_title="🎯 Bot Unificado — 9 Motores + Green", layout="centered")
+st.title("🎯 Bot Unificado — 9 Motores + Green Repeat + Erro Espera")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -1155,6 +1281,7 @@ defaults = {
     'usar_sniper': True, 'usar_mineracao': True,
     'usar_leque': True, 'usar_giro': True,
     'usar_gap': True, 'usar_sequencia': True,
+    'usar_quadrantes': True, 'usar_terminais': True, 'usar_simetria': True,  # 🆕
     'repetir_entrada': True,
     'repetir_acerto': True,
     'max_repeticoes_acerto': 3
@@ -1189,11 +1316,16 @@ with st.sidebar.expander("🤖 Motores Ativos", expanded=True):
     st.session_state.usar_giro = st.checkbox("🔄 Análise por Giro", value=st.session_state.usar_giro)
     st.session_state.usar_gap = st.checkbox("🔁 Gap (Repetição espaçada)", value=st.session_state.usar_gap)
     st.session_state.usar_sequencia = st.checkbox("📊 Sequência (Após X, vem Y)", value=st.session_state.usar_sequencia)
+    st.session_state.usar_quadrantes = st.checkbox("🟩 Quadrantes (Atraso de zona)", value=st.session_state.usar_quadrantes)  # 🆕
+    st.session_state.usar_terminais = st.checkbox("🔢 Terminais (Finais quentes)", value=st.session_state.usar_terminais)    # 🆕
+    st.session_state.usar_simetria = st.checkbox("🔄 Simetria (Espelhamento)", value=st.session_state.usar_simetria)          # 🆕
     
     ativos = sum([st.session_state.usar_sniper, st.session_state.usar_mineracao, 
                   st.session_state.usar_leque, st.session_state.usar_giro,
-                  st.session_state.usar_gap, st.session_state.usar_sequencia])
-    st.caption(f"📊 {ativos}/6 motores ativos")
+                  st.session_state.usar_gap, st.session_state.usar_sequencia,
+                  st.session_state.usar_quadrantes, st.session_state.usar_terminais,
+                  st.session_state.usar_simetria])  # 🆕
+    st.caption(f"📊 {ativos}/9 motores ativos")
 
 with st.sidebar.expander("🟢 Green (Repetir após Acerto)", expanded=True):
     st.session_state.repetir_acerto = st.checkbox("🟢 Repetir entrada após ACERTO", value=st.session_state.repetir_acerto,
