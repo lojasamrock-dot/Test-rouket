@@ -67,7 +67,7 @@ def salvar_sessao():
             'usar_loop_terminal': st.session_state.get('usar_loop_terminal', True),
             'usar_gap_curto': st.session_state.get('usar_gap_curto', True),
             'usar_zero_vizinho': st.session_state.get('usar_zero_vizinho', True),
-            'forca_minima_entrada': st.session_state.get('forca_minima_entrada', 40),
+            'forca_minima_entrada': st.session_state.get('forca_minima_entrada', 35),
             'modo_conservador': st.session_state.get('modo_conservador', False),
             'janela_analise': st.session_state.get('janela_analise', 50),
             'janela_leque': st.session_state.get('janela_leque', 20),
@@ -113,9 +113,10 @@ def limpar_sessao():
         pass
 
 # =============================
-# NOTIFICAÇÕES
+# NOTIFICAÇÕES (TELEGRAM + INTERFACE)
 # =============================
 def enviar_previsao_auto(previsao):
+    """Envia notificação de nova entrada (Interface + Telegram)"""
     try:
         numeros = sorted(previsao['numeros_apostar'])
         forca = previsao.get('forca_real', 0)
@@ -158,18 +159,25 @@ def enviar_previsao_auto(previsao):
         
         msg += f"🔢 {len(numeros)} números: {numeros}"
         
+        # Notificação na interface
         st.toast(f"{'🟢 Green' if green else '⏳ Repetindo' if repeticao else '🎯 ' + motor} - {forca}%", icon=emoji)
         st.success(f"🔔 {msg}")
         
+        # 🆕 ENVIO VIA TELEGRAM
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
             tag = "[GREEN]" if green else "[REPETINDO]" if repeticao else ""
-            enviar_telegram(f"🔔 ENTRADA {tag} {forca}%\n" + " ".join(map(str, numeros)))
+            mensagem_telegram = f"🔔 ENTRADA {tag} {forca}%\n"
+            mensagem_telegram += f"🎯 {', '.join(estrategias[:3]) if not green and not repeticao else ''}\n"
+            mensagem_telegram += f"🔢 {len(numeros)} números:\n"
+            mensagem_telegram += " ".join(map(str, numeros))
+            enviar_telegram(mensagem_telegram)
         
         salvar_sessao()
     except Exception as e:
-        logging.error(f"Erro ao enviar: {e}")
+        logging.error(f"Erro ao enviar previsão: {e}")
 
 def enviar_resultado_auto(numero_real, acerto, multiplicador=None):
+    """Envia notificação de resultado (Interface + Telegram)"""
     try:
         if acerto:
             msg = f"✅ ACERTO! {numero_real}"
@@ -178,26 +186,67 @@ def enviar_resultado_auto(numero_real, acerto, multiplicador=None):
         if multiplicador and multiplicador > 0:
             msg += f" ⚡{multiplicador}x"
         
+        # Notificação na interface
         st.toast(f"{'✅' if acerto else '❌'} {numero_real}", icon="✅" if acerto else "❌")
         
+        # 🆕 ENVIO VIA TELEGRAM
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
             enviar_telegram(f"📢 {msg}")
         
         salvar_sessao()
-    except:
-        pass
+    except Exception as e:
+        logging.error(f"Erro ao enviar resultado: {e}")
 
 def enviar_telegram(mensagem):
+    """Envia mensagem para o Telegram via API"""
     try:
         token = st.session_state.get('telegram_token', '')
         chat_id = st.session_state.get('telegram_chat_id', '')
         if not token or not chat_id:
-            return
+            return False
+        
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {"chat_id": chat_id, "text": mensagem, "parse_mode": "HTML"}
-        requests.post(url, json=payload, timeout=10)
-    except:
-        pass
+        payload = {
+            "chat_id": chat_id,
+            "text": mensagem,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            logging.info(f"✅ Telegram enviado: {mensagem[:50]}...")
+            return True
+        else:
+            logging.error(f"❌ Erro Telegram: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        logging.error(f"❌ Erro ao enviar Telegram: {e}")
+        return False
+
+def testar_telegram():
+    """Testa a conexão com o Telegram"""
+    try:
+        token = st.session_state.get('telegram_token', '')
+        chat_id = st.session_state.get('telegram_chat_id', '')
+        
+        if not token or not chat_id:
+            return False, "Token ou Chat ID não configurados"
+        
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": "✅ Teste de conexão - Bot Unificado 12-15 números",
+            "parse_mode": "HTML"
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            return True, "✅ Conexão Telegram OK!"
+        else:
+            return False, f"❌ Erro: {response.status_code} - {response.text}"
+    except Exception as e:
+        return False, f"❌ Erro: {str(e)}"
 
 # =============================
 # API
@@ -239,8 +288,9 @@ class RoletaBase:
 
 
 # =============================
-# ESTRATÉGIA 1: SNIPER
+# ESTRATÉGIAS (1-17)
 # =============================
+
 class EstrategiaSniper:
     def __init__(self, roleta):
         self.roleta = roleta
@@ -304,9 +354,6 @@ class EstrategiaSniper:
         }
 
 
-# =============================
-# ESTRATÉGIA 2: MINERAÇÃO
-# =============================
 class EstrategiaMineracao:
     def __init__(self):
         self.transicoes = defaultdict(list)
@@ -356,9 +403,6 @@ class EstrategiaMineracao:
         }
 
 
-# =============================
-# ESTRATÉGIA 3: LEQUE DINÂMICO
-# =============================
 class EstrategiaLeque:
     def __init__(self, roleta):
         self.roleta = roleta
@@ -394,9 +438,6 @@ class EstrategiaLeque:
         }
 
 
-# =============================
-# ESTRATÉGIA 4: ANÁLISE POR GIRO
-# =============================
 class EstrategiaPorGiro:
     def __init__(self, roleta):
         self.roleta = roleta
@@ -517,9 +558,6 @@ class EstrategiaPorGiro:
         }
 
 
-# =============================
-# ESTRATÉGIA 5: REPETIÇÃO COM GAP
-# =============================
 class EstrategiaGap:
     def __init__(self):
         pass
@@ -578,9 +616,6 @@ class EstrategiaGap:
         return None
 
 
-# =============================
-# ESTRATÉGIA 6: SEQUÊNCIA PADRÃO
-# =============================
 class EstrategiaSequencia:
     def __init__(self):
         self.padroes = defaultdict(list)
@@ -628,9 +663,6 @@ class EstrategiaSequencia:
         }
 
 
-# =============================
-# ESTRATÉGIA 7: CICLOS DE QUADRANTES
-# =============================
 class EstrategiaCiclosQuadrantes:
     def __init__(self):
         self.quadrantes = {
@@ -655,7 +687,6 @@ class EstrategiaCiclosQuadrantes:
         
         ausentes = set(self.quadrantes.keys()) - vistos
         
-        # 🆕 Retorna todos os quadrantes ausentes para ter mais números
         if len(ausentes) >= 1:
             base = set()
             for q_id in ausentes:
@@ -670,9 +701,6 @@ class EstrategiaCiclosQuadrantes:
         return None
 
 
-# =============================
-# ESTRATÉGIA 8: TERMINAIS
-# =============================
 class EstrategiaTerminais:
     def __init__(self):
         self.terminais = {i: [n for n in range(37) if n % 10 == i] for i in range(10)}
@@ -684,7 +712,6 @@ class EstrategiaTerminais:
         recentes = historico[-janela:]
         finais_contagem = Counter([n % 10 for n in recentes])
         
-        # 🆕 Pega os 2 terminais mais quentes para ter mais números
         top_terminais = finais_contagem.most_common(2)
         
         base = set()
@@ -706,9 +733,6 @@ class EstrategiaTerminais:
         return None
 
 
-# =============================
-# ESTRATÉGIA 9: SIMETRIA
-# =============================
 class EstrategiaSimetria:
     def __init__(self):
         self.espelhos = {
@@ -722,7 +746,6 @@ class EstrategiaSimetria:
         
         if ultimo in self.espelhos:
             base.add(self.espelhos[ultimo])
-            # 🆕 Adiciona vizinhos do espelho para mais cobertura
             return {
                 'base': base,
                 'forca': 50,
@@ -731,9 +754,6 @@ class EstrategiaSimetria:
         return None
 
 
-# =============================
-# ESTRATÉGIA 10: PROTEÇÃO DO ZERO
-# =============================
 class EstrategiaProtecaoZero:
     def __init__(self, roleta):
         self.roleta = roleta
@@ -771,9 +791,6 @@ class EstrategiaProtecaoZero:
         return None
 
 
-# =============================
-# ESTRATÉGIA 11: DÚZIAS/COLUNAS
-# =============================
 class EstrategiaDuziasColunas:
     def __init__(self):
         self.duzias = {
@@ -819,9 +836,6 @@ class EstrategiaDuziasColunas:
         return None
 
 
-# =============================
-# ESTRATÉGIA 12: LIGHTNING HUNT
-# =============================
 class EstrategiaLightningHunt:
     def __init__(self, roleta):
         self.roleta = roleta
@@ -848,7 +862,6 @@ class EstrategiaLightningHunt:
         recentes = historico[-15:]
         freq_recentes = Counter(recentes)
         
-        # 🆕 Pega mais lucky numbers para expandir cobertura
         for n in repetidos[:5]:
             base.add(n)
             vizinhos = self.roleta.get_vizinhos(n, 1)
@@ -869,9 +882,6 @@ class EstrategiaLightningHunt:
         }
 
 
-# =============================
-# ESTRATÉGIA 13: TENDÊNCIA DE COR
-# =============================
 class EstrategiaTendenciaCor:
     def __init__(self, roleta):
         self.roleta = roleta
@@ -897,7 +907,6 @@ class EstrategiaTendenciaCor:
             else:
                 break
         
-        # 🆕 Retorna o conjunto completo da cor (18-19 números)
         if sequencia >= 5:
             cor_oposta = 'Vermelho' if cor_atual == 'Preto' else 'Preto'
             numeros_cor_oposta = self.roleta.vermelhos if cor_oposta == 'Vermelho' else self.roleta.pretos
@@ -918,9 +927,6 @@ class EstrategiaTendenciaCor:
         return None
 
 
-# =============================
-# ESTRATÉGIA 14: SOMBRA
-# =============================
 class EstrategiaSombra:
     def __init__(self, roleta):
         self.roleta = roleta
@@ -942,8 +948,6 @@ class EstrategiaSombra:
         
         freq_lucky = Counter(lucky_recentes)
         sombras_fortes = [n for n, c in freq_lucky.items() if c >= 2]
-        
-        # 🆕 Inclui todos os lucky numbers recentes para expandir
         todos_lucky = list(set(lucky_recentes))
         
         if sombras_fortes:
@@ -954,7 +958,6 @@ class EstrategiaSombra:
             forca += 55 + (len(sombras_fortes) * 10)
             estrategias.append(f"👻 Sombra Forte: {sombras_fortes}")
         
-        # 🆕 Sempre adiciona os lucky recentes
         base.update(todos_lucky[:6])
         
         if not sombras_fortes:
@@ -978,9 +981,6 @@ class EstrategiaSombra:
         return None
 
 
-# =============================
-# ESTRATÉGIA 15: LOOP TERMINAL
-# =============================
 class EstrategiaLoopTerminal:
     def __init__(self):
         self.terminais = {i: [n for n in range(37) if n % 10 == i] for i in range(10)}
@@ -1002,12 +1002,10 @@ class EstrategiaLoopTerminal:
         estrategias = []
         forca = 0
         
-        # 🆕 Inclui todos os terminais quentes para expandir
         for t in terminais_quentes:
             base.update(self.terminais[t])
             forca += 30
         
-        # Conexões de terminais
         if 1 in terminais_quentes:
             base.update(self.terminais[2])
             base.update(self.terminais[4])
@@ -1028,9 +1026,6 @@ class EstrategiaLoopTerminal:
         return None
 
 
-# =============================
-# ESTRATÉGIA 16: GAP CURTO
-# =============================
 class EstrategiaGapCurto:
     def __init__(self):
         pass
@@ -1068,9 +1063,6 @@ class EstrategiaGapCurto:
         return None
 
 
-# =============================
-# ESTRATÉGIA 17: ZERO VIZINHO
-# =============================
 class EstrategiaZeroVizinho:
     def __init__(self, roleta):
         self.roleta = roleta
@@ -1236,12 +1228,6 @@ class RoletaBotUnificado:
         return self.performance['acertos'] + self.performance['erros']
     
     def analisar_e_prever(self, top_n=13, motores_ativos=None, forca_minima=35):
-        """
-        🆕 Gera entre 12 e 15 números por entrada
-        - top_n define o máximo de números (padrão 13)
-        - Mínimo garantido de 12 números
-        - Máximo de 15 números
-        """
         if len(self.historico) < 5:
             return None
         
@@ -1259,7 +1245,6 @@ class RoletaBotUnificado:
         
         resultados = []
         
-        # Estratégias - com threshold reduzido para gerar mais resultados
         if motores_ativos.get('sniper', True) and len(self.historico) >= 15:
             r = self.sniper.analisar(list(self.historico), lucky_recentes)
             if r and r['forca'] >= forca_minima: resultados.append(('Sniper', r))
@@ -1332,14 +1317,12 @@ class RoletaBotUnificado:
         if not resultados:
             return None
         
-        # 🆕 PESO PROGRESSIVO para priorização
         freq_base = Counter()
         for motor, r in resultados:
             peso = r['forca'] / 100
             for n in r['base']:
                 freq_base[n] += peso
         
-        # HOT NUMBERS BOOST
         ultimos_10 = self.historico[-10:]
         freq_recentes = Counter(ultimos_10)
         for n in freq_base:
@@ -1349,19 +1332,15 @@ class RoletaBotUnificado:
             elif freq_recente >= 1:
                 freq_base[n] *= 1.2
         
-        # 🆕 Garante 12-15 números
         prioridade = [n for n, _ in freq_base.most_common()]
         
-        # Garante mínimo de 12 números
         if len(prioridade) < 12:
-            # Expande com números quentes do histórico
             for n, _ in freq_recentes.most_common(20):
                 if n not in prioridade:
                     prioridade.append(n)
                     if len(prioridade) >= 12:
                         break
         
-        # Se ainda tem menos de 12, adiciona da união de todas as bases
         if len(prioridade) < 12:
             todos_numeros = set()
             for _, r in resultados:
@@ -1372,19 +1351,15 @@ class RoletaBotUnificado:
                     if len(prioridade) >= 12:
                         break
         
-        # Limita a 15 números
         base_list = prioridade[:15]
         
-        # Garante mínimo de 12
         if len(base_list) < 12:
-            # Último recurso: adiciona números 0-36 que faltam
             for n in range(37):
                 if n not in base_list:
                     base_list.append(n)
                     if len(base_list) >= 12:
                         break
         
-        # Força média ponderada
         todas_estrategias = []
         forca_total = 0
         motor_principal = ""
@@ -1584,6 +1559,7 @@ class SistemaBot:
                 else:
                     self.ultima_entrada_numeros = []
             
+            # 🆕 Envia resultado via Telegram
             enviar_resultado_auto(numero_real, acerto, mult)
             
             self.historico_desempenho.append({
@@ -1650,7 +1626,6 @@ class SistemaBot:
                     pass
                 
                 else:
-                    # 🆕 12-15 números por entrada
                     top_n = st.session_state.get('top_n_apostas', 13)
                     forca_minima = st.session_state.get('forca_minima_entrada', 35)
                     
@@ -1767,8 +1742,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Bot Unificado — 12-15 Números", layout="centered")
-st.title("🎯 Bot Unificado — 12 a 15 Números por Entrada")
+st.set_page_config(page_title="🎯 Bot Unificado — 12-15 Números + Telegram", layout="centered")
+st.title("🎯 Bot Unificado — 12 a 15 Números + Alertas Telegram")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -1831,10 +1806,10 @@ if dados:
             pass
 
 defaults = {
-    'modo_automatico': True, 'top_n_apostas': 13,  # 🆕 13 números padrão
+    'modo_automatico': True, 'top_n_apostas': 13,
     'intervalo_minimo_entradas': 0,
     'janela_leque': 20,
-    'forca_minima_entrada': 35,  # 🆕 Threshold mais baixo
+    'forca_minima_entrada': 35,
     'modo_conservador': False,
     'usar_sniper': True, 'usar_mineracao': True,
     'usar_leque': True, 'usar_giro': True,
@@ -1867,7 +1842,9 @@ if "telegram_token" not in st.session_state:
 if "telegram_chat_id" not in st.session_state:
     st.session_state.telegram_chat_id = ""
 
-# Sidebar
+# =============================
+# SIDEBAR
+# =============================
 st.sidebar.title("⚙️ Configurações")
 
 with st.sidebar.expander("🎯 Números por Entrada", expanded=True):
@@ -1908,6 +1885,60 @@ with st.sidebar.expander("🟢 Green / ⏳ Erro", expanded=True):
     st.session_state.max_repeticoes_acerto = st.slider("Máx. green", 1, 5, st.session_state.max_repeticoes_acerto)
     st.session_state.repetir_entrada = st.checkbox("⏳ Repetir após erro (força≥45%)", value=st.session_state.repetir_entrada)
 
+# 🆕 SEÇÃO TELEGRAM
+with st.sidebar.expander("🔔 Telegram", expanded=True):
+    st.write("**Configuração de Alertas:**")
+    
+    st.session_state.telegram_token = st.text_input(
+        "🤖 Token do Bot:", 
+        value=st.session_state.telegram_token, 
+        type="password",
+        placeholder="123456:ABC-DEF1234ghikl-zyx57W2v1u123ew11",
+        help="Token do seu bot do Telegram (obtido com @BotFather)"
+    )
+    
+    st.session_state.telegram_chat_id = st.text_input(
+        "💬 Chat ID:", 
+        value=st.session_state.telegram_chat_id,
+        placeholder="-1001234567890",
+        help="ID do chat/grupo para enviar mensagens"
+    )
+    
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        if st.button("🧪 Testar Telegram", use_container_width=True):
+            sucesso, msg = testar_telegram()
+            if sucesso:
+                st.success(msg)
+            else:
+                st.error(msg)
+    
+    with col_t2:
+        if st.button("💾 Salvar Config", use_container_width=True):
+            salvar_sessao()
+            st.success("✅ Config salva!")
+    
+    # Status do Telegram
+    if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+        st.success("🔔 Telegram configurado e ativo!")
+        st.caption("Você receberá alertas de:")
+        st.caption("• 🎯 Novas entradas (12-15 números)")
+        st.caption("• ✅ Acertos")
+        st.caption("• ❌ Erros")
+        st.caption("• 🟢 Green Repeat")
+        st.caption("• ⏳ Erro Repeat")
+    else:
+        st.warning("⚠️ Configure Token e Chat ID para receber alertas")
+    
+    st.info("""
+    **Como obter as credenciais:**
+    1. Crie um bot: @BotFather no Telegram
+    2. Use `/newbot` e siga as instruções
+    3. Copie o **Token** gerado
+    4. Adicione o bot ao grupo/canal
+    5. Use @userinfobot para obter o **Chat ID**
+    """)
+
 st.session_state.modo_automatico = st.sidebar.checkbox("🔄 Modo Automático", value=st.session_state.modo_automatico)
 if st.sidebar.button("Atualizar"):
     st.session_state.sistema.estrategia_ativa_manual = not st.session_state.modo_automatico
@@ -1925,6 +1956,10 @@ with st.sidebar.expander("💾 Geral", expanded=False):
         if st.checkbox("Confirmar"):
             st.session_state.sistema.zerar_estatisticas()
             st.rerun()
+
+# =============================
+# CONTEÚDO PRINCIPAL
+# =============================
 
 # Inserção manual
 st.subheader("✍️ Inserir Sorteios")
@@ -1995,10 +2030,22 @@ if status['total'] > 0:
     else:
         st.error(f"🎯 Taxa: {taxa:.1f}%")
 
+# Indicadores de estado
+sis = st.session_state.sistema
+if sis.repeticoes_acerto_consecutivas > 0 and not sis.previsao_ativa:
+    st.success(f"🟢 **Green Ativo!** ({sis.repeticoes_acerto_consecutivas}/{st.session_state.max_repeticoes_acerto})")
+elif sis.giros_restantes_espera > 0:
+    st.warning(f"⏳ **Aguardando {sis.giros_restantes_espera} giro(s)**")
+
+# Status Telegram
+if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+    st.success("🔔 Alertas Telegram: **ATIVOS**")
+else:
+    st.info("🔔 Alertas Telegram: **NÃO CONFIGURADOS** - Configure na sidebar")
+
 # Previsão
 st.subheader("🎯 Previsão Ativa")
 
-sis = st.session_state.sistema
 if sis.estrategia_ativa_manual:
     st.warning("⚠️ MANUAL")
 elif sis.previsao_ativa:
