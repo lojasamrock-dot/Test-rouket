@@ -991,5 +991,18 @@ with col_d1:
     # 🆕 Download direto (sem botão aninhado)
     st.download_button(
         label="📥 Baixar JSON",
-
+        data=exportar_historico(st.session_state.historico, 'json'),
+        file_name=f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+        mime="application/json",
+        key="btn_download_json"
+    )
+with col_d2:
+    # 🆕 Download direto (sem botão aninhado)
+    st.download_button(
+        label="📥 Baixar CSV",
+        data=exportar_historico(st.session_state.historico, 'csv'),
+        file_name=f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv",
+        key="btn_download_csv"
+    )
 salvar_sessao()
