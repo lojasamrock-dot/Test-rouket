@@ -935,9 +935,16 @@ class RoletaBotUnificado:
         self.padroes_sequencia = {}
         
     def atualizar(self, numero, lucky_nums=None, lucky_mults=None):
+        """Atualiza o histórico com um novo número"""
+        # Garante que numero seja inteiro
+        if isinstance(numero, dict):
+            numero = numero.get('number', 0)
+        
         self.historico.append(numero)
         self.lucky.append(lucky_nums if lucky_nums else [])
         self.lucky_mult.append(lucky_mults if lucky_mults else {})
+        
+        # Mantém apenas os últimos 200 registros
         if len(self.historico) > 200:
             self.historico = self.historico[-200:]
             self.lucky = self.lucky[-200:]
@@ -969,6 +976,10 @@ class RoletaBotUnificado:
         """Retorna entropia atual do sistema"""
         return self.ia_adaptativa.get_entropia()
     
+    def get_ultimos_numeros(self, n=10):
+        """Retorna os últimos n números do histórico"""
+        return self.historico[-n:] if len(self.historico) >= n else self.historico
+    
     def analisar_e_prever(self, top_n=5, motores_ativos=None):
         if len(self.historico) < 5:
             return None
@@ -978,7 +989,7 @@ class RoletaBotUnificado:
                 'sniper': True, 'mineracao': True, 'leque': True, 
                 'giro': True, 'gap': True, 'sequencia': True,
                 'quadrantes': True, 'terminais': True, 'simetria': True,
-                'ia_adaptativa': True  # 🧠 NOVO
+                'ia_adaptativa': True
             }
         
         lucky_recentes = []
@@ -1095,7 +1106,10 @@ class RoletaBotUnificado:
         prioridade = [n for n, _ in freq_base.most_common()]
         base_list = prioridade[:top_n]
         
-        gatilho = f"u={self.historico[-1]}"
+        # Usa o último número real do histórico
+        ultimo_numero = self.historico[-1] if self.historico else 0
+        gatilho = f"u={ultimo_numero}"
+        
         if len(self.historico) >= 2 and self.historico[-1] == self.historico[-2]:
             gatilho = f"REPETIU {self.historico[-1]}!"
         elif len(self.historico) >= 3 and self.historico[-1] == self.historico[-3]:
@@ -1118,7 +1132,7 @@ class RoletaBotUnificado:
             'green': False,
             'green_count': 0,
             'giros_esperados': 0,
-            'modo_ia': modo_ia  # 🧠 Modo da IA (AGRESSIVO/MODERADO/CONSERVADOR)
+            'modo_ia': modo_ia
         }
     
     def get_analise_completa(self):
@@ -1143,7 +1157,7 @@ class RoletaBotUnificado:
         
         txt = "🎯 BOT UNIFICADO + IA ADAPTATIVA V3\n" + "="*45 + "\n\n"
         txt += f"🎲 Último: {ultimo}\n"
-        txt += f"📊 10 últimos: {hist[-10:]}\n\n"
+        txt += f"📊 10 últimos: {ultimos_10}\n\n"
         
         txt += f"🔥 Quentes: {quentes}\n"
         txt += f"🍀 Lucky: {top_lucky}\n"
@@ -1228,6 +1242,8 @@ class SistemaBot:
         self.entropia_atual = 3.5
         
     def processar_novo_numero(self, numero_data):
+        """Processa um novo número do sorteio"""
+        # Extrai o número real
         if isinstance(numero_data, dict):
             numero_real = numero_data['number']
             lucky = numero_data.get('luckyNumbers', [])
@@ -1239,6 +1255,7 @@ class SistemaBot:
             lucky_mults = {}
             mult = None
         
+        # Atualiza o bot com o número real
         self.bot.atualizar(numero_real, lucky, lucky_mults)
         self.historico_numeros.append(numero_real)
         self.historico_lucky.append(lucky)
@@ -1385,7 +1402,7 @@ class SistemaBot:
                         'quadrantes': st.session_state.get('usar_quadrantes', True),
                         'terminais': st.session_state.get('usar_terminais', True),
                         'simetria': st.session_state.get('usar_simetria', True),
-                        'ia_adaptativa': st.session_state.get('usar_ia_adaptativa', True)  # 🧠
+                        'ia_adaptativa': st.session_state.get('usar_ia_adaptativa', True)
                     }
                     
                     nova = self.bot.analisar_e_prever(top_n, motores_ativos)
@@ -1509,14 +1526,15 @@ if dados:
     sis.modo_ia = dados.get('modo_ia', 'MODERADO')
     sis.entropia_atual = dados.get('entropia_atual', 3.5)
     
+    # Restaura histórico de números
     for num in dados.get('historico_numeros', []):
         sis.historico_numeros.append(num)
     for lucky in dados.get('historico_lucky', []):
         sis.historico_lucky.append(lucky)
     
+    # Restaura histórico do bot
     for num, lucky in zip(dados.get('historico_numeros', []), dados.get('historico_lucky', [])):
-        sis.bot.historico.append(num)
-        sis.bot.lucky.append(lucky)
+        sis.bot.atualizar(num, lucky)
     
     if os.path.exists(PERFORMANCE_PATH):
         try:
@@ -1547,7 +1565,7 @@ defaults = {
     'usar_leque': True, 'usar_giro': True,
     'usar_gap': True, 'usar_sequencia': True,
     'usar_quadrantes': True, 'usar_terminais': True, 'usar_simetria': True,
-    'usar_ia_adaptativa': True,  # 🧠 NOVO
+    'usar_ia_adaptativa': True,
     'repetir_entrada': True,
     'repetir_acerto': True,
     'max_repeticoes_acerto': 3
@@ -1724,6 +1742,9 @@ if st.session_state.historico:
         else:
             fmt.append(str(n))
     st.write(" ".join(fmt))
+    
+    # Mostra os números reais do bot
+    st.caption(f"📊 Histórico do bot: {st.session_state.sistema.bot.get_ultimos_numeros(10)}")
 
 # Status
 status = st.session_state.sistema.get_status()
