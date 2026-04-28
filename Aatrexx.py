@@ -983,14 +983,13 @@ if sis.historico_desempenho:
         m = f" ⚡{r['multiplicador']}x" if r.get('multiplicador') and r['acerto'] else ""
         st.write(f"{e}{g} ({r.get('forca',0)}%) [{r.get('motor','')}]: {r['numero']}{m}")
 
+#st.subheader("📥 Download")
 st.subheader("📥 Download")
 st.metric("📊 Registros", len(st.session_state.historico))
 col_d1, col_d2 = st.columns(2)
 with col_d1:
-    if st.button("📥 JSON", use_container_width=True, key="btn_download_json"):
-        st.download_button("⬇️ Baixar JSON", exportar_historico(st.session_state.historico, 'json'), f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "application/json")
-with col_d2:
-    if st.button("📥 CSV", use_container_width=True, key="btn_download_csv"):
-        st.download_button("⬇️ Baixar CSV", exportar_historico(st.session_state.historico, 'csv'), f"historico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
+    # 🆕 Download direto (sem botão aninhado)
+    st.download_button(
+        label="📥 Baixar JSON",
 
 salvar_sessao()
