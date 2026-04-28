@@ -269,10 +269,9 @@ class EstrategiaIAAdaptativa:
         total = len(self.historico_completo)
         
         for n in range(37):
-            # Encontra última aparição
             aparicoes = [i for i, x in enumerate(self.historico_completo) if x == n]
             if not aparicoes:
-                atraso[n] = 1.0  # Nunca apareceu = máximo atraso
+                atraso[n] = 1.0
             else:
                 gap = total - aparicoes[-1] - 1
                 atraso[n] = min(1.0, gap / total)
@@ -298,16 +297,13 @@ class EstrategiaIAAdaptativa:
         """Mede o caos do sistema - quanto menor, mais 'previsível'"""
         freq = self.freq_score()
         probs = np.array(list(freq.values()))
-        probs = probs[probs > 0]  # Remove zeros
+        probs = probs[probs > 0]
         
         if len(probs) == 0:
-            return 5.0  # Máxima entropia
+            return 5.0
         
-        # Entropia de Shannon normalizada
         entropia = -np.sum(probs * np.log(probs))
-        
-        # Normaliza para escala 0-5
-        entropia_max = np.log(37)  # ~3.61
+        entropia_max = np.log(37)
         entropia_norm = (entropia / entropia_max) * 5
         
         return entropia_norm
@@ -317,11 +313,9 @@ class EstrategiaIAAdaptativa:
         if len(historico) < 10:
             return None
         
-        # Atualiza estado interno
         self.historico_completo = list(historico)
         self.buffer = deque(list(historico)[-self.window:], maxlen=self.window)
         
-        # Reconstrói transições
         self.transicoes = {}
         for i in range(len(self.historico_completo) - 1):
             atual = self.historico_completo[i]
@@ -330,12 +324,10 @@ class EstrategiaIAAdaptativa:
                 self.transicoes[atual] = []
             self.transicoes[atual].append(proximo)
         
-        # Calcula scores
         freq = self.freq_score()
         atraso = self.atraso_score()
         trans = self.transicao_score()
         
-        # Score híbrido: 40% frequência + 40% atraso + 20% transição
         score = {}
         for n in range(37):
             score[n] = (
@@ -344,13 +336,9 @@ class EstrategiaIAAdaptativa:
                 0.2 * trans.get(n, 0)
             )
         
-        # Ordena por score
         ranking = sorted(score.items(), key=lambda x: x[1], reverse=True)
-        
-        # Calcula entropia
         entropia = self.calcular_entropia()
         
-        # Define modo baseado na entropia
         if entropia < 3.0:
             modo = "AGRESSIVO"
             top_n = 5
@@ -365,17 +353,13 @@ class EstrategiaIAAdaptativa:
             forca = 35
         
         base = [n for n, _ in ranking[:top_n]]
-        
-        # Detecta clusters na base
         clusters = self._detectar_clusters(base)
         
         estrategias = [f"IA Adaptativa ({modo})"]
         if clusters:
             estrategias.append(f"Cluster: {clusters}")
-        
         estrategias.append(f"Entropia: {entropia:.2f}")
         
-        # Ajusta força baseado na qualidade dos scores
         score_medio = np.mean([s for _, s in ranking[:top_n]])
         if score_medio > 0.05:
             forca += 10
@@ -394,11 +378,9 @@ class EstrategiaIAAdaptativa:
         }
     
     def _detectar_clusters(self, numeros):
-        """Detecta agrupamentos nos números (setores, dúzias, colunas)"""
         if len(numeros) < 2:
             return None
         
-        # Verifica concentração em dúzias
         duzias = Counter()
         for n in numeros:
             if n == 0:
@@ -411,7 +393,6 @@ class EstrategiaIAAdaptativa:
             if dom[1] >= len(numeros) * 0.5:
                 return f"Dúzia {dom[0]} dominante"
         
-        # Verifica concentração em colunas
         colunas = Counter()
         for n in numeros:
             if n == 0:
@@ -427,7 +408,6 @@ class EstrategiaIAAdaptativa:
         return None
     
     def get_entropia(self):
-        """Retorna entropia atual"""
         return self.calcular_entropia()
 
 
@@ -822,11 +802,10 @@ class EstrategiaSequencia:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 7: CICLOS DE QUADRANTES
+# ESTRATÉGIA 7: CICLOS DE QUADRANTES
 # =============================
 class EstrategiaCiclosQuadrantes:
     def __init__(self):
-        # Divisão da mesa em 4 quadrantes de 9 números cada
         self.quadrantes = {
             1: set([1, 2, 3, 4, 5, 6, 7, 8, 9]),
             2: set([10, 11, 12, 13, 14, 15, 16, 17, 18]),
@@ -860,7 +839,7 @@ class EstrategiaCiclosQuadrantes:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 8: TERMINAIS (FINAIS)
+# ESTRATÉGIA 8: TERMINAIS (FINAIS)
 # =============================
 class EstrategiaTerminais:
     def __init__(self):
@@ -885,7 +864,7 @@ class EstrategiaTerminais:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 9: SIMETRIA (ESPELHAMENTO)
+# ESTRATÉGIA 9: SIMETRIA (ESPELHAMENTO)
 # =============================
 class EstrategiaSimetria:
     def __init__(self):
@@ -925,35 +904,49 @@ class RoletaBotUnificado:
         self.terminais_strat = EstrategiaTerminais()
         self.simetria_strat = EstrategiaSimetria()
         
-        # 🧠 NOVO: IA Adaptativa V3
+        # 🧠 IA Adaptativa V3
         self.ia_adaptativa = EstrategiaIAAdaptativa(window=50)
         
+        # Histórico de números (apenas inteiros)
         self.historico = []
+        # Histórico de lucky numbers (listas de inteiros)
         self.lucky = []
+        # Histórico de multiplicadores
         self.lucky_mult = []
+        # Performance
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
         self.padroes_sequencia = {}
         
     def atualizar(self, numero, lucky_nums=None, lucky_mults=None):
-        """Atualiza o histórico com um novo número"""
-        # Garante que numero seja inteiro
+        """
+        ATUALIZA O HISTÓRICO COM UM NOVO NÚMERO
+        - numero: deve ser um INTEIRO (0-36), nunca um dicionário
+        - lucky_nums: lista de inteiros ou None
+        - lucky_mults: dicionário ou None
+        """
+        # Garante que numero é inteiro
         if isinstance(numero, dict):
+            # Se por acaso receber dicionário, extrai o número
             numero = numero.get('number', 0)
+        elif not isinstance(numero, int):
+            numero = int(numero)
         
+        # Adiciona ao histórico
         self.historico.append(numero)
         self.lucky.append(lucky_nums if lucky_nums else [])
         self.lucky_mult.append(lucky_mults if lucky_mults else {})
         
-        # Mantém apenas os últimos 200 registros
+        # Limita tamanho do histórico
         if len(self.historico) > 200:
             self.historico = self.historico[-200:]
             self.lucky = self.lucky[-200:]
             self.lucky_mult = self.lucky_mult[-200:]
         
+        # Atualiza sequência
         if len(self.historico) >= 2:
             self.sequencia.treinar(self.historico)
         
-        # 🧠 Atualiza IA adaptativa
+        # Atualiza IA adaptativa
         self.ia_adaptativa.atualizar(numero)
     
     def atualizar_resultado(self, acerto):
@@ -973,12 +966,11 @@ class RoletaBotUnificado:
         return self.performance['acertos'] + self.performance['erros']
     
     def get_entropia(self):
-        """Retorna entropia atual do sistema"""
         return self.ia_adaptativa.get_entropia()
     
     def get_ultimos_numeros(self, n=10):
         """Retorna os últimos n números do histórico"""
-        return self.historico[-n:] if len(self.historico) >= n else self.historico
+        return self.historico[-n:] if len(self.historico) >= n else self.historico.copy()
     
     def analisar_e_prever(self, top_n=5, motores_ativos=None):
         if len(self.historico) < 5:
@@ -998,7 +990,7 @@ class RoletaBotUnificado:
         
         resultados = []
         
-        # 🧠 IA ADAPTATIVA (maior peso na fusão)
+        # IA ADAPTATIVA (maior peso na fusão)
         if motores_ativos.get('ia_adaptativa', True) and len(self.historico) >= 10:
             r = self.ia_adaptativa.analisar(list(self.historico))
             if r:
@@ -1061,7 +1053,6 @@ class RoletaBotUnificado:
         modo_ia = ""
         
         for motor, r in resultados:
-            # 🧠 IA Adaptativa tem peso 2x na fusão
             peso = 2 if motor == 'IA Adaptativa' else 1
             for _ in range(peso):
                 base_final.update(r['base'])
@@ -1073,11 +1064,9 @@ class RoletaBotUnificado:
                 maior_forca = r['forca']
                 motor_principal = motor
             
-            # Captura modo da IA
             if motor == 'IA Adaptativa' and 'modo' in r:
                 modo_ia = r['modo']
         
-        # Calcula força média ponderada
         pesos_total = sum(2 if m == 'IA Adaptativa' else 1 for m, _ in resultados)
         forca_media = forca_total / pesos_total if pesos_total > 0 else 20
         
@@ -1106,7 +1095,7 @@ class RoletaBotUnificado:
         prioridade = [n for n, _ in freq_base.most_common()]
         base_list = prioridade[:top_n]
         
-        # Usa o último número real do histórico
+        # GATILHO USA O ÚLTIMO NÚMERO REAL DO HISTÓRICO
         ultimo_numero = self.historico[-1] if self.historico else 0
         gatilho = f"u={ultimo_numero}"
         
@@ -1115,7 +1104,6 @@ class RoletaBotUnificado:
         elif len(self.historico) >= 3 and self.historico[-1] == self.historico[-3]:
             gatilho = f"REPETIU COM GAP! {self.historico[-3]}→{self.historico[-2]}→{self.historico[-1]}"
         
-        # Adiciona modo IA ao gatilho se relevante
         if modo_ia:
             gatilho += f" [{modo_ia}]"
         
@@ -1162,7 +1150,6 @@ class RoletaBotUnificado:
         txt += f"🔥 Quentes: {quentes}\n"
         txt += f"🍀 Lucky: {top_lucky}\n"
         
-        # 🧠 Info da IA
         txt += f"\n🧠 **IA ADAPTATIVA V3:**\n"
         txt += f"  📊 Entropia: {entropia:.2f}/5.0\n"
         if entropia < 3.0:
@@ -1209,7 +1196,7 @@ class RoletaBotUnificado:
 
 
 # =============================
-# 🆕 SISTEMA PRINCIPAL (COM GREEN REPEAT + ERRO ESPERA + IA)
+# SISTEMA PRINCIPAL
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -1224,44 +1211,43 @@ class SistemaBot:
         self.ultima_entrada_rodada = -10
         self.estrategia_ativa_manual = False
         
-        # Controle de repetição após ERRO (espera 2 giros)
         self.giros_espera_repeticao = 0
         self.giros_restantes_espera = 0
         
-        # Controle de repetição após ACERTO (Green - até 3x seguidas)
         self.repeticoes_acerto_consecutivas = 0
         self.ultima_entrada_green = False
         
-        # Armazena última entrada para repetição
         self.ultima_entrada_numeros = []
         self.ultima_entrada_forca = 0
         self.ultima_entrada_motor = ""
         
-        # 🧠 Estado da IA
         self.modo_ia = "MODERADO"
         self.entropia_atual = 3.5
         
     def processar_novo_numero(self, numero_data):
-        """Processa um novo número do sorteio"""
-        # Extrai o número real
+        """
+        PROCESSA UM NOVO NÚMERO DO SORTEIO
+        - numero_data: pode ser dict (da API) ou int (manual)
+        """
+        # EXTRAI O NÚMERO REAL (INTEIRO)
         if isinstance(numero_data, dict):
             numero_real = numero_data['number']
             lucky = numero_data.get('luckyNumbers', [])
             lucky_mults = numero_data.get('luckyMultipliers', {})
             mult = lucky_mults.get(numero_real) if numero_real in lucky else None
         else:
-            numero_real = numero_data
+            numero_real = int(numero_data)
             lucky = []
             lucky_mults = {}
             mult = None
         
-        # Atualiza o bot com o número real
+        # ATUALIZA O BOT COM O NÚMERO REAL (INTEIRO)
         self.bot.atualizar(numero_real, lucky, lucky_mults)
         self.historico_numeros.append(numero_real)
         self.historico_lucky.append(lucky)
         self.rodadas_sem_entrada += 1
         
-        # 🧠 Atualiza estado da IA
+        # ATUALIZA ESTADO DA IA
         self.entropia_atual = self.bot.get_entropia()
         if self.entropia_atual < 3.0:
             self.modo_ia = "AGRESSIVO"
@@ -1270,7 +1256,6 @@ class SistemaBot:
         else:
             self.modo_ia = "CONSERVADOR"
         
-        # Decrementa espera de erro se estiver ativa
         if self.giros_restantes_espera > 0:
             self.giros_restantes_espera -= 1
         
@@ -1281,7 +1266,6 @@ class SistemaBot:
             if acerto:
                 self.acertos += 1
                 
-                # 🟢 ACERTOU! Verifica regra GREEN
                 if st.session_state.get('repetir_acerto', True):
                     max_rep = st.session_state.get('max_repeticoes_acerto', 3)
                     if self.repeticoes_acerto_consecutivas < max_rep:
@@ -1332,13 +1316,12 @@ class SistemaBot:
         if self.estrategia_ativa_manual:
             return
         
-        # GERA PREVISÃO A CADA GIRO
+        # GERA PREVISÃO
         if len(self.historico_numeros) >= 5:
             intervalo = st.session_state.get('intervalo_minimo_entradas', 0)
             
             if len(self.historico_numeros) - self.ultima_entrada_rodada >= intervalo:
                 
-                # 🟢 PRIORIDADE 1: Repetir após ACERTO (Green)
                 if self.ultima_entrada_green and self.ultima_entrada_numeros and self.repeticoes_acerto_consecutivas > 0:
                     previsao_green = {
                         'nome': 'Bot Unificado',
@@ -1360,7 +1343,6 @@ class SistemaBot:
                     self.ultima_entrada_green = False
                     enviar_previsao_auto(previsao_green)
                 
-                # ⏳ PRIORIDADE 2: Repetir após ERRO (espera 2 giros)
                 elif self.giros_restantes_espera == 0 and self.ultima_entrada_numeros and not self.ultima_entrada_green:
                     self.giros_espera_repeticao = 0
                     
@@ -1384,11 +1366,9 @@ class SistemaBot:
                     self.ultima_entrada_numeros = []
                     enviar_previsao_auto(previsao_repetida)
                 
-                # 🕐 Se está esperando (giros_restantes > 0), não faz nada
                 elif self.giros_restantes_espera > 0:
                     pass
                 
-                # 🆕 NOVA ANÁLISE (COM IA ADAPTATIVA)
                 else:
                     top_n = st.session_state.get('top_n_apostas', 5)
                     
@@ -1526,15 +1506,15 @@ if dados:
     sis.modo_ia = dados.get('modo_ia', 'MODERADO')
     sis.entropia_atual = dados.get('entropia_atual', 3.5)
     
-    # Restaura histórico de números
-    for num in dados.get('historico_numeros', []):
-        sis.historico_numeros.append(num)
-    for lucky in dados.get('historico_lucky', []):
-        sis.historico_lucky.append(lucky)
+    # RESTAURA HISTÓRICO DO BOT CORRETAMENTE
+    historico_numeros = dados.get('historico_numeros', [])
+    historico_lucky = dados.get('historico_lucky', [])
     
-    # Restaura histórico do bot
-    for num, lucky in zip(dados.get('historico_numeros', []), dados.get('historico_lucky', [])):
+    for i, num in enumerate(historico_numeros):
+        lucky = historico_lucky[i] if i < len(historico_lucky) else []
         sis.bot.atualizar(num, lucky)
+        sis.historico_numeros.append(num)
+        sis.historico_lucky.append(lucky)
     
     if os.path.exists(PERFORMANCE_PATH):
         try:
@@ -1612,13 +1592,11 @@ with st.sidebar.expander("🤖 Motores Ativos", expanded=True):
                   st.session_state.usar_terminais, st.session_state.usar_simetria])
     st.caption(f"📊 {ativos}/10 motores ativos")
 
-# 🧠 Indicador de Entropia
 with st.sidebar.expander("🧠 IA Adaptativa V3", expanded=True):
     sis = st.session_state.sistema
     entropia = sis.entropia_atual
     modo = sis.modo_ia
     
-    # Barra de entropia visual
     st.write(f"📊 **Entropia:** {entropia:.2f}/5.0")
     st.progress(min(1.0, entropia / 5.0))
     
@@ -1640,14 +1618,11 @@ with st.sidebar.expander("🧠 IA Adaptativa V3", expanded=True):
     """)
 
 with st.sidebar.expander("🟢 Green (Repetir após Acerto)", expanded=True):
-    st.session_state.repetir_acerto = st.checkbox("🟢 Repetir entrada após ACERTO", value=st.session_state.repetir_acerto,
-        help="Quando acertar, repete a mesma entrada no próximo giro")
-    st.session_state.max_repeticoes_acerto = st.slider("🔄 Máx. repetições green", 1, 5, st.session_state.max_repeticoes_acerto,
-        help="Quantas vezes seguidas pode repetir após acerto")
+    st.session_state.repetir_acerto = st.checkbox("🟢 Repetir entrada após ACERTO", value=st.session_state.repetir_acerto)
+    st.session_state.max_repeticoes_acerto = st.slider("🔄 Máx. repetições green", 1, 5, st.session_state.max_repeticoes_acerto)
     st.info(f"""
     **Green Repeat:**
     - ✅ Acertou → repete mesma entrada
-    - ✅ Acertou de novo → repete de novo
     - Máximo: {st.session_state.max_repeticoes_acerto}x seguidas
     - ❌ Errou → volta análise normal
     """)
@@ -1658,7 +1633,6 @@ with st.sidebar.expander("⏳ Repetição pós-Erro", expanded=True):
     **Erro Repeat:**
     - ❌ Erro → espera 2 giros
     - ⏳ Após 2 giros → repete a entrada
-    - ✅ Acerto → reseta
     """)
 
 with st.sidebar.expander("⚙️ Ajustes", expanded=True):
@@ -1742,9 +1716,6 @@ if st.session_state.historico:
         else:
             fmt.append(str(n))
     st.write(" ".join(fmt))
-    
-    # Mostra os números reais do bot
-    st.caption(f"📊 Histórico do bot: {st.session_state.sistema.bot.get_ultimos_numeros(10)}")
 
 # Status
 status = st.session_state.sistema.get_status()
@@ -1767,7 +1738,6 @@ if status['total'] > 0:
 # Indicadores de estado
 sis = st.session_state.sistema
 
-# 🧠 Barra de entropia no topo
 st.subheader("🧠 Estado da IA Adaptativa")
 ec1, ec2 = st.columns([3, 1])
 with ec1:
@@ -1781,9 +1751,9 @@ with ec2:
         st.error(f"🔴 {sis.modo_ia}")
 
 if sis.repeticoes_acerto_consecutivas > 0 and not sis.previsao_ativa:
-    st.success(f"🟢 **Green Ativo!** Repetindo entrada após acerto ({sis.repeticoes_acerto_consecutivas}/{st.session_state.max_repeticoes_acerto})")
+    st.success(f"🟢 **Green Ativo!** ({sis.repeticoes_acerto_consecutivas}/{st.session_state.max_repeticoes_acerto})")
 elif sis.giros_restantes_espera > 0:
-    st.warning(f"⏳ **Aguardando {sis.giros_restantes_espera} giro(s) para repetir entrada anterior**")
+    st.warning(f"⏳ **Aguardando {sis.giros_restantes_espera} giro(s)**")
 
 # Previsão
 st.subheader("🎯 Previsão Ativa")
@@ -1806,7 +1776,7 @@ elif sis.previsao_ativa:
     if green:
         st.success(f"🟢 **GREEN #{green_count}!** Repetindo após acerto")
     elif repeticao:
-        st.success(f"⏳ **REPETINDO ENTRADA!** (após espera de {giros_esperados} giros)")
+        st.success(f"⏳ **REPETINDO ENTRADA!** (após {giros_esperados} giros)")
     elif f >= 55:
         st.success(f"🔥 **FORÇA {f}%** - {c} ({qtd} motores)")
     elif f >= 35:
@@ -1816,13 +1786,12 @@ elif sis.previsao_ativa:
     
     st.caption(f"📋 {p['gatilho']}")
     if not repeticao and not green:
-        st.caption(f"🤖 Motor principal: {motor}")
+        st.caption(f"🤖 Motor: {motor}")
         if modo_ia:
             st.caption(f"🧠 Modo IA: {modo_ia}")
         if estrategias:
             st.caption(f"🎯 {', '.join(estrategias[:4])}")
     
-    st.write(f"**🔢 {len(p['numeros_apostar'])} números:**")
     nums = sorted(p['numeros_apostar'])
     st.markdown(f"### {', '.join(map(str, nums))}")
 else:
