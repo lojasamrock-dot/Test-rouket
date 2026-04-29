@@ -66,7 +66,6 @@ def salvar_sessao():
             'erro_aguardando': st.session_state.sistema.erro_aguardando,
             'ultima_entrada_numeros': st.session_state.sistema.ultima_entrada_numeros,
             'erro_ja_repitido': st.session_state.sistema.erro_ja_repitido,
-            'ultima_entrada_forca': st.session_state.sistema.ultima_entrada_forca,
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -172,7 +171,7 @@ class RoletaBase:
 
 
 # =============================
-# ESTRATÉGIAS
+# ESTRATÉGIAS (COMPACTADAS)
 # =============================
 
 class EstrategiaSniperElite:
@@ -388,7 +387,7 @@ class EstrategiaCorSetor:
 
 
 # =============================
-# BOT UNIFICADO
+# BOT UNIFICADO (17 ESTRATÉGIAS)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
@@ -467,6 +466,7 @@ class RoletaBotUnificado:
             quentes = [n for n, _ in freq.most_common(8)]
             return {'numeros_apostar': sorted(quentes[:8]), 'forca_real': 20, 'motor': 'Frequência', 'estrategias_ativas': ['Quentes'], 'qtd_motores': 1, 'qualidade': 'BÁSICA', 'green': False, 'green_count': 0}
         
+        # Fusão com pesos e limite de 8 números
         base = set()
         ests_ativas = []
         ft, mp, mf = 0, resultados[0][0], 0
@@ -481,6 +481,7 @@ class RoletaBotUnificado:
         mx = st.session_state.get('max_n_apostas', 8)
         mn = st.session_state.get('min_n_apostas', 5)
         
+        # Prioriza números com maior consenso entre motores
         consenso = Counter()
         for nome, r, peso in resultados:
             for n in r['base']:
@@ -498,14 +499,13 @@ class RoletaBotUnificado:
 
 
 # =============================
-# SISTEMA PRINCIPAL
+# SISTEMA PRINCIPAL (CORRIGIDO)
 # =============================
 class SistemaBot:
     def __init__(self):
         self.bot = RoletaBotUnificado()
         self.historico_numeros = deque(maxlen=200)
         self.historico_lucky = deque(maxlen=100)
-        self.historico_mults = deque(maxlen=100)  # 🆕 guarda multiplicadores
         self.entrada_ativa = None
         self.historico_entradas = []
         self.acertos = 0
@@ -514,7 +514,7 @@ class SistemaBot:
         self.erro_aguardando = False
         self.erro_ja_repitido = False
         self.ultima_entrada_numeros = []
-        self.ultima_entrada_forca = 0
+        self.ultima_entrada_forca = 0  # 🆕 guarda força da última entrada
         
     def processar_novo_numero(self, numero_data):
         if isinstance(numero_data, dict):
@@ -530,7 +530,6 @@ class SistemaBot:
         self.bot.atualizar(nr, lucky)
         self.historico_numeros.append(nr)
         self.historico_lucky.append(lucky)
-        self.historico_mults.append(mult)  # 🆕 guarda multiplicador
         
         if self.entrada_ativa:
             acerto = nr in self.entrada_ativa.get('numeros_apostar', [])
@@ -544,7 +543,7 @@ class SistemaBot:
             
             self.bot.performance['historico'].append(1 if acerto else 0)
             
-            self.historico_entradas.append({
+            entrada_info = {
                 'rodada': len(self.historico_numeros)-1,
                 'hora': datetime.now().strftime('%H:%M:%S'),
                 'numeros': self.entrada_ativa.get('numeros_apostar', []),
@@ -555,14 +554,20 @@ class SistemaBot:
                 'qualidade': self.entrada_ativa.get('qualidade', ''),
                 'lucky': is_lucky, 'multiplicador': mult,
                 'green': self.entrada_ativa.get('green', False),
-            })
+            }
+            self.historico_entradas.append(entrada_info)
             if len(self.historico_entradas) > 50: self.historico_entradas = self.historico_entradas[-50:]
             
+            # ==========================================
+            # LÓGICA GREEN/ERRO REPEAT CORRIGIDA
+            # ==========================================
             entrada_forca = self.entrada_ativa.get('forca_real', 0)
             era_green = self.entrada_ativa.get('green', False)
             
             if acerto:
+                # ✅ ACERTOU
                 if not era_green and self.green_repeticoes < 2:
+                    # Só ativa green se força ≥ 35%
                     if entrada_forca >= 35:
                         self.green_repeticoes += 1
                         self.ultima_entrada_numeros = list(self.entrada_ativa.get('numeros_apostar', []))
@@ -581,12 +586,15 @@ class SistemaBot:
                 self.erro_aguardando = False
                 self.erro_ja_repitido = False
             else:
+                # ❌ ERROU
                 if era_green:
+                    # 🆕 CORREÇÃO: Green errou → NÃO repete green #2
                     self.green_repeticoes = 0
                     self.ultima_entrada_numeros = []
                     self.erro_aguardando = False
                     self.erro_ja_repitido = False
                 else:
+                    # 🆕 CORREÇÃO: Só ativa erro repeat se força ≥ 35%
                     if entrada_forca >= 35 and not self.erro_ja_repitido:
                         self.erro_aguardando = True
                         self.ultima_entrada_numeros = list(self.entrada_ativa.get('numeros_apostar', []))
@@ -600,20 +608,26 @@ class SistemaBot:
             enviar_resultado_auto(nr, acerto, is_lucky)
             self.entrada_ativa = None
         
-        # Green Repeat
+        # ==========================================
+        # GERA NOVA ENTRADA
+        # ==========================================
+        
+        # 🟢 Green Repeat
         if self.green_repeticoes > 0 and self.ultima_entrada_numeros:
             self.entrada_ativa = {
                 'numeros_apostar': sorted(self.ultima_entrada_numeros),
                 'forca_real': min(70, self.ultima_entrada_forca + 5),
                 'motor': 'Green Repeat',
                 'estrategias_ativas': [f'🟢 Green #{self.green_repeticoes}/2'],
-                'qtd_motores': 1, 'qualidade': 'GREEN', 'green': True,
+                'qtd_motores': 1,
+                'qualidade': 'GREEN',
+                'green': True,
                 'green_count': self.green_repeticoes,
             }
             enviar_previsao_auto(self.entrada_ativa)
             return
         
-        # Erro Repeat
+        # ⏳ Erro Repeat
         if self.erro_aguardando and self.ultima_entrada_numeros:
             self.erro_aguardando = False
             self.erro_ja_repitido = True
@@ -622,14 +636,19 @@ class SistemaBot:
                 'forca_real': self.ultima_entrada_forca,
                 'motor': 'Erro Repeat',
                 'estrategias_ativas': ['⏳ Repetindo'],
-                'qtd_motores': 1, 'qualidade': 'REPEAT', 'green': False, 'green_count': 0,
+                'qtd_motores': 1,
+                'qualidade': 'REPEAT',
+                'green': False,
+                'green_count': 0,
             }
             enviar_previsao_auto(self.entrada_ativa)
             return
         
+        # Reset
         if self.erro_ja_repitido and self.green_repeticoes == 0:
             self.erro_ja_repitido = False
         
+        # Nova análise
         mot = {k: st.session_state.get(f'usar_{k}', True) for k in [
             'sniper_elite','elite_master','sniper','mineracao','giro','gap','sequencia','terminais',
             'simetria','repeticao','ciclo','par_impar','duzia_dom','gap3',
@@ -644,7 +663,6 @@ class SistemaBot:
         self.historico_entradas = []
         self.historico_numeros.clear()
         self.historico_lucky.clear()
-        self.historico_mults.clear()
         self.entrada_ativa = None
         self.green_repeticoes = 0
         self.erro_aguardando = False
@@ -825,100 +843,15 @@ if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo
         st.session_state.sistema.processar_novo_numero(resultado)
         salvar_resultado_em_arquivo(st.session_state.historico); salvar_sessao()
 
-# ==========================================
-# 🆕 ÚLTIMOS NÚMEROS COM RAIOS (VISUAL MELHORADO)
-# ==========================================
-st.subheader("🔁 Últimos Números")
+# Últimos números
+st.subheader("🔁 Últimos")
 if st.session_state.historico:
-    # Pega os últimos 12 itens do histórico
-    ultimos = st.session_state.historico[-12:]
-    
-    # Cria colunas para exibir em grade
-    cols = st.columns(6)
-    
-    for i, item in enumerate(reversed(ultimos)):
-        col_idx = i % 6
-        with cols[col_idx]:
-            n = item['number'] if isinstance(item, dict) else item
-            
-            # Verifica se é Lucky Number e pega o multiplicador
-            is_lucky = False
-            mult_val = None
-            if isinstance(item, dict):
-                lucky_nums = item.get('luckyNumbers', [])
-                lucky_mults = item.get('luckyMultipliers', {})
-                if n in lucky_nums:
-                    is_lucky = True
-                    mult_val = lucky_mults.get(n)
-            
-            # 🆕 Exibe o número com destaque para Lucky
-            if is_lucky:
-                # Número com raio - destaque dourado
-                mult_str = f"{mult_val}x" if mult_val else ""
-                st.markdown(f"""
-                <div style="
-                    background: linear-gradient(135deg, #1a1a2e, #2d2d44);
-                    border: 2px solid #f0c040;
-                    border-radius: 12px;
-                    padding: 8px 4px;
-                    text-align: center;
-                    margin: 2px 0;
-                    box-shadow: 0 0 10px rgba(240, 192, 64, 0.3);
-                ">
-                    <div style="font-size: 0.65rem; color: #f0c040;">⚡ LUCKY</div>
-                    <div style="font-size: 1.5rem; font-weight: 700; color: #f0c040;">{n}</div>
-                    <div style="font-size: 0.8rem; color: #f0c040; font-weight: 600;">{mult_str}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                # Número normal
-                cor = "#4fc3f7" if n == 0 else "#66bb6a" if n in {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36} else "#ef5350"
-                st.markdown(f"""
-                <div style="
-                    background: linear-gradient(135deg, #1a1a2e, #252540);
-                    border: 2px solid {cor};
-                    border-radius: 12px;
-                    padding: 12px 4px;
-                    text-align: center;
-                    margin: 2px 0;
-                ">
-                    <div style="font-size: 1.4rem; font-weight: 700; color: {cor};">{n}</div>
-                </div>
-                """, unsafe_allow_html=True)
-else:
-    st.info("Nenhum número ainda.")
-
-# ==========================================
-# ESTATÍSTICAS DE RAIOS
-# ==========================================
-if st.session_state.historico:
-    # Conta raios nos últimos 20 giros
-    raios_recentes = []
-    for item in st.session_state.historico[-20:]:
-        if isinstance(item, dict):
-            n = item.get('number')
-            lucky_nums = item.get('luckyNumbers', [])
-            lucky_mults = item.get('luckyMultipliers', {})
-            if n in lucky_nums:
-                raios_recentes.append({'numero': n, 'multiplicador': lucky_mults.get(n, '?')})
-    
-    if raios_recentes:
-        with st.expander(f"⚡ Raios Recentes ({len(raios_recentes)} nos últimos 20 giros)", expanded=False):
-            cols = st.columns(min(6, len(raios_recentes)))
-            for i, raio in enumerate(reversed(raios_recentes[-6:])):
-                with cols[i]:
-                    st.markdown(f"""
-                    <div style="
-                        background: linear-gradient(135deg, #2d2d44, #1a1a2e);
-                        border: 2px solid #f0c040;
-                        border-radius: 10px;
-                        padding: 6px;
-                        text-align: center;
-                    ">
-                        <span style="font-size: 1.2rem; font-weight: 700; color: #f0c040;">⚡ {raio['numero']}</span><br>
-                        <span style="font-size: 0.8rem; color: #f0c040;">{raio['multiplicador']}x</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+    fmt = []
+    for item in st.session_state.historico[-10:]:
+        n = item['number'] if isinstance(item, dict) else item
+        l = isinstance(item, dict) and n in item.get('luckyNumbers', [])
+        fmt.append(f"⚡**{n}**" if l else str(n))
+    st.write(" | ".join(fmt))
 
 # Status
 sis = st.session_state.sistema
