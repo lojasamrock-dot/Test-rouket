@@ -8,6 +8,7 @@ from streamlit_autorefresh import st_autorefresh
 import pickle
 from datetime import datetime
 import numpy as np
+import pandas as pd
 
 # =============================
 # CONFIGURAÇÕES DE PERSISTÊNCIA
@@ -57,6 +58,7 @@ def salvar_sessao():
             'usar_par_impar': st.session_state.get('usar_par_impar', True),
             'usar_duzia_dom': st.session_state.get('usar_duzia_dom', True),
             'usar_gap3': st.session_state.get('usar_gap3', True),
+            'usar_elite_master': st.session_state.get('usar_elite_master', True),
             'modo_ia': st.session_state.sistema.modo_ia,
             'entropia_atual': st.session_state.sistema.entropia_atual,
             'erros_consecutivos': st.session_state.sistema.erros_consecutivos,
@@ -163,6 +165,10 @@ class RoletaBase:
         self.pretos = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
         self.pares = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36}
         self.impares = {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35}
+        # Setores do cilindro (roleta francesa)
+        self.voisins = {22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25}
+        self.tiers = {27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33}
+        self.orphelins = {1, 20, 14, 31, 9, 17, 34, 6}
     
     def get_vizinhos(self, numero, raio=2):
         if numero not in self.race:
@@ -177,7 +183,6 @@ class RoletaBase:
         return 0 if numero == 0 else (numero - 1) % 3 + 1
     
     def get_vizinhos_roleta(self, numero, distancia=1):
-        """Retorna vizinhos na roleta (sequência física)"""
         if numero not in self.race:
             return []
         idx = self.race.index(numero)
@@ -185,6 +190,141 @@ class RoletaBase:
         for i in range(-distancia, distancia + 1):
             vizinhos.append(self.race[(idx + i) % 37])
         return vizinhos
+    
+    def get_setor_cilindro(self, numero):
+        """Retorna o setor do cilindro (Voisins, Tiers, Orphelins)"""
+        if numero in self.voisins:
+            return "Voisins"
+        elif numero in self.tiers:
+            return "Tiers"
+        elif numero in self.orphelins:
+            return "Orphelins"
+        return "Zero"
+
+
+# =============================
+# 🆕 ANALISADOR ELITE MASTER
+# =============================
+class AnalisadorEliteMaster:
+    """
+    Motor de análise baseado em frequência observada no histórico real.
+    Identifica padrões de inércia, vácuo, setores e terminais.
+    """
+    def __init__(self, roleta):
+        self.roleta = roleta
+        self.vermelhos_list = list(roleta.vermelhos)
+    
+    def get_info(self, n):
+        """Extrai propriedades de um número."""
+        if n == 0:
+            return {"cor": "Verde", "par": "Zero", "duzia": 0, "col": 0, "setor": "Voisins", "term": 0}
+        
+        info = {
+            "cor": "Vermelho" if n in self.roleta.vermelhos else "Preto",
+            "par": "Par" if n % 2 == 0 else "Ímpar",
+            "duzia": (n - 1) // 12 + 1,
+            "col": (n - 1) % 3 + 1,
+            "term": n % 10
+        }
+        
+        info["setor"] = self.roleta.get_setor_cilindro(n)
+        return info
+    
+    def analisar(self, historico, janela=5):
+        """
+        Recebe o histórico completo e analisa os últimos 'janela' números.
+        Retorna base de apostas baseada nos gatilhos encontrados.
+        """
+        if len(historico) < janela:
+            return None
+        
+        numeros_janela = historico[-janela:]
+        dados = [self.get_info(n) for n in numeros_janela]
+        gatilhos = []
+        base = set()
+        forca = 0
+        
+        # 1. GATILHO DE MOMENTUM (Cores)
+        cores = [d['cor'] for d in dados]
+        for item in ["Vermelho", "Preto"]:
+            if cores.count(item) >= 4:
+                gatilhos.append(f"🔥 MOMENTUM: {item}")
+                # Aposta na cor dominante
+                if item == "Vermelho":
+                    base.update(list(self.roleta.vermelhos)[:8])
+                else:
+                    base.update(list(self.roleta.pretos)[:8])
+                forca += 40
+        
+        # 2. GATILHO DE ONDA DE PARIDADE
+        pares = [d['par'] for d in dados]
+        for item in ["Par", "Ímpar"]:
+            if pares.count(item) >= 4:
+                gatilhos.append(f"📊 ONDA: {item}")
+                if item == "Par":
+                    base.update(list(self.roleta.pares)[:8])
+                else:
+                    base.update(list(self.roleta.impares)[:8])
+                forca += 35
+        
+        # 3. GATILHO DE VÁCUO (Dúzias)
+        duzias_presentes = set(d['duzia'] for d in dados if d['duzia'] != 0)
+        for d in [1, 2, 3]:
+            if d not in duzias_presentes:
+                inicio = (d - 1) * 12 + 1
+                fim = d * 12
+                numeros_duzia = set(range(inicio, fim + 1))
+                # Pega os números da dúzia que não saíram
+                nao_sairam = numeros_duzia - set(historico[-10:])
+                if nao_sairam:
+                    base.update(list(nao_sairam)[:6])
+                else:
+                    base.update(list(numeros_duzia)[:6])
+                gatilhos.append(f"🕳️ VÁCUO: Dúzia {d}")
+                forca += 35
+        
+        # 4. GATILHO DE SETORES (Cilindro)
+        setores = [d['setor'] for d in dados]
+        if setores.count("Voisins") >= 3:
+            gatilhos.append("🎡 SETOR: Voisins")
+            base.update(list(self.roleta.voisins)[:8])
+            forca += 35
+        elif setores.count("Tiers") >= 3:
+            gatilhos.append("⚡ SETOR: Tiers")
+            base.update(list(self.roleta.tiers)[:8])
+            forca += 35
+        
+        # 5. GATILHO DE TERMINAIS
+        terminais = [d['term'] for d in dados]
+        term_count = Counter(terminais)
+        term_dom, freq = term_count.most_common(1)[0]
+        if freq >= 2:
+            numeros_terminal = [n for n in range(37) if n % 10 == term_dom]
+            base.update(numeros_terminal[:5])
+            gatilhos.append(f"🔢 TERMINAL: {term_dom}")
+            forca += 25
+        
+        # 6. GATILHO DE INVERSÃO (Contra-tendência)
+        if len(set(cores)) == 1 and len(dados) >= 4:
+            # Todos da mesma cor - apostar na inversão
+            cor_oposta = "Preto" if cores[0] == "Vermelho" else "Vermelho"
+            if cor_oposta == "Vermelho":
+                recentes_opostos = [n for n in historico[-20:] if n in self.roleta.vermelhos]
+            else:
+                recentes_opostos = [n for n in historico[-20:] if n in self.roleta.pretos]
+            if recentes_opostos:
+                base.update(recentes_opostos[-6:])
+                gatilhos.append(f"🔄 INVERSÃO: {cor_oposta}")
+                forca += 30
+        
+        if len(base) == 0:
+            return None
+        
+        return {
+            'base': base,
+            'forca': min(100, forca),
+            'estrategias': gatilhos[:4]
+        }
 
 
 # =============================
@@ -333,7 +473,7 @@ class EstrategiaTerminais:
 
 
 # =============================
-# ESTRATÉGIA 7: SIMETRIA (CORRIGIDA)
+# ESTRATÉGIA 7: SIMETRIA
 # =============================
 class EstrategiaSimetria:
     def __init__(self, roleta):
@@ -385,14 +525,9 @@ class EstrategiaSimetria:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 8: REPETIÇÃO IMEDIATA
+# ESTRATÉGIA 8: REPETIÇÃO IMEDIATA
 # =============================
 class EstrategiaRepeticao:
-    """
-    Padrão: Números que se repetem no giro seguinte
-    Gatilho: Último número = penúltimo número
-    Ação: Aposta no número repetido + vizinhos na roleta
-    """
     def __init__(self, roleta):
         self.roleta = roleta
     
@@ -407,7 +542,6 @@ class EstrategiaRepeticao:
         forca = 0
         estrategias = []
         
-        # Gatilho 1: Número repetiu (ex: 12→12)
         if ultimo == penultimo:
             base.add(ultimo)
             vizinhos = self.roleta.get_vizinhos_roleta(ultimo, 1)
@@ -415,21 +549,15 @@ class EstrategiaRepeticao:
             forca += 55
             estrategias.append(f"Repetição {ultimo}")
         
-        # Gatilho 2: Número repetiu com gap 1 (ex: 5→X→5)
         if len(historico) >= 3 and historico[-3] == ultimo:
             base.add(ultimo)
             base.add(historico[-2])
             forca += 45
             estrategias.append(f"Gap1 {ultimo}")
         
-        # Gatilho 3: Verifica se há padrão de repetição nos últimos 20 giros
         if len(historico) >= 5:
-            repeticoes = 0
-            for i in range(len(historico) - 1):
-                if historico[i] == historico[i+1]:
-                    repeticoes += 1
+            repeticoes = sum(1 for i in range(len(historico) - 1) if historico[i] == historico[i+1])
             if repeticoes >= 2:
-                # Padrão de repetição frequente - aposta no último
                 base.add(ultimo)
                 forca += 30
                 estrategias.append("Padrão Repetição")
@@ -441,14 +569,9 @@ class EstrategiaRepeticao:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 9: CICLO DE RETORNO
+# ESTRATÉGIA 9: CICLO DE RETORNO
 # =============================
 class EstrategiaCicloRetorno:
-    """
-    Padrão: Números que retornam após 20-40 giros
-    Gatilho: Número apareceu 2x ou mais no histórico total
-    Ação: Aposta nos números que estão voltando
-    """
     def __init__(self, roleta):
         self.roleta = roleta
     
@@ -456,18 +579,14 @@ class EstrategiaCicloRetorno:
         if len(historico) < 20:
             return None
         
-        # Encontra números que apareceram múltiplas vezes
         freq_total = Counter(historico)
         numeros_repetidos = [n for n, c in freq_total.items() if c >= 3]
         
         if not numeros_repetidos:
             return None
         
-        # Verifica os últimos 10 giros
         recentes = historico[-10:]
         freq_recentes = Counter(recentes)
-        
-        # Números quentes que já repetiram antes
         quentes_repetidos = [n for n in numeros_repetidos if freq_recentes.get(n, 0) >= 1]
         
         if not quentes_repetidos:
@@ -476,7 +595,6 @@ class EstrategiaCicloRetorno:
         base = set(quentes_repetidos[:4])
         estrategias = [f"Ciclo {n}" for n in quentes_repetidos[:3]]
         
-        # Adiciona vizinhos dos números cíclicos
         for n in quentes_repetidos[:2]:
             vizinhos = self.roleta.get_vizinhos(n, 1)
             base.update(vizinhos[:2])
@@ -487,14 +605,9 @@ class EstrategiaCicloRetorno:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 10: PAR/ÍMPAR
+# ESTRATÉGIA 10: PAR/ÍMPAR
 # =============================
 class EstrategiaParImpar:
-    """
-    Padrão: Sequências de 3+ pares ou 3+ ímpares
-    Gatilho: 3+ números do mesmo tipo seguidos
-    Ação: Aposta no tipo oposto (inversão)
-    """
     def __init__(self, roleta):
         self.roleta = roleta
     
@@ -502,7 +615,6 @@ class EstrategiaParImpar:
         if len(historico) < 4:
             return None
         
-        # Classifica últimos giros
         ultimos_tipos = []
         for n in historico[-10:]:
             if n == 0:
@@ -512,7 +624,6 @@ class EstrategiaParImpar:
             else:
                 ultimos_tipos.append('impar')
         
-        # Conta sequência atual
         seq_atual = 0
         tipo_atual = ultimos_tipos[-1]
         for t in reversed(ultimos_tipos):
@@ -521,17 +632,12 @@ class EstrategiaParImpar:
             else:
                 break
         
-        # Gatilho: 3+ do mesmo tipo
         if seq_atual >= 3 and tipo_atual in ['par', 'impar']:
-            # Aposta no tipo oposto
             tipo_alvo = 'par' if tipo_atual == 'impar' else 'impar'
             alvo_set = self.roleta.pares if tipo_alvo == 'par' else self.roleta.impares
-            
-            # Filtra pelos números que saíram recentemente
             recentes = set(historico[-15:])
             base = alvo_set.intersection(recentes)
             
-            # Se não tem sobreposição suficiente, pega todos do tipo
             if len(base) < 4:
                 base = set(list(alvo_set)[:8])
             
@@ -544,14 +650,9 @@ class EstrategiaParImpar:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 11: DÚZIA DOMINANTE
+# ESTRATÉGIA 11: DÚZIA DOMINANTE
 # =============================
 class EstrategiaDuziaDominante:
-    """
-    Padrão: Concentração de números em uma dúzia
-    Gatilho: Dúzia com 5+ números nos últimos 10 giros
-    Ação: Aposta nos números da dúzia que ainda não saíram
-    """
     def __init__(self):
         self.duzias = {
             1: set(range(1, 13)),
@@ -576,7 +677,6 @@ class EstrategiaDuziaDominante:
         duzia_dom, freq = contagem.most_common(1)[0]
         
         if freq >= 4:
-            # Pega números da dúzia que não saíram nos últimos 5 giros
             numeros_duzia = self.duzias[duzia_dom]
             nao_sairam = numeros_duzia - set(historico[-5:])
             
@@ -584,7 +684,6 @@ class EstrategiaDuziaDominante:
             if nao_sairam:
                 base.update(list(nao_sairam)[:5])
             
-            # Adiciona também os que saíram (quentes)
             quentes_duzia = numeros_duzia.intersection(set(historico[-5:]))
             base.update(list(quentes_duzia)[:3])
             
@@ -597,14 +696,9 @@ class EstrategiaDuziaDominante:
 
 
 # =============================
-# 🆕 ESTRATÉGIA 12: GAP 3 GIROS
+# ESTRATÉGIA 12: GAP 3 GIROS
 # =============================
 class EstrategiaGap3:
-    """
-    Padrão: Número que repete após 3 giros
-    Gatilho: N[i] == N[i+3]
-    Ação: Aposta no número + vizinhos
-    """
     def __init__(self, roleta):
         self.roleta = roleta
     
@@ -617,7 +711,6 @@ class EstrategiaGap3:
         estrategias = []
         forca = 0
         
-        # Gap 3: número repete após 3 giros
         if len(historico) >= 4 and historico[-4] == ultimo:
             base.add(ultimo)
             base.add(historico[-2])
@@ -625,13 +718,11 @@ class EstrategiaGap3:
             forca += 45
             estrategias.append(f"Gap3: {ultimo}")
         
-        # Gap 4: número repete após 4 giros
         if len(historico) >= 5 and historico[-5] == ultimo:
             base.add(ultimo)
             forca += 35
             estrategias.append(f"Gap4: {ultimo}")
         
-        # Gap 5: número repete após 5 giros
         if len(historico) >= 6 and historico[-6] == ultimo:
             base.add(ultimo)
             base.add(historico[-3])
@@ -641,7 +732,6 @@ class EstrategiaGap3:
         if len(base) == 0:
             return None
         
-        # Adiciona vizinhos
         for n in list(base)[:2]:
             base.update(self.roleta.get_vizinhos(n, 1)[:2])
         
@@ -649,11 +739,12 @@ class EstrategiaGap3:
 
 
 # =============================
-# BOT UNIFICADO (12 ESTRATÉGIAS)
+# BOT UNIFICADO (13 ESTRATÉGIAS)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
         self.roleta = RoletaBase()
+        self.elite_master = AnalisadorEliteMaster(self.roleta)
         self.sniper = EstrategiaSniper(self.roleta)
         self.mineracao = EstrategiaMineracao()
         self.giro = EstrategiaPorGiro(self.roleta)
@@ -697,13 +788,15 @@ class RoletaBotUnificado:
     def gerar_entrada(self, motores_ativos=None):
         if motores_ativos is None:
             motores_ativos = {k: True for k in [
-                'sniper', 'mineracao', 'giro', 'gap', 'sequencia', 'terminais', 'simetria',
+                'elite_master', 'sniper', 'mineracao', 'giro', 'gap', 'sequencia', 'terminais', 'simetria',
                 'repeticao', 'ciclo', 'par_impar', 'duzia_dom', 'gap3'
             ]}
         
         resultados = []
         
+        # Ordem de prioridade: Elite Master primeiro (maior peso)
         estrategias = [
+            ('Elite Master', self.elite_master, [list(self.historico)], 'elite_master'),
             ('Repetição', self.repeticao, [list(self.historico)], 'repeticao'),
             ('Ciclo Retorno', self.ciclo, [list(self.historico)], 'ciclo'),
             ('Par/Ímpar', self.par_impar, [list(self.historico)], 'par_impar'),
@@ -723,11 +816,12 @@ class RoletaBotUnificado:
                 if motores_ativos.get(key, True) and len(self.historico) >= 1:
                     r = estrategia.analisar(*args)
                     if r and len(r.get('base', set())) >= 1:
-                        resultados.append((nome, r))
+                        # Elite Master tem peso 2x
+                        peso = 2 if key == 'elite_master' else 1
+                        resultados.append((nome, r, peso))
             except:
                 pass
         
-        # Se nenhum motor ativou, cria entrada básica
         if not resultados:
             freq = Counter(self.historico[-20:]) if len(self.historico) >= 5 else Counter(self.historico)
             quentes = [n for n, _ in freq.most_common(8)]
@@ -745,22 +839,24 @@ class RoletaBotUnificado:
                 'repeticao': False,
             }
         
-        # Fusão dos resultados
+        # Fusão com pesos
         base_final = set()
         todas_estrategias = []
         forca_total = 0
         motor_principal = resultados[0][0]
         maior_forca = 0
         
-        for nome, r in resultados:
-            base_final.update(r['base'])
+        for nome, r, peso in resultados:
+            for _ in range(peso):
+                base_final.update(r['base'])
             todas_estrategias.extend(r.get('estrategias', []))
-            forca_total += r['forca']
+            forca_total += r['forca'] * peso
             if r['forca'] > maior_forca:
                 maior_forca = r['forca']
                 motor_principal = nome
         
-        forca_media = int(forca_total / len(resultados)) if resultados else 25
+        pesos_total = sum(p for _, _, p in resultados)
+        forca_media = int(forca_total / pesos_total) if pesos_total > 0 else 25
         
         max_n = st.session_state.get('max_n_apostas', 10)
         min_n = st.session_state.get('min_n_apostas', 5)
@@ -865,6 +961,7 @@ class SistemaBot:
             'par_impar': st.session_state.get('usar_par_impar', True),
             'duzia_dom': st.session_state.get('usar_duzia_dom', True),
             'gap3': st.session_state.get('usar_gap3', True),
+            'elite_master': st.session_state.get('usar_elite_master', True),
         }
         
         self.entrada_ativa = self.bot.gerar_entrada(motores_ativos)
@@ -934,8 +1031,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Bot Unificado — 12 Estratégias", layout="centered")
-st.title("🎯 Bot Unificado — 12 Estratégias com Padrões Reais")
+st.set_page_config(page_title="🎯 Bot Unificado — 13 Estratégias + Elite Master", layout="centered")
+st.title("🎯 Bot Unificado — 13 Estratégias + Elite Master")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -974,6 +1071,7 @@ defaults = {
     'usar_gap': True, 'usar_sequencia': True, 'usar_terminais': True,
     'usar_simetria': True, 'usar_repeticao': True, 'usar_ciclo': True,
     'usar_par_impar': True, 'usar_duzia_dom': True, 'usar_gap3': True,
+    'usar_elite_master': True,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -994,14 +1092,18 @@ if "telegram_chat_id" not in st.session_state:
 
 # Sidebar
 st.sidebar.title("⚙️ Configurações")
-st.sidebar.success("✅ **ENTRADA TODO GIRO - 12 ESTRATÉGIAS**")
+st.sidebar.success("✅ **13 ESTRATÉGIAS + ELITE MASTER**")
 
-with st.sidebar.expander("🆕 Novas Estratégias (Histórico)", expanded=True):
-    st.session_state.usar_repeticao = st.checkbox("🔄 Repetição Imediata", value=st.session_state.usar_repeticao, help="Números que repetem no giro seguinte")
-    st.session_state.usar_ciclo = st.checkbox("🔁 Ciclo de Retorno", value=st.session_state.usar_ciclo, help="Números que retornam após 20-40 giros")
-    st.session_state.usar_par_impar = st.checkbox("⚖️ Par/Ímpar", value=st.session_state.usar_par_impar, help="Sequência de 3+ pares ou ímpares")
-    st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dominante", value=st.session_state.usar_duzia_dom, help="Dúzia com mais números em 10 giros")
-    st.session_state.usar_gap3 = st.checkbox("⏭️ Gap 3 Giros", value=st.session_state.usar_gap3, help="Número que repete após 3 giros")
+with st.sidebar.expander("🧠 Elite Master (Prioritário)", expanded=True):
+    st.session_state.usar_elite_master = st.checkbox("👑 Elite Master", value=st.session_state.usar_elite_master, help="🔥 MOMENTUM | 🕳️ VÁCUO | 🎡 SETORES | 🔢 TERMINAIS")
+    st.caption("Análise de inércia, vácuo, setores do cilindro e terminais")
+
+with st.sidebar.expander("🆕 Estratégias do Histórico", expanded=False):
+    st.session_state.usar_repeticao = st.checkbox("🔄 Repetição Imediata", value=st.session_state.usar_repeticao)
+    st.session_state.usar_ciclo = st.checkbox("🔁 Ciclo de Retorno", value=st.session_state.usar_ciclo)
+    st.session_state.usar_par_impar = st.checkbox("⚖️ Par/Ímpar", value=st.session_state.usar_par_impar)
+    st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dominante", value=st.session_state.usar_duzia_dom)
+    st.session_state.usar_gap3 = st.checkbox("⏭️ Gap 3 Giros", value=st.session_state.usar_gap3)
 
 with st.sidebar.expander("🎯 Estratégias Originais", expanded=False):
     st.session_state.usar_sniper = st.checkbox("🎯 Sniper", value=st.session_state.usar_sniper)
@@ -1093,7 +1195,7 @@ c1.metric("🟢 Acertos", sis.acertos)
 c2.metric("🔴 Erros", sis.erros)
 c3.metric("📊 Total", sis.acertos + sis.erros)
 c4.metric("⚠️ Erros seg.", sis.erros_consecutivos)
-c5.metric("🤖 Estrat.", "12")
+c5.metric("🤖 Estrat.", "13")
 
 if sis.acertos + sis.erros > 0:
     taxa = sis.acertos / (sis.acertos + sis.erros) * 100
