@@ -1,3 +1,4 @@
+
 import streamlit as st
 import json
 import os
@@ -47,15 +48,11 @@ def salvar_sessao():
             'min_n_apostas': st.session_state.get('min_n_apostas', 5),
             'usar_sniper': st.session_state.get('usar_sniper', True),
             'usar_mineracao': st.session_state.get('usar_mineracao', True),
-            'usar_leque': st.session_state.get('usar_leque', True),
             'usar_giro': st.session_state.get('usar_giro', True),
             'usar_gap': st.session_state.get('usar_gap', True),
             'usar_sequencia': st.session_state.get('usar_sequencia', True),
-            'usar_quadrantes': st.session_state.get('usar_quadrantes', True),
             'usar_terminais': st.session_state.get('usar_terminais', True),
             'usar_simetria': st.session_state.get('usar_simetria', True),
-            'usar_ia_adaptativa': st.session_state.get('usar_ia_adaptativa', True),
-            'janela_leque': st.session_state.get('janela_leque', 15),
             'modo_ia': st.session_state.sistema.modo_ia,
             'entropia_atual': st.session_state.sistema.entropia_atual,
             'erros_consecutivos': st.session_state.sistema.erros_consecutivos,
@@ -179,95 +176,7 @@ class RoletaBase:
 
 
 # =============================
-# IA ADAPTATIVA
-# =============================
-class EstrategiaIAAdaptativa:
-    def __init__(self, window=50):
-        self.window = window
-        self.buffer = deque(maxlen=window)
-        self.transicoes = {}
-        self.historico_completo = []
-    
-    def atualizar(self, numero):
-        if self.historico_completo:
-            ultimo = self.historico_completo[-1]
-            if ultimo not in self.transicoes:
-                self.transicoes[ultimo] = []
-            self.transicoes[ultimo].append(numero)
-        self.historico_completo.append(numero)
-        self.buffer.append(numero)
-    
-    def freq_score(self):
-        if len(self.buffer) == 0:
-            return {n: 0 for n in range(37)}
-        contagem = Counter(self.buffer)
-        total = len(self.buffer)
-        return {n: contagem.get(n, 0) / total for n in range(37)}
-    
-    def atraso_score(self):
-        if len(self.historico_completo) == 0:
-            return {n: 0 for n in range(37)}
-        atraso = {}
-        total = len(self.historico_completo)
-        for n in range(37):
-            aparicoes = [i for i, x in enumerate(self.historico_completo) if x == n]
-            atraso[n] = 1.0 if not aparicoes else min(1.0, (total - aparicoes[-1] - 1) / total)
-        return atraso
-    
-    def transicao_score(self):
-        if len(self.historico_completo) < 2:
-            return {n: 0 for n in range(37)}
-        ultimo = self.historico_completo[-1]
-        if ultimo not in self.transicoes or len(self.transicoes[ultimo]) == 0:
-            return {n: 0 for n in range(37)}
-        contagem = Counter(self.transicoes[ultimo])
-        total = sum(contagem.values())
-        return {n: contagem.get(n, 0) / total for n in range(37)}
-    
-    def get_entropia(self):
-        freq = self.freq_score()
-        probs = np.array(list(freq.values()))
-        probs = probs[probs > 0]
-        if len(probs) == 0:
-            return 5.0
-        return (-np.sum(probs * np.log(probs)) / np.log(37)) * 5
-    
-    def analisar(self, historico, top_n=10):
-        if len(historico) < 2:
-            return None
-        
-        self.historico_completo = list(historico)
-        self.buffer = deque(list(historico)[-self.window:], maxlen=self.window)
-        
-        self.transicoes = {}
-        for i in range(len(self.historico_completo) - 1):
-            if self.historico_completo[i] not in self.transicoes:
-                self.transicoes[self.historico_completo[i]] = []
-            self.transicoes[self.historico_completo[i]].append(self.historico_completo[i + 1])
-        
-        freq = self.freq_score()
-        atraso = self.atraso_score()
-        trans = self.transicao_score()
-        
-        score = {}
-        for n in range(37):
-            score[n] = 0.35 * freq.get(n, 0) + 0.35 * atraso.get(n, 0) + 0.30 * trans.get(n, 0)
-        
-        ranking = sorted(score.items(), key=lambda x: x[1], reverse=True)
-        entropia = self.get_entropia()
-        
-        forca = 50 if entropia < 2.8 else 40 if entropia < 3.3 else 30
-        
-        return {
-            'base': set([n for n, _ in ranking[:top_n]]),
-            'forca': min(100, max(25, forca)),
-            'estrategias': [f"IA Adaptativa"],
-            'entropia': entropia
-        }
-
-
-# =============================
-# ESTRATÉGIAS
+# ESTRATÉGIA 1: SNIPER
 # =============================
 class EstrategiaSniper:
     def __init__(self, roleta):
@@ -304,6 +213,9 @@ class EstrategiaSniper:
         return {'base': base, 'forca': min(100, forca), 'estrategias': ['Sniper']} if forca > 0 else None
 
 
+# =============================
+# ESTRATÉGIA 2: MINERAÇÃO
+# =============================
 class EstrategiaMineracao:
     def __init__(self):
         self.transicoes = defaultdict(list)
@@ -324,22 +236,9 @@ class EstrategiaMineracao:
         return None
 
 
-class EstrategiaLeque:
-    def __init__(self, roleta):
-        self.roleta = roleta
-    
-    def analisar(self, historico, janela=15):
-        if len(historico) < 3:
-            return None
-        
-        recentes = historico[-janela:] if len(historico) >= janela else historico
-        macro = self.roleta.get_vizinhos(recentes[-1], 5)
-        acertos = sum(1 for n in recentes if n in macro)
-        
-        leque = 4 if acertos >= 3 else 2 if acertos >= 1 else 1
-        return {'base': set(self.roleta.get_vizinhos(recentes[-1], leque)), 'forca': 40 if acertos >= 3 else 30, 'estrategias': [f'Leque {leque}']}
-
-
+# =============================
+# ESTRATÉGIA 3: ANÁLISE POR GIRO
+# =============================
 class EstrategiaPorGiro:
     def __init__(self, roleta):
         self.roleta = roleta
@@ -360,6 +259,9 @@ class EstrategiaPorGiro:
         return {'base': base, 'forca': 30, 'estrategias': ['Análise Giro']}
 
 
+# =============================
+# ESTRATÉGIA 4: GAP
+# =============================
 class EstrategiaGap:
     def analisar(self, historico):
         if len(historico) < 3:
@@ -370,9 +272,21 @@ class EstrategiaGap:
             return {'base': {ultimo, historico[-2]}, 'forca': 35, 'estrategias': ['Gap1']}
         if len(historico) >= 4 and historico[-4] == ultimo:
             return {'base': {ultimo, historico[-2], historico[-3]}, 'forca': 25, 'estrategias': ['Gap2']}
+        
+        recentes = historico[-15:]
+        gaps = []
+        for i in range(len(recentes) - 2):
+            if recentes[i] == recentes[i + 2]:
+                gaps.append(recentes[i])
+        if gaps:
+            return {'base': set([n for n, _ in Counter(gaps).most_common(4)]), 'forca': 25, 'estrategias': ['Gap Padrão']}
+        
         return None
 
 
+# =============================
+# ESTRATÉGIA 5: SEQUÊNCIA
+# =============================
 class EstrategiaSequencia:
     def __init__(self):
         self.padroes = defaultdict(list)
@@ -389,26 +303,9 @@ class EstrategiaSequencia:
         return {'base': set(previsao), 'forca': 30, 'estrategias': ['Sequência']} if len(previsao) >= 2 else None
 
 
-class EstrategiaCiclosQuadrantes:
-    def __init__(self):
-        self.quadrantes = {1: set(range(1,10)), 2: set(range(10,19)), 3: set(range(19,28)), 4: set(range(28,37))}
-    
-    def analisar(self, historico, janela=5):
-        if len(historico) < janela:
-            return None
-        
-        vistos = set()
-        for n in list(historico)[-janela:]:
-            for q, nums in self.quadrantes.items():
-                if n in nums:
-                    vistos.add(q)
-        
-        ausentes = set(self.quadrantes.keys()) - vistos
-        if ausentes:
-            return {'base': self.quadrantes[list(ausentes)[0]], 'forca': 30, 'estrategias': ['Quadrantes']}
-        return None
-
-
+# =============================
+# ESTRATÉGIA 6: TERMINAIS
+# =============================
 class EstrategiaTerminais:
     def __init__(self):
         self.terminais = {i: [n for n in range(37) if n % 10 == i] for i in range(10)}
@@ -423,6 +320,9 @@ class EstrategiaTerminais:
         return None
 
 
+# =============================
+# ESTRATÉGIA 7: SIMETRIA
+# =============================
 class EstrategiaSimetria:
     def __init__(self):
         self.espelhos = {12:21, 21:12, 13:31, 31:13, 23:32, 32:23, 1:10, 10:1, 2:20, 20:2, 3:30, 30:3}
@@ -435,19 +335,16 @@ class EstrategiaSimetria:
 
 
 # =============================
-# BOT UNIFICADO
+# BOT UNIFICADO (7 ESTRATÉGIAS)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
         self.roleta = RoletaBase()
-        self.ia = EstrategiaIAAdaptativa(50)
         self.sniper = EstrategiaSniper(self.roleta)
         self.mineracao = EstrategiaMineracao()
-        self.leque = EstrategiaLeque(self.roleta)
         self.giro = EstrategiaPorGiro(self.roleta)
         self.gap = EstrategiaGap()
         self.sequencia = EstrategiaSequencia()
-        self.quadrantes = EstrategiaCiclosQuadrantes()
         self.terminais = EstrategiaTerminais()
         self.simetria = EstrategiaSimetria()
         
@@ -466,8 +363,6 @@ class RoletaBotUnificado:
         if len(self.historico) > 200:
             self.historico = self.historico[-200:]
             self.lucky = self.lucky[-200:]
-        
-        self.ia.atualizar(numero)
     
     def atualizar_resultado(self, acerto):
         self.performance['historico'].append(1 if acerto else 0)
@@ -480,40 +375,32 @@ class RoletaBotUnificado:
         total = self.performance['acertos'] + self.performance['erros']
         return self.performance['acertos'] / total if total > 0 else 0
     
-    def get_entropia(self):
-        return self.ia.get_entropia()
-    
     def gerar_entrada(self, motores_ativos=None):
         """
         GERA UMA ENTRADA A CADA CHAMADA - SEMPRE RETORNA ALGO
-        Se nenhum motor ativar, gera entrada baseada em frequência simples
         """
         if motores_ativos is None:
-            motores_ativos = {k: True for k in ['ia', 'sniper', 'mineracao', 'leque', 'giro', 'gap', 'sequencia', 'quadrantes', 'terminais', 'simetria']}
+            motores_ativos = {k: True for k in ['sniper', 'mineracao', 'giro', 'gap', 'sequencia', 'terminais', 'simetria']}
         
         resultados = []
         
         # Executa todos os motores ativos
         estrategias = [
-            ('IA Adaptativa', self.ia, [list(self.historico), 10]),
             ('Sniper', self.sniper, [list(self.historico)]),
             ('Mineração', self.mineracao, [list(self.historico)]),
-            ('Leque', self.leque, [list(self.historico), st.session_state.get('janela_leque', 15)]),
             ('Giro', self.giro, [list(self.historico)]),
             ('Gap', self.gap, [list(self.historico)]),
             ('Sequência', self.sequencia, [list(self.historico)]),
-            ('Quadrantes', self.quadrantes, [self.historico]),
             ('Terminais', self.terminais, [list(self.historico)]),
             ('Simetria', self.simetria, [list(self.historico)]),
         ]
         
         for nome, estrategia, args in estrategias:
             try:
-                key = nome.lower().replace(' ', '_').replace('á', 'a').replace('ê', 'e').replace('ó', 'o')
+                key = nome.lower().replace(' ', '_').replace('ã', 'a').replace('ê', 'e').replace('ó', 'o').replace('ú', 'u').replace('ç', 'c')
                 key_map = {
-                    'ia_adaptativa': 'ia', 'sniper': 'sniper', 'mineracao': 'mineracao',
-                    'leque': 'leque', 'giro': 'giro', 'gap': 'gap', 'sequencia': 'sequencia',
-                    'quadrantes': 'quadrantes', 'terminais': 'terminais', 'simetria': 'simetria'
+                    'sniper': 'sniper', 'mineracao': 'mineracao', 'giro': 'giro',
+                    'gap': 'gap', 'sequencia': 'sequencia', 'terminais': 'terminais', 'simetria': 'simetria'
                 }
                 key = key_map.get(key, key)
                 
@@ -528,7 +415,7 @@ class RoletaBotUnificado:
         if not resultados:
             freq = Counter(self.historico[-20:]) if len(self.historico) >= 5 else Counter(self.historico)
             quentes = [n for n, _ in freq.most_common(8)]
-            atrasados = [n for n in range(37) if n not in [x for x in self.historico[-10:]]][:4]
+            atrasados = [n for n in range(37) if n not in self.historico[-10:]][:4]
             
             base = set(quentes[:6] + atrasados[:2])
             return {
@@ -550,7 +437,7 @@ class RoletaBotUnificado:
         maior_forca = 0
         
         for nome, r in resultados:
-            peso = 2 if nome == 'IA Adaptativa' else 1
+            peso = 1
             for _ in range(peso):
                 base_final.update(r['base'])
             todas_estrategias.extend(r.get('estrategias', []))
@@ -559,8 +446,7 @@ class RoletaBotUnificado:
                 maior_forca = r['forca']
                 motor_principal = nome
         
-        pesos_total = sum(2 if n == 'IA Adaptativa' else 1 for n, _ in resultados)
-        forca_media = int(forca_total / pesos_total) if pesos_total > 0 else 25
+        forca_media = int(forca_total / len(resultados)) if resultados else 25
         
         max_n = st.session_state.get('max_n_apostas', 10)
         min_n = st.session_state.get('min_n_apostas', 5)
@@ -591,7 +477,7 @@ class RoletaBotUnificado:
 
 
 # =============================
-# SISTEMA PRINCIPAL (SIMPLIFICADO)
+# SISTEMA PRINCIPAL
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -602,8 +488,8 @@ class SistemaBot:
         self.historico_entradas = []
         self.acertos = 0
         self.erros = 0
-        self.modo_ia = "MODERADO"
-        self.entropia_atual = 3.5
+        self.modo_ia = "ATIVO"
+        self.entropia_atual = 0
         self.erros_consecutivos = 0
         self.repeticoes_acerto_consecutivas = 0
         self.ultima_entrada_numeros = []
@@ -626,15 +512,6 @@ class SistemaBot:
         self.bot.atualizar(numero_real, lucky, lucky_mults)
         self.historico_numeros.append(numero_real)
         self.historico_lucky.append(lucky)
-        
-        # Atualiza entropia
-        self.entropia_atual = self.bot.get_entropia()
-        if self.entropia_atual < 2.8:
-            self.modo_ia = "AGRESSIVO"
-        elif self.entropia_atual < 3.3:
-            self.modo_ia = "MODERADO"
-        else:
-            self.modo_ia = "CONSERVADOR"
         
         # Verifica resultado da entrada anterior
         if self.entrada_ativa:
@@ -662,7 +539,6 @@ class SistemaBot:
             if acerto:
                 self.acertos += 1
                 self.erros_consecutivos = 0
-                # Guarda para possível green (mas não implementado por simplicidade)
                 self.ultima_entrada_numeros = self.entrada_ativa.get('numeros_apostar', [])
                 self.ultima_entrada_forca = self.entrada_ativa.get('forca_real', 0)
                 self.ultima_entrada_motor = self.entrada_ativa.get('motor', '')
@@ -677,14 +553,11 @@ class SistemaBot:
         # GERA NOVA ENTRADA (SEMPRE!)
         # ==========================================
         motores_ativos = {
-            'ia': st.session_state.get('usar_ia_adaptativa', True),
             'sniper': st.session_state.get('usar_sniper', True),
             'mineracao': st.session_state.get('usar_mineracao', True),
-            'leque': st.session_state.get('usar_leque', True),
             'giro': st.session_state.get('usar_giro', True),
             'gap': st.session_state.get('usar_gap', True),
             'sequencia': st.session_state.get('usar_sequencia', True),
-            'quadrantes': st.session_state.get('usar_quadrantes', True),
             'terminais': st.session_state.get('usar_terminais', True),
             'simetria': st.session_state.get('usar_simetria', True),
         }
@@ -756,8 +629,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Bot Unificado — Entrada Todo Giro", layout="centered")
-st.title("🎯 Bot Unificado — Entrada Todo Giro")
+st.set_page_config(page_title="🎯 Bot Unificado — 7 Estratégias", layout="centered")
+st.title("🎯 Bot Unificado — 7 Estratégias")
 
 # Inicializa sistema
 if "sistema" not in st.session_state or st.session_state.sistema is None:
@@ -773,8 +646,6 @@ if dados:
     sis.acertos = dados.get('sistema_acertos', 0)
     sis.erros = dados.get('sistema_erros', 0)
     sis.erros_consecutivos = dados.get('erros_consecutivos', 0)
-    sis.modo_ia = dados.get('modo_ia', 'MODERADO')
-    sis.entropia_atual = dados.get('entropia_atual', 3.5)
     
     for num, lucky in zip(dados.get('historico_numeros', []), dados.get('historico_lucky', [])):
         sis.bot.atualizar(num, lucky)
@@ -799,11 +670,9 @@ defaults = {
     'modo_automatico': True,
     'max_n_apostas': 10,
     'min_n_apostas': 5,
-    'usar_sniper': True, 'usar_mineracao': True, 'usar_leque': True,
+    'usar_sniper': True, 'usar_mineracao': True,
     'usar_giro': True, 'usar_gap': True, 'usar_sequencia': True,
-    'usar_quadrantes': True, 'usar_terminais': True, 'usar_simetria': True,
-    'usar_ia_adaptativa': True,
-    'janela_leque': 15,
+    'usar_terminais': True, 'usar_simetria': True,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -829,22 +698,18 @@ st.sidebar.title("⚙️ Configurações")
 
 st.sidebar.success("✅ **MODO: ENTRADA TODO GIRO**")
 
-with st.sidebar.expander("🤖 Motores", expanded=True):
-    st.session_state.usar_ia_adaptativa = st.checkbox("🧠 IA Adaptativa", value=st.session_state.usar_ia_adaptativa)
+with st.sidebar.expander("🤖 Motores (7 ativos)", expanded=True):
     st.session_state.usar_sniper = st.checkbox("🎯 Sniper", value=st.session_state.usar_sniper)
     st.session_state.usar_mineracao = st.checkbox("🔬 Mineração", value=st.session_state.usar_mineracao)
-    st.session_state.usar_leque = st.checkbox("🪭 Leque", value=st.session_state.usar_leque)
     st.session_state.usar_giro = st.checkbox("🔄 Giro", value=st.session_state.usar_giro)
     st.session_state.usar_gap = st.checkbox("🔁 Gap", value=st.session_state.usar_gap)
     st.session_state.usar_sequencia = st.checkbox("📊 Sequência", value=st.session_state.usar_sequencia)
-    st.session_state.usar_quadrantes = st.checkbox("🟩 Quadrantes", value=st.session_state.usar_quadrantes)
     st.session_state.usar_terminais = st.checkbox("🔢 Terminais", value=st.session_state.usar_terminais)
     st.session_state.usar_simetria = st.checkbox("🔄 Simetria", value=st.session_state.usar_simetria)
 
 with st.sidebar.expander("⚙️ Ajustes", expanded=True):
     st.session_state.max_n_apostas = st.slider("📊 Máx. números", 5, 18, st.session_state.max_n_apostas)
     st.session_state.min_n_apostas = st.slider("📊 Mín. números", 3, 8, st.session_state.min_n_apostas)
-    st.session_state.janela_leque = st.slider("🪭 Janela Leque", 8, 30, st.session_state.janela_leque, 2)
 
 st.session_state.modo_automatico = st.sidebar.checkbox("🔄 Modo Automático", value=st.session_state.modo_automatico)
 
@@ -927,7 +792,7 @@ c1.metric("🟢 Acertos", sis.acertos)
 c2.metric("🔴 Erros", sis.erros)
 c3.metric("📊 Total", sis.acertos + sis.erros)
 c4.metric("⚠️ Erros seg.", sis.erros_consecutivos)
-c5.metric("🧠 IA", sis.modo_ia)
+c5.metric("🤖 Motores", "7")
 
 if sis.acertos + sis.erros > 0:
     taxa = sis.acertos / (sis.acertos + sis.erros) * 100
@@ -983,8 +848,9 @@ if sis.historico_entradas:
     cols = st.columns(min(5, len(motor_stats)))
     for i, (motor, stats) in enumerate(sorted(motor_stats.items(), key=lambda x: x[1]['total'], reverse=True)[:5]):
         taxa = stats['acertos'] / stats['total'] * 100 if stats['total'] > 0 else 0
+        emoji = "🟢" if taxa >= 30 else "🟡" if taxa >= 20 else "🔴"
         with cols[i]:
-            st.metric(motor[:10], f"{taxa:.0f}%", f"{stats['acertos']}/{stats['total']}")
+            st.metric(f"{emoji} {motor[:10]}", f"{taxa:.0f}%", f"{stats['acertos']}/{stats['total']}")
 
 st.subheader("📥 Download")
 st.metric("📊 Registros", len(st.session_state.historico))
