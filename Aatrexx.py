@@ -1,3 +1,4 @@
+
 import streamlit as st
 import json
 import os
@@ -8,7 +9,6 @@ from streamlit_autorefresh import st_autorefresh
 import pickle
 from datetime import datetime
 import numpy as np
-import pandas as pd
 
 # =============================
 # CONFIGURAÇÕES DE PERSISTÊNCIA
@@ -44,7 +44,7 @@ def salvar_sessao():
             'historico_numeros': list(st.session_state.sistema.historico_numeros),
             'historico_lucky': list(st.session_state.sistema.historico_lucky),
             'modo_automatico': st.session_state.get('modo_automatico', True),
-            'max_n_apostas': st.session_state.get('max_n_apostas', 10),
+            'max_n_apostas': st.session_state.get('max_n_apostas', 12),
             'min_n_apostas': st.session_state.get('min_n_apostas', 5),
             'usar_sniper': st.session_state.get('usar_sniper', True),
             'usar_mineracao': st.session_state.get('usar_mineracao', True),
@@ -59,6 +59,7 @@ def salvar_sessao():
             'usar_duzia_dom': st.session_state.get('usar_duzia_dom', True),
             'usar_gap3': st.session_state.get('usar_gap3', True),
             'usar_elite_master': st.session_state.get('usar_elite_master', True),
+            'usar_sniper_elite': st.session_state.get('usar_sniper_elite', True),
             'modo_ia': st.session_state.sistema.modo_ia,
             'entropia_atual': st.session_state.sistema.entropia_atual,
             'erros_consecutivos': st.session_state.sistema.erros_consecutivos,
@@ -165,10 +166,16 @@ class RoletaBase:
         self.pretos = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
         self.pares = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36}
         self.impares = {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35}
-        # Setores do cilindro (roleta francesa)
+        # Setores do cilindro
         self.voisins = {22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25}
         self.tiers = {27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33}
         self.orphelins = {1, 20, 14, 31, 9, 17, 34, 6}
+        # Mapeamento de setores organizados por ordem na roleta
+        self.setores_ordem = {
+            "Voisins": [22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25],
+            "Tiers": [27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33],
+            "Orphelins": [1, 20, 14, 31, 9, 17, 34, 6]
+        }
     
     def get_vizinhos(self, numero, raio=2):
         if numero not in self.race:
@@ -182,17 +189,7 @@ class RoletaBase:
     def get_coluna(self, numero):
         return 0 if numero == 0 else (numero - 1) % 3 + 1
     
-    def get_vizinhos_roleta(self, numero, distancia=1):
-        if numero not in self.race:
-            return []
-        idx = self.race.index(numero)
-        vizinhos = []
-        for i in range(-distancia, distancia + 1):
-            vizinhos.append(self.race[(idx + i) % 37])
-        return vizinhos
-    
     def get_setor_cilindro(self, numero):
-        """Retorna o setor do cilindro (Voisins, Tiers, Orphelins)"""
         if numero in self.voisins:
             return "Voisins"
         elif numero in self.tiers:
@@ -203,38 +200,168 @@ class RoletaBase:
 
 
 # =============================
-# 🆕 ANALISADOR ELITE MASTER
+# 🆕 SNIPER-ELITE V2 COM TERMINAIS DINÂMICOS
 # =============================
-class AnalisadorEliteMaster:
+class EstrategiaSniperElite:
     """
-    Motor de análise baseado em frequência observada no histórico real.
-    Identifica padrões de inércia, vácuo, setores e terminais.
+    Estratégia Sniper-Elite v2 com Terminais Dinâmicos.
+    - Detecta os terminais mais frequentes nos últimos 5 giros
+    - Combina com setor físico da roleta
+    - Cobertura alvo de 12 números
+    - Força baseada em concentração de terminais e cores
     """
     def __init__(self, roleta):
         self.roleta = roleta
-        self.vermelhos_list = list(roleta.vermelhos)
+        self.intervalo_forca_ideal = (20, 70)
+        self.cobertura_alvo = 12
+        self.janela_analise = 5
     
-    def get_info(self, n):
+    def identificar_terminais_quentes(self, numeros_janela):
+        """Identifica os terminais que mais se repetiram na janela."""
+        terminais = [n % 10 for n in numeros_janela]
+        contagem = Counter(terminais)
+        # Retorna os terminais ordenados da maior para menor frequência
+        return [t for t, freq in contagem.most_common()]
+    
+    def get_info_numero(self, n):
         """Extrai propriedades de um número."""
         if n == 0:
             return {"cor": "Verde", "par": "Zero", "duzia": 0, "col": 0, "setor": "Voisins", "term": 0}
         
-        info = {
+        return {
             "cor": "Vermelho" if n in self.roleta.vermelhos else "Preto",
             "par": "Par" if n % 2 == 0 else "Ímpar",
             "duzia": (n - 1) // 12 + 1,
             "col": (n - 1) % 3 + 1,
-            "term": n % 10
+            "term": n % 10,
+            "setor": self.roleta.get_setor_cilindro(n)
         }
+    
+    def analisar(self, historico):
+        """
+        Executa o plano Sniper-Elite com Terminais Dinâmicos.
+        """
+        if len(historico) < self.janela_analise:
+            return None
         
-        info["setor"] = self.roleta.get_setor_cilindro(n)
-        return info
+        # Pega os últimos 5 números
+        ultimos_5 = historico[-self.janela_analise:]
+        infos = [self.get_info_numero(n) for n in ultimos_5]
+        
+        # 1. Cálculo de Força
+        forca = 0
+        estrategias = []
+        
+        # Força por concentração de cor
+        cores = [i['cor'] for i in infos]
+        cor_dominante = cores[-1]
+        count_cor = cores.count(cor_dominante)
+        if count_cor >= 3:
+            forca += 20
+            estrategias.append(f"Cor {cor_dominante} ({count_cor}/5)")
+        
+        # Força por concentração de paridade
+        pares = [i['par'] for i in infos]
+        par_dominante = pares[-1]
+        count_par = pares.count(par_dominante)
+        if count_par >= 3 and par_dominante != "Zero":
+            forca += 15
+            estrategias.append(f"{par_dominante} ({count_par}/5)")
+        
+        # Força por repetição de terminais (PRINCIPAL)
+        term_quentes = self.identificar_terminais_quentes(ultimos_5)
+        termos_unicos = len(set(term_quentes))
+        
+        if termos_unicos < 5:
+            # Há repetição de terminais
+            repeticoes = 5 - termos_unicos
+            forca += 25 + (repeticoes * 5)
+            estrategias.append(f"Terminais repetidos ({termos_unicos}/5 únicos)")
+        
+        # Força por setor
+        setores = [i['setor'] for i in infos]
+        setor_dominante = setores[-1]
+        count_setor = setores.count(setor_dominante)
+        if count_setor >= 2:
+            forca += 10
+            estrategias.append(f"Setor {setor_dominante} ({count_setor}/5)")
+        
+        # 2. Filtro de Força
+        if forca < self.intervalo_forca_ideal[0]:
+            return None
+        
+        forca = min(100, forca)
+        
+        # 3. Construção Dinâmica da Aposta
+        aposta = set()
+        
+        # Prioridade 1: Números do Setor do último resultado (6 principais)
+        setor_atual = infos[-1]['setor']
+        if setor_atual in self.roleta.setores_ordem:
+            numeros_setor = self.roleta.setores_ordem[setor_atual]
+            # Pega os primeiros 6 do setor
+            aposta.update(numeros_setor[:6])
+            estrategias.append(f"Setor {setor_atual}")
+        
+        # Prioridade 2: Números dos Terminais Quentes (dinâmico)
+        term_prioritarios = term_quentes[:2]  # Top 2 terminais mais frequentes
+        
+        for t in term_prioritarios:
+            # Coleta todos os números com este terminal
+            numeros_terminal = [n for n in range(37) if n % 10 == t]
+            for n in numeros_terminal:
+                aposta.add(n)
+                if len(aposta) >= self.cobertura_alvo:
+                    break
+            if len(aposta) >= self.cobertura_alvo:
+                break
+        
+        # Prioridade 3: Se ainda não atingiu cobertura, adiciona vizinhos do último
+        if len(aposta) < 8:
+            vizinhos = self.roleta.get_vizinhos(ultimos_5[-1], 1)
+            for v in vizinhos:
+                aposta.add(v)
+                if len(aposta) >= self.cobertura_alvo:
+                    break
+        
+        # Prioridade 4: Números quentes da janela
+        if len(aposta) < 6:
+            for n in ultimos_5:
+                aposta.add(n)
+        
+        # Limita ao máximo
+        aposta_list = list(aposta)[:self.cobertura_alvo]
+        
+        estrategias.insert(0, f"Terminais {term_prioritarios}")
+        
+        return {
+            'base': set(aposta_list),
+            'forca': forca,
+            'estrategias': estrategias[:5]
+        }
+
+
+# =============================
+# ANALISADOR ELITE MASTER
+# =============================
+class AnalisadorEliteMaster:
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def get_info(self, n):
+        if n == 0:
+            return {"cor": "Verde", "par": "Zero", "duzia": 0, "col": 0, "setor": "Voisins", "term": 0}
+        
+        return {
+            "cor": "Vermelho" if n in self.roleta.vermelhos else "Preto",
+            "par": "Par" if n % 2 == 0 else "Ímpar",
+            "duzia": (n - 1) // 12 + 1,
+            "col": (n - 1) % 3 + 1,
+            "term": n % 10,
+            "setor": self.roleta.get_setor_cilindro(n)
+        }
     
     def analisar(self, historico, janela=5):
-        """
-        Recebe o histórico completo e analisa os últimos 'janela' números.
-        Retorna base de apostas baseada nos gatilhos encontrados.
-        """
         if len(historico) < janela:
             return None
         
@@ -244,19 +371,16 @@ class AnalisadorEliteMaster:
         base = set()
         forca = 0
         
-        # 1. GATILHO DE MOMENTUM (Cores)
         cores = [d['cor'] for d in dados]
         for item in ["Vermelho", "Preto"]:
             if cores.count(item) >= 4:
                 gatilhos.append(f"🔥 MOMENTUM: {item}")
-                # Aposta na cor dominante
                 if item == "Vermelho":
                     base.update(list(self.roleta.vermelhos)[:8])
                 else:
                     base.update(list(self.roleta.pretos)[:8])
                 forca += 40
         
-        # 2. GATILHO DE ONDA DE PARIDADE
         pares = [d['par'] for d in dados]
         for item in ["Par", "Ímpar"]:
             if pares.count(item) >= 4:
@@ -267,14 +391,12 @@ class AnalisadorEliteMaster:
                     base.update(list(self.roleta.impares)[:8])
                 forca += 35
         
-        # 3. GATILHO DE VÁCUO (Dúzias)
         duzias_presentes = set(d['duzia'] for d in dados if d['duzia'] != 0)
         for d in [1, 2, 3]:
             if d not in duzias_presentes:
                 inicio = (d - 1) * 12 + 1
                 fim = d * 12
                 numeros_duzia = set(range(inicio, fim + 1))
-                # Pega os números da dúzia que não saíram
                 nao_sairam = numeros_duzia - set(historico[-10:])
                 if nao_sairam:
                     base.update(list(nao_sairam)[:6])
@@ -283,7 +405,6 @@ class AnalisadorEliteMaster:
                 gatilhos.append(f"🕳️ VÁCUO: Dúzia {d}")
                 forca += 35
         
-        # 4. GATILHO DE SETORES (Cilindro)
         setores = [d['setor'] for d in dados]
         if setores.count("Voisins") >= 3:
             gatilhos.append("🎡 SETOR: Voisins")
@@ -294,7 +415,6 @@ class AnalisadorEliteMaster:
             base.update(list(self.roleta.tiers)[:8])
             forca += 35
         
-        # 5. GATILHO DE TERMINAIS
         terminais = [d['term'] for d in dados]
         term_count = Counter(terminais)
         term_dom, freq = term_count.most_common(1)[0]
@@ -303,19 +423,6 @@ class AnalisadorEliteMaster:
             base.update(numeros_terminal[:5])
             gatilhos.append(f"🔢 TERMINAL: {term_dom}")
             forca += 25
-        
-        # 6. GATILHO DE INVERSÃO (Contra-tendência)
-        if len(set(cores)) == 1 and len(dados) >= 4:
-            # Todos da mesma cor - apostar na inversão
-            cor_oposta = "Preto" if cores[0] == "Vermelho" else "Vermelho"
-            if cor_oposta == "Vermelho":
-                recentes_opostos = [n for n in historico[-20:] if n in self.roleta.vermelhos]
-            else:
-                recentes_opostos = [n for n in historico[-20:] if n in self.roleta.pretos]
-            if recentes_opostos:
-                base.update(recentes_opostos[-6:])
-                gatilhos.append(f"🔄 INVERSÃO: {cor_oposta}")
-                forca += 30
         
         if len(base) == 0:
             return None
@@ -497,13 +604,11 @@ class EstrategiaSimetria:
             base.add(espelhado)
             base.add(ultimo)
             estrategias.append(f"Simetria {ultimo}↔{espelhado}")
-        
         elif ultimo in self.palindromos:
             base.add(ultimo)
             vizinhos = self.roleta.get_vizinhos(ultimo, 1)
             base.update(vizinhos[:3])
             estrategias.append(f"Palíndromo {ultimo}")
-        
         elif 0 <= ultimo <= 9:
             mesma_terminacao = [n for n in range(37) if n % 10 == ultimo]
             base.update(mesma_terminacao[:4])
@@ -544,7 +649,7 @@ class EstrategiaRepeticao:
         
         if ultimo == penultimo:
             base.add(ultimo)
-            vizinhos = self.roleta.get_vizinhos_roleta(ultimo, 1)
+            vizinhos = self.roleta.get_vizinhos(ultimo, 1)
             base.update(vizinhos[:2])
             forca += 55
             estrategias.append(f"Repetição {ultimo}")
@@ -654,11 +759,7 @@ class EstrategiaParImpar:
 # =============================
 class EstrategiaDuziaDominante:
     def __init__(self):
-        self.duzias = {
-            1: set(range(1, 13)),
-            2: set(range(13, 25)),
-            3: set(range(25, 37))
-        }
+        self.duzias = {1: set(range(1, 13)), 2: set(range(13, 25)), 3: set(range(25, 37))}
     
     def analisar(self, historico):
         if len(historico) < 10:
@@ -739,11 +840,12 @@ class EstrategiaGap3:
 
 
 # =============================
-# BOT UNIFICADO (13 ESTRATÉGIAS)
+# BOT UNIFICADO (14 ESTRATÉGIAS)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
         self.roleta = RoletaBase()
+        self.sniper_elite = EstrategiaSniperElite(self.roleta)
         self.elite_master = AnalisadorEliteMaster(self.roleta)
         self.sniper = EstrategiaSniper(self.roleta)
         self.mineracao = EstrategiaMineracao()
@@ -788,36 +890,36 @@ class RoletaBotUnificado:
     def gerar_entrada(self, motores_ativos=None):
         if motores_ativos is None:
             motores_ativos = {k: True for k in [
-                'elite_master', 'sniper', 'mineracao', 'giro', 'gap', 'sequencia', 'terminais', 'simetria',
-                'repeticao', 'ciclo', 'par_impar', 'duzia_dom', 'gap3'
+                'sniper_elite', 'elite_master', 'sniper', 'mineracao', 'giro', 'gap',
+                'sequencia', 'terminais', 'simetria', 'repeticao', 'ciclo',
+                'par_impar', 'duzia_dom', 'gap3'
             ]}
         
         resultados = []
         
-        # Ordem de prioridade: Elite Master primeiro (maior peso)
+        # Ordem de prioridade: Sniper-Elite PRIMEIRO (maior peso)
         estrategias = [
-            ('Elite Master', self.elite_master, [list(self.historico)], 'elite_master'),
-            ('Repetição', self.repeticao, [list(self.historico)], 'repeticao'),
-            ('Ciclo Retorno', self.ciclo, [list(self.historico)], 'ciclo'),
-            ('Par/Ímpar', self.par_impar, [list(self.historico)], 'par_impar'),
-            ('Dúzia Dominante', self.duzia_dom, [list(self.historico)], 'duzia_dom'),
-            ('Gap 3', self.gap3, [list(self.historico)], 'gap3'),
-            ('Sniper', self.sniper, [list(self.historico)], 'sniper'),
-            ('Mineração', self.mineracao, [list(self.historico)], 'mineracao'),
-            ('Giro', self.giro, [list(self.historico)], 'giro'),
-            ('Gap', self.gap, [list(self.historico)], 'gap'),
-            ('Sequência', self.sequencia, [list(self.historico)], 'sequencia'),
-            ('Terminais', self.terminais, [list(self.historico)], 'terminais'),
-            ('Simetria', self.simetria, [list(self.historico)], 'simetria'),
+            ('Sniper-Elite v2', self.sniper_elite, [list(self.historico)], 'sniper_elite', 3),
+            ('Elite Master', self.elite_master, [list(self.historico)], 'elite_master', 2),
+            ('Repetição', self.repeticao, [list(self.historico)], 'repeticao', 1),
+            ('Ciclo Retorno', self.ciclo, [list(self.historico)], 'ciclo', 1),
+            ('Par/Ímpar', self.par_impar, [list(self.historico)], 'par_impar', 1),
+            ('Dúzia Dominante', self.duzia_dom, [list(self.historico)], 'duzia_dom', 1),
+            ('Gap 3', self.gap3, [list(self.historico)], 'gap3', 1),
+            ('Sniper', self.sniper, [list(self.historico)], 'sniper', 1),
+            ('Mineração', self.mineracao, [list(self.historico)], 'mineracao', 1),
+            ('Giro', self.giro, [list(self.historico)], 'giro', 1),
+            ('Gap', self.gap, [list(self.historico)], 'gap', 1),
+            ('Sequência', self.sequencia, [list(self.historico)], 'sequencia', 1),
+            ('Terminais', self.terminais, [list(self.historico)], 'terminais', 1),
+            ('Simetria', self.simetria, [list(self.historico)], 'simetria', 1),
         ]
         
-        for nome, estrategia, args, key in estrategias:
+        for nome, estrategia, args, key, peso in estrategias:
             try:
                 if motores_ativos.get(key, True) and len(self.historico) >= 1:
                     r = estrategia.analisar(*args)
                     if r and len(r.get('base', set())) >= 1:
-                        # Elite Master tem peso 2x
-                        peso = 2 if key == 'elite_master' else 1
                         resultados.append((nome, r, peso))
             except:
                 pass
@@ -829,7 +931,7 @@ class RoletaBotUnificado:
             
             base = set(quentes[:6] + atrasados[:2])
             return {
-                'numeros_apostar': sorted(list(base)[:10]),
+                'numeros_apostar': sorted(list(base)[:12]),
                 'forca_real': 20,
                 'motor': 'Frequência Básica',
                 'estrategias_ativas': ['Quentes + Atrasados'],
@@ -858,7 +960,7 @@ class RoletaBotUnificado:
         pesos_total = sum(p for _, _, p in resultados)
         forca_media = int(forca_total / pesos_total) if pesos_total > 0 else 25
         
-        max_n = st.session_state.get('max_n_apostas', 10)
+        max_n = st.session_state.get('max_n_apostas', 12)
         min_n = st.session_state.get('min_n_apostas', 5)
         
         prioridade = [n for n, _ in Counter({n: 1 for n in base_final}).most_common()]
@@ -949,6 +1051,8 @@ class SistemaBot:
         
         # Gera nova entrada
         motores_ativos = {
+            'sniper_elite': st.session_state.get('usar_sniper_elite', True),
+            'elite_master': st.session_state.get('usar_elite_master', True),
             'sniper': st.session_state.get('usar_sniper', True),
             'mineracao': st.session_state.get('usar_mineracao', True),
             'giro': st.session_state.get('usar_giro', True),
@@ -961,7 +1065,6 @@ class SistemaBot:
             'par_impar': st.session_state.get('usar_par_impar', True),
             'duzia_dom': st.session_state.get('usar_duzia_dom', True),
             'gap3': st.session_state.get('usar_gap3', True),
-            'elite_master': st.session_state.get('usar_elite_master', True),
         }
         
         self.entrada_ativa = self.bot.gerar_entrada(motores_ativos)
@@ -1031,8 +1134,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Bot Unificado — 13 Estratégias + Elite Master", layout="centered")
-st.title("🎯 Bot Unificado — 13 Estratégias + Elite Master")
+st.set_page_config(page_title="🎯 Bot Unificado — 14 Estratégias + Sniper-Elite", layout="centered")
+st.title("🎯 Bot Unificado — 14 Estratégias + Sniper-Elite v2")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -1066,12 +1169,12 @@ if dados:
         except: pass
 
 defaults = {
-    'modo_automatico': True, 'max_n_apostas': 10, 'min_n_apostas': 5,
+    'modo_automatico': True, 'max_n_apostas': 12, 'min_n_apostas': 5,
+    'usar_sniper_elite': True, 'usar_elite_master': True,
     'usar_sniper': True, 'usar_mineracao': True, 'usar_giro': True,
     'usar_gap': True, 'usar_sequencia': True, 'usar_terminais': True,
     'usar_simetria': True, 'usar_repeticao': True, 'usar_ciclo': True,
     'usar_par_impar': True, 'usar_duzia_dom': True, 'usar_gap3': True,
-    'usar_elite_master': True,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -1092,20 +1195,24 @@ if "telegram_chat_id" not in st.session_state:
 
 # Sidebar
 st.sidebar.title("⚙️ Configurações")
-st.sidebar.success("✅ **13 ESTRATÉGIAS + ELITE MASTER**")
+st.sidebar.success("✅ **14 ESTRATÉGIAS**")
 
-with st.sidebar.expander("🧠 Elite Master (Prioritário)", expanded=True):
-    st.session_state.usar_elite_master = st.checkbox("👑 Elite Master", value=st.session_state.usar_elite_master, help="🔥 MOMENTUM | 🕳️ VÁCUO | 🎡 SETORES | 🔢 TERMINAIS")
-    st.caption("Análise de inércia, vácuo, setores do cilindro e terminais")
+with st.sidebar.expander("👑 Sniper-Elite v2 (PRIORITÁRIO)", expanded=True):
+    st.session_state.usar_sniper_elite = st.checkbox("🎯 Sniper-Elite v2", value=st.session_state.usar_sniper_elite, help="Terminais Dinâmicos + Setor + Cores")
+    st.caption("Peso 3x | Terminais dinâmicos + Setor físico + Momentum")
 
-with st.sidebar.expander("🆕 Estratégias do Histórico", expanded=False):
-    st.session_state.usar_repeticao = st.checkbox("🔄 Repetição Imediata", value=st.session_state.usar_repeticao)
-    st.session_state.usar_ciclo = st.checkbox("🔁 Ciclo de Retorno", value=st.session_state.usar_ciclo)
+with st.sidebar.expander("🧠 Elite Master", expanded=True):
+    st.session_state.usar_elite_master = st.checkbox("👑 Elite Master", value=st.session_state.usar_elite_master)
+    st.caption("Peso 2x | MOMENTUM, VÁCUO, SETORES, TERMINAIS")
+
+with st.sidebar.expander("🆕 Histórico", expanded=False):
+    st.session_state.usar_repeticao = st.checkbox("🔄 Repetição", value=st.session_state.usar_repeticao)
+    st.session_state.usar_ciclo = st.checkbox("🔁 Ciclo", value=st.session_state.usar_ciclo)
     st.session_state.usar_par_impar = st.checkbox("⚖️ Par/Ímpar", value=st.session_state.usar_par_impar)
-    st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dominante", value=st.session_state.usar_duzia_dom)
-    st.session_state.usar_gap3 = st.checkbox("⏭️ Gap 3 Giros", value=st.session_state.usar_gap3)
+    st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dom.", value=st.session_state.usar_duzia_dom)
+    st.session_state.usar_gap3 = st.checkbox("⏭️ Gap 3", value=st.session_state.usar_gap3)
 
-with st.sidebar.expander("🎯 Estratégias Originais", expanded=False):
+with st.sidebar.expander("🎯 Originais", expanded=False):
     st.session_state.usar_sniper = st.checkbox("🎯 Sniper", value=st.session_state.usar_sniper)
     st.session_state.usar_mineracao = st.checkbox("🔬 Mineração", value=st.session_state.usar_mineracao)
     st.session_state.usar_giro = st.checkbox("🔄 Giro", value=st.session_state.usar_giro)
@@ -1195,7 +1302,7 @@ c1.metric("🟢 Acertos", sis.acertos)
 c2.metric("🔴 Erros", sis.erros)
 c3.metric("📊 Total", sis.acertos + sis.erros)
 c4.metric("⚠️ Erros seg.", sis.erros_consecutivos)
-c5.metric("🤖 Estrat.", "13")
+c5.metric("🤖 Estrat.", "14")
 
 if sis.acertos + sis.erros > 0:
     taxa = sis.acertos / (sis.acertos + sis.erros) * 100
