@@ -42,27 +42,17 @@ def salvar_sessao():
             'historico_numeros': list(st.session_state.sistema.historico_numeros),
             'historico_lucky': list(st.session_state.sistema.historico_lucky),
             'modo_automatico': st.session_state.get('modo_automatico', True),
-            'max_n_apostas': st.session_state.get('max_n_apostas', 7),
-            'min_n_apostas': st.session_state.get('min_n_apostas', 5),
-            'forca_minima_entrada': st.session_state.get('forca_minima_entrada', 42),
-            'usar_sniper': st.session_state.get('usar_sniper', True),
-            'usar_mineracao': st.session_state.get('usar_mineracao', True),
-            'usar_giro': st.session_state.get('usar_giro', True),
-            'usar_gap': st.session_state.get('usar_gap', True),
-            'usar_sequencia': st.session_state.get('usar_sequencia', True),
-            'usar_terminais': st.session_state.get('usar_terminais', True),
-            'usar_simetria': st.session_state.get('usar_simetria', True),
-            'usar_repeticao': st.session_state.get('usar_repeticao', True),
-            'usar_ciclo': st.session_state.get('usar_ciclo', True),
-            'usar_par_impar': st.session_state.get('usar_par_impar', True),
-            'usar_duzia_dom': st.session_state.get('usar_duzia_dom', True),
-            'usar_gap3': st.session_state.get('usar_gap3', True),
-            'usar_elite_master': st.session_state.get('usar_elite_master', True),
+            'max_n_apostas': st.session_state.get('max_n_apostas', 6),
+            'min_n_apostas': st.session_state.get('min_n_apostas', 4),
+            'forca_minima_entrada': st.session_state.get('forca_minima_entrada', 45),
             'usar_sniper_elite': st.session_state.get('usar_sniper_elite', True),
+            'usar_repeticao': st.session_state.get('usar_repeticao', True),
+            'usar_gap3': st.session_state.get('usar_gap3', True),
             'usar_ciclo_rapido': st.session_state.get('usar_ciclo_rapido', True),
-            'usar_vizinhos_numericos': st.session_state.get('usar_vizinhos_numericos', True),
             'usar_lucky_vizinhos': st.session_state.get('usar_lucky_vizinhos', True),
             'usar_cor_setor': st.session_state.get('usar_cor_setor', True),
+            'usar_mineracao': st.session_state.get('usar_mineracao', True),
+            'usar_duzia_dom': st.session_state.get('usar_duzia_dom', True),
             'green_repeticoes': st.session_state.sistema.green_repeticoes,
             'erro_aguardando': st.session_state.sistema.erro_aguardando,
             'ultima_entrada_numeros': st.session_state.sistema.ultima_entrada_numeros,
@@ -82,8 +72,7 @@ def carregar_dados_persistidos():
         if os.path.exists(SESSION_DATA_PATH):
             with open(SESSION_DATA_PATH, 'rb') as f:
                 return pickle.load(f)
-    except:
-        pass
+    except: pass
     return None
 
 def limpar_sessao():
@@ -94,8 +83,7 @@ def limpar_sessao():
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
-    except:
-        pass
+    except: pass
 
 # =============================
 # NOTIFICAÇÕES
@@ -164,10 +152,11 @@ class RoletaBase:
 
 
 # =============================
-# ESTRATÉGIAS (FORÇAS AUMENTADAS, SAÍDAS REDUZIDAS)
+# 8 ESTRATÉGIAS NÃO REDUNDANTES
 # =============================
 
 class EstrategiaSniperElite:
+    """Motor principal: Terminais dinâmicos + vizinhos"""
     def __init__(self, roleta): self.roleta = roleta
     def analisar(self, h):
         if len(h) < 5: return None
@@ -178,131 +167,88 @@ class EstrategiaSniperElite:
         for t in tq[:2]:
             for n in range(37):
                 if n%10 == t: aposta.add(n)
-                if len(aposta) >= 7: break
-            if len(aposta) >= 7: break
-        f = 45 + (15 if len(set(termos)) <= 3 else 0)
-        return {'base': set(list(aposta)[:7]), 'forca': min(100, f), 'estrategias': [f'Terminais {tq[:2]}']}
-
-class AnalisadorEliteMaster:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h):
-        if len(h) < 5: return None
-        cores = ['V' if n in self.roleta.vermelhos else 'P' if n in self.roleta.pretos else 'Z' for n in h[-5:]]
-        base = set(); f = 0
-        if cores.count("V") >= 4: base.update(list(self.roleta.vermelhos)[:5]); f += 45
-        elif cores.count("P") >= 4: base.update(list(self.roleta.pretos)[:5]); f += 45
-        elif cores.count("V") >= 3: base.update(list(self.roleta.vermelhos)[:4]); f += 35
-        elif cores.count("P") >= 3: base.update(list(self.roleta.pretos)[:4]); f += 35
-        if not base: return None
-        return {'base': base, 'forca': min(100,f), 'estrategias': ['Elite Master']}
-
-class EstrategiaSniper:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h):
-        if len(h) < 5: return None
-        r = h[-15:] if len(h) >= 15 else h
-        dz = Counter([self.roleta.get_setor(n) for n in r if n != 0])
-        cl = Counter([self.roleta.get_coluna(n) for n in r if n != 0])
-        b = set(); f = 0
-        if dz and cl and dz.most_common(1)[0][1] >= 5 and cl.most_common(1)[0][1] >= 4:
-            d, c = dz.most_common(1)[0][0], cl.most_common(1)[0][0]
-            b.update(set(range((d-1)*12+1,d*12+1)).intersection(set(range(c,37,3)))); f += 50
-        return {'base': b, 'forca': f, 'estrategias': ['Sniper']} if f > 0 else None
-
-class EstrategiaMineracao:
-    def analisar(self, h):
-        if len(h) < 3: return None
-        t = defaultdict(list)
-        for i in range(len(h)-1): t[h[i]].append(h[i+1])
-        s = t.get(h[-1], [])
-        if s:
-            top = [n for n, c in Counter(s).most_common(4) if c/len(s) >= 0.12]
-            if top: return {'base': set(top[:3]), 'forca': 40, 'estrategias': ['Mineração']}
-        return None
-
-class EstrategiaPorGiro:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h):
-        if len(h) < 2: return None
-        freq = Counter(h[-5:])
-        b = set([h[-1]])
-        b.update([n for n, c in freq.most_common(2) if c >= 2])
-        b.update(self.roleta.get_vizinhos(h[-1], 1)[:2])
-        return {'base': b, 'forca': 35 if len(b) <= 5 else 30, 'estrategias': ['Giro']}
-
-class EstrategiaGap:
-    def analisar(self, h):
-        if len(h) < 3: return None
-        u = h[-1]
-        if len(h) >= 3 and h[-3] == u: return {'base': {u, h[-2]}, 'forca': 50, 'estrategias': ['Gap1']}
-        if len(h) >= 4 and h[-4] == u: return {'base': {u, h[-2], h[-3]}, 'forca': 40, 'estrategias': ['Gap2']}
-        return None
-
-class EstrategiaSequencia:
-    def analisar(self, h):
-        if len(h) < 3: return None
-        p = defaultdict(list)
-        for i in range(len(h)-1): p[h[i]].append(h[i+1])
-        prev = [n for n,_ in Counter(p.get(h[-1],[])).most_common(3)]
-        return {'base': set(prev), 'forca': 35, 'estrategias': ['Sequência']} if len(prev) >= 2 else None
-
-class EstrategiaTerminais:
-    def analisar(self, h, jan=10):
-        if len(h) < jan: return None
-        f, freq = Counter([n%10 for n in h[-jan:]]).most_common(1)[0]
-        if freq >= 3: return {'base': set([n for n in range(37) if n%10==f][:4]), 'forca': 35+freq*5, 'estrategias': [f'Terminal {f}']}
-        return None
-
-class EstrategiaSimetria:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h):
-        if len(h) < 1: return None
-        esp = {1:10,10:1,2:20,20:2,3:30,30:3,12:21,21:12,13:31,31:13,23:32,32:23}
-        u = h[-1]; b = set()
-        if u in esp: b.update([esp[u], u]); b.update(self.roleta.get_vizinhos(u,1)[:1])
-        elif u in {0,11,22,33}: b.add(u)
-        elif 0 <= u <= 9: b.update([n for n in range(37) if n%10==u][:2])
-        if not b: return None
-        return {'base': b, 'forca': 30, 'estrategias': ['Simetria']}
+                if len(aposta) >= 6: break
+            if len(aposta) >= 6: break
+        f = 45 + (15 if len(set(termos)) <= 3 else 5)
+        return {'base': set(list(aposta)[:6]), 'forca': min(100, f), 'estrategias': [f'Terminais {tq[:2]}']}
 
 class EstrategiaRepeticao:
+    """Número repetiu no giro seguinte"""
     def __init__(self, roleta): self.roleta = roleta
     def analisar(self, h):
         if len(h) < 2: return None
         u, p = h[-1], h[-2]; b = set()
         if u == p: b.add(u); b.update(self.roleta.get_vizinhos(u,1)[:2])
         if len(b) == 0: return None
-        return {'base': b, 'forca': 60, 'estrategias': ['Repetição']}
+        return {'base': b, 'forca': 60, 'estrategias': [f'Repetição {u}']}
 
-class EstrategiaCicloRetorno:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h):
-        if len(h) < 15: return None
-        reps = [n for n, c in Counter(h).items() if c >= 3]
-        if not reps: return None
-        rec = [n for n in reps if n in h[-8:]]
-        if not rec: return None
-        b = set(rec[:3])
-        for n in rec[:2]: b.update(self.roleta.get_vizinhos(n,1)[:1])
-        return {'base': b, 'forca': 45, 'estrategias': ['Ciclo']}
-
-class EstrategiaParImpar:
+class EstrategiaGap3:
+    """Número repete após 3 giros"""
     def __init__(self, roleta): self.roleta = roleta
     def analisar(self, h):
         if len(h) < 4: return None
-        tipos = ['zero' if n==0 else 'par' if n%2==0 else 'impar' for n in h[-10:]]
-        seq, ta = 0, tipos[-1]
-        for t in reversed(tipos):
-            if t == ta and t != 'zero': seq += 1
+        u = h[-1]; b = set()
+        if len(h) >= 4 and h[-4] == u: b.update([u, h[-2], h[-3]])
+        if len(h) >= 5 and h[-5] == u: b.add(u)
+        if len(b) == 0: return None
+        for n in list(b)[:1]: b.update(self.roleta.get_vizinhos(n,1)[:1])
+        return {'base': b, 'forca': 50, 'estrategias': ['Gap 3-4']}
+
+class EstrategiaCicloRapido:
+    """Números com 2+ aparições em 15 giros"""
+    def __init__(self, roleta): self.roleta = roleta
+    def analisar(self, h):
+        if len(h) < 12: return None
+        freq = Counter(h[-15:]); reps = [n for n, c in freq.items() if c >= 2]
+        if len(reps) < 2: return None
+        b = set(reps[:4])
+        for n in list(b)[:2]: b.update(self.roleta.get_vizinhos(n, 1)[:1])
+        return {'base': b, 'forca': 50, 'estrategias': [f'Ciclo {reps[:3]}']}
+
+class EstrategiaLuckyVizinhos:
+    """Lucky Numbers recentes + vizinhos"""
+    def __init__(self, roleta): self.roleta = roleta
+    def analisar(self, h, lucky_hist):
+        if len(h) < 2 or not lucky_hist: return None
+        all_lucky = []
+        for sub in lucky_hist[-6:]: all_lucky.extend(sub)
+        if not all_lucky: return None
+        freq_lucky = Counter(all_lucky); top_lucky = [n for n, _ in freq_lucky.most_common(3)]
+        b = set(top_lucky)
+        for n in top_lucky[:1]: b.update(self.roleta.get_vizinhos(n, 1)[:1])
+        return {'base': b, 'forca': 45, 'estrategias': [f'Lucky {top_lucky}']}
+
+class EstrategiaCorSetor:
+    """4+ mesma cor → aposta na oposta"""
+    def __init__(self, roleta): self.roleta = roleta
+    def analisar(self, h):
+        if len(h) < 5: return None
+        cores = ['V' if n in self.roleta.vermelhos else 'P' if n in self.roleta.pretos else 'Z' for n in h[-8:]]
+        ult_cor = cores[-1]; seq = 0
+        for c in reversed(cores):
+            if c == ult_cor and c != 'Z': seq += 1
             else: break
-        if seq >= 4 and ta in ['par','impar']:
-            alvo = self.roleta.pares if ta == 'impar' else self.roleta.impares
+        if seq >= 4:
+            alvo = self.roleta.pretos if ult_cor == 'V' else self.roleta.vermelhos
             b = alvo.intersection(set(h[-10:]))
-            if len(b) < 4: b = set(list(alvo)[:5])
-            return {'base': b, 'forca': 40+seq*5, 'estrategias': [f'Inversão {ta}']}
+            if len(b) < 3: b = set(list(alvo)[:5])
+            return {'base': b, 'forca': 45+seq*5, 'estrategias': [f'Cor Oposta ({seq}x {ult_cor})']}
+        return None
+
+class EstrategiaMineracao:
+    """Cadeia de Markov: após X, o que mais vem?"""
+    def analisar(self, h):
+        if len(h) < 3: return None
+        t = defaultdict(list)
+        for i in range(len(h)-1): t[h[i]].append(h[i+1])
+        s = t.get(h[-1], [])
+        if s:
+            top = [n for n, c in Counter(s).most_common(3) if c/len(s) >= 0.15]
+            if top: return {'base': set(top[:3]), 'forca': 40, 'estrategias': ['Mineração']}
         return None
 
 class EstrategiaDuziaDominante:
+    """5+ números na mesma dúzia em 10 giros"""
     def analisar(self, h):
         if len(h) < 10: return None
         dz = {1:set(range(1,13)),2:set(range(13,25)),3:set(range(25,37))}
@@ -316,92 +262,21 @@ class EstrategiaDuziaDominante:
             return {'base': b, 'forca': 40+freq*3, 'estrategias': [f'Dúzia {d}']}
         return None
 
-class EstrategiaGap3:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h):
-        if len(h) < 4: return None
-        u = h[-1]; b = set()
-        if len(h) >= 4 and h[-4] == u: b.update([u, h[-2], h[-3]])
-        if len(b) == 0: return None
-        for n in list(b)[:1]: b.update(self.roleta.get_vizinhos(n,1)[:1])
-        return {'base': b, 'forca': 50, 'estrategias': ['Gap3']}
-
-class EstrategiaCicloRapido:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h):
-        if len(h) < 12: return None
-        freq = Counter(h[-15:])
-        reps = [n for n, c in freq.items() if c >= 2]
-        if not reps: return None
-        b = set(reps[:4])
-        for n in list(b)[:2]: b.update(self.roleta.get_vizinhos(n, 1)[:1])
-        return {'base': b, 'forca': 50, 'estrategias': ['Ciclo Rápido']}
-
-class EstrategiaVizinhosNumericos:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h):
-        if len(h) < 1: return None
-        u = h[-1]; b = set()
-        for d in [-2, -1, 1, 2]:
-            v = u + d
-            if 0 <= v <= 36: b.add(v)
-        b.add(u)
-        return {'base': b, 'forca': 35, 'estrategias': [f'Vizinhos ±2']}
-
-class EstrategiaLuckyVizinhos:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h, lucky_hist):
-        if len(h) < 2 or not lucky_hist: return None
-        all_lucky = []
-        for sub in lucky_hist[-6:]: all_lucky.extend(sub)
-        if not all_lucky: return None
-        freq_lucky = Counter(all_lucky)
-        top_lucky = [n for n, _ in freq_lucky.most_common(3)]
-        b = set(top_lucky)
-        for n in top_lucky[:1]: b.update(self.roleta.get_vizinhos(n, 1)[:1])
-        return {'base': b, 'forca': 45, 'estrategias': ['Lucky Vizinhos']}
-
-class EstrategiaCorSetor:
-    def __init__(self, roleta): self.roleta = roleta
-    def analisar(self, h):
-        if len(h) < 4: return None
-        cores = ['V' if n in self.roleta.vermelhos else 'P' if n in self.roleta.pretos else 'Z' for n in h[-8:]]
-        ult_cor = cores[-1]; seq = 0
-        for c in reversed(cores):
-            if c == ult_cor and c != 'Z': seq += 1
-            else: break
-        if seq >= 4:
-            alvo = self.roleta.pretos if ult_cor == 'V' else self.roleta.vermelhos
-            b = alvo.intersection(set(h[-10:]))
-            if len(b) < 4: b = set(list(alvo)[:5])
-            return {'base': b, 'forca': 45+seq*5, 'estrategias': [f'Cor Oposta ({seq}x {ult_cor})']}
-        return None
-
 
 # =============================
-# BOT UNIFICADO (17 ESTRATÉGIAS - OTIMIZADO)
+# BOT UNIFICADO (8 ESTRATÉGIAS)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
         self.roleta = RoletaBase()
         self.sniper_elite = EstrategiaSniperElite(self.roleta)
-        self.elite_master = AnalisadorEliteMaster(self.roleta)
-        self.sniper = EstrategiaSniper(self.roleta)
-        self.mineracao = EstrategiaMineracao()
-        self.giro = EstrategiaPorGiro(self.roleta)
-        self.gap = EstrategiaGap()
-        self.sequencia = EstrategiaSequencia()
-        self.terminais = EstrategiaTerminais()
-        self.simetria = EstrategiaSimetria(self.roleta)
         self.repeticao = EstrategiaRepeticao(self.roleta)
-        self.ciclo = EstrategiaCicloRetorno(self.roleta)
-        self.par_impar = EstrategiaParImpar(self.roleta)
-        self.duzia_dom = EstrategiaDuziaDominante()
         self.gap3 = EstrategiaGap3(self.roleta)
         self.ciclo_rapido = EstrategiaCicloRapido(self.roleta)
-        self.vizinhos_num = EstrategiaVizinhosNumericos(self.roleta)
         self.lucky_vizinhos = EstrategiaLuckyVizinhos(self.roleta)
         self.cor_setor = EstrategiaCorSetor(self.roleta)
+        self.mineracao = EstrategiaMineracao()
+        self.duzia_dom = EstrategiaDuziaDominante()
         
         self.historico = []; self.lucky = []
         self.performance = {'acertos': 0, 'erros': 0, 'historico': []}
@@ -416,33 +291,22 @@ class RoletaBotUnificado:
     def gerar_entrada(self, motores=None):
         if motores is None:
             motores = {k: True for k in [
-                'sniper_elite','elite_master','sniper','mineracao','giro','gap',
-                'sequencia','terminais','simetria','repeticao','ciclo','par_impar',
-                'duzia_dom','gap3','ciclo_rapido','vizinhos_num','lucky_vizinhos','cor_setor'
+                'sniper_elite','repeticao','gap3','ciclo_rapido',
+                'lucky_vizinhos','cor_setor','mineracao','duzia_dom'
             ]}
         
         resultados = []
-        forca_min = st.session_state.get('forca_minima_entrada', 42)
+        forca_min = st.session_state.get('forca_minima_entrada', 45)
         
         ests = [
             (self.sniper_elite, 'sniper_elite', 4, [list(self.historico)]),
-            (self.elite_master, 'elite_master', 3, [list(self.historico)]),
             (self.repeticao, 'repeticao', 3, [list(self.historico)]),
-            (self.gap3, 'gap3', 2, [list(self.historico)]),
+            (self.gap3, 'gap3', 3, [list(self.historico)]),
             (self.ciclo_rapido, 'ciclo_rapido', 2, [list(self.historico)]),
             (self.lucky_vizinhos, 'lucky_vizinhos', 2, [list(self.historico), self.lucky]),
             (self.cor_setor, 'cor_setor', 2, [list(self.historico)]),
-            (self.ciclo, 'ciclo', 1, [list(self.historico)]),
-            (self.vizinhos_num, 'vizinhos_num', 1, [list(self.historico)]),
-            (self.par_impar, 'par_impar', 1, [list(self.historico)]),
-            (self.duzia_dom, 'duzia_dom', 1, [list(self.historico)]),
-            (self.sniper, 'sniper', 1, [list(self.historico)]),
             (self.mineracao, 'mineracao', 1, [list(self.historico)]),
-            (self.giro, 'giro', 1, [list(self.historico)]),
-            (self.gap, 'gap', 1, [list(self.historico)]),
-            (self.sequencia, 'sequencia', 1, [list(self.historico)]),
-            (self.terminais, 'terminais', 1, [list(self.historico)]),
-            (self.simetria, 'simetria', 1, [list(self.historico)]),
+            (self.duzia_dom, 'duzia_dom', 1, [list(self.historico)]),
         ]
         
         for est, key, peso, args in ests:
@@ -455,9 +319,9 @@ class RoletaBotUnificado:
             except: pass
         
         if not resultados:
-            freq = Counter(self.historico[-8:])
-            quentes = [n for n, _ in freq.most_common(7)]
-            return {'numeros_apostar': sorted(quentes[:7]), 'forca_real': 25, 'motor': 'Frequência', 'estrategias_ativas': ['Quentes 8g'], 'qtd_motores': 1, 'qualidade': 'BÁSICA', 'green': False, 'green_count': 0}
+            freq = Counter(self.historico[-6:])
+            quentes = [n for n, _ in freq.most_common(6)]
+            return {'numeros_apostar': sorted(quentes[:6]), 'forca_real': 25, 'motor': 'Quentes', 'estrategias_ativas': ['Frequência'], 'qtd_motores': 1, 'qualidade': 'BÁSICA', 'green': False, 'green_count': 0}
         
         base = set(); ests_ativas = []
         ft, mp, mf = 0, resultados[0][0], 0
@@ -469,8 +333,8 @@ class RoletaBotUnificado:
             if r['forca'] > mf: mf, mp = r['forca'], nome
         
         fm = int(ft / sum(p for _, _, p in resultados))
-        mx = st.session_state.get('max_n_apostas', 7)
-        mn = st.session_state.get('min_n_apostas', 5)
+        mx = st.session_state.get('max_n_apostas', 6)
+        mn = st.session_state.get('min_n_apostas', 4)
         
         consenso = Counter()
         for nome, r, peso in resultados:
@@ -482,13 +346,13 @@ class RoletaBotUnificado:
                 if n not in lst: lst.append(n); break
         
         qs = fm / max(1, len(lst))
-        q = "EXCELENTE" if qs >= 10 else "BOA" if qs >= 7 else "REGULAR"
+        q = "EXCELENTE" if qs >= 12 else "BOA" if qs >= 8 else "REGULAR"
         
-        return {'numeros_apostar': sorted(lst), 'forca_real': min(100, max(25, fm)), 'motor': mp, 'estrategias_ativas': list(set(ests_ativas))[:5], 'qtd_motores': len(resultados), 'qualidade': q, 'green': False, 'green_count': 0}
+        return {'numeros_apostar': sorted(lst), 'forca_real': min(100, max(30, fm)), 'motor': mp, 'estrategias_ativas': list(set(ests_ativas))[:5], 'qtd_motores': len(resultados), 'qualidade': q, 'green': False, 'green_count': 0}
 
 
 # =============================
-# SISTEMA PRINCIPAL (OTIMIZADO)
+# SISTEMA PRINCIPAL
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -544,10 +408,9 @@ class SistemaBot:
             
             entrada_forca = self.entrada_ativa.get('forca_real', 0)
             era_green = self.entrada_ativa.get('green', False)
-            forca_min = st.session_state.get('forca_minima_entrada', 42)
+            forca_min = st.session_state.get('forca_minima_entrada', 45)
             
             if acerto:
-                # ✅ ACERTOU
                 if not era_green and self.green_repeticoes < 2:
                     if entrada_forca >= forca_min:
                         self.green_repeticoes += 1
@@ -561,10 +424,8 @@ class SistemaBot:
                     self.ultima_entrada_forca = entrada_forca
                 else:
                     self.green_repeticoes = 0; self.ultima_entrada_numeros = []
-                
                 self.erro_aguardando = False; self.erro_ja_repitido = False
             else:
-                # ❌ ERROU
                 if era_green:
                     self.green_repeticoes = 0; self.ultima_entrada_numeros = []
                     self.erro_aguardando = False; self.erro_ja_repitido = False
@@ -581,7 +442,7 @@ class SistemaBot:
             enviar_resultado_auto(nr, acerto, is_lucky)
             self.entrada_ativa = None
         
-        # 🟢 Green Repeat
+        # Green Repeat
         if self.green_repeticoes > 0 and self.ultima_entrada_numeros:
             self.entrada_ativa = {
                 'numeros_apostar': sorted(self.ultima_entrada_numeros),
@@ -593,7 +454,7 @@ class SistemaBot:
             enviar_previsao_auto(self.entrada_ativa)
             return
         
-        # ⏳ Erro Repeat
+        # Erro Repeat
         if self.erro_aguardando and self.ultima_entrada_numeros:
             self.erro_aguardando = False; self.erro_ja_repitido = True
             self.entrada_ativa = {
@@ -607,11 +468,10 @@ class SistemaBot:
         
         if self.erro_ja_repitido and self.green_repeticoes == 0: self.erro_ja_repitido = False
         
-        # 🧠 Nova análise
+        # Nova análise
         mot = {k: st.session_state.get(f'usar_{k}', True) for k in [
-            'sniper_elite','elite_master','sniper','mineracao','giro','gap','sequencia','terminais',
-            'simetria','repeticao','ciclo','par_impar','duzia_dom','gap3',
-            'ciclo_rapido','vizinhos_num','lucky_vizinhos','cor_setor'
+            'sniper_elite','repeticao','gap3','ciclo_rapido',
+            'lucky_vizinhos','cor_setor','mineracao','duzia_dom'
         ]}
         self.entrada_ativa = self.bot.gerar_entrada(mot)
         if self.entrada_ativa: enviar_previsao_auto(self.entrada_ativa)
@@ -663,8 +523,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Roleta Bot Pro v3", layout="centered")
-st.title("🎯 Roleta Bot Pro v3")
+st.set_page_config(page_title="🎯 Roleta Bot Pro v4 - 8 Estratégias", layout="centered")
+st.title("🎯 Roleta Bot Pro v4")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -693,15 +553,12 @@ if dados:
         except: pass
 
 defaults = {
-    'modo_automatico': True, 'max_n_apostas': 7, 'min_n_apostas': 5,
-    'forca_minima_entrada': 42,
-    'usar_sniper_elite': True, 'usar_elite_master': True,
-    'usar_sniper': True, 'usar_mineracao': True, 'usar_giro': True,
-    'usar_gap': True, 'usar_sequencia': True, 'usar_terminais': True,
-    'usar_simetria': True, 'usar_repeticao': True, 'usar_ciclo': True,
-    'usar_par_impar': True, 'usar_duzia_dom': True, 'usar_gap3': True,
-    'usar_ciclo_rapido': True, 'usar_vizinhos_numericos': True,
+    'modo_automatico': True, 'max_n_apostas': 6, 'min_n_apostas': 4,
+    'forca_minima_entrada': 45,
+    'usar_sniper_elite': True, 'usar_repeticao': True,
+    'usar_gap3': True, 'usar_ciclo_rapido': True,
     'usar_lucky_vizinhos': True, 'usar_cor_setor': True,
+    'usar_mineracao': True, 'usar_duzia_dom': True,
 }
 for k, v in defaults.items():
     if k not in st.session_state: st.session_state[k] = v
@@ -719,33 +576,19 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 # Sidebar
 with st.sidebar:
     st.subheader("⚙️ Config")
-    st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 30, 60, st.session_state.forca_minima_entrada, 2,
-        help="Força mínima para ativar motores e Green/Erro Repeat")
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 10, st.session_state.max_n_apostas)
-    st.session_state.min_n_apostas = st.slider("📊 Mín. números", 3, 7, st.session_state.min_n_apostas)
+    st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 35, 60, st.session_state.forca_minima_entrada, 5)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 8, st.session_state.max_n_apostas)
+    st.session_state.min_n_apostas = st.slider("📊 Mín. números", 3, 6, st.session_state.min_n_apostas)
     
-    with st.expander("🤖 Motores (17)", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            st.session_state.usar_sniper_elite = st.checkbox("Sniper-Elite", value=st.session_state.usar_sniper_elite)
-            st.session_state.usar_elite_master = st.checkbox("Elite Master", value=st.session_state.usar_elite_master)
-            st.session_state.usar_ciclo_rapido = st.checkbox("Ciclo Rápido", value=st.session_state.usar_ciclo_rapido)
-            st.session_state.usar_lucky_vizinhos = st.checkbox("Lucky Vizinhos", value=st.session_state.usar_lucky_vizinhos)
-            st.session_state.usar_cor_setor = st.checkbox("Cor Setor", value=st.session_state.usar_cor_setor)
-            st.session_state.usar_vizinhos_numericos = st.checkbox("Vizinhos ±2", value=st.session_state.usar_vizinhos_numericos)
-            st.session_state.usar_sniper = st.checkbox("Sniper", value=st.session_state.usar_sniper)
-            st.session_state.usar_mineracao = st.checkbox("Mineração", value=st.session_state.usar_mineracao)
-            st.session_state.usar_giro = st.checkbox("Giro", value=st.session_state.usar_giro)
-        with c2:
-            st.session_state.usar_gap = st.checkbox("Gap", value=st.session_state.usar_gap)
-            st.session_state.usar_sequencia = st.checkbox("Sequência", value=st.session_state.usar_sequencia)
-            st.session_state.usar_terminais = st.checkbox("Terminais", value=st.session_state.usar_terminais)
-            st.session_state.usar_simetria = st.checkbox("Simetria", value=st.session_state.usar_simetria)
-            st.session_state.usar_repeticao = st.checkbox("Repetição", value=st.session_state.usar_repeticao)
-            st.session_state.usar_ciclo = st.checkbox("Ciclo", value=st.session_state.usar_ciclo)
-            st.session_state.usar_par_impar = st.checkbox("Par/Ímpar", value=st.session_state.usar_par_impar)
-            st.session_state.usar_duzia_dom = st.checkbox("Dúzia Dom.", value=st.session_state.usar_duzia_dom)
-            st.session_state.usar_gap3 = st.checkbox("Gap 3", value=st.session_state.usar_gap3)
+    with st.expander("🤖 8 Estratégias", expanded=False):
+        st.session_state.usar_sniper_elite = st.checkbox("🎯 Sniper-Elite (4x)", value=st.session_state.usar_sniper_elite)
+        st.session_state.usar_repeticao = st.checkbox("🔄 Repetição (3x)", value=st.session_state.usar_repeticao)
+        st.session_state.usar_gap3 = st.checkbox("⏭️ Gap 3-4 (3x)", value=st.session_state.usar_gap3)
+        st.session_state.usar_ciclo_rapido = st.checkbox("🔁 Ciclo Rápido (2x)", value=st.session_state.usar_ciclo_rapido)
+        st.session_state.usar_lucky_vizinhos = st.checkbox("🍀 Lucky Vizinhos (2x)", value=st.session_state.usar_lucky_vizinhos)
+        st.session_state.usar_cor_setor = st.checkbox("🎨 Cor Setor (2x)", value=st.session_state.usar_cor_setor)
+        st.session_state.usar_mineracao = st.checkbox("⛏️ Mineração (1x)", value=st.session_state.usar_mineracao)
+        st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dom. (1x)", value=st.session_state.usar_duzia_dom)
     
     st.session_state.modo_automatico = st.checkbox("Modo Automático", value=st.session_state.modo_automatico)
     
@@ -791,7 +634,7 @@ if resultado and resultado.get("timestamp") and resultado["timestamp"] != ultimo
         st.session_state.sistema.processar_novo_numero(resultado)
         salvar_resultado_em_arquivo(st.session_state.historico); salvar_sessao()
 
-# Últimos números com raios
+# Últimos números
 st.subheader("🔁 Últimos Números")
 if st.session_state.historico:
     ultimos = st.session_state.historico[-12:]
@@ -830,7 +673,7 @@ tx = sis.acertos/(sis.acertos+sis.erros)*100 if (sis.acertos+sis.erros)>0 else 0
 c3.metric("📊", f"{tx:.0f}%")
 c4.metric("🟢G", f"{sis.green_repeticoes}/2")
 c5.metric("⏳E", "Sim" if sis.erro_aguardando else "Não")
-c6.metric("⚡Min", st.session_state.get('forca_minima_entrada', 42))
+c6.metric("⚡Min", st.session_state.get('forca_minima_entrada', 45))
 
 # Entrada
 st.subheader("🎯 Entrada Atual")
