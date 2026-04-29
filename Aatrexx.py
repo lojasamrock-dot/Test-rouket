@@ -1,4 +1,3 @@
-
 import streamlit as st
 import json
 import os
@@ -53,13 +52,14 @@ def salvar_sessao():
             'usar_sequencia': st.session_state.get('usar_sequencia', True),
             'usar_terminais': st.session_state.get('usar_terminais', True),
             'usar_simetria': st.session_state.get('usar_simetria', True),
+            'usar_repeticao': st.session_state.get('usar_repeticao', True),
+            'usar_ciclo': st.session_state.get('usar_ciclo', True),
+            'usar_par_impar': st.session_state.get('usar_par_impar', True),
+            'usar_duzia_dom': st.session_state.get('usar_duzia_dom', True),
+            'usar_gap3': st.session_state.get('usar_gap3', True),
             'modo_ia': st.session_state.sistema.modo_ia,
             'entropia_atual': st.session_state.sistema.entropia_atual,
             'erros_consecutivos': st.session_state.sistema.erros_consecutivos,
-            'ultima_entrada_numeros': st.session_state.sistema.ultima_entrada_numeros,
-            'ultima_entrada_forca': st.session_state.sistema.ultima_entrada_forca,
-            'ultima_entrada_motor': st.session_state.sistema.ultima_entrada_motor,
-            'repeticoes_acerto_consecutivas': st.session_state.sistema.repeticoes_acerto_consecutivas,
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -161,6 +161,8 @@ class RoletaBase:
         self.race = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
         self.vermelhos = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
         self.pretos = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
+        self.pares = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36}
+        self.impares = {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35}
     
     def get_vizinhos(self, numero, raio=2):
         if numero not in self.race:
@@ -173,6 +175,16 @@ class RoletaBase:
     
     def get_coluna(self, numero):
         return 0 if numero == 0 else (numero - 1) % 3 + 1
+    
+    def get_vizinhos_roleta(self, numero, distancia=1):
+        """Retorna vizinhos na roleta (sequência física)"""
+        if numero not in self.race:
+            return []
+        idx = self.race.index(numero)
+        vizinhos = []
+        for i in range(-distancia, distancia + 1):
+            vizinhos.append(self.race[(idx + i) % 37])
+        return vizinhos
 
 
 # =============================
@@ -321,23 +333,15 @@ class EstrategiaTerminais:
 
 
 # =============================
-# ESTRATÉGIA 7: SIMETRIA (CORRIGIDA E COMPLETA)
+# ESTRATÉGIA 7: SIMETRIA (CORRIGIDA)
 # =============================
 class EstrategiaSimetria:
     def __init__(self, roleta):
         self.roleta = roleta
-        # Simetria de espelhamento de dígitos (COMPLETO)
-        # Ex: 12 inverte para 21, 13 inverte para 31, etc.
         self.espelhos = {
-            1: 10, 10: 1,
-            2: 20, 20: 2,
-            3: 30, 30: 3,
-            12: 21, 21: 12,
-            13: 31, 31: 13,
-            23: 32, 32: 23,
+            1: 10, 10: 1, 2: 20, 20: 2, 3: 30, 30: 3,
+            12: 21, 21: 12, 13: 31, 31: 13, 23: 32, 32: 23,
         }
-        
-        # Números que são simétricos de si mesmos (palíndromos)
         self.palindromos = {0, 11, 22, 33}
     
     def analisar(self, historico):
@@ -348,35 +352,25 @@ class EstrategiaSimetria:
         base = set()
         estrategias = []
         
-        # 1. Simetria de espelhamento (a mais importante)
         if ultimo in self.espelhos:
             espelhado = self.espelhos[ultimo]
             base.add(espelhado)
-            base.add(ultimo)  # Inclui também o próprio número
+            base.add(ultimo)
             estrategias.append(f"Simetria {ultimo}↔{espelhado}")
         
-        # 2. Se for palíndromo, aposta no próprio número e vizinhos
         elif ultimo in self.palindromos:
             base.add(ultimo)
-            # Adiciona vizinhos na roleta
             vizinhos = self.roleta.get_vizinhos(ultimo, 1)
             base.update(vizinhos[:3])
-            estrategias.append(f"Palíndromo {ultimo}+vizinhos")
+            estrategias.append(f"Palíndromo {ultimo}")
         
-        # 3. Simetria por inversão de dígitos para números de 1 dígito
-        # Ex: 5 → aposta em números terminados em 5 (5,15,25,35)
         elif 0 <= ultimo <= 9:
-            # Números que terminam com o mesmo dígito
             mesma_terminacao = [n for n in range(37) if n % 10 == ultimo]
             base.update(mesma_terminacao[:4])
             estrategias.append(f"Simetria dígito {ultimo}")
         
-        # 4. Simetria de dezenas (números na mesma faixa)
-        # Ex: 14 → aposta em 4, 24, 34 (mesmo final)
         if 10 <= ultimo <= 36:
-            dezena = ultimo // 10
-            unidade = ultimo % 10
-            # Inverte dezena e unidade
+            dezena, unidade = ultimo // 10, ultimo % 10
             if 0 <= unidade <= 3 and 0 <= dezena <= 3:
                 invertido = unidade * 10 + dezena
                 if 0 <= invertido <= 36:
@@ -386,18 +380,276 @@ class EstrategiaSimetria:
         if len(base) == 0:
             return None
         
-        # Força baseada na quantidade de números gerados
         forca = 25 if len(base) <= 3 else 20
-        
-        return {
-            'base': base,
-            'forca': min(100, forca),
-            'estrategias': estrategias
-        }
+        return {'base': base, 'forca': min(100, forca), 'estrategias': estrategias}
 
 
 # =============================
-# BOT UNIFICADO (7 ESTRATÉGIAS)
+# 🆕 ESTRATÉGIA 8: REPETIÇÃO IMEDIATA
+# =============================
+class EstrategiaRepeticao:
+    """
+    Padrão: Números que se repetem no giro seguinte
+    Gatilho: Último número = penúltimo número
+    Ação: Aposta no número repetido + vizinhos na roleta
+    """
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, historico):
+        if len(historico) < 2:
+            return None
+        
+        ultimo = historico[-1]
+        penultimo = historico[-2]
+        
+        base = set()
+        forca = 0
+        estrategias = []
+        
+        # Gatilho 1: Número repetiu (ex: 12→12)
+        if ultimo == penultimo:
+            base.add(ultimo)
+            vizinhos = self.roleta.get_vizinhos_roleta(ultimo, 1)
+            base.update(vizinhos[:2])
+            forca += 55
+            estrategias.append(f"Repetição {ultimo}")
+        
+        # Gatilho 2: Número repetiu com gap 1 (ex: 5→X→5)
+        if len(historico) >= 3 and historico[-3] == ultimo:
+            base.add(ultimo)
+            base.add(historico[-2])
+            forca += 45
+            estrategias.append(f"Gap1 {ultimo}")
+        
+        # Gatilho 3: Verifica se há padrão de repetição nos últimos 20 giros
+        if len(historico) >= 5:
+            repeticoes = 0
+            for i in range(len(historico) - 1):
+                if historico[i] == historico[i+1]:
+                    repeticoes += 1
+            if repeticoes >= 2:
+                # Padrão de repetição frequente - aposta no último
+                base.add(ultimo)
+                forca += 30
+                estrategias.append("Padrão Repetição")
+        
+        if len(base) == 0:
+            return None
+        
+        return {'base': base, 'forca': min(100, forca), 'estrategias': estrategias}
+
+
+# =============================
+# 🆕 ESTRATÉGIA 9: CICLO DE RETORNO
+# =============================
+class EstrategiaCicloRetorno:
+    """
+    Padrão: Números que retornam após 20-40 giros
+    Gatilho: Número apareceu 2x ou mais no histórico total
+    Ação: Aposta nos números que estão voltando
+    """
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, historico):
+        if len(historico) < 20:
+            return None
+        
+        # Encontra números que apareceram múltiplas vezes
+        freq_total = Counter(historico)
+        numeros_repetidos = [n for n, c in freq_total.items() if c >= 3]
+        
+        if not numeros_repetidos:
+            return None
+        
+        # Verifica os últimos 10 giros
+        recentes = historico[-10:]
+        freq_recentes = Counter(recentes)
+        
+        # Números quentes que já repetiram antes
+        quentes_repetidos = [n for n in numeros_repetidos if freq_recentes.get(n, 0) >= 1]
+        
+        if not quentes_repetidos:
+            return None
+        
+        base = set(quentes_repetidos[:4])
+        estrategias = [f"Ciclo {n}" for n in quentes_repetidos[:3]]
+        
+        # Adiciona vizinhos dos números cíclicos
+        for n in quentes_repetidos[:2]:
+            vizinhos = self.roleta.get_vizinhos(n, 1)
+            base.update(vizinhos[:2])
+        
+        forca = 40 if len(quentes_repetidos) >= 3 else 30
+        
+        return {'base': base, 'forca': min(100, forca), 'estrategias': estrategias}
+
+
+# =============================
+# 🆕 ESTRATÉGIA 10: PAR/ÍMPAR
+# =============================
+class EstrategiaParImpar:
+    """
+    Padrão: Sequências de 3+ pares ou 3+ ímpares
+    Gatilho: 3+ números do mesmo tipo seguidos
+    Ação: Aposta no tipo oposto (inversão)
+    """
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, historico):
+        if len(historico) < 4:
+            return None
+        
+        # Classifica últimos giros
+        ultimos_tipos = []
+        for n in historico[-10:]:
+            if n == 0:
+                ultimos_tipos.append('zero')
+            elif n % 2 == 0:
+                ultimos_tipos.append('par')
+            else:
+                ultimos_tipos.append('impar')
+        
+        # Conta sequência atual
+        seq_atual = 0
+        tipo_atual = ultimos_tipos[-1]
+        for t in reversed(ultimos_tipos):
+            if t == tipo_atual and t != 'zero':
+                seq_atual += 1
+            else:
+                break
+        
+        # Gatilho: 3+ do mesmo tipo
+        if seq_atual >= 3 and tipo_atual in ['par', 'impar']:
+            # Aposta no tipo oposto
+            tipo_alvo = 'par' if tipo_atual == 'impar' else 'impar'
+            alvo_set = self.roleta.pares if tipo_alvo == 'par' else self.roleta.impares
+            
+            # Filtra pelos números que saíram recentemente
+            recentes = set(historico[-15:])
+            base = alvo_set.intersection(recentes)
+            
+            # Se não tem sobreposição suficiente, pega todos do tipo
+            if len(base) < 4:
+                base = set(list(alvo_set)[:8])
+            
+            forca = 35 + (seq_atual * 5)
+            estrategias = [f"Inversão {tipo_atual}→{tipo_alvo} ({seq_atual}x)"]
+            
+            return {'base': base, 'forca': min(100, forca), 'estrategias': estrategias}
+        
+        return None
+
+
+# =============================
+# 🆕 ESTRATÉGIA 11: DÚZIA DOMINANTE
+# =============================
+class EstrategiaDuziaDominante:
+    """
+    Padrão: Concentração de números em uma dúzia
+    Gatilho: Dúzia com 5+ números nos últimos 10 giros
+    Ação: Aposta nos números da dúzia que ainda não saíram
+    """
+    def __init__(self):
+        self.duzias = {
+            1: set(range(1, 13)),
+            2: set(range(13, 25)),
+            3: set(range(25, 37))
+        }
+    
+    def analisar(self, historico):
+        if len(historico) < 10:
+            return None
+        
+        recentes = historico[-10:]
+        contagem = Counter()
+        for n in recentes:
+            if n != 0:
+                d = (n - 1) // 12 + 1
+                contagem[d] += 1
+        
+        if not contagem:
+            return None
+        
+        duzia_dom, freq = contagem.most_common(1)[0]
+        
+        if freq >= 4:
+            # Pega números da dúzia que não saíram nos últimos 5 giros
+            numeros_duzia = self.duzias[duzia_dom]
+            nao_sairam = numeros_duzia - set(historico[-5:])
+            
+            base = set()
+            if nao_sairam:
+                base.update(list(nao_sairam)[:5])
+            
+            # Adiciona também os que saíram (quentes)
+            quentes_duzia = numeros_duzia.intersection(set(historico[-5:]))
+            base.update(list(quentes_duzia)[:3])
+            
+            forca = 35 + (freq * 3)
+            estrategias = [f"Dúzia {duzia_dom} ({freq}/10)"]
+            
+            return {'base': base, 'forca': min(100, forca), 'estrategias': estrategias}
+        
+        return None
+
+
+# =============================
+# 🆕 ESTRATÉGIA 12: GAP 3 GIROS
+# =============================
+class EstrategiaGap3:
+    """
+    Padrão: Número que repete após 3 giros
+    Gatilho: N[i] == N[i+3]
+    Ação: Aposta no número + vizinhos
+    """
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, historico):
+        if len(historico) < 4:
+            return None
+        
+        ultimo = historico[-1]
+        base = set()
+        estrategias = []
+        forca = 0
+        
+        # Gap 3: número repete após 3 giros
+        if len(historico) >= 4 and historico[-4] == ultimo:
+            base.add(ultimo)
+            base.add(historico[-2])
+            base.add(historico[-3])
+            forca += 45
+            estrategias.append(f"Gap3: {ultimo}")
+        
+        # Gap 4: número repete após 4 giros
+        if len(historico) >= 5 and historico[-5] == ultimo:
+            base.add(ultimo)
+            forca += 35
+            estrategias.append(f"Gap4: {ultimo}")
+        
+        # Gap 5: número repete após 5 giros
+        if len(historico) >= 6 and historico[-6] == ultimo:
+            base.add(ultimo)
+            base.add(historico[-3])
+            forca += 25
+            estrategias.append(f"Gap5: {ultimo}")
+        
+        if len(base) == 0:
+            return None
+        
+        # Adiciona vizinhos
+        for n in list(base)[:2]:
+            base.update(self.roleta.get_vizinhos(n, 1)[:2])
+        
+        return {'base': base, 'forca': min(100, forca), 'estrategias': estrategias}
+
+
+# =============================
+# BOT UNIFICADO (12 ESTRATÉGIAS)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
@@ -409,6 +661,11 @@ class RoletaBotUnificado:
         self.sequencia = EstrategiaSequencia()
         self.terminais = EstrategiaTerminais()
         self.simetria = EstrategiaSimetria(self.roleta)
+        self.repeticao = EstrategiaRepeticao(self.roleta)
+        self.ciclo = EstrategiaCicloRetorno(self.roleta)
+        self.par_impar = EstrategiaParImpar(self.roleta)
+        self.duzia_dom = EstrategiaDuziaDominante()
+        self.gap3 = EstrategiaGap3(self.roleta)
         
         self.historico = []
         self.lucky = []
@@ -438,39 +695,36 @@ class RoletaBotUnificado:
         return self.performance['acertos'] / total if total > 0 else 0
     
     def gerar_entrada(self, motores_ativos=None):
-        """
-        GERA UMA ENTRADA A CADA CHAMADA - SEMPRE RETORNA ALGO
-        """
         if motores_ativos is None:
-            motores_ativos = {k: True for k in ['sniper', 'mineracao', 'giro', 'gap', 'sequencia', 'terminais', 'simetria']}
+            motores_ativos = {k: True for k in [
+                'sniper', 'mineracao', 'giro', 'gap', 'sequencia', 'terminais', 'simetria',
+                'repeticao', 'ciclo', 'par_impar', 'duzia_dom', 'gap3'
+            ]}
         
         resultados = []
         
-        # Executa todos os motores ativos
         estrategias = [
-            ('Sniper', self.sniper, [list(self.historico)]),
-            ('Mineração', self.mineracao, [list(self.historico)]),
-            ('Giro', self.giro, [list(self.historico)]),
-            ('Gap', self.gap, [list(self.historico)]),
-            ('Sequência', self.sequencia, [list(self.historico)]),
-            ('Terminais', self.terminais, [list(self.historico)]),
-            ('Simetria', self.simetria, [list(self.historico)]),
+            ('Repetição', self.repeticao, [list(self.historico)], 'repeticao'),
+            ('Ciclo Retorno', self.ciclo, [list(self.historico)], 'ciclo'),
+            ('Par/Ímpar', self.par_impar, [list(self.historico)], 'par_impar'),
+            ('Dúzia Dominante', self.duzia_dom, [list(self.historico)], 'duzia_dom'),
+            ('Gap 3', self.gap3, [list(self.historico)], 'gap3'),
+            ('Sniper', self.sniper, [list(self.historico)], 'sniper'),
+            ('Mineração', self.mineracao, [list(self.historico)], 'mineracao'),
+            ('Giro', self.giro, [list(self.historico)], 'giro'),
+            ('Gap', self.gap, [list(self.historico)], 'gap'),
+            ('Sequência', self.sequencia, [list(self.historico)], 'sequencia'),
+            ('Terminais', self.terminais, [list(self.historico)], 'terminais'),
+            ('Simetria', self.simetria, [list(self.historico)], 'simetria'),
         ]
         
-        for nome, estrategia, args in estrategias:
+        for nome, estrategia, args, key in estrategias:
             try:
-                key = nome.lower().replace(' ', '_').replace('ã', 'a').replace('ê', 'e').replace('ó', 'o').replace('ú', 'u').replace('ç', 'c')
-                key_map = {
-                    'sniper': 'sniper', 'mineracao': 'mineracao', 'giro': 'giro',
-                    'gap': 'gap', 'sequencia': 'sequencia', 'terminais': 'terminais', 'simetria': 'simetria'
-                }
-                key = key_map.get(key, key)
-                
                 if motores_ativos.get(key, True) and len(self.historico) >= 1:
                     r = estrategia.analisar(*args)
                     if r and len(r.get('base', set())) >= 1:
                         resultados.append((nome, r))
-            except Exception as e:
+            except:
                 pass
         
         # Se nenhum motor ativou, cria entrada básica
@@ -499,11 +753,9 @@ class RoletaBotUnificado:
         maior_forca = 0
         
         for nome, r in resultados:
-            peso = 1
-            for _ in range(peso):
-                base_final.update(r['base'])
+            base_final.update(r['base'])
             todas_estrategias.extend(r.get('estrategias', []))
-            forca_total += r['forca'] * peso
+            forca_total += r['forca']
             if r['forca'] > maior_forca:
                 maior_forca = r['forca']
                 motor_principal = nome
@@ -516,7 +768,6 @@ class RoletaBotUnificado:
         prioridade = [n for n, _ in Counter({n: 1 for n in base_final}).most_common()]
         base_list = prioridade[:max_n]
         
-        # Garante mínimo de números
         while len(base_list) < min_n and len(base_list) < 37:
             for n in range(37):
                 if n not in base_list:
@@ -553,13 +804,8 @@ class SistemaBot:
         self.modo_ia = "ATIVO"
         self.entropia_atual = 0
         self.erros_consecutivos = 0
-        self.repeticoes_acerto_consecutivas = 0
-        self.ultima_entrada_numeros = []
-        self.ultima_entrada_forca = 0
-        self.ultima_entrada_motor = ""
         
     def processar_novo_numero(self, numero_data):
-        # Extrai dados
         if isinstance(numero_data, dict):
             numero_real = numero_data['number']
             lucky = numero_data.get('luckyNumbers', [])
@@ -570,17 +816,14 @@ class SistemaBot:
             numero_real = int(numero_data)
             lucky, lucky_mults, mult, is_lucky = [], {}, None, False
         
-        # Atualiza bot
         self.bot.atualizar(numero_real, lucky, lucky_mults)
         self.historico_numeros.append(numero_real)
         self.historico_lucky.append(lucky)
         
-        # Verifica resultado da entrada anterior
         if self.entrada_ativa:
             acerto = numero_real in self.entrada_ativa.get('numeros_apostar', [])
             self.bot.atualizar_resultado(acerto)
             
-            # Registra no histórico
             entrada_info = {
                 'rodada': len(self.historico_numeros) - 1,
                 'hora': datetime.now().strftime('%H:%M:%S'),
@@ -601,9 +844,6 @@ class SistemaBot:
             if acerto:
                 self.acertos += 1
                 self.erros_consecutivos = 0
-                self.ultima_entrada_numeros = self.entrada_ativa.get('numeros_apostar', [])
-                self.ultima_entrada_forca = self.entrada_ativa.get('forca_real', 0)
-                self.ultima_entrada_motor = self.entrada_ativa.get('motor', '')
             else:
                 self.erros += 1
                 self.erros_consecutivos += 1
@@ -611,9 +851,7 @@ class SistemaBot:
             enviar_resultado_auto(numero_real, acerto, mult, is_lucky)
             self.entrada_ativa = None
         
-        # ==========================================
-        # GERA NOVA ENTRADA (SEMPRE!)
-        # ==========================================
+        # Gera nova entrada
         motores_ativos = {
             'sniper': st.session_state.get('usar_sniper', True),
             'mineracao': st.session_state.get('usar_mineracao', True),
@@ -622,6 +860,11 @@ class SistemaBot:
             'sequencia': st.session_state.get('usar_sequencia', True),
             'terminais': st.session_state.get('usar_terminais', True),
             'simetria': st.session_state.get('usar_simetria', True),
+            'repeticao': st.session_state.get('usar_repeticao', True),
+            'ciclo': st.session_state.get('usar_ciclo', True),
+            'par_impar': st.session_state.get('usar_par_impar', True),
+            'duzia_dom': st.session_state.get('usar_duzia_dom', True),
+            'gap3': st.session_state.get('usar_gap3', True),
         }
         
         self.entrada_ativa = self.bot.gerar_entrada(motores_ativos)
@@ -691,14 +934,12 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Bot Unificado — 7 Estratégias", layout="centered")
-st.title("🎯 Bot Unificado — 7 Estratégias")
+st.set_page_config(page_title="🎯 Bot Unificado — 12 Estratégias", layout="centered")
+st.title("🎯 Bot Unificado — 12 Estratégias com Padrões Reais")
 
-# Inicializa sistema
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
 
-# Carrega dados
 dados = carregar_dados_persistidos()
 if dados:
     if not st.session_state.get('historico'):
@@ -727,14 +968,12 @@ if dados:
                 sis.historico_entradas = json.load(f)
         except: pass
 
-# Valores padrão
 defaults = {
-    'modo_automatico': True,
-    'max_n_apostas': 10,
-    'min_n_apostas': 5,
-    'usar_sniper': True, 'usar_mineracao': True,
-    'usar_giro': True, 'usar_gap': True, 'usar_sequencia': True,
-    'usar_terminais': True, 'usar_simetria': True,
+    'modo_automatico': True, 'max_n_apostas': 10, 'min_n_apostas': 5,
+    'usar_sniper': True, 'usar_mineracao': True, 'usar_giro': True,
+    'usar_gap': True, 'usar_sequencia': True, 'usar_terminais': True,
+    'usar_simetria': True, 'usar_repeticao': True, 'usar_ciclo': True,
+    'usar_par_impar': True, 'usar_duzia_dom': True, 'usar_gap3': True,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -753,14 +992,18 @@ if "telegram_token" not in st.session_state:
 if "telegram_chat_id" not in st.session_state:
     st.session_state.telegram_chat_id = ""
 
-# ==========================================
-# SIDEBAR
-# ==========================================
+# Sidebar
 st.sidebar.title("⚙️ Configurações")
+st.sidebar.success("✅ **ENTRADA TODO GIRO - 12 ESTRATÉGIAS**")
 
-st.sidebar.success("✅ **MODO: ENTRADA TODO GIRO**")
+with st.sidebar.expander("🆕 Novas Estratégias (Histórico)", expanded=True):
+    st.session_state.usar_repeticao = st.checkbox("🔄 Repetição Imediata", value=st.session_state.usar_repeticao, help="Números que repetem no giro seguinte")
+    st.session_state.usar_ciclo = st.checkbox("🔁 Ciclo de Retorno", value=st.session_state.usar_ciclo, help="Números que retornam após 20-40 giros")
+    st.session_state.usar_par_impar = st.checkbox("⚖️ Par/Ímpar", value=st.session_state.usar_par_impar, help="Sequência de 3+ pares ou ímpares")
+    st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dominante", value=st.session_state.usar_duzia_dom, help="Dúzia com mais números em 10 giros")
+    st.session_state.usar_gap3 = st.checkbox("⏭️ Gap 3 Giros", value=st.session_state.usar_gap3, help="Número que repete após 3 giros")
 
-with st.sidebar.expander("🤖 Motores (7 ativos)", expanded=True):
+with st.sidebar.expander("🎯 Estratégias Originais", expanded=False):
     st.session_state.usar_sniper = st.checkbox("🎯 Sniper", value=st.session_state.usar_sniper)
     st.session_state.usar_mineracao = st.checkbox("🔬 Mineração", value=st.session_state.usar_mineracao)
     st.session_state.usar_giro = st.checkbox("🔄 Giro", value=st.session_state.usar_giro)
@@ -768,25 +1011,6 @@ with st.sidebar.expander("🤖 Motores (7 ativos)", expanded=True):
     st.session_state.usar_sequencia = st.checkbox("📊 Sequência", value=st.session_state.usar_sequencia)
     st.session_state.usar_terminais = st.checkbox("🔢 Terminais", value=st.session_state.usar_terminais)
     st.session_state.usar_simetria = st.checkbox("🔄 Simetria", value=st.session_state.usar_simetria)
-
-with st.sidebar.expander("📋 Tabela de Simetrias", expanded=False):
-    st.markdown("""
-    | Número | Espelho |
-    |--------|---------|
-    | 1 | 10 |
-    | 10 | 1 |
-    | 2 | 20 |
-    | 20 | 2 |
-    | 3 | 30 |
-    | 30 | 3 |
-    | 12 | 21 |
-    | 21 | 12 |
-    | 13 | 31 |
-    | 31 | 13 |
-    | 23 | 32 |
-    | 32 | 23 |
-    | 0,11,22,33 | Palíndromos |
-    """)
 
 with st.sidebar.expander("⚙️ Ajustes", expanded=True):
     st.session_state.max_n_apostas = st.slider("📊 Máx. números", 5, 18, st.session_state.max_n_apostas)
@@ -811,11 +1035,7 @@ with st.sidebar.expander("💾 Geral", expanded=False):
             st.session_state.sistema.zerar()
             st.rerun()
 
-# ==========================================
-# CONTEÚDO PRINCIPAL
-# ==========================================
-
-# Inserção manual
+# Conteúdo principal
 st.subheader("✍️ Inserir Números")
 c1, c2 = st.columns([3, 1])
 with c1:
@@ -873,7 +1093,7 @@ c1.metric("🟢 Acertos", sis.acertos)
 c2.metric("🔴 Erros", sis.erros)
 c3.metric("📊 Total", sis.acertos + sis.erros)
 c4.metric("⚠️ Erros seg.", sis.erros_consecutivos)
-c5.metric("🤖 Motores", "7")
+c5.metric("🤖 Estrat.", "12")
 
 if sis.acertos + sis.erros > 0:
     taxa = sis.acertos / (sis.acertos + sis.erros) * 100
@@ -885,8 +1105,8 @@ st.subheader("🎯 Entrada Atual")
 if sis.entrada_ativa:
     e = sis.entrada_ativa
     emoji = "🔥" if e['forca_real'] >= 50 else "🎯" if e['forca_real'] >= 35 else "📊"
-    st.info(f"{emoji} **{e['qualidade']}** | Força {e['forca_real']}% | {len(e['numeros_apostar'])} núm. | {e['motor']} (+{e['qtd_motores']-1})")
-    st.caption(f"🎯 {', '.join(e.get('estrategias_ativas', [])[:4])}")
+    st.info(f"{emoji} **{e['qualidade']}** | Força {e['forca_real']}% | {len(e['numeros_apostar'])} núm. | {e['motor']}")
+    st.caption(f"🎯 {', '.join(e.get('estrategias_ativas', [])[:5])}")
     st.markdown(f"## {', '.join(map(str, sorted(e['numeros_apostar'])))}")
 
 # Histórico de entradas
