@@ -321,17 +321,79 @@ class EstrategiaTerminais:
 
 
 # =============================
-# ESTRATÉGIA 7: SIMETRIA
+# ESTRATÉGIA 7: SIMETRIA (CORRIGIDA E COMPLETA)
 # =============================
 class EstrategiaSimetria:
-    def __init__(self):
-        self.espelhos = {12:21, 21:12, 13:31, 31:13, 23:32, 32:23, 1:10, 10:1, 2:20, 20:2, 3:30, 30:3}
+    def __init__(self, roleta):
+        self.roleta = roleta
+        # Simetria de espelhamento de dígitos (COMPLETO)
+        # Ex: 12 inverte para 21, 13 inverte para 31, etc.
+        self.espelhos = {
+            1: 10, 10: 1,
+            2: 20, 20: 2,
+            3: 30, 30: 3,
+            12: 21, 21: 12,
+            13: 31, 31: 13,
+            23: 32, 32: 23,
+        }
+        
+        # Números que são simétricos de si mesmos (palíndromos)
+        self.palindromos = {0, 11, 22, 33}
     
     def analisar(self, historico):
+        if len(historico) < 1:
+            return None
+        
         ultimo = historico[-1]
+        base = set()
+        estrategias = []
+        
+        # 1. Simetria de espelhamento (a mais importante)
         if ultimo in self.espelhos:
-            return {'base': {self.espelhos[ultimo], ultimo}, 'forca': 20, 'estrategias': ['Simetria']}
-        return None
+            espelhado = self.espelhos[ultimo]
+            base.add(espelhado)
+            base.add(ultimo)  # Inclui também o próprio número
+            estrategias.append(f"Simetria {ultimo}↔{espelhado}")
+        
+        # 2. Se for palíndromo, aposta no próprio número e vizinhos
+        elif ultimo in self.palindromos:
+            base.add(ultimo)
+            # Adiciona vizinhos na roleta
+            vizinhos = self.roleta.get_vizinhos(ultimo, 1)
+            base.update(vizinhos[:3])
+            estrategias.append(f"Palíndromo {ultimo}+vizinhos")
+        
+        # 3. Simetria por inversão de dígitos para números de 1 dígito
+        # Ex: 5 → aposta em números terminados em 5 (5,15,25,35)
+        elif 0 <= ultimo <= 9:
+            # Números que terminam com o mesmo dígito
+            mesma_terminacao = [n for n in range(37) if n % 10 == ultimo]
+            base.update(mesma_terminacao[:4])
+            estrategias.append(f"Simetria dígito {ultimo}")
+        
+        # 4. Simetria de dezenas (números na mesma faixa)
+        # Ex: 14 → aposta em 4, 24, 34 (mesmo final)
+        if 10 <= ultimo <= 36:
+            dezena = ultimo // 10
+            unidade = ultimo % 10
+            # Inverte dezena e unidade
+            if 0 <= unidade <= 3 and 0 <= dezena <= 3:
+                invertido = unidade * 10 + dezena
+                if 0 <= invertido <= 36:
+                    base.add(invertido)
+                    estrategias.append(f"Inversão {ultimo}→{invertido}")
+        
+        if len(base) == 0:
+            return None
+        
+        # Força baseada na quantidade de números gerados
+        forca = 25 if len(base) <= 3 else 20
+        
+        return {
+            'base': base,
+            'forca': min(100, forca),
+            'estrategias': estrategias
+        }
 
 
 # =============================
@@ -346,7 +408,7 @@ class RoletaBotUnificado:
         self.gap = EstrategiaGap()
         self.sequencia = EstrategiaSequencia()
         self.terminais = EstrategiaTerminais()
-        self.simetria = EstrategiaSimetria()
+        self.simetria = EstrategiaSimetria(self.roleta)
         
         self.historico = []
         self.lucky = []
@@ -404,11 +466,11 @@ class RoletaBotUnificado:
                 }
                 key = key_map.get(key, key)
                 
-                if motores_ativos.get(key, True) and len(self.historico) >= 2:
+                if motores_ativos.get(key, True) and len(self.historico) >= 1:
                     r = estrategia.analisar(*args)
                     if r and len(r.get('base', set())) >= 1:
                         resultados.append((nome, r))
-            except:
+            except Exception as e:
                 pass
         
         # Se nenhum motor ativou, cria entrada básica
@@ -706,6 +768,25 @@ with st.sidebar.expander("🤖 Motores (7 ativos)", expanded=True):
     st.session_state.usar_sequencia = st.checkbox("📊 Sequência", value=st.session_state.usar_sequencia)
     st.session_state.usar_terminais = st.checkbox("🔢 Terminais", value=st.session_state.usar_terminais)
     st.session_state.usar_simetria = st.checkbox("🔄 Simetria", value=st.session_state.usar_simetria)
+
+with st.sidebar.expander("📋 Tabela de Simetrias", expanded=False):
+    st.markdown("""
+    | Número | Espelho |
+    |--------|---------|
+    | 1 | 10 |
+    | 10 | 1 |
+    | 2 | 20 |
+    | 20 | 2 |
+    | 3 | 30 |
+    | 30 | 3 |
+    | 12 | 21 |
+    | 21 | 12 |
+    | 13 | 31 |
+    | 31 | 13 |
+    | 23 | 32 |
+    | 32 | 23 |
+    | 0,11,22,33 | Palíndromos |
+    """)
 
 with st.sidebar.expander("⚙️ Ajustes", expanded=True):
     st.session_state.max_n_apostas = st.slider("📊 Máx. números", 5, 18, st.session_state.max_n_apostas)
