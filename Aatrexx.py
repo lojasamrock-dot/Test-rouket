@@ -1,4 +1,3 @@
-
 import streamlit as st
 import json
 import os
@@ -63,6 +62,9 @@ def salvar_sessao():
             'modo_ia': st.session_state.sistema.modo_ia,
             'entropia_atual': st.session_state.sistema.entropia_atual,
             'erros_consecutivos': st.session_state.sistema.erros_consecutivos,
+            'green_repeticoes': st.session_state.sistema.green_repeticoes,
+            'green_contagem': st.session_state.sistema.green_contagem,
+            'erro_aguardando': st.session_state.sistema.erro_aguardando,
         }
         
         with open(SESSION_DATA_PATH, 'wb') as f:
@@ -103,20 +105,44 @@ def enviar_previsao_auto(previsao):
         motor = previsao.get('motor', '')
         qualidade = previsao.get('qualidade', '')
         qtd_motores = previsao.get('qtd_motores', 0)
+        green = previsao.get('green', False)
+        repeticao = previsao.get('repeticao', False)
+        green_count = previsao.get('green_count', 0)
         
-        emoji = "🔥" if forca >= 50 else "🎯" if forca >= 35 else "📊"
+        if green:
+            emoji = "🟢"
+            tipo = f"GREEN #{green_count}"
+        elif repeticao:
+            emoji = "⏳"
+            tipo = "REPETINDO"
+        elif forca >= 50:
+            emoji = "🔥"
+            tipo = motor
+        elif forca >= 35:
+            emoji = "🎯"
+            tipo = motor
+        else:
+            emoji = "📊"
+            tipo = motor
         
         msg = f"{emoji} **ENTRADA** - Força: {forca}% | {len(numeros)} núm.\n"
-        msg += f"🤖 {motor} (+{qtd_motores-1}) | Q: {qualidade}\n"
-        if estrategias:
-            msg += f"🎯 {', '.join(estrategias[:3])}\n"
+        
+        if green:
+            msg += f"🟢 GREEN! Repetindo após acerto ({green_count}/2)\n"
+        elif repeticao:
+            msg += f"⏳ REPETINDO após erro (aguardou 1 giro)\n"
+        else:
+            msg += f"🤖 {motor} (+{qtd_motores-1}) | Q: {qualidade}\n"
+            if estrategias:
+                msg += f"🎯 {', '.join(estrategias[:3])}\n"
         msg += f"🔢 {numeros}"
         
-        st.toast(f"{emoji} {motor} - {forca}%", icon=emoji)
+        st.toast(f"{emoji} {tipo} - {forca}%", icon=emoji)
         st.success(f"🔔 {msg}")
         
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
-            enviar_telegram(f"🔔 ENTRADA F{forca}% | {len(numeros)}núm.\n🤖 {motor}\n🔢 " + " ".join(map(str, numeros)))
+            tag = "[GREEN]" if green else "[REPEAT]" if repeticao else ""
+            enviar_telegram(f"🔔 ENTRADA {tag} F{forca}% | {len(numeros)}núm.\n🤖 {motor}\n🔢 " + " ".join(map(str, numeros)))
         
         salvar_sessao()
     except Exception as e:
@@ -166,11 +192,9 @@ class RoletaBase:
         self.pretos = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
         self.pares = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36}
         self.impares = {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35}
-        # Setores do cilindro
         self.voisins = {22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25}
         self.tiers = {27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33}
         self.orphelins = {1, 20, 14, 31, 9, 17, 34, 6}
-        # Mapeamento de setores organizados por ordem na roleta
         self.setores_ordem = {
             "Voisins": [22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25],
             "Tiers": [27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33],
@@ -200,16 +224,9 @@ class RoletaBase:
 
 
 # =============================
-# 🆕 SNIPER-ELITE V2 COM TERMINAIS DINÂMICOS
+# SNIPER-ELITE V2 COM TERMINAIS DINÂMICOS
 # =============================
 class EstrategiaSniperElite:
-    """
-    Estratégia Sniper-Elite v2 com Terminais Dinâmicos.
-    - Detecta os terminais mais frequentes nos últimos 5 giros
-    - Combina com setor físico da roleta
-    - Cobertura alvo de 12 números
-    - Força baseada em concentração de terminais e cores
-    """
     def __init__(self, roleta):
         self.roleta = roleta
         self.intervalo_forca_ideal = (20, 70)
@@ -217,17 +234,13 @@ class EstrategiaSniperElite:
         self.janela_analise = 5
     
     def identificar_terminais_quentes(self, numeros_janela):
-        """Identifica os terminais que mais se repetiram na janela."""
         terminais = [n % 10 for n in numeros_janela]
         contagem = Counter(terminais)
-        # Retorna os terminais ordenados da maior para menor frequência
         return [t for t, freq in contagem.most_common()]
     
     def get_info_numero(self, n):
-        """Extrai propriedades de um número."""
         if n == 0:
             return {"cor": "Verde", "par": "Zero", "duzia": 0, "col": 0, "setor": "Voisins", "term": 0}
-        
         return {
             "cor": "Vermelho" if n in self.roleta.vermelhos else "Preto",
             "par": "Par" if n % 2 == 0 else "Ímpar",
@@ -238,21 +251,15 @@ class EstrategiaSniperElite:
         }
     
     def analisar(self, historico):
-        """
-        Executa o plano Sniper-Elite com Terminais Dinâmicos.
-        """
         if len(historico) < self.janela_analise:
             return None
         
-        # Pega os últimos 5 números
         ultimos_5 = historico[-self.janela_analise:]
         infos = [self.get_info_numero(n) for n in ultimos_5]
         
-        # 1. Cálculo de Força
         forca = 0
         estrategias = []
         
-        # Força por concentração de cor
         cores = [i['cor'] for i in infos]
         cor_dominante = cores[-1]
         count_cor = cores.count(cor_dominante)
@@ -260,7 +267,6 @@ class EstrategiaSniperElite:
             forca += 20
             estrategias.append(f"Cor {cor_dominante} ({count_cor}/5)")
         
-        # Força por concentração de paridade
         pares = [i['par'] for i in infos]
         par_dominante = pares[-1]
         count_par = pares.count(par_dominante)
@@ -268,17 +274,14 @@ class EstrategiaSniperElite:
             forca += 15
             estrategias.append(f"{par_dominante} ({count_par}/5)")
         
-        # Força por repetição de terminais (PRINCIPAL)
         term_quentes = self.identificar_terminais_quentes(ultimos_5)
         termos_unicos = len(set(term_quentes))
         
         if termos_unicos < 5:
-            # Há repetição de terminais
             repeticoes = 5 - termos_unicos
             forca += 25 + (repeticoes * 5)
             estrategias.append(f"Terminais repetidos ({termos_unicos}/5 únicos)")
         
-        # Força por setor
         setores = [i['setor'] for i in infos]
         setor_dominante = setores[-1]
         count_setor = setores.count(setor_dominante)
@@ -286,28 +289,20 @@ class EstrategiaSniperElite:
             forca += 10
             estrategias.append(f"Setor {setor_dominante} ({count_setor}/5)")
         
-        # 2. Filtro de Força
         if forca < self.intervalo_forca_ideal[0]:
             return None
         
         forca = min(100, forca)
         
-        # 3. Construção Dinâmica da Aposta
         aposta = set()
-        
-        # Prioridade 1: Números do Setor do último resultado (6 principais)
         setor_atual = infos[-1]['setor']
         if setor_atual in self.roleta.setores_ordem:
             numeros_setor = self.roleta.setores_ordem[setor_atual]
-            # Pega os primeiros 6 do setor
             aposta.update(numeros_setor[:6])
             estrategias.append(f"Setor {setor_atual}")
         
-        # Prioridade 2: Números dos Terminais Quentes (dinâmico)
-        term_prioritarios = term_quentes[:2]  # Top 2 terminais mais frequentes
-        
+        term_prioritarios = term_quentes[:2]
         for t in term_prioritarios:
-            # Coleta todos os números com este terminal
             numeros_terminal = [n for n in range(37) if n % 10 == t]
             for n in numeros_terminal:
                 aposta.add(n)
@@ -316,7 +311,6 @@ class EstrategiaSniperElite:
             if len(aposta) >= self.cobertura_alvo:
                 break
         
-        # Prioridade 3: Se ainda não atingiu cobertura, adiciona vizinhos do último
         if len(aposta) < 8:
             vizinhos = self.roleta.get_vizinhos(ultimos_5[-1], 1)
             for v in vizinhos:
@@ -324,14 +318,11 @@ class EstrategiaSniperElite:
                 if len(aposta) >= self.cobertura_alvo:
                     break
         
-        # Prioridade 4: Números quentes da janela
         if len(aposta) < 6:
             for n in ultimos_5:
                 aposta.add(n)
         
-        # Limita ao máximo
         aposta_list = list(aposta)[:self.cobertura_alvo]
-        
         estrategias.insert(0, f"Terminais {term_prioritarios}")
         
         return {
@@ -351,7 +342,6 @@ class AnalisadorEliteMaster:
     def get_info(self, n):
         if n == 0:
             return {"cor": "Verde", "par": "Zero", "duzia": 0, "col": 0, "setor": "Voisins", "term": 0}
-        
         return {
             "cor": "Vermelho" if n in self.roleta.vermelhos else "Preto",
             "par": "Par" if n % 2 == 0 else "Ímpar",
@@ -897,7 +887,6 @@ class RoletaBotUnificado:
         
         resultados = []
         
-        # Ordem de prioridade: Sniper-Elite PRIMEIRO (maior peso)
         estrategias = [
             ('Sniper-Elite v2', self.sniper_elite, [list(self.historico)], 'sniper_elite', 3),
             ('Elite Master', self.elite_master, [list(self.historico)], 'elite_master', 2),
@@ -939,9 +928,9 @@ class RoletaBotUnificado:
                 'qualidade': 'BÁSICA',
                 'green': False,
                 'repeticao': False,
+                'green_count': 0,
             }
         
-        # Fusão com pesos
         base_final = set()
         todas_estrategias = []
         forca_total = 0
@@ -984,11 +973,12 @@ class RoletaBotUnificado:
             'qualidade': qualidade,
             'green': False,
             'repeticao': False,
+            'green_count': 0,
         }
 
 
 # =============================
-# SISTEMA PRINCIPAL
+# SISTEMA PRINCIPAL (COM GREEN REPEAT E ERRO REPEAT)
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -1002,6 +992,12 @@ class SistemaBot:
         self.modo_ia = "ATIVO"
         self.entropia_atual = 0
         self.erros_consecutivos = 0
+        
+        # 🟢 Sistema Green/Erro Repeat
+        self.green_repeticoes = 0      # Quantas vezes já repetiu o green (máx 2)
+        self.green_contagem = 0        # Contagem atual de greens consecutivos
+        self.erro_aguardando = False   # Flag: errou e está aguardando 1 giro
+        self.ultima_entrada_numeros = []  # Armazena a última entrada para repetir
         
     def processar_novo_numero(self, numero_data):
         if isinstance(numero_data, dict):
@@ -1034,22 +1030,81 @@ class SistemaBot:
                 'qualidade': self.entrada_ativa.get('qualidade', ''),
                 'lucky': is_lucky,
                 'multiplicador': mult,
+                'green': self.entrada_ativa.get('green', False),
+                'repeticao': self.entrada_ativa.get('repeticao', False),
             }
             self.historico_entradas.append(entrada_info)
             if len(self.historico_entradas) > 50:
                 self.historico_entradas = self.historico_entradas[-50:]
             
+            # ==========================================
+            # 🟢 LÓGICA GREEN/ERRO REPEAT
+            # ==========================================
             if acerto:
                 self.acertos += 1
                 self.erros_consecutivos = 0
+                self.erro_aguardando = False
+                
+                # Ativa green repeat (até 2x)
+                if self.green_repeticoes < 2:
+                    self.green_repeticoes += 1
+                    self.ultima_entrada_numeros = self.entrada_ativa.get('numeros_apostar', [])
             else:
                 self.erros += 1
                 self.erros_consecutivos += 1
+                
+                # Se era green e errou, reseta green
+                if self.entrada_ativa.get('green', False):
+                    self.green_repeticoes = 0
+                    self.ultima_entrada_numeros = []
+                else:
+                    # Se não era green, ativa erro repeat (aguarda 1 giro)
+                    self.erro_aguardando = True
+                    self.ultima_entrada_numeros = self.entrada_ativa.get('numeros_apostar', [])
+                    self.green_repeticoes = 0
             
             enviar_resultado_auto(numero_real, acerto, mult, is_lucky)
             self.entrada_ativa = None
         
-        # Gera nova entrada
+        # ==========================================
+        # GERA ENTRADA COM PRIORIDADE GREEN/ERRO
+        # ==========================================
+        
+        # 🟢 PRIORIDADE 1: Green Repeat (repetir após acerto até 2x)
+        if self.green_repeticoes > 0 and self.ultima_entrada_numeros:
+            self.entrada_ativa = {
+                'numeros_apostar': sorted(self.ultima_entrada_numeros),
+                'forca_real': 65,
+                'motor': 'Green Repeat',
+                'estrategias_ativas': [f'🟢 Green #{self.green_repeticoes}/2'],
+                'qtd_motores': 1,
+                'qualidade': 'GREEN',
+                'green': True,
+                'repeticao': False,
+                'green_count': self.green_repeticoes,
+            }
+            enviar_previsao_auto(self.entrada_ativa)
+            return
+        
+        # ⏳ PRIORIDADE 2: Erro Repeat (aguardou 1 giro, agora repete)
+        if self.erro_aguardando:
+            self.erro_aguardando = False
+            if self.ultima_entrada_numeros:
+                self.entrada_ativa = {
+                    'numeros_apostar': sorted(self.ultima_entrada_numeros),
+                    'forca_real': 45,
+                    'motor': 'Erro Repeat',
+                    'estrategias_ativas': ['⏳ Repetindo após erro'],
+                    'qtd_motores': 1,
+                    'qualidade': 'REPEAT',
+                    'green': False,
+                    'repeticao': True,
+                    'green_count': 0,
+                }
+                enviar_previsao_auto(self.entrada_ativa)
+                return
+        
+        # 🧠 PRIORIDADE 3: Nova análise normal
         motores_ativos = {
             'sniper_elite': st.session_state.get('usar_sniper_elite', True),
             'elite_master': st.session_state.get('usar_elite_master', True),
@@ -1080,6 +1135,10 @@ class SistemaBot:
         self.historico_lucky.clear()
         self.entrada_ativa = None
         self.erros_consecutivos = 0
+        self.green_repeticoes = 0
+        self.green_contagem = 0
+        self.erro_aguardando = False
+        self.ultima_entrada_numeros = []
         self.bot.zerar()
         salvar_sessao()
 
@@ -1134,8 +1193,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Bot Unificado — 14 Estratégias + Sniper-Elite", layout="centered")
-st.title("🎯 Bot Unificado — 14 Estratégias + Sniper-Elite v2")
+st.set_page_config(page_title="🎯 Bot Unificado — 14 Estratégias + Green/Erro Repeat", layout="centered")
+st.title("🎯 Bot Unificado — 14 Estratégias + Green/Erro Repeat")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -1149,6 +1208,9 @@ if dados:
     sis.acertos = dados.get('sistema_acertos', 0)
     sis.erros = dados.get('sistema_erros', 0)
     sis.erros_consecutivos = dados.get('erros_consecutivos', 0)
+    sis.green_repeticoes = dados.get('green_repeticoes', 0)
+    sis.green_contagem = dados.get('green_contagem', 0)
+    sis.erro_aguardando = dados.get('erro_aguardando', False)
     
     for num, lucky in zip(dados.get('historico_numeros', []), dados.get('historico_lucky', [])):
         sis.bot.atualizar(num, lucky)
@@ -1197,13 +1259,23 @@ if "telegram_chat_id" not in st.session_state:
 st.sidebar.title("⚙️ Configurações")
 st.sidebar.success("✅ **14 ESTRATÉGIAS**")
 
+with st.sidebar.expander("🔄 Green/Erro Repeat (Automático)", expanded=True):
+    st.success("""
+    **🟢 GREEN REPEAT:**
+    - Acertou → repete entrada até 2x
+    - Errou no green → análise normal
+    
+    **⏳ ERRO REPEAT:**
+    - Errou → aguarda 1 giro
+    - Repete a entrada no próximo
+    - Acertou → análise normal
+    """)
+
 with st.sidebar.expander("👑 Sniper-Elite v2 (PRIORITÁRIO)", expanded=True):
-    st.session_state.usar_sniper_elite = st.checkbox("🎯 Sniper-Elite v2", value=st.session_state.usar_sniper_elite, help="Terminais Dinâmicos + Setor + Cores")
-    st.caption("Peso 3x | Terminais dinâmicos + Setor físico + Momentum")
+    st.session_state.usar_sniper_elite = st.checkbox("🎯 Sniper-Elite v2", value=st.session_state.usar_sniper_elite)
 
 with st.sidebar.expander("🧠 Elite Master", expanded=True):
     st.session_state.usar_elite_master = st.checkbox("👑 Elite Master", value=st.session_state.usar_elite_master)
-    st.caption("Peso 2x | MOMENTUM, VÁCUO, SETORES, TERMINAIS")
 
 with st.sidebar.expander("🆕 Histórico", expanded=False):
     st.session_state.usar_repeticao = st.checkbox("🔄 Repetição", value=st.session_state.usar_repeticao)
@@ -1297,25 +1369,54 @@ if st.session_state.historico:
 
 # Status
 sis = st.session_state.sistema
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("🟢 Acertos", sis.acertos)
-c2.metric("🔴 Erros", sis.erros)
-c3.metric("📊 Total", sis.acertos + sis.erros)
-c4.metric("⚠️ Erros seg.", sis.erros_consecutivos)
-c5.metric("🤖 Estrat.", "14")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1.metric("🟢", sis.acertos)
+c2.metric("🔴", sis.erros)
+c3.metric("📊", sis.acertos + sis.erros)
+c4.metric("⚠️", sis.erros_consecutivos)
+c5.metric("🟢G", sis.green_repeticoes)
+c6.metric("⏳E", "Sim" if sis.erro_aguardando else "Não")
 
 if sis.acertos + sis.erros > 0:
     taxa = sis.acertos / (sis.acertos + sis.erros) * 100
     emoji = "🟢" if taxa >= 30 else "🟡" if taxa >= 20 else "🔴"
     st.write(f"{emoji} **Taxa de acerto: {taxa:.1f}%**")
 
+# Estado do sistema
+st.subheader("🧠 Estado do Sistema")
+ec1, ec2, ec3 = st.columns(3)
+with ec1:
+    if sis.green_repeticoes > 0:
+        st.success(f"🟢 Green Ativo: {sis.green_repeticoes}/2")
+    else:
+        st.info("🟢 Green: Inativo")
+with ec2:
+    if sis.erro_aguardando:
+        st.warning("⏳ Aguardando para repetir")
+    else:
+        st.info("⏳ Erro Repeat: Livre")
+with ec3:
+    st.info(f"🤖 Estratégias: 14")
+
 # Entrada atual
 st.subheader("🎯 Entrada Atual")
 if sis.entrada_ativa:
     e = sis.entrada_ativa
-    emoji = "🔥" if e['forca_real'] >= 50 else "🎯" if e['forca_real'] >= 35 else "📊"
-    st.info(f"{emoji} **{e['qualidade']}** | Força {e['forca_real']}% | {len(e['numeros_apostar'])} núm. | {e['motor']}")
-    st.caption(f"🎯 {', '.join(e.get('estrategias_ativas', [])[:5])}")
+    if e.get('green', False):
+        emoji = "🟢"
+    elif e.get('repeticao', False):
+        emoji = "⏳"
+    else:
+        emoji = "🔥" if e['forca_real'] >= 50 else "🎯" if e['forca_real'] >= 35 else "📊"
+    
+    if e.get('green', False):
+        st.success(f"🟢 **GREEN #{e.get('green_count', 0)}/2** | {len(e['numeros_apostar'])} núm.")
+    elif e.get('repeticao', False):
+        st.warning(f"⏳ **REPETINDO** | {len(e['numeros_apostar'])} núm.")
+    else:
+        st.info(f"{emoji} **{e['qualidade']}** | Força {e['forca_real']}% | {len(e['numeros_apostar'])} núm. | {e['motor']}")
+    
+    st.caption(f"🎯 {', '.join(e.get('estrategias_ativas', [])[:4])}")
     st.markdown(f"## {', '.join(map(str, sorted(e['numeros_apostar'])))}")
 
 # Histórico de entradas
@@ -1340,7 +1441,12 @@ if sis.historico_entradas:
         else:
             c3.error(f"❌ {entrada['resultado']}")
         c4.write(f"{entrada['forca']}%")
-        c5.write(entrada['motor'][:14])
+        if entrada.get('green'):
+            c5.write("🟢 GREEN")
+        elif entrada.get('repeticao'):
+            c5.write("⏳ REPEAT")
+        else:
+            c5.write(entrada['motor'][:14])
         c6.write(entrada.get('qualidade', '-'))
 else:
     st.info("Nenhuma entrada ainda.")
