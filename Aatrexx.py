@@ -782,7 +782,7 @@ with st.sidebar:
             st.info("🔄 Inversão DESATIVADA")
     
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 45, 65, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 9, st.session_state.max_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 12, 18, st.session_state.max_n_apostas)
     
     with st.expander("🟢 Green Repeat 1x", expanded=False):
         st.success("Acertou → Repete 1x (força+15%)")
