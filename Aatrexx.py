@@ -659,7 +659,7 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 with st.sidebar:
     st.subheader("⚙️ Config")
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 45, 65, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 9, st.session_state.max_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 10, 15, st.session_state.max_n_apostas)
     
     with st.expander("🛡️ Filtros Anti-Erro", expanded=True):
         st.session_state.limitar_numeros_altos = st.checkbox("🚫 Limitar 0,32,33,34,35 (máx 2)", value=st.session_state.limitar_numeros_altos)
