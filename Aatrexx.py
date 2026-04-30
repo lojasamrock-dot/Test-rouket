@@ -44,7 +44,8 @@ def salvar_sessao():
             'evitar_zero': st.session_state.get('evitar_zero', True),
             'max_gatilhos': st.session_state.get('max_gatilhos', 2),
             'green_repeticoes': st.session_state.sistema.green_repeticoes,
-            'modo_inversao': st.session_state.get('modo_inversao', False),
+            'modo_inversao_auto': st.session_state.get('modo_inversao_auto', False),
+            'estado_inversao': st.session_state.sistema.estado_inversao,
         }
         with open(SESSION_DATA_PATH, 'wb') as f: pickle.dump(session_data, f)
         return True
@@ -368,7 +369,7 @@ class EstrategiaNumeroDoDia:
 
 
 # =============================
-# BOT UNIFICADO (18 ESTRATÉGIAS + FILTROS + INVERSÃO)
+# BOT UNIFICADO (18 ESTRATÉGIAS + INVERSÃO AUTOMÁTICA)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
@@ -404,7 +405,7 @@ class RoletaBotUnificado:
         if len(self.lucky) > 200: self.lucky = self.lucky[-200:]
         if len(self.mults) > 200: self.mults = self.mults[-200:]
     
-    def gerar_entrada(self, motores=None):
+    def gerar_entrada(self, motores=None, forcar_inversao=False):
         if motores is None:
             motores = {k: True for k in [
                 'sniper_elite','lucky_vizinhos','repeticao','gap_curto','mineracao','duzia_dom',
@@ -504,8 +505,8 @@ class RoletaBotUnificado:
             'invertido': False
         }
         
-        # 🆕 MODO INVERSÃO
-        if st.session_state.get('modo_inversao', False):
+        # 🆕 INVERSÃO AUTOMÁTICA
+        if forcar_inversao or st.session_state.get('modo_inversao_auto', False):
             entrada = self._inverter_entrada(entrada)
         
         return entrada
@@ -516,30 +517,27 @@ class RoletaBotUnificado:
         todos_numeros = set(range(37))
         numeros_invertidos = todos_numeros - numeros_originais
         
-        # Pega a mesma quantidade de números da entrada original
         qtd = len(entrada['numeros_apostar'])
         invertidos_list = sorted(list(numeros_invertidos))
         
-        # Prioriza números que NÃO são problemáticos
         nao_problematicos = [n for n in invertidos_list if n not in {0, 32, 33, 34, 35}]
         problematicos = [n for n in invertidos_list if n in {0, 32, 33, 34, 35}]
         
-        # Monta a lista final: primeiro não problemáticos, depois completa com problemáticos
         final = nao_problematicos[:qtd]
         if len(final) < qtd:
             final.extend(problematicos[:qtd - len(final)])
         
         entrada['numeros_apostar'] = sorted(final[:qtd])
         entrada['motor'] = f"🔄 {entrada['motor']} (Inv)"
-        entrada['estrategias_ativas'] = ['🔄 MODO INVERSÃO'] + entrada['estrategias_ativas'][:3]
+        entrada['estrategias_ativas'] = ['🔄 INVERSÃO AUTO'] + entrada['estrategias_ativas'][:3]
         entrada['invertido'] = True
-        entrada['gatilho'] = f"🔄 INVERSO: {entrada['gatilho']}"
+        entrada['gatilho'] = f"🔄 INV: {entrada['gatilho']}"
         
         return entrada
 
 
 # =============================
-# SISTEMA PRINCIPAL (COM GREEN REPEAT 1X)
+# SISTEMA PRINCIPAL (INVERSÃO AUTOMÁTICA)
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -553,6 +551,9 @@ class SistemaBot:
         self.green_repeticoes = 0
         self.ultima_entrada_numeros = []
         self.ultima_entrada_forca = 0
+        
+        # 🆕 ESTADO DA INVERSÃO AUTOMÁTICA
+        self.estado_inversao = False  # False = Normal, True = Invertido
         
     def processar_novo_numero(self, numero_data):
         if isinstance(numero_data, dict):
@@ -593,8 +594,12 @@ class SistemaBot:
             if len(self.historico_entradas) > 50: self.historico_entradas = self.historico_entradas[-50:]
             
             entrada_forca = self.entrada_ativa.get('forca_real', 0)
+            era_invertido = self.entrada_ativa.get('invertido', False)
             
-            if acerto and entrada_forca >= 55 and not self.entrada_ativa.get('invertido', False):
+            # ==========================================
+            # 🟢 GREEN REPEAT (1x)
+            # ==========================================
+            if acerto and entrada_forca >= 55 and not era_invertido:
                 self.green_repeticoes = 1
                 self.ultima_entrada_numeros = list(self.entrada_ativa.get('numeros_apostar', []))
                 self.ultima_entrada_forca = entrada_forca
@@ -602,10 +607,23 @@ class SistemaBot:
                 self.green_repeticoes = 0
                 self.ultima_entrada_numeros = []
             
+            # ==========================================
+            # 🔄 LÓGICA DE INVERSÃO AUTOMÁTICA
+            # ==========================================
+            if st.session_state.get('modo_inversao_auto', False):
+                if acerto:
+                    # ACERTOU → MANTÉM O MESMO ESTADO (normal ou invertido)
+                    pass  # estado_inversao não muda
+                else:
+                    # ERROU → INVERTE O ESTADO
+                    self.estado_inversao = not self.estado_inversao
+            
             enviar_resultado_auto(nr, acerto, is_lucky)
             self.entrada_ativa = None
         
-        # Green Repeat
+        # ==========================================
+        # 🟢 GREEN REPEAT - PRIORIDADE MÁXIMA
+        # ==========================================
         if self.green_repeticoes > 0 and self.ultima_entrada_numeros:
             self.green_repeticoes = 0
             self.entrada_ativa = {
@@ -623,13 +641,18 @@ class SistemaBot:
             enviar_previsao_auto(self.entrada_ativa)
             return
         
-        # Nova análise
+        # ==========================================
+        # 🧠 NOVA ANÁLISE (COM OU SEM INVERSÃO)
+        # ==========================================
         mot = {k: st.session_state.get(f'usar_{k}', True) for k in [
             'sniper_elite','lucky_vizinhos','repeticao','gap_curto','mineracao','duzia_dom',
             'espelho','soma_cinco','lucky_alto','ciclo_oito','alternancia_cor',
             'setor_cilindro','zero_virada','primos','vizinhos_fisicos','lucky_terminal','faixa_numerica','numero_do_dia'
         ]}
-        self.entrada_ativa = self.bot.gerar_entrada(mot)
+        
+        # Aplica inversão se modo automático estiver ativo e estado for True
+        forcar_inversao = st.session_state.get('modo_inversao_auto', False) and self.estado_inversao
+        self.entrada_ativa = self.bot.gerar_entrada(mot, forcar_inversao)
         if self.entrada_ativa: enviar_previsao_auto(self.entrada_ativa)
     
     def zerar(self):
@@ -638,6 +661,7 @@ class SistemaBot:
         self.historico_numeros.clear(); self.historico_lucky.clear(); self.historico_mults.clear()
         self.entrada_ativa = None
         self.green_repeticoes = 0
+        self.estado_inversao = False
         self.ultima_entrada_numeros = []; self.ultima_entrada_forca = 0
         self.bot.performance = {'acertos': 0, 'erros': 0, 'historico': []}
         self.bot.historico = []; self.bot.lucky = []; self.bot.mults = []
@@ -679,8 +703,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Roleta Bot Pro v14 - Modo Inversão", layout="centered")
-st.title("🎯 Roleta Bot Pro v14 - Modo Inversão")
+st.set_page_config(page_title="🎯 Roleta Bot Pro v15 - Inversão Automática", layout="centered")
+st.title("🎯 Roleta Bot Pro v15 - Inversão Automática")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -691,6 +715,7 @@ if dados:
     sis = st.session_state.sistema
     sis.acertos = dados.get('sistema_acertos', 0); sis.erros = dados.get('sistema_erros', 0)
     sis.green_repeticoes = dados.get('green_repeticoes', 0)
+    sis.estado_inversao = dados.get('estado_inversao', False)
     sis.ultima_entrada_numeros = dados.get('ultima_entrada_numeros', [])
     sis.ultima_entrada_forca = dados.get('ultima_entrada_forca', 0)
     for num, lucky in zip(dados.get('historico_numeros', []), dados.get('historico_lucky', [])):
@@ -713,7 +738,7 @@ defaults = {k: True for k in [
     'usar_zero_virada','usar_primos','usar_vizinhos_fisicos','usar_lucky_terminal',
     'usar_faixa_numerica','usar_numero_do_dia','limitar_numeros_altos','evitar_zero'
 ]}
-defaults.update({'max_n_apostas': 7, 'min_n_apostas': 4, 'forca_minima_entrada': 55, 'max_gatilhos': 2, 'modo_inversao': False})
+defaults.update({'max_n_apostas': 7, 'min_n_apostas': 4, 'forca_minima_entrada': 55, 'max_gatilhos': 2, 'modo_inversao_auto': False})
 for k, v in defaults.items():
     if k not in st.session_state: st.session_state[k] = v
 
@@ -731,29 +756,33 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 with st.sidebar:
     st.subheader("⚙️ Config")
     
-    # 🆕 MODO INVERSÃO
-    with st.expander("🔄 Modo Inversão", expanded=True):
-        st.session_state.modo_inversao = st.checkbox(
-            "🔄 ATIVAR MODO INVERSÃO",
-            value=st.session_state.modo_inversao,
-            help="Quando ativado, troca TODOS os números da entrada pelos que NÃO estão nela"
+    # 🔄 INVERSÃO AUTOMÁTICA
+    with st.expander("🔄 Inversão Automática", expanded=True):
+        st.session_state.modo_inversao_auto = st.checkbox(
+            "🔄 ATIVAR INVERSÃO AUTOMÁTICA",
+            value=st.session_state.modo_inversao_auto,
+            help="Acertou → mantém estado | Errou → inverte (Normal↔Invertido)"
         )
-        if st.session_state.modo_inversao:
-            st.warning("""
-            **⚠️ MODO INVERSÃO ATIVO!**
+        if st.session_state.modo_inversao_auto:
+            estado = "🔄 INVERTIDO" if st.session_state.sistema.estado_inversao else "📊 NORMAL"
+            st.warning(f"""
+            **⚠️ INVERSÃO AUTOMÁTICA ATIVA!**
             
-            **Como funciona:**
-            - Se a entrada tem 7 números (ex: 1,5,10,15,20,25,30)
-            - A entrada invertida terá os OUTROS 30 números
-            - Prioriza números não problemáticos
+            **Estado atual: {estado}**
             
-            **Regra:** Troca todos os números pelos que NÃO estão na entrada original
+            **Regras:**
+            - ✅ Acertou → Mantém o estado
+            - ❌ Errou → Inverte (Normal↔Invertido)
+            
+            **Exemplo:**
+            Normal erra → Próxima é Invertida
+            Invertida erra → Próxima é Normal
             """)
         else:
-            st.info("🔄 Modo Inversão DESATIVADO - Entrada normal")
+            st.info("🔄 Inversão DESATIVADA")
     
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 45, 65, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 12, 18, st.session_state.max_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 9, st.session_state.max_n_apostas)
     
     with st.expander("🟢 Green Repeat 1x", expanded=False):
         st.success("Acertou → Repete 1x (força+15%)")
@@ -843,8 +872,8 @@ c2.metric("🔴", sis.erros)
 tx = sis.acertos/(sis.acertos+sis.erros)*100 if (sis.acertos+sis.erros)>0 else 0
 c3.metric("📊", f"{tx:.0f}%")
 c4.metric("🟢G", "1x")
-c5.metric("🔄", "ON" if st.session_state.get('modo_inversao', False) else "OFF")
-c6.metric("🤖", "18")
+c5.metric("🔄", "ON" if st.session_state.get('modo_inversao_auto', False) else "OFF")
+c6.metric("📊→🔄", "INV" if sis.estado_inversao else "NOR")
 
 # Entrada
 st.subheader("🎯 Entrada Atual")
@@ -853,7 +882,7 @@ if sis.entrada_ativa:
     if e.get('green'): 
         st.success(f"### 🟢 GREEN REPEAT | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
     elif e.get('invertido'):
-        st.warning(f"### 🔄 MODO INVERSÃO | {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
+        st.warning(f"### 🔄 INVERTIDA | {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
     else:
         emoji = "🔥" if e['forca_real'] >= 65 else "🎯" if e['forca_real'] >= 55 else "📊"
         st.info(f"### {emoji} {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
