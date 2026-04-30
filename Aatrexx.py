@@ -649,7 +649,7 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 with st.sidebar:
     st.subheader("⚙️ Config")
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 40, 65, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 10, st.session_state.max_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 10, 15, st.session_state.max_n_apostas)
     
     with st.expander("🤖 11 Estratégias", expanded=False):
         tab1, tab2 = st.tabs(["Originais (6)", "Novas (5)"])
