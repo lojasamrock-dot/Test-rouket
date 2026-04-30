@@ -700,7 +700,7 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 with st.sidebar:
     st.subheader("⚙️ Config")
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 45, 65, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 9, st.session_state.max_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 12, 18, st.session_state.max_n_apostas)
     
     with st.expander("🟢 Green Repeat 1x", expanded=True):
         st.success("""
@@ -714,7 +714,7 @@ with st.sidebar:
     with st.expander("🛡️ Filtros Anti-Erro", expanded=False):
         st.session_state.limitar_numeros_altos = st.checkbox("🚫 Limitar 0,32,33,34,35 (máx 2)", value=st.session_state.limitar_numeros_altos)
         st.session_state.evitar_zero = st.checkbox("🚫 Evitar Zero", value=st.session_state.evitar_zero)
-        st.session_state.max_gatilhos = st.slider("🎯 Máx. gatilhos", 1, 4, st.session_state.max_gatilhos)
+        st.session_state.max_gatilhos = st.slider("🎯 Máx. gatilhos", 1, 8, st.session_state.max_gatilhos)
     
     with st.expander("🤖 18 Estratégias", expanded=False):
         st.session_state.usar_repeticao = st.checkbox("🔄 Repetição (4x)", value=st.session_state.usar_repeticao)
