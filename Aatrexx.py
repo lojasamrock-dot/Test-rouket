@@ -1,3 +1,4 @@
+)
 import streamlit as st
 import json
 import os
@@ -43,6 +44,9 @@ def salvar_sessao():
             'limitar_numeros_altos': st.session_state.get('limitar_numeros_altos', True),
             'evitar_zero': st.session_state.get('evitar_zero', True),
             'max_gatilhos': st.session_state.get('max_gatilhos', 2),
+            'green_repeticoes': st.session_state.sistema.green_repeticoes,
+            'ultima_entrada_numeros': st.session_state.sistema.ultima_entrada_numeros,
+            'ultima_entrada_forca': st.session_state.sistema.ultima_entrada_forca,
         }
         with open(SESSION_DATA_PATH, 'wb') as f: pickle.dump(session_data, f)
         return True
@@ -74,10 +78,11 @@ def enviar_previsao_auto(previsao):
         forca = previsao.get('forca_real', 0)
         motor = previsao.get('motor', '')
         gatilho = previsao.get('gatilho', '')
-        emoji = "🔥" if forca >= 65 else "🎯" if forca >= 55 else "⚠️"
+        green = previsao.get('green', False)
+        emoji = "🟢" if green else "🔥" if forca >= 65 else "🎯" if forca >= 55 else "📊"
         st.toast(f"{emoji} {motor} - {forca}%")
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
-            enviar_telegram(f"🔔 F{forca}% | {motor}\n{gatilho}\n🔢 " + " ".join(map(str, numeros)))
+            enviar_telegram(f"🔔 {'[GREEN]' if green else ''} F{forca}% | {motor}\n{gatilho}\n🔢 " + " ".join(map(str, numeros)))
         salvar_sessao()
     except: pass
 
@@ -118,10 +123,8 @@ class RoletaBase:
         self.primos = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31}
         self.baixos = set(range(1, 19))
         self.altos = set(range(19, 37))
-        # 🆕 NÚMEROS PROBLEMÁTICOS (aparecem muito em entradas erradas)
         self.numeros_problematicos = {0, 32, 33, 34, 35}
-        self.max_problematicos = 2  # Máximo de números problemáticos por entrada
-        
+        self.max_problematicos = 2
     def get_vizinhos(self, n, r=2):
         if n not in self.race: return []
         i = self.race.index(n)
@@ -139,7 +142,7 @@ class RoletaBase:
 
 
 # =============================
-# ESTRATÉGIAS (18)
+# 18 ESTRATÉGIAS
 # =============================
 class EstrategiaSniperElite:
     def __init__(self, roleta): self.roleta = roleta
@@ -460,29 +463,20 @@ class RoletaBotUnificado:
         
         lst = [n for n, _ in consenso.most_common(mx)]
         
-        # ==========================================
-        # 🆕 FILTROS ANTI-ERRO
-        # ==========================================
-        
-        # Filtro 1: Limitar números problemáticos (0, 32, 33, 34, 35)
+        # FILTROS ANTI-ERRO
         if st.session_state.get('limitar_numeros_altos', True):
             problematicos = [n for n in lst if n in self.roleta.numeros_problematicos]
             if len(problematicos) > self.roleta.max_problematicos:
-                # Remove o excesso de problemáticos
                 for p in problematicos[self.roleta.max_problematicos:]:
                     if p in lst and len(lst) > mn: lst.remove(p)
         
-        # Filtro 2: Evitar zero se não for gatilho específico
         if st.session_state.get('evitar_zero', True):
             if 0 in lst and 'Zero' not in ' '.join(gatilhos) and len(lst) > mn:
                 lst.remove(0)
         
-        # Filtro 3: Limitar número de gatilhos (máx 2)
         max_gat = st.session_state.get('max_gatilhos', 2)
-        if len(gatilhos) > max_gat:
-            gatilhos = gatilhos[:max_gat]
+        if len(gatilhos) > max_gat: gatilhos = gatilhos[:max_gat]
         
-        # Filtro 4: Garantir diversidade (não muitos altos)
         altos = [n for n in lst if n >= 25]
         if len(altos) > 3 and len(lst) > mn:
             for a in altos[3:]:
@@ -502,12 +496,13 @@ class RoletaBotUnificado:
             'estrategias_ativas': list(set(ests_ativas))[:4],
             'qtd_motores': len(resultados),
             'qualidade': q,
-            'gatilho': ' | '.join(gatilhos[:2])
+            'gatilho': ' | '.join(gatilhos[:2]),
+            'green': False
         }
 
 
 # =============================
-# SISTEMA PRINCIPAL
+# SISTEMA PRINCIPAL (COM GREEN REPEAT 1X)
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -518,6 +513,10 @@ class SistemaBot:
         self.entrada_ativa = None
         self.historico_entradas = []
         self.acertos = 0; self.erros = 0
+        # 🟢 GREEN REPEAT 1X
+        self.green_repeticoes = 0
+        self.ultima_entrada_numeros = []
+        self.ultima_entrada_forca = 0
         
     def processar_novo_numero(self, numero_data):
         if isinstance(numero_data, dict):
@@ -551,12 +550,48 @@ class SistemaBot:
                 'estrategias': self.entrada_ativa.get('estrategias_ativas', []),
                 'qualidade': self.entrada_ativa.get('qualidade', ''),
                 'lucky': is_lucky, 'multiplicador': mult,
+                'green': self.entrada_ativa.get('green', False),
             })
             if len(self.historico_entradas) > 50: self.historico_entradas = self.historico_entradas[-50:]
+            
+            entrada_forca = self.entrada_ativa.get('forca_real', 0)
+            
+            # ==========================================
+            # 🟢 GREEN REPEAT 1X
+            # ==========================================
+            if acerto and entrada_forca >= 50:
+                self.green_repeticoes = 1
+                self.ultima_entrada_numeros = list(self.entrada_ativa.get('numeros_apostar', []))
+                self.ultima_entrada_forca = entrada_forca
+            else:
+                self.green_repeticoes = 0
+                self.ultima_entrada_numeros = []
             
             enviar_resultado_auto(nr, acerto, is_lucky)
             self.entrada_ativa = None
         
+        # ==========================================
+        # 🟢 GREEN REPEAT (PRIORIDADE MÁXIMA)
+        # ==========================================
+        if self.green_repeticoes > 0 and self.ultima_entrada_numeros:
+            self.green_repeticoes = 0  # Reseta após usar
+            self.entrada_ativa = {
+                'numeros_apostar': sorted(self.ultima_entrada_numeros),
+                'forca_real': min(85, self.ultima_entrada_forca + 15),
+                'motor': 'Green Repeat',
+                'estrategias_ativas': ['🟢 Green Repeat'],
+                'qtd_motores': 1,
+                'qualidade': 'GREEN',
+                'gatilho': 'Repetindo entrada que acertou (1x)',
+                'green': True,
+                'green_count': 1,
+            }
+            enviar_previsao_auto(self.entrada_ativa)
+            return
+        
+        # ==========================================
+        # NOVA ANÁLISE
+        # ==========================================
         mot = {k: st.session_state.get(f'usar_{k}', True) for k in [
             'sniper_elite','lucky_vizinhos','repeticao','gap_curto','mineracao','duzia_dom',
             'espelho','soma_cinco','lucky_alto','ciclo_oito','alternancia_cor',
@@ -570,6 +605,8 @@ class SistemaBot:
         self.historico_entradas = []
         self.historico_numeros.clear(); self.historico_lucky.clear(); self.historico_mults.clear()
         self.entrada_ativa = None
+        self.green_repeticoes = 0
+        self.ultima_entrada_numeros = []; self.ultima_entrada_forca = 0
         self.bot.performance = {'acertos': 0, 'erros': 0, 'historico': []}
         self.bot.historico = []; self.bot.lucky = []; self.bot.mults = []
         salvar_sessao()
@@ -610,8 +647,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Roleta Bot Pro v12 - Filtros Anti-Erro", layout="centered")
-st.title("🎯 Roleta Bot Pro v12 - Filtros Anti-Erro")
+st.set_page_config(page_title="🎯 Roleta Bot Pro v13 - Green Repeat 1x", layout="centered")
+st.title("🎯 Roleta Bot Pro v13 - Green Repeat 1x")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -621,6 +658,9 @@ if dados:
     if not st.session_state.get('historico'): st.session_state.historico = dados.get('historico', [])
     sis = st.session_state.sistema
     sis.acertos = dados.get('sistema_acertos', 0); sis.erros = dados.get('sistema_erros', 0)
+    sis.green_repeticoes = dados.get('green_repeticoes', 0)
+    sis.ultima_entrada_numeros = dados.get('ultima_entrada_numeros', [])
+    sis.ultima_entrada_forca = dados.get('ultima_entrada_forca', 0)
     for num, lucky in zip(dados.get('historico_numeros', []), dados.get('historico_lucky', [])):
         sis.bot.atualizar(num, lucky); sis.historico_numeros.append(num); sis.historico_lucky.append(lucky)
     if os.path.exists(PERFORMANCE_PATH):
@@ -659,20 +699,14 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 with st.sidebar:
     st.subheader("⚙️ Config")
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 45, 65, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 10, 15, st.session_state.max_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 12, 18, st.session_state.max_n_apostas)
+    
+    st.success("🟢 **Green Repeat 1x**: Acertou → Repete 1x")
     
     with st.expander("🛡️ Filtros Anti-Erro", expanded=True):
-        st.session_state.limitar_numeros_altos = st.checkbox("🚫 Limitar 0,32,33,34,35 (máx 2)", value=st.session_state.limitar_numeros_altos)
-        st.session_state.evitar_zero = st.checkbox("🚫 Evitar Zero (se não for gatilho)", value=st.session_state.evitar_zero)
-        st.session_state.max_gatilhos = st.slider("🎯 Máx. gatilhos", 1, 10, st.session_state.max_gatilhos)
-        st.info("""
-        **Regras Anti-Erro:**
-        - Máx 2 de {0,32,33,34,35}
-        - Zero só com gatilho
-        - Máx 2 gatilhos simultâneos
-        - Máx 3 números ≥25
-        - Força mínima 55%
-        """)
+        st.session_state.limitar_numeros_altos = st.checkbox("🚫 Limitar 0,32,33,34,35", value=st.session_state.limitar_numeros_altos)
+        st.session_state.evitar_zero = st.checkbox("🚫 Evitar Zero", value=st.session_state.evitar_zero)
+        st.session_state.max_gatilhos = st.slider("🎯 Máx. gatilhos", 1, 3, st.session_state.max_gatilhos)
     
     with st.expander("🤖 18 Estratégias", expanded=False):
         st.session_state.usar_repeticao = st.checkbox("🔄 Repetição (4x)", value=st.session_state.usar_repeticao)
@@ -683,16 +717,6 @@ with st.sidebar:
         st.session_state.usar_espelho = st.checkbox("🪞 Espelho", value=st.session_state.usar_espelho)
         st.session_state.usar_lucky_alto = st.checkbox("💎 Lucky Alto", value=st.session_state.usar_lucky_alto)
         st.session_state.usar_numero_do_dia = st.checkbox("🌟 Nº do Dia", value=st.session_state.usar_numero_do_dia)
-        st.session_state.usar_mineracao = st.checkbox("⛏️ Mineração", value=st.session_state.usar_mineracao)
-        st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dom.", value=st.session_state.usar_duzia_dom)
-        st.session_state.usar_soma_cinco = st.checkbox("➕5 Soma Cinco", value=st.session_state.usar_soma_cinco)
-        st.session_state.usar_ciclo_oito = st.checkbox("8️⃣ Ciclo Oito", value=st.session_state.usar_ciclo_oito)
-        st.session_state.usar_alternancia_cor = st.checkbox("🎨 Alternância", value=st.session_state.usar_alternancia_cor)
-        st.session_state.usar_setor_cilindro = st.checkbox("🎡 Setor Cilindro", value=st.session_state.usar_setor_cilindro)
-        st.session_state.usar_zero_virada = st.checkbox("0️⃣ Zero Virada", value=st.session_state.usar_zero_virada)
-        st.session_state.usar_primos = st.checkbox("🔢 Primos", value=st.session_state.usar_primos)
-        st.session_state.usar_lucky_terminal = st.checkbox("🍀🔢 Lucky Terminal", value=st.session_state.usar_lucky_terminal)
-        st.session_state.usar_faixa_numerica = st.checkbox("📏 Faixa Numérica", value=st.session_state.usar_faixa_numerica)
     
     st.session_state.modo_automatico = st.checkbox("Modo Automático", value=st.session_state.modo_automatico)
     
@@ -749,19 +773,21 @@ if st.session_state.historico:
 # Status
 sis = st.session_state.sistema
 st.subheader("📊 Status")
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("🟢 Acertos", sis.acertos)
-c2.metric("🔴 Erros", sis.erros)
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("🟢", sis.acertos); c2.metric("🔴", sis.erros)
 tx = sis.acertos/(sis.acertos+sis.erros)*100 if (sis.acertos+sis.erros)>0 else 0
-c3.metric("📊 Taxa", f"{tx:.0f}%")
-c4.metric("🤖 Estrat.", "18")
+c3.metric("📊", f"{tx:.0f}%"); c4.metric("🟢G", "1x")
+c5.metric("🤖", "18")
 
 # Entrada
 st.subheader("🎯 Entrada Atual")
 if sis.entrada_ativa:
     e = sis.entrada_ativa
-    emoji = "🔥" if e['forca_real'] >= 65 else "🎯" if e['forca_real'] >= 55 else "📊"
-    st.info(f"### {emoji} {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
+    if e.get('green'):
+        st.success(f"### 🟢 GREEN REPEAT | {e['forca_real']}%")
+    else:
+        emoji = "🔥" if e['forca_real'] >= 65 else "🎯" if e['forca_real'] >= 55 else "📊"
+        st.info(f"### {emoji} {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
     if e.get('gatilho'): st.warning(f"🎯 {e['gatilho']}")
     st.markdown(f"## {', '.join(map(str, sorted(e['numeros_apostar'])))}")
 else: st.info("🔍 Analisando...")
@@ -774,7 +800,8 @@ if sis.historico_entradas:
         c1.write(f"#{entrada['rodada']}")
         if entrada['acerto']: c2.success(f"✅ {entrada['resultado']}")
         else: c2.error(f"❌ {entrada['resultado']}")
-        c3.write(f"{entrada['motor'][:12]} | {entrada.get('gatilho','')[:25]}")
+        green_str = "🟢" if entrada.get('green') else ""
+        c3.write(f"{green_str} {entrada['motor'][:12]} | {entrada.get('gatilho','')[:25]}")
 
 with st.expander("📥 Download", expanded=False):
     c1, c2, c3 = st.columns(3)
