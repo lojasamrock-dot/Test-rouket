@@ -668,8 +668,8 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 with st.sidebar:
     st.subheader("⚙️ Config")
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 45, 70, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 9, 15, st.session_state.max_n_apostas)
-    st.session_state.min_n_apostas = st.slider("📊 Mín. números", 3, 9, st.session_state.min_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 12, 15, st.session_state.max_n_apostas)
+    st.session_state.min_n_apostas = st.slider("📊 Mín. números", 3, 12, st.session_state.min_n_apostas)
     
     with st.expander("🤖 6 Estratégias com Gatilhos", expanded=False):
         st.markdown("""
