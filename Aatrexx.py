@@ -21,7 +21,6 @@ def salvar_sessao():
     try:
         if 'sistema' not in st.session_state or st.session_state.sistema is None:
             return False
-        
         performance_data = {
             'acertos': st.session_state.sistema.acertos,
             'erros': st.session_state.sistema.erros,
@@ -29,7 +28,6 @@ def salvar_sessao():
         }
         with open(PERFORMANCE_PATH, 'w') as f: json.dump(performance_data, f)
         with open(ENTRADAS_PATH, 'w') as f: json.dump(st.session_state.sistema.historico_entradas, f)
-        
         session_data = {
             'historico': st.session_state.get('historico', []),
             'telegram_token': st.session_state.get('telegram_token', ''),
@@ -39,12 +37,12 @@ def salvar_sessao():
             'historico_numeros': list(st.session_state.sistema.historico_numeros),
             'historico_lucky': list(st.session_state.sistema.historico_lucky),
             'modo_automatico': st.session_state.get('modo_automatico', True),
-            'max_n_apostas': st.session_state.get('max_n_apostas', 7),
+            'max_n_apostas': st.session_state.get('max_n_apostas', 8),
             'min_n_apostas': st.session_state.get('min_n_apostas', 5),
             'forca_minima_entrada': st.session_state.get('forca_minima_entrada', 55),
             'usar_sniper_elite': st.session_state.get('usar_sniper_elite', True),
             'usar_repeticao': st.session_state.get('usar_repeticao', True),
-            'usar_gap3': st.session_state.get('usar_gap3', True),
+            'usar_gap_curto': st.session_state.get('usar_gap_curto', True),
             'usar_lucky_vizinhos': st.session_state.get('usar_lucky_vizinhos', True),
             'usar_mineracao': st.session_state.get('usar_mineracao', True),
             'usar_duzia_dom': st.session_state.get('usar_duzia_dom', True),
@@ -81,15 +79,8 @@ def enviar_previsao_auto(previsao):
         motor = previsao.get('motor', '')
         green = previsao.get('green', False)
         gatilho = previsao.get('gatilho', '')
-        emoji = "🟢" if green else "🔥" if forca >= 60 else "🎯"
+        emoji = "🟢" if green else "🔥" if forca >= 65 else "🎯"
         st.toast(f"{emoji} {motor} - {forca}%")
-        
-        msg = f"🔔 **{emoji} ENTRADA** - Força: {forca}% | {len(numeros)} núm.\n"
-        msg += f"🤖 {motor}\n"
-        if gatilho: msg += f"🎯 Gatilho: {gatilho}\n"
-        msg += f"🔢 {numeros}"
-        st.success(msg)
-        
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
             enviar_telegram(f"🔔 {'[GREEN]' if green else ''} F{forca}% | {motor}\n{gatilho}\n🔢 " + " ".join(map(str, numeros)))
         salvar_sessao()
@@ -133,279 +124,134 @@ class RoletaBase:
 
 
 # =============================
-# 6 ESTRATÉGIAS COM GATILHOS DINÂMICOS
+# 6 ESTRATÉGIAS COM GATILHOS OTIMIZADOS
 # =============================
 
 class EstrategiaSniperElite:
-    """
-    🎯 GATILHO DINÂMICO: Terminal mais frequente nos últimos 8 giros
-    - Calcula em tempo real qual dígito final (0-9) está dominando
-    - Se um terminal aparece 3+ vezes em 8 giros → ATIVA
-    - Ex: 3, 13, 23, 33 nos últimos 8 giros → Terminal 3 ativado
-    """
+    """Terminal dominante nos últimos 6 giros"""
     def __init__(self, roleta): self.roleta = roleta
     def analisar(self, h):
-        if len(h) < 8: return None
-        
-        # Gatilho dinâmico: frequência de terminais nos últimos 8 giros
-        termos_8 = [n%10 for n in h[-8:]]
-        contagem = Counter(termos_8)
-        terminal_dom, freq = contagem.most_common(1)[0]
-        
-        # Só ativa se 3+ ocorrências do mesmo terminal
+        if len(h) < 6: return None
+        termos = [n%10 for n in h[-6:]]
+        contagem = Counter(termos)
+        td, freq = contagem.most_common(1)[0]
         if freq < 3: return None
         
-        # Busca nos últimos 5 giros também
-        termos_5 = [n%10 for n in h[-5:]]
-        contagem_5 = Counter(termos_5)
-        terminal_5, freq_5 = contagem_5.most_common(1)[0]
-        
-        # Se o terminal dominante mudou nos últimos 5, usa o mais recente
-        if freq_5 >= 2 and terminal_5 != terminal_dom:
-            terminal_dom = terminal_5
-            freq = freq_5
-        
         aposta = set()
-        # Vizinhos do último número na roleta
         aposta.update(self.roleta.get_vizinhos(h[-1], 1)[:3])
-        
-        # Números com o terminal dominante
         for n in range(37):
-            if n%10 == terminal_dom:
-                aposta.add(n)
-                if len(aposta) >= 6: break
+            if n%10 == td: aposta.add(n)
+            if len(aposta) >= 7: break
         
-        forca = 50 + (freq * 5)  # Força baseada na frequência real
-        gatilho = f"Terminal {terminal_dom} ({freq}x em 8 giros)"
-        
-        return {
-            'base': set(list(aposta)[:6]),
-            'forca': min(100, forca),
-            'estrategias': [gatilho],
-            'gatilho': gatilho
-        }
-
+        forca = 55 + freq * 3
+        gatilho = f"Terminal {td} ({freq}x em 6 giros)"
+        return {'base': set(list(aposta)[:7]), 'forca': min(100, forca), 'estrategias': [gatilho], 'gatilho': gatilho}
 
 class EstrategiaRepeticao:
-    """
-    🔄 GATILHO DINÂMICO: Número repetiu no giro anterior
-    - Se último == penúltimo → ATIVA IMEDIATAMENTE
-    - Ex: 23 → 23 → Aposta no 23 + vizinhos
-    """
+    """Número repetiu no giro anterior"""
     def __init__(self, roleta): self.roleta = roleta
     def analisar(self, h):
         if len(h) < 2: return None
         u, p = h[-1], h[-2]
-        
         if u != p: return None
-        
         b = set([u])
         b.update(self.roleta.get_vizinhos(u, 1)[:2])
-        
-        gatilho = f"Número {u} repetiu! ({p}→{u})"
-        return {
-            'base': b,
-            'forca': 75,
-            'estrategias': [gatilho],
-            'gatilho': gatilho
-        }
+        gatilho = f"Número {u} repetiu!"
+        return {'base': b, 'forca': 75, 'estrategias': [gatilho], 'gatilho': gatilho}
 
-
-class EstrategiaGap3:
-    """
-    ⏭️ GATILHO DINÂMICO: Padrão de ciclo curto (gap 3-5 giros)
-    - Verifica se o número atual já apareceu 3, 4 ou 5 giros atrás
-    - Ex: 13 → X → Y → 13 → Aposta no 13 + vizinhos
-    - Também detecta padrões de gap nos últimos 20 giros
-    """
+class EstrategiaGapCurto:
+    """Gap de 2-4 giros (detectado no histórico: 32→X→32)"""
     def __init__(self, roleta): self.roleta = roleta
     def analisar(self, h):
-        if len(h) < 4: return None
+        if len(h) < 3: return None
         u = h[-1]
         b = set()
         gap_encontrado = None
         
+        # Gap 2: N[i] == N[i+2] (32→X→32)
+        if len(h) >= 3 and h[-3] == u:
+            b.add(u); b.add(h[-2])
+            gap_encontrado = 2
+        
         # Gap 3: N[i] == N[i+3]
         if len(h) >= 4 and h[-4] == u:
             b.update([u, h[-2], h[-3]])
-            gap_encontrado = 3
+            gap_encontrado = gap_encontrado or 3
         
         # Gap 4: N[i] == N[i+4]
         if len(h) >= 5 and h[-5] == u:
             b.add(u)
             gap_encontrado = gap_encontrado or 4
         
-        # Gap 5: N[i] == N[i+5]
-        if len(h) >= 6 and h[-6] == u:
-            b.add(u)
-            gap_encontrado = gap_encontrado or 5
-        
-        # Detecta padrão de gap nos últimos 20 giros
-        if not b:
-            gaps = []
-            for i in range(len(h) - 3):
-                for g in [3, 4, 5]:
-                    if i + g < len(h) and h[i] == h[i + g]:
-                        gaps.append((h[i], g))
-            if gaps:
-                # Pega o gap mais recente
-                num, g = gaps[-1]
-                b.add(num)
-                b.update(self.roleta.get_vizinhos(num, 1)[:2])
-                gap_encontrado = g
-        
         if not b: return None
-        
         for n in list(b)[:2]: b.update(self.roleta.get_vizinhos(n, 1)[:1])
         
-        gatilho = f"Ciclo de {gap_encontrado} giros: {u}"
-        return {
-            'base': b,
-            'forca': 55 + (gap_encontrado or 0) * 3,
-            'estrategias': [gatilho],
-            'gatilho': gatilho
-        }
-
+        gatilho = f"Gap {gap_encontrado} giros: {u}"
+        return {'base': b, 'forca': 55 + (gap_encontrado or 0) * 5, 'estrategias': [gatilho], 'gatilho': gatilho}
 
 class EstrategiaLuckyVizinhos:
-    """
-    🍀 GATILHO DINÂMICO: Lucky Numbers recentes no histórico
-    - Rastreia quais Lucky Numbers saíram nos últimos 10 giros
-    - Se houver 2+ Lucky Numbers recentes → ATIVA
-    - Aposta nos Lucky Numbers + seus vizinhos na roleta
-    """
+    """Lucky Numbers recentes"""
     def __init__(self, roleta): self.roleta = roleta
     def analisar(self, h, lucky_hist):
         if len(h) < 3 or not lucky_hist: return None
-        
-        # Coleta Lucky Numbers das últimas 8 rodadas
         all_lucky = []
-        for sub in lucky_hist[-8:]:
-            all_lucky.extend(sub)
-        
+        for sub in lucky_hist[-8:]: all_lucky.extend(sub)
         if len(all_lucky) < 2: return None
         
-        # Frequência dos Lucky Numbers
-        freq_lucky = Counter(all_lucky)
-        
-        # Verifica se algum Lucky Number saiu nos últimos 3 giros
+        freq = Counter(all_lucky)
         recentes = set(h[-3:])
-        lucky_recentes = [n for n in freq_lucky if n in recentes]
-        
-        if lucky_recentes:
-            # Lucky Number acabou de sair → aposta nele + vizinhos
-            top = lucky_recentes[:2]
-        else:
-            # Pega os mais frequentes
-            top = [n for n, _ in freq_lucky.most_common(2)]
+        lucky_rec = [n for n in freq if n in recentes]
+        top = lucky_rec[:2] if lucky_rec else [n for n, _ in freq.most_common(2)]
         
         b = set(top)
         for n in top[:1]: b.update(self.roleta.get_vizinhos(n, 1)[:1])
         
         gatilho = f"Lucky {' e '.join(map(str, top))}"
-        return {
-            'base': b,
-            'forca': 50 + len(all_lucky) * 2,
-            'estrategias': [gatilho],
-            'gatilho': gatilho
-        }
-
+        return {'base': b, 'forca': 55, 'estrategias': [gatilho], 'gatilho': gatilho}
 
 class EstrategiaMineracao:
-    """
-    ⛏️ GATILHO DINÂMICO: Cadeia de Markov em tempo real
-    - Após o número X, quais números mais saíram?
-    - Se há um seguidor com 15%+ de frequência → ATIVA
-    - Ex: Após 13, o 25 saiu 3x → Aposta 25
-    """
+    """Cadeia de Markov em tempo real"""
     def analisar(self, h):
         if len(h) < 5: return None
         u = h[-1]
-        
-        # Constrói matriz de transição com todo histórico
         t = defaultdict(list)
-        for i in range(len(h) - 1):
-            t[h[i]].append(h[i + 1])
-        
-        seguidores = t.get(u, [])
-        if len(seguidores) < 2: return None
-        
-        contagem = Counter(seguidores)
-        # Pega números com frequência ≥ 15%
-        top = [(n, c) for n, c in contagem.most_common(3) if c/len(seguidores) >= 0.15]
-        
+        for i in range(len(h) - 1): t[h[i]].append(h[i + 1])
+        seg = t.get(u, [])
+        if len(seg) < 2: return None
+        top = [(n, c) for n, c in Counter(seg).most_common(2) if c/len(seg) >= 0.15]
         if not top: return None
-        
-        b = set([n for n, _ in top[:2]])
-        
-        gatilho = f"Após {u} → {top[0][0]} ({top[0][1]}/{len(seguidores)})"
-        return {
-            'base': b,
-            'forca': 45 + len(seguidores),
-            'estrategias': [gatilho],
-            'gatilho': gatilho
-        }
-
+        b = set([n for n, _ in top])
+        gatilho = f"Após {u} → {top[0][0]} ({top[0][1]}/{len(seg)})"
+        return {'base': b, 'forca': 50, 'estrategias': [gatilho], 'gatilho': gatilho}
 
 class EstrategiaDuziaDominante:
-    """
-    📐 GATILHO DINÂMICO: Concentração em dúzia/zona
-    - Analisa os últimos 12 giros em tempo real
-    - Se 6+ números estão na mesma dúzia → ATIVA
-    - Aposta nos números faltantes da dúzia + quentes
-    """
+    """Concentração em dúzia nos últimos 10 giros"""
     def analisar(self, h):
-        if len(h) < 12: return None
-        
+        if len(h) < 10: return None
         dz = {1: set(range(1, 13)), 2: set(range(13, 25)), 3: set(range(25, 37))}
-        
-        # Contagem dinâmica nos últimos 12 giros
-        recentes = h[-12:]
-        cnt = Counter()
-        for n in recentes:
-            if n != 0:
-                d = (n - 1) // 12 + 1
-                cnt[d] += 1
-        
+        cnt = Counter((n-1)//12+1 for n in h[-10:] if n != 0)
         if not cnt: return None
-        
-        duzia_dom, freq = cnt.most_common(1)[0]
-        
-        # Gatilho: 50%+ dos últimos 12 giros na mesma dúzia
+        d, freq = cnt.most_common(1)[0]
         if freq < 6: return None
         
         b = set()
-        # Números da dúzia que NÃO saíram nos últimos 5 giros
-        nao_sairam = dz[duzia_dom] - set(h[-5:])
-        b.update(list(nao_sairam)[:3])
-        
-        # Números quentes da dúzia (saíram nos últimos 5)
-        quentes = dz[duzia_dom].intersection(set(h[-5:]))
-        b.update(list(quentes)[:2])
-        
-        # Adiciona vizinhos do último número
-        b.update(RoletaBase().get_vizinhos(h[-1], 1)[:2])
+        b.update(list(dz[d] - set(h[-5:]))[:3])
+        b.update(list(dz[d].intersection(set(h[-5:])))[:2])
         
         forca = 50 + (freq - 6) * 5
-        gatilho = f"Dúzia {duzia_dom} concentrada ({freq}/12 giros)"
-        
-        return {
-            'base': b,
-            'forca': min(100, forca),
-            'estrategias': [gatilho],
-            'gatilho': gatilho
-        }
+        gatilho = f"Dúzia {d} ({freq}/10 giros)"
+        return {'base': b, 'forca': min(100, forca), 'estrategias': [gatilho], 'gatilho': gatilho}
 
 
 # =============================
-# BOT UNIFICADO (6 ESTRATÉGIAS COM GATILHOS)
+# BOT UNIFICADO
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
         self.roleta = RoletaBase()
         self.sniper_elite = EstrategiaSniperElite(self.roleta)
         self.repeticao = EstrategiaRepeticao(self.roleta)
-        self.gap3 = EstrategiaGap3(self.roleta)
+        self.gap_curto = EstrategiaGapCurto(self.roleta)
         self.lucky_vizinhos = EstrategiaLuckyVizinhos(self.roleta)
         self.mineracao = EstrategiaMineracao()
         self.duzia_dom = EstrategiaDuziaDominante()
@@ -421,15 +267,15 @@ class RoletaBotUnificado:
     
     def gerar_entrada(self, motores=None):
         if motores is None:
-            motores = {k: True for k in ['sniper_elite','repeticao','gap3','lucky_vizinhos','mineracao','duzia_dom']}
+            motores = {k: True for k in ['sniper_elite','repeticao','gap_curto','lucky_vizinhos','mineracao','duzia_dom']}
         
         resultados = []
         forca_min = st.session_state.get('forca_minima_entrada', 55)
         
         ests = [
             (self.sniper_elite, 'Sniper Elite', 4, [list(self.historico)]),
-            (self.repeticao, 'Repetição', 3, [list(self.historico)]),
-            (self.gap3, 'Gap 3-4', 3, [list(self.historico)]),
+            (self.repeticao, 'Repetição', 4, [list(self.historico)]),
+            (self.gap_curto, 'Gap Curto', 3, [list(self.historico)]),
             (self.lucky_vizinhos, 'Lucky Vizinhos', 2, [list(self.historico), self.lucky]),
             (self.mineracao, 'Mineração', 1, [list(self.historico)]),
             (self.duzia_dom, 'Dúzia Dom.', 1, [list(self.historico)]),
@@ -456,7 +302,7 @@ class RoletaBotUnificado:
             if r['forca'] > mf: mf, mp = r['forca'], nome
         
         fm = int(ft / sum(p for _, _, p in resultados))
-        mx = st.session_state.get('max_n_apostas', 7)
+        mx = st.session_state.get('max_n_apostas', 8)
         mn = st.session_state.get('min_n_apostas', 5)
         
         consenso = Counter()
@@ -480,7 +326,7 @@ class RoletaBotUnificado:
             'qualidade': q,
             'green': False,
             'green_count': 0,
-            'gatilho': ' | '.join(gatilhos[:3])
+            'gatilho': ' | '.join(gatilhos[:2])
         }
 
 
@@ -538,35 +384,34 @@ class SistemaBot:
             
             entrada_forca = self.entrada_ativa.get('forca_real', 0)
             
-            if acerto:
-                if self.green_repeticoes < 2:
-                    self.green_repeticoes += 1
-                    self.ultima_entrada_numeros = list(self.entrada_ativa.get('numeros_apostar', []))
-                    self.ultima_entrada_forca = entrada_forca
-                else:
-                    self.green_repeticoes = 0; self.ultima_entrada_numeros = []
+            if acerto and entrada_forca >= 55:
+                # 🆕 Green apenas 1x (estava 2x e errando muito)
+                self.green_repeticoes = 1
+                self.ultima_entrada_numeros = list(self.entrada_ativa.get('numeros_apostar', []))
+                self.ultima_entrada_forca = entrada_forca
             else:
                 self.green_repeticoes = 0; self.ultima_entrada_numeros = []
             
             enviar_resultado_auto(nr, acerto, is_lucky)
             self.entrada_ativa = None
         
-        # Green Repeat
+        # Green Repeat (apenas 1x)
         if self.green_repeticoes > 0 and self.ultima_entrada_numeros:
+            self.green_repeticoes = 0
             self.entrada_ativa = {
                 'numeros_apostar': sorted(self.ultima_entrada_numeros),
-                'forca_real': min(90, self.ultima_entrada_forca + 15),
+                'forca_real': min(85, self.ultima_entrada_forca + 10),
                 'motor': 'Green Repeat',
-                'estrategias_ativas': [f'🟢 Green #{self.green_repeticoes}/2'],
+                'estrategias_ativas': ['🟢 Green Repeat'],
                 'qtd_motores': 1, 'qualidade': 'GREEN', 'green': True,
-                'green_count': self.green_repeticoes,
-                'gatilho': f'Repetindo entrada que acertou ({self.green_repeticoes}/2)'
+                'green_count': 1,
+                'gatilho': 'Repetindo entrada que acertou'
             }
             enviar_previsao_auto(self.entrada_ativa)
             return
         
         # Nova análise
-        mot = {k: st.session_state.get(f'usar_{k}', True) for k in ['sniper_elite','repeticao','gap3','lucky_vizinhos','mineracao','duzia_dom']}
+        mot = {k: st.session_state.get(f'usar_{k}', True) for k in ['sniper_elite','repeticao','gap_curto','lucky_vizinhos','mineracao','duzia_dom']}
         self.entrada_ativa = self.bot.gerar_entrada(mot)
         if self.entrada_ativa: enviar_previsao_auto(self.entrada_ativa)
     
@@ -617,8 +462,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Roleta Bot Pro v7 - Gatilhos Dinâmicos", layout="centered")
-st.title("🎯 Roleta Bot Pro v7 - Gatilhos Dinâmicos")
+st.set_page_config(page_title="🎯 Roleta Bot Pro v8", layout="centered")
+st.title("🎯 Roleta Bot Pro v8")
 
 if "sistema" not in st.session_state or st.session_state.sistema is None:
     st.session_state.sistema = SistemaBot()
@@ -645,10 +490,10 @@ if dados:
         except: pass
 
 defaults = {
-    'modo_automatico': True, 'max_n_apostas': 7, 'min_n_apostas': 5,
+    'modo_automatico': True, 'max_n_apostas': 8, 'min_n_apostas': 5,
     'forca_minima_entrada': 55,
     'usar_sniper_elite': True, 'usar_repeticao': True,
-    'usar_gap3': True, 'usar_lucky_vizinhos': True,
+    'usar_gap_curto': True, 'usar_lucky_vizinhos': True,
     'usar_mineracao': True, 'usar_duzia_dom': True,
 }
 for k, v in defaults.items():
@@ -668,28 +513,28 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 with st.sidebar:
     st.subheader("⚙️ Config")
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 45, 70, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 12, 15, st.session_state.max_n_apostas)
-    st.session_state.min_n_apostas = st.slider("📊 Mín. números", 3, 12, st.session_state.min_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 10, 15, st.session_state.max_n_apostas)
+    st.session_state.min_n_apostas = st.slider("📊 Mín. números", 10, 12, st.session_state.min_n_apostas)
     
     with st.expander("🤖 6 Estratégias com Gatilhos", expanded=False):
         st.markdown("""
         | Estratégia | Gatilho Dinâmico |
         |-----------|-----------------|
-        | 🎯 Sniper Elite | Terminal 3+ em 8 giros |
+        | 🎯 Sniper Elite | Terminal 3+ em 6 giros |
         | 🔄 Repetição | Número repetiu agora |
-        | ⏭️ Gap 3-4 | Ciclo de 3-5 giros |
+        | ⏭️ Gap Curto | Gap 2-4 giros |
         | 🍀 Lucky Vizinhos | Lucky Numbers recentes |
-        | ⛏️ Mineração | Cadeia Markov 15%+ |
-        | 📐 Dúzia Dom. | 6+/12 na mesma dúzia |
+        | ⛏️ Mineração | Cadeia Markov |
+        | 📐 Dúzia Dom. | 6+/10 na mesma dúzia |
         """)
         st.session_state.usar_sniper_elite = st.checkbox("🎯 Sniper Elite (4x)", value=st.session_state.usar_sniper_elite)
-        st.session_state.usar_repeticao = st.checkbox("🔄 Repetição (3x)", value=st.session_state.usar_repeticao)
-        st.session_state.usar_gap3 = st.checkbox("⏭️ Gap 3-4 (3x)", value=st.session_state.usar_gap3)
+        st.session_state.usar_repeticao = st.checkbox("🔄 Repetição (4x)", value=st.session_state.usar_repeticao)
+        st.session_state.usar_gap_curto = st.checkbox("⏭️ Gap Curto (3x)", value=st.session_state.usar_gap_curto)
         st.session_state.usar_lucky_vizinhos = st.checkbox("🍀 Lucky Vizinhos (2x)", value=st.session_state.usar_lucky_vizinhos)
         st.session_state.usar_mineracao = st.checkbox("⛏️ Mineração (1x)", value=st.session_state.usar_mineracao)
         st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dom. (1x)", value=st.session_state.usar_duzia_dom)
     
-    st.success("🟢 **Green Repeat**: 50% acerto\n🎯 **Força mínima**: " + str(st.session_state.forca_minima_entrada) + "%\n📊 **Máx**: " + str(st.session_state.max_n_apostas) + " números")
+    st.success("🟢 **Green**: 1x apenas\n🎯 **Força mín**: " + str(st.session_state.forca_minima_entrada) + "%\n📊 **Máx**: " + str(st.session_state.max_n_apostas) + " núm.")
     st.session_state.modo_automatico = st.checkbox("Modo Automático", value=st.session_state.modo_automatico)
     
     with st.expander("🔔 Telegram", expanded=False):
@@ -759,27 +604,23 @@ st.subheader("📊 Status")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("🟢", sis.acertos); c2.metric("🔴", sis.erros)
 tx = sis.acertos/(sis.acertos+sis.erros)*100 if (sis.acertos+sis.erros)>0 else 0
-c3.metric("📊", f"{tx:.0f}%"); c4.metric("🟢G", f"{sis.green_repeticoes}/2")
+c3.metric("📊", f"{tx:.0f}%"); c4.metric("🟢G", "1x")
 c5.metric("⚡Min", st.session_state.get('forca_minima_entrada', 55))
-c6.metric("🎯N", st.session_state.get('max_n_apostas', 7))
+c6.metric("🎯N", st.session_state.get('max_n_apostas', 8))
 
 # Entrada
 st.subheader("🎯 Entrada Atual")
 if sis.entrada_ativa:
     e = sis.entrada_ativa
-    if e.get('green'): st.success(f"### 🟢 GREEN #{e.get('green_count',0)}/2")
+    if e.get('green'): st.success(f"### 🟢 GREEN REPEAT")
     else:
-        emoji = "🔥" if e['forca_real'] >= 60 else "🎯"
+        emoji = "🔥" if e['forca_real'] >= 65 else "🎯"
         st.info(f"### {emoji} {e['motor']} | {e['forca_real']}% | {e['qualidade']} | {len(e['numeros_apostar'])}n")
-    
-    # 🆕 Exibe o gatilho
-    if e.get('gatilho'):
-        st.warning(f"🎯 **Gatilho**: {e['gatilho']}")
-    st.caption(f"🎯 {', '.join(e.get('estrategias_ativas', [])[:3])}")
+    if e.get('gatilho'): st.warning(f"🎯 **Gatilho**: {e['gatilho']}")
     st.markdown(f"## {', '.join(map(str, sorted(e['numeros_apostar'])))}")
 else: st.info("🔍 Analisando...")
 
-# Histórico com gatilhos
+# Histórico
 st.subheader("📋 Últimas Entradas")
 if sis.historico_entradas:
     for entrada in reversed(sis.historico_entradas[-6:]):
@@ -787,11 +628,10 @@ if sis.historico_entradas:
         c1.write(f"**#{entrada['rodada']}**"); c2.write(", ".join(map(str, entrada['numeros'][:5])))
         if entrada['acerto']: c3.success(f"✅ {entrada['resultado']}" + ("🍀" if entrada.get('lucky') else ""))
         else: c3.error(f"❌ {entrada['resultado']}")
-        g_str = f" | {entrada.get('gatilho','')[:30]}" if entrada.get('gatilho') else ""
+        g_str = f" | {entrada.get('gatilho','')[:40]}" if entrada.get('gatilho') else ""
         c4.write(f"{'🟢' if entrada.get('green') else ''} {entrada['motor'][:10]}{g_str}")
 else: st.info("Nenhuma entrada.")
 
-# Performance
 if sis.historico_entradas:
     with st.expander("📊 Performance", expanded=False):
         ms = defaultdict(lambda: {'a':0,'t':0})
