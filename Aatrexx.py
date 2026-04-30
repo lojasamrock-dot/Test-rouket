@@ -528,8 +528,8 @@ with st.sidebar:
     st.subheader("⚙️ Config")
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 40, 65, st.session_state.forca_minima_entrada, 5,
         help="Apenas motores com força ≥ este valor geram entradas")
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 8, st.session_state.max_n_apostas)
-    st.session_state.min_n_apostas = st.slider("📊 Mín. números", 3, 6, st.session_state.min_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 8, 15, st.session_state.max_n_apostas)
+    st.session_state.min_n_apostas = st.slider("📊 Mín. números", 6, 8, st.session_state.min_n_apostas)
     
     st.success("""
     **🟢 GREEN REPEAT**: Acertou → repete até 2x
