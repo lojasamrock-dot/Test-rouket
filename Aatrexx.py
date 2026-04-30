@@ -664,7 +664,7 @@ with st.sidebar:
     with st.expander("🛡️ Filtros Anti-Erro", expanded=True):
         st.session_state.limitar_numeros_altos = st.checkbox("🚫 Limitar 0,32,33,34,35 (máx 2)", value=st.session_state.limitar_numeros_altos)
         st.session_state.evitar_zero = st.checkbox("🚫 Evitar Zero (se não for gatilho)", value=st.session_state.evitar_zero)
-        st.session_state.max_gatilhos = st.slider("🎯 Máx. gatilhos", 1, 4, st.session_state.max_gatilhos)
+        st.session_state.max_gatilhos = st.slider("🎯 Máx. gatilhos", 1, 10, st.session_state.max_gatilhos)
         st.info("""
         **Regras Anti-Erro:**
         - Máx 2 de {0,32,33,34,35}
