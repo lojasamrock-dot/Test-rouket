@@ -492,7 +492,7 @@ with st.sidebar:
         estado = "🔄 INVERTIDO" if st.session_state.sistema.estado_inversao else "📊 NORMAL"
         st.info(f"Estado: {estado} | ✅→Mantém | ❌→Inverte")
     
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 12, st.session_state.max_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 12, 18, st.session_state.max_n_apostas)
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 35, 65, st.session_state.forca_minima_entrada, 5)
     st.session_state.evitar_zero = st.checkbox("🚫 Evitar Zero", value=st.session_state.evitar_zero)
     
