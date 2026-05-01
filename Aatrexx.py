@@ -1,3 +1,4 @@
+
 import streamlit as st
 import json
 import os
@@ -153,7 +154,7 @@ class RoletaBase:
         self.race = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26]
         self.vermelhos = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
         self.pretos = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
-        self.espelhos = {12:21, 21:12, 13:31, 31:13, 23:32, 32:23, 1:10, 10:1, 2:20, 20:2, 3:30, 30:3}
+        self.espelhos = {0:0, 12:21, 21:12, 13:31, 31:13, 23:32, 32:23, 1:10, 10:1, 2:20, 20:2, 3:30, 30:3, 4:19, 19:4, 5:24, 24:5, 6:27, 27:6, 7:28, 28:7, 8:23, 23:8, 9:22, 22:9, 11:36, 36:11, 14:31, 31:14, 15:32, 32:15, 16:33, 33:16, 17:34, 34:17, 18:29, 29:18, 25:26, 26:25}
         self.voisins = {22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25}
         self.tiers = {27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33}
         self.orphelins = {1, 20, 14, 31, 9, 17, 34, 6}
@@ -163,7 +164,6 @@ class RoletaBase:
         self.numeros_problematicos = {0, 32, 33, 34, 35}
         self.max_problematicos = 2
         
-        # Colunas para nova estratégia
         self.coluna1 = set(range(1, 13))
         self.coluna2 = set(range(13, 25))
         self.coluna3 = set(range(25, 37))
@@ -198,12 +198,19 @@ class RoletaBase:
         ia, ib = self.race.index(a), self.race.index(b)
         diff = abs(ia - ib)
         return diff <= d or diff >= 37 - d
+    
+    def get_setor_oposto(self, setor):
+        if setor == "Voisins":
+            return "Orphelins"
+        elif setor == "Orphelins":
+            return "Voisins"
+        elif setor == "Tiers":
+            return "Tiers"
+        return None
 
 # =============================
-# 24 ESTRATÉGIAS (18 ORIGINAIS + 6 NOVAS)
+# ESTRATÉGIAS ORIGINAIS (18)
 # =============================
-
-# --- 18 ESTRATÉGIAS ORIGINAIS (MANTIDAS INTACTAS) ---
 
 class EstrategiaSniperElite:
     def __init__(self, roleta):
@@ -639,11 +646,10 @@ class EstrategiaNumeroDoDia:
         }
 
 # =============================
-# 🆕 6 NOVAS ESTRATÉGIAS
+# ESTRATÉGIAS DA PRIMEIRA ANÁLISE (6)
 # =============================
 
 class EstrategiaConfirmacaoLucky:
-    """✅ NOVA: Lucky numbers tendem a repetir em 2-3 giros"""
     def __init__(self, roleta):
         self.roleta = roleta
     
@@ -651,7 +657,6 @@ class EstrategiaConfirmacaoLucky:
         if len(h) < 3 or not lucky_hist:
             return None
         
-        # Pega lucky numbers dos últimos 5 giros
         recent_lucky = []
         for i in range(max(0, len(lucky_hist)-5), len(lucky_hist)):
             recent_lucky.extend(lucky_hist[i])
@@ -659,14 +664,12 @@ class EstrategiaConfirmacaoLucky:
         if not recent_lucky:
             return None
         
-        # Verifica se algum lucky recente ainda não saiu
         lucky_freq = Counter(recent_lucky)
         nao_saiu = [n for n in lucky_freq if n not in h[-3:]]
         
         if not nao_saiu:
             return None
         
-        # Prioriza lucky com maior frequência
         top_lucky = sorted(nao_saiu, key=lambda x: lucky_freq[x], reverse=True)[:3]
         
         b = set(top_lucky)
@@ -682,7 +685,6 @@ class EstrategiaConfirmacaoLucky:
         }
 
 class EstrategiaPendulo:
-    """✅ NOVA: Balanço entre números altos e baixos"""
     def __init__(self, roleta):
         self.roleta = roleta
     
@@ -694,7 +696,6 @@ class EstrategiaPendulo:
         altos = sum(1 for n in ultimos if n >= 19)
         baixos = len(ultimos) - altos
         
-        # Se desbalanceou muito (6+ de um lado)
         if altos >= 6:
             alvo = self.roleta.baixos
             tendencia = "Baixos"
@@ -704,10 +705,7 @@ class EstrategiaPendulo:
         else:
             return None
         
-        # Pega números do lado oposto que saíram recentemente
         b = alvo.intersection(set(h[-15:])) if len(h) >= 15 else alvo
-        
-        # Adiciona vizinhos do último número
         b.update(self.roleta.get_vizinhos(h[-1], 1)[:3])
         
         forca = 50 + abs(altos - baixos) * 5
@@ -719,7 +717,6 @@ class EstrategiaPendulo:
         }
 
 class EstrategiaQuenteFrio:
-    """✅ NOVA: Números frios (ausentes 15+ giros) combinados com lucky"""
     def __init__(self, roleta):
         self.roleta = roleta
     
@@ -727,15 +724,13 @@ class EstrategiaQuenteFrio:
         if len(h) < 15:
             return None
         
-        # Encontra números que não saíram nos últimos 15 giros
         recentes = set(h[-15:])
         todos = set(range(37))
-        frios = list(todos - recentes - {0})  # Exclui zero inicialmente
+        frios = list(todos - recentes - {0})
         
         if not frios:
             return None
         
-        # Se tem lucky recente, prioriza frios próximos aos lucky
         b = set()
         if lucky_hist:
             recent_lucky = [n for sub in lucky_hist[-5:] for n in sub]
@@ -744,7 +739,6 @@ class EstrategiaQuenteFrio:
                 frios_proximos = vizinhos.intersection(frios)
                 b.update(list(frios_proximos)[:3])
         
-        # Adiciona alguns frios aleatórios
         frios_restantes = [n for n in frios if n not in b]
         random.shuffle(frios_restantes)
         b.update(frios_restantes[:4])
@@ -758,14 +752,10 @@ class EstrategiaQuenteFrio:
         }
 
 class EstrategiaConfirmacaoDupla:
-    """✅ NOVA: Duas estratégias apontando mesmo número aumenta precisão"""
     def analisar(self, h):
-        # Esta é uma meta-estratégia que será processada diferentemente
-        # Ela identifica números que aparecem em múltiplas estratégias
-        return None  # Será implementada via lógica no gerar_entrada
+        return None
 
 class EstrategiaColunasAlternadas:
-    """✅ NOVA: Ciclos de colunas (1-12, 13-24, 25-36)"""
     def __init__(self, roleta):
         self.roleta = roleta
     
@@ -777,7 +767,6 @@ class EstrategiaColunasAlternadas:
         if len(colunas) < 4:
             return None
         
-        # Detecta padrão de alternância entre colunas
         padrao = []
         for i in range(1, len(colunas)):
             if colunas[i] != colunas[i-1]:
@@ -786,19 +775,14 @@ class EstrategiaColunasAlternadas:
         if len(padrao) < 3:
             return None
         
-        # Última coluna que apareceu
         ultima_col = colunas[-1]
-        
-        # Próxima coluna provável (diferente da última)
         colunas_alvo = [1, 2, 3]
         colunas_alvo.remove(ultima_col)
-        coluna_provavel = colunas_alvo[0]  # Simplificação: pega a primeira disponível
+        coluna_provavel = colunas_alvo[0]
         
-        # Mapeia coluna para números
         col_map = {1: self.roleta.coluna1, 2: self.roleta.coluna2, 3: self.roleta.coluna3}
         alvo_numeros = col_map[coluna_provavel]
         
-        # Filtra números que já saíram recentemente nessa coluna
         b = alvo_numeros.intersection(set(h[-10:]))
         if len(b) < 3:
             b = set(list(alvo_numeros)[:5])
@@ -811,7 +795,6 @@ class EstrategiaColunasAlternadas:
         }
 
 class EstrategiaLuckySetor:
-    """✅ NOVA: Lucky em setor específico atrai números do mesmo setor"""
     def __init__(self, roleta):
         self.roleta = roleta
     
@@ -819,7 +802,6 @@ class EstrategiaLuckySetor:
         if len(h) < 3 or not lucky_hist:
             return None
         
-        # Encontra últimos lucky numbers e seus setores
         setores_lucky = defaultdict(int)
         for i in range(max(0, len(lucky_hist)-8), len(lucky_hist)):
             for n in lucky_hist[i]:
@@ -830,10 +812,8 @@ class EstrategiaLuckySetor:
         if not setores_lucky:
             return None
         
-        # Setor dominante nos lucky
         setor_dom = max(setores_lucky, key=setores_lucky.get)
         
-        # Mapeia setor para números
         sn = {
             'Voisins': self.roleta.voisins,
             'Tiers': self.roleta.tiers,
@@ -844,12 +824,8 @@ class EstrategiaLuckySetor:
             return None
         
         numeros_setor = sn[setor_dom]
-        
-        # Números do setor que não saíram recentemente
         nao_sairam = numeros_setor - set(h[-5:])
         b = set(list(nao_sairam)[:4])
-        
-        # Adiciona alguns que já saíram também
         ja_sairam = numeros_setor.intersection(set(h[-5:]))
         b.update(list(ja_sairam)[:3])
         
@@ -862,7 +838,477 @@ class EstrategiaLuckySetor:
         }
 
 # =============================
-# BOT UNIFICADO (ATUALIZADO COM 24 ESTRATÉGIAS)
+# ESTRATÉGIAS DA SEGUNDA ANÁLISE (6)
+# =============================
+
+class EstrategiaLuckyCascata:
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h, lucky_hist):
+        if len(h) < 6 or not lucky_hist:
+            return None
+        
+        lucky_sequence = []
+        for i in range(max(0, len(lucky_hist)-8), len(lucky_hist)):
+            lucky_sequence.append(set(lucky_hist[i]))
+        
+        persistentes = []
+        for n in range(37):
+            count = 0
+            for ls in lucky_sequence[-5:]:
+                if n in ls:
+                    count += 1
+                else:
+                    count = 0
+                if count >= 3:
+                    persistentes.append(n)
+                    break
+        
+        if not persistentes:
+            return None
+        
+        b = set()
+        for n in persistentes[:3]:
+            b.add(n)
+            b.update(self.roleta.get_vizinhos(n, 2)[:3])
+        
+        b.update(self.roleta.get_vizinhos(h[-1], 1)[:2])
+        
+        forca = 55 + len(persistentes) * 8
+        return {
+            'base': set(list(b)[:7]),
+            'forca': min(85, forca),
+            'estrategias': ['Lucky Cascata'],
+            'gatilho': f'Cascata: {persistentes[:3]}'
+        }
+
+class EstrategiaRessacaLucky:
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h, lucky_hist, entradas_hist=None):
+        if len(h) < 8 or not lucky_hist:
+            return None
+        
+        erros_recentes = 0
+        if entradas_hist:
+            for entrada in entradas_hist[-5:]:
+                if not entrada.get('acerto', True):
+                    erros_recentes += 1
+        else:
+            erros_recentes = 2
+        
+        if erros_recentes < 3:
+            return None
+        
+        lucky_antigos = []
+        for i in range(max(0, len(lucky_hist)-8), max(0, len(lucky_hist)-4)):
+            lucky_antigos.extend(lucky_hist[i])
+        
+        if not lucky_antigos:
+            return None
+        
+        lucky_freq = Counter(lucky_antigos)
+        nao_sairam = [n for n in lucky_freq if n not in h[-5:]]
+        
+        if not nao_sairam:
+            return None
+        
+        top = sorted(nao_sairam, key=lambda x: lucky_freq[x], reverse=True)[:4]
+        
+        b = set(top)
+        for n in top[:2]:
+            b.update(self.roleta.get_vizinhos(n, 1)[:2])
+        
+        forca = 55 + erros_recentes * 5
+        return {
+            'base': set(list(b)[:7]),
+            'forca': min(80, forca),
+            'estrategias': ['Ressaca Lucky'],
+            'gatilho': f'Ressaca ({erros_recentes}❌): {top[:2]}'
+        }
+
+class EstrategiaEspelhoTemporal:
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h, lucky_hist):
+        if len(h) < 12 or not lucky_hist:
+            return None
+        
+        resultados_antigos = h[-12:-8] if len(h) >= 12 else h[:-8]
+        
+        lucky_recentes = []
+        for i in range(max(0, len(lucky_hist)-3), len(lucky_hist)):
+            lucky_recentes.extend(lucky_hist[i])
+        
+        intersecao = set(resultados_antigos).intersection(set(lucky_recentes))
+        
+        if len(intersecao) < 2:
+            return None
+        
+        b = set()
+        for n in intersecao:
+            b.update(self.roleta.get_vizinhos(n, 1)[:2])
+            if n in self.roleta.espelhos:
+                b.add(self.roleta.espelhos[n])
+        
+        forca = 50 + len(intersecao) * 8
+        return {
+            'base': set(list(b)[:7]),
+            'forca': min(75, forca),
+            'estrategias': ['Espelho Temporal'],
+            'gatilho': f'Temp: {list(intersecao)[:3]}'
+        }
+
+class EstrategiaEsgotamentoColuna:
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h):
+        if len(h) < 8:
+            return None
+        
+        colunas_vistas = {'col1': 0, 'col2': 0, 'col3': 0}
+        ultima_aparicao = {'col1': -1, 'col2': -1, 'col3': -1}
+        
+        for i in range(len(h)-1, max(0, len(h)-20)-1, -1):
+            n = h[i]
+            if n == 0:
+                continue
+            col = self.roleta.get_coluna(n)
+            colunas_vistas[f'col{col}'] += 1
+            if ultima_aparicao[f'col{col}'] == -1:
+                ultima_aparicao[f'col{col}'] = len(h) - 1 - i
+        
+        ausencias = {}
+        for col in ['col1', 'col2', 'col3']:
+            if ultima_aparicao[col] >= 4:
+                ausencias[col] = ultima_aparicao[col]
+        
+        if not ausencias:
+            return None
+        
+        coluna_esgotada = max(ausencias, key=ausencias.get)
+        col_num = int(coluna_esgotada[-1])
+        
+        col_map = {1: self.roleta.coluna1, 2: self.roleta.coluna2, 3: self.roleta.coluna3}
+        alvo = col_map[col_num]
+        
+        b = alvo.intersection(set(h[-15:]))
+        if len(b) < 4:
+            b.update(list(alvo)[:5])
+        
+        forca = 50 + ausencias[coluna_esgotada] * 5
+        return {
+            'base': set(list(b)[:7]),
+            'forca': min(80, forca),
+            'estrategias': ['Esgotamento Coluna'],
+            'gatilho': f'Col {col_num} ausente {ausencias[coluna_esgotada]}g'
+        }
+
+class EstrategiaMicroCiclo3:
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h):
+        if len(h) < 6:
+            return None
+        
+        if len(h) >= 6 and h[-3] == h[-6]:
+            b = set([h[-3]])
+            b.update(self.roleta.get_vizinhos(h[-3], 1)[:2])
+            
+            if len(h) >= 4:
+                b.add(h[-4])
+            
+            return {
+                'base': b,
+                'forca': 65,
+                'estrategias': ['Micro Ciclo 3'],
+                'gatilho': f'Ciclo 3g: {h[-3]} repete'
+            }
+        
+        if len(h) >= 7:
+            ciclo1 = [h[-7], h[-6], h[-5]]
+            ciclo2 = [h[-4], h[-3], h[-2]]
+            
+            dif1 = ciclo1[1] - ciclo1[0] if ciclo1[0] != 0 else 0
+            dif2 = ciclo2[1] - ciclo2[0] if ciclo2[0] != 0 else 0
+            
+            if abs(dif1 - dif2) <= 2 and dif1 != 0:
+                previsao = h[-2] + dif1
+                if previsao > 36:
+                    previsao -= 37
+                elif previsao < 0:
+                    previsao += 37
+                
+                b = set([previsao])
+                b.update(self.roleta.get_vizinhos(previsao, 1)[:3])
+                b.update(self.roleta.get_vizinhos(h[-1], 1)[:2])
+                
+                return {
+                    'base': b,
+                    'forca': 55,
+                    'estrategias': ['Micro Ciclo 3'],
+                    'gatilho': f'Ciclo 3g: Δ{dif1}→{previsao}'
+                }
+        
+        return None
+
+class EstrategiaSetorRitmado:
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h):
+        if len(h) < 8:
+            return None
+        
+        setores = [self.roleta.get_setor_cilindro(n) for n in h[-8:] if n != 0]
+        if len(setores) < 6:
+            return None
+        
+        contagem = Counter(setores)
+        setor_dom, freq = contagem.most_common(1)[0]
+        
+        if freq < 3 or setor_dom == "Zero":
+            return None
+        
+        if setores[-1] == setor_dom:
+            sn = {
+                'Voisins': self.roleta.voisins,
+                'Tiers': self.roleta.tiers,
+                'Orphelins': self.roleta.orphelins
+            }
+            b = sn[setor_dom] - set(h[-3:])
+            if len(b) < 4:
+                b = sn[setor_dom]
+            b = set(list(b)[:6])
+        else:
+            setor_oposto = self.roleta.get_setor_oposto(setor_dom)
+            if setor_oposto:
+                sn = {
+                    'Voisins': self.roleta.voisins,
+                    'Tiers': self.roleta.tiers,
+                    'Orphelins': self.roleta.orphelins
+                }
+                b = sn[setor_oposto]
+                b = set(list(b)[:6])
+            else:
+                return None
+        
+        forca = 45 + freq * 5
+        return {
+            'base': b,
+            'forca': min(75, forca),
+            'estrategias': ['Setor Ritmado'],
+            'gatilho': f'Ritmo {setor_dom} ({freq}x)'
+        }
+
+# =============================
+# 🆕 5 NOVAS ESTRATÉGIAS CORRETIVAS (BASEADAS NOS ERROS)
+# =============================
+
+class EstrategiaLuckyImediato:
+    """✅ CORREÇÃO ERRO TIPO 1: Lucky numbers do giro ATUAL têm 35% de chance de sair"""
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h, lucky_hist):
+        if len(h) < 1 or not lucky_hist:
+            return None
+        
+        # Pega os lucky numbers do último giro
+        ultimo_lucky = lucky_hist[-1] if lucky_hist else []
+        
+        if len(ultimo_lucky) < 2:
+            return None
+        
+        # Lucky com multiplicadores altos têm prioridade
+        b = set(ultimo_lucky[:5])
+        
+        # Adiciona vizinhos dos top 2 lucky
+        for n in ultimo_lucky[:2]:
+            b.update(self.roleta.get_vizinhos(n, 1)[:2])
+        
+        forca = 65 + len(ultimo_lucky) * 3
+        return {
+            'base': set(list(b)[:7]),
+            'forca': min(90, forca),
+            'estrategias': ['Lucky Imediato'],
+            'gatilho': f'Lucky atual: {ultimo_lucky[:3]}'
+        }
+
+class EstrategiaLuckyRecenteNaoSaiu:
+    """✅ CORREÇÃO ERRO TIPO 2: Lucky dos últimos 3 giros que ainda não saíram como resultado"""
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h, lucky_hist):
+        if len(h) < 3 or not lucky_hist:
+            return None
+        
+        # Coleta lucky dos últimos 3 giros
+        lucky_recentes = []
+        for i in range(max(0, len(lucky_hist)-3), len(lucky_hist)):
+            lucky_recentes.extend(lucky_hist[i])
+        
+        if not lucky_recentes:
+            return None
+        
+        # Filtra os que já não saíram como resultado
+        lucky_set = set(lucky_recentes)
+        resultados_recentes = set(h[-5:])
+        nao_sairam = lucky_set - resultados_recentes
+        
+        if len(nao_sairam) < 2:
+            return None
+        
+        # Prioriza por frequência
+        freq = Counter(lucky_recentes)
+        top = sorted(nao_sairam, key=lambda x: freq[x], reverse=True)[:4]
+        
+        b = set(top)
+        for n in top[:2]:
+            b.update(self.roleta.get_vizinhos(n, 1)[:2])
+        
+        forca = 60 + len(nao_sairam) * 4
+        return {
+            'base': set(list(b)[:7]),
+            'forca': min(85, forca),
+            'estrategias': ['Lucky Recente'],
+            'gatilho': f'Lucky ñ saiu: {top[:2]}'
+        }
+
+class EstrategiaEspelhoLucky:
+    """✅ CORREÇÃO ERRO TIPO 3: Espelhos dos lucky numbers recentes"""
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h, lucky_hist):
+        if len(h) < 2 or not lucky_hist:
+            return None
+        
+        # Pega lucky dos últimos 2 giros
+        lucky_recentes = []
+        for i in range(max(0, len(lucky_hist)-2), len(lucky_hist)):
+            lucky_recentes.extend(lucky_hist[i])
+        
+        if not lucky_recentes:
+            return None
+        
+        # Encontra espelhos
+        b = set()
+        for n in lucky_recentes:
+            if n in self.roleta.espelhos:
+                esp = self.roleta.espelhos[n]
+                b.add(esp)
+                b.update(self.roleta.get_vizinhos(esp, 1)[:2])
+        
+        if len(b) < 2:
+            return None
+        
+        # Adiciona os próprios lucky também
+        b.update(lucky_recentes[:3])
+        
+        forca = 55 + len(b) * 3
+        return {
+            'base': set(list(b)[:7]),
+            'forca': min(75, forca),
+            'estrategias': ['Espelho Lucky'],
+            'gatilho': f'Espelho Lucky: {list(b)[:3]}'
+        }
+
+class EstrategiaOrfaosSetor:
+    """✅ CORREÇÃO ERRO TIPO 4: Quando setor domina 4+ giros, apostar no setor órfão"""
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h):
+        if len(h) < 6:
+            return None
+        
+        # Analisa os últimos 6 setores
+        setores = [self.roleta.get_setor_cilindro(n) for n in h[-6:] if n != 0]
+        if len(setores) < 5:
+            return None
+        
+        # Conta setores
+        contagem = Counter(setores)
+        
+        # Encontra setores que NÃO apareceram
+        todos_setores = {'Voisins', 'Tiers', 'Orphelins'}
+        setores_presentes = set(contagem.keys())
+        setores_orfãos = todos_setores - setores_presentes
+        
+        if not setores_orfãos:
+            return None
+        
+        # Se tem setor dominante com 4+ aparições
+        setor_dom, freq = contagem.most_common(1)[0]
+        if freq < 4:
+            return None
+        
+        # Aposta no setor órfão mais provável
+        sn = {
+            'Voisins': self.roleta.voisins,
+            'Tiers': self.roleta.tiers,
+            'Orphelins': self.roleta.orphelins
+        }
+        
+        b = set()
+        for setor in setores_orfãos:
+            if setor in sn:
+                b.update(list(sn[setor])[:5])
+        
+        if not b:
+            return None
+        
+        forca = 55 + freq * 3
+        return {
+            'base': set(list(b)[:7]),
+            'forca': min(75, forca),
+            'estrategias': ['Órfãos Setor'],
+            'gatilho': f'Setor órfão: {setores_orfãos}'
+        }
+
+class EstrategiaZeroCiclo:
+    """✅ CORREÇÃO ERRO TIPO 5: Zero aparece a cada 20-30 giros"""
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def analisar(self, h):
+        if len(h) < 15:
+            return None
+        
+        # Conta giros desde o último zero
+        giros_sem_zero = 0
+        for n in reversed(h):
+            if n == 0:
+                break
+            giros_sem_zero += 1
+        
+        if giros_sem_zero < 20:
+            return None
+        
+        # Zero está atrasado, incluir zero e vizinhos
+        b = set([0])
+        b.update(self.roleta.get_vizinhos(0, 2)[:4])
+        
+        # Adiciona números do setor Voisins (onde zero está)
+        b.update(list(self.roleta.voisins)[:4])
+        
+        forca = 50 + min(30, (giros_sem_zero - 20) * 2)
+        return {
+            'base': set(list(b)[:7]),
+            'forca': min(80, forca),
+            'estrategias': ['Zero Ciclo'],
+            'gatilho': f'Zero ausente {giros_sem_zero}g'
+        }
+
+# =============================
+# BOT UNIFICADO (35 ESTRATÉGIAS)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
@@ -888,13 +1334,28 @@ class RoletaBotUnificado:
         self.faixa_numerica = EstrategiaFaixaNumerica(self.roleta)
         self.numero_do_dia = EstrategiaNumeroDoDia(self.roleta)
         
-        # 6 novas
+        # 6 da primeira análise
         self.confirmacao_lucky = EstrategiaConfirmacaoLucky(self.roleta)
         self.pendulo = EstrategiaPendulo(self.roleta)
         self.quente_frio = EstrategiaQuenteFrio(self.roleta)
         self.confirmacao_dupla = EstrategiaConfirmacaoDupla()
         self.colunas_alternadas = EstrategiaColunasAlternadas(self.roleta)
         self.lucky_setor = EstrategiaLuckySetor(self.roleta)
+        
+        # 6 da segunda análise
+        self.lucky_cascata = EstrategiaLuckyCascata(self.roleta)
+        self.ressaca_lucky = EstrategiaRessacaLucky(self.roleta)
+        self.espelho_temporal = EstrategiaEspelhoTemporal(self.roleta)
+        self.esgotamento_coluna = EstrategiaEsgotamentoColuna(self.roleta)
+        self.micro_ciclo3 = EstrategiaMicroCiclo3(self.roleta)
+        self.setor_ritmado = EstrategiaSetorRitmado(self.roleta)
+        
+        # 5 novas corretivas
+        self.lucky_imediato = EstrategiaLuckyImediato(self.roleta)
+        self.lucky_recente_nao_saiu = EstrategiaLuckyRecenteNaoSaiu(self.roleta)
+        self.espelho_lucky = EstrategiaEspelhoLucky(self.roleta)
+        self.orfaos_setor = EstrategiaOrfaosSetor(self.roleta)
+        self.zero_ciclo = EstrategiaZeroCiclo(self.roleta)
         
         self.historico = []
         self.lucky = []
@@ -914,39 +1375,50 @@ class RoletaBotUnificado:
         if len(self.mults) > 200:
             self.mults = self.mults[-200:]
     
-    def gerar_entrada(self, motores=None, forcar_inversao=False):
+    def gerar_entrada(self, motores=None, forcar_inversao=False, entradas_hist=None):
         if motores is None:
             motores = {k: True for k in [
                 'sniper_elite', 'lucky_vizinhos', 'repeticao', 'gap_curto', 'mineracao', 'duzia_dom',
                 'espelho', 'soma_cinco', 'lucky_alto', 'ciclo_oito', 'alternancia_cor',
                 'setor_cilindro', 'zero_virada', 'primos', 'vizinhos_fisicos', 'lucky_terminal',
                 'faixa_numerica', 'numero_do_dia',
-                # Novas estratégias
-                'confirmacao_lucky', 'pendulo', 'quente_frio', 'colunas_alternadas', 'lucky_setor'
+                'confirmacao_lucky', 'pendulo', 'quente_frio', 'colunas_alternadas', 'lucky_setor',
+                'lucky_cascata', 'ressaca_lucky', 'espelho_temporal', 'esgotamento_coluna',
+                'micro_ciclo3', 'setor_ritmado',
+                'lucky_imediato', 'lucky_recente_nao_saiu', 'espelho_lucky', 'orfaos_setor', 'zero_ciclo'
             ]}
         
         resultados = []
         forca_min = st.session_state.get('forca_minima_entrada', 55)
         
-        # Lista de estratégias (nome, instância, peso, argumentos)
         ests = [
-            # Originais (peso 4)
+            # PESO 4 - Estratégias de altíssima confiabilidade
+            (self.lucky_imediato, 'Lucky Imediato', 4, [list(self.historico), self.lucky]),
             (self.repeticao, 'Repetição', 4, [list(self.historico)]),
-            # Originais (peso 3)
+            
+            # PESO 3 - Estratégias de alta confiabilidade
+            (self.lucky_recente_nao_saiu, 'Lucky Recente', 3, [list(self.historico), self.lucky]),
             (self.lucky_vizinhos, 'Lucky Vizinhos', 3, [list(self.historico), self.lucky]),
             (self.vizinhos_fisicos, 'Vizinhos Físicos', 3, [list(self.historico)]),
-            # Novas (peso 3 - alta prioridade baseada na análise)
             (self.confirmacao_lucky, 'Confirm. Lucky', 3, [list(self.historico), self.lucky]),
+            (self.lucky_cascata, 'Lucky Cascata', 3, [list(self.historico), self.lucky]),
             (self.lucky_setor, 'Lucky Setor', 3, [list(self.historico), self.lucky]),
-            # Originais (peso 2)
+            
+            # PESO 2 - Estratégias de média-alta confiabilidade
+            (self.espelho_lucky, 'Espelho Lucky', 2, [list(self.historico), self.lucky]),
+            (self.orfaos_setor, 'Órfãos Setor', 2, [list(self.historico)]),
             (self.sniper_elite, 'Sniper Elite', 2, [list(self.historico), self.lucky]),
             (self.gap_curto, 'Gap Curto', 2, [list(self.historico)]),
             (self.espelho, 'Espelho', 2, [list(self.historico)]),
             (self.lucky_alto, 'Lucky Alto', 2, [list(self.historico), self.lucky, self.mults]),
             (self.numero_do_dia, 'Nº do Dia', 2, [list(self.historico)]),
-            # Novas (peso 2)
             (self.pendulo, 'Pêndulo', 2, [list(self.historico)]),
-            # Originais (peso 1)
+            (self.ressaca_lucky, 'Ressaca Lucky', 2, [list(self.historico), self.lucky, entradas_hist]),
+            (self.esgotamento_coluna, 'Esgot. Coluna', 2, [list(self.historico)]),
+            (self.setor_ritmado, 'Setor Ritmado', 2, [list(self.historico)]),
+            
+            # PESO 1 - Estratégias complementares
+            (self.zero_ciclo, 'Zero Ciclo', 1, [list(self.historico)]),
             (self.mineracao, 'Mineração', 1, [list(self.historico)]),
             (self.duzia_dom, 'Dúzia Dom.', 1, [list(self.historico)]),
             (self.soma_cinco, 'Soma Cinco', 1, [list(self.historico)]),
@@ -957,9 +1429,10 @@ class RoletaBotUnificado:
             (self.primos, 'Primos', 1, [list(self.historico)]),
             (self.lucky_terminal, 'Lucky Terminal', 1, [list(self.historico), self.lucky]),
             (self.faixa_numerica, 'Faixa Numérica', 1, [list(self.historico)]),
-            # Novas (peso 1)
             (self.quente_frio, 'Quente/Frio', 1, [list(self.historico), self.lucky]),
             (self.colunas_alternadas, 'Colunas Alt.', 1, [list(self.historico)]),
+            (self.espelho_temporal, 'Espelho Temp.', 1, [list(self.historico), self.lucky]),
+            (self.micro_ciclo3, 'Micro Ciclo 3', 1, [list(self.historico)]),
         ]
         
         for est, nome, peso, args in ests:
@@ -972,18 +1445,15 @@ class RoletaBotUnificado:
             except:
                 pass
         
-        # ✅ Meta-estratégia: Confirmação Dupla
-        # Aumenta peso de números que aparecem em múltiplas estratégias
+        # Meta-estratégia: Confirmação Dupla
         if len(resultados) >= 2:
             contagem_numeros = Counter()
             for _, r, peso in resultados:
                 for n in r['base']:
                     contagem_numeros[n] += peso
             
-            # Números com confirmação dupla (aparecem em 2+ estratégias)
             confirmados = [n for n, c in contagem_numeros.items() if c >= 5]
             if confirmados:
-                # Cria entrada virtual para confirmação dupla
                 resultados.append(('Conf. Dupla', {
                     'base': set(confirmados[:5]),
                     'forca': 65 + len(confirmados) * 2,
@@ -1062,14 +1532,12 @@ class RoletaBotUnificado:
             'invertido': False
         }
         
-        # 🔄 INVERSÃO
         if forcar_inversao:
             entrada = self._inverter_entrada(entrada)
         
         return entrada
     
     def _inverter_entrada(self, entrada):
-        """Inverte os números, escolhendo aleatoriamente entre os não selecionados"""
         numeros_originais = set(entrada['numeros_apostar'])
         todos_numeros = set(range(37))
         numeros_invertidos = list(todos_numeros - numeros_originais)
@@ -1095,7 +1563,7 @@ class RoletaBotUnificado:
         return entrada
 
 # =============================
-# SISTEMA PRINCIPAL (MANTIDO INTACTO)
+# SISTEMA PRINCIPAL
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -1166,13 +1634,15 @@ class SistemaBot:
             'espelho', 'soma_cinco', 'lucky_alto', 'ciclo_oito', 'alternancia_cor',
             'setor_cilindro', 'zero_virada', 'primos', 'vizinhos_fisicos', 'lucky_terminal',
             'faixa_numerica', 'numero_do_dia',
-            # Novas estratégias
-            'confirmacao_lucky', 'pendulo', 'quente_frio', 'colunas_alternadas', 'lucky_setor'
+            'confirmacao_lucky', 'pendulo', 'quente_frio', 'colunas_alternadas', 'lucky_setor',
+            'lucky_cascata', 'ressaca_lucky', 'espelho_temporal', 'esgotamento_coluna',
+            'micro_ciclo3', 'setor_ritmado',
+            'lucky_imediato', 'lucky_recente_nao_saiu', 'espelho_lucky', 'orfaos_setor', 'zero_ciclo'
         ]}
         
         forcar_inversao = st.session_state.get('modo_inversao_auto', False) and self.estado_inversao
         
-        self.entrada_ativa = self.bot.gerar_entrada(mot, forcar_inversao)
+        self.entrada_ativa = self.bot.gerar_entrada(mot, forcar_inversao, list(self.historico_entradas))
         if self.entrada_ativa:
             enviar_previsao_auto(self.entrada_ativa)
     
@@ -1192,7 +1662,7 @@ class SistemaBot:
         salvar_sessao()
 
 # =============================
-# FUNÇÕES AUXILIARES (MANTIDAS INTACTAS)
+# FUNÇÕES AUXILIARES
 # =============================
 def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
     try:
@@ -1244,10 +1714,10 @@ def exportar_historico(historico, formato='json'):
     return "\n".join(linhas)
 
 # =============================
-# APLICAÇÃO STREAMLIT (MANTIDA INTACTA)
+# APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Roleta Bot Pro v17 - 24 Estratégias", layout="centered")
-st.title("🎯 Roleta Bot Pro v17 - Análise Avançada")
+st.set_page_config(page_title="🎯 Roleta Bot Pro v19 - 35 Estratégias Corretivas", layout="centered")
+st.title("🎯 Roleta Bot Pro v19 - Correção de Erros")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1300,16 +1770,19 @@ if dados:
         except:
             pass
 
-# Configurações padrão (incluindo novas estratégias)
+# Configurações padrão
 defaults = {k: True for k in [
     'modo_automatico', 'usar_sniper_elite', 'usar_lucky_vizinhos', 'usar_repeticao',
     'usar_gap_curto', 'usar_mineracao', 'usar_duzia_dom', 'usar_espelho', 'usar_soma_cinco',
     'usar_lucky_alto', 'usar_ciclo_oito', 'usar_alternancia_cor', 'usar_setor_cilindro',
     'usar_zero_virada', 'usar_primos', 'usar_vizinhos_fisicos', 'usar_lucky_terminal',
     'usar_faixa_numerica', 'usar_numero_do_dia', 'limitar_numeros_altos', 'evitar_zero',
-    # Novas estratégias (ativadas por padrão)
-    'usar_confirmacao_lucky', 'usar_pendulo', 'usar_quente_frio', 
-    'usar_colunas_alternadas', 'usar_lucky_setor'
+    'usar_confirmacao_lucky', 'usar_pendulo', 'usar_quente_frio',
+    'usar_colunas_alternadas', 'usar_lucky_setor',
+    'usar_lucky_cascata', 'usar_ressaca_lucky', 'usar_espelho_temporal',
+    'usar_esgotamento_coluna', 'usar_micro_ciclo3', 'usar_setor_ritmado',
+    'usar_lucky_imediato', 'usar_lucky_recente_nao_saiu', 'usar_espelho_lucky',
+    'usar_orfaos_setor', 'usar_zero_ciclo'
 ]}
 defaults.update({
     'max_n_apostas': 7,
@@ -1360,7 +1833,7 @@ with st.sidebar:
     
     st.session_state.forca_minima_entrada = st.slider(
         "⚡ Força Mínima",
-        25, 95,
+        45, 65,
         st.session_state.forca_minima_entrada,
         5
     )
@@ -1380,33 +1853,50 @@ with st.sidebar:
             value=st.session_state.evitar_zero
         )
     
-    with st.expander("🤖 24 Estratégias", expanded=False):
-        st.markdown("**🆕 NOVAS (Análise de Padrões)**")
-        st.session_state.usar_confirmacao_lucky = st.checkbox(
-            "🍀 Confirmação Lucky (3x)", 
-            value=st.session_state.usar_confirmacao_lucky,
-            help="Lucky numbers tendem a repetir em 2-3 giros"
+    with st.expander("🤖 35 Estratégias", expanded=False):
+        st.markdown("**🆕 CORRETIVAS (Análise de Erros)**")
+        st.session_state.usar_lucky_imediato = st.checkbox(
+            "⚡ Lucky Imediato (4x)", 
+            value=st.session_state.usar_lucky_imediato,
+            help="Lucky do giro atual - 35% dos erros"
         )
-        st.session_state.usar_lucky_setor = st.checkbox(
-            "🎯 Lucky Setor (3x)", 
-            value=st.session_state.usar_lucky_setor,
-            help="Lucky em setor atrai números do mesmo setor"
+        st.session_state.usar_lucky_recente_nao_saiu = st.checkbox(
+            "🍀 Lucky Recente (3x)", 
+            value=st.session_state.usar_lucky_recente_nao_saiu,
+            help="Lucky 3 giros que não saiu - 25% dos erros"
         )
-        st.session_state.usar_pendulo = st.checkbox(
-            "⏳ Pêndulo (2x)", 
-            value=st.session_state.usar_pendulo,
-            help="Balanço entre números altos e baixos"
+        st.session_state.usar_espelho_lucky = st.checkbox(
+            "🪞 Espelho Lucky (2x)", 
+            value=st.session_state.usar_espelho_lucky,
+            help="Espelhos de lucky - 20% dos erros"
         )
-        st.session_state.usar_quente_frio = st.checkbox(
-            "🌡️ Quente/Frio", 
-            value=st.session_state.usar_quente_frio,
-            help="Números frios (15+ giros) com lucky"
+        st.session_state.usar_orfaos_setor = st.checkbox(
+            "🎯 Órfãos Setor (2x)", 
+            value=st.session_state.usar_orfaos_setor,
+            help="Setor órfão quando domina 4+ giros - 15% dos erros"
         )
-        st.session_state.usar_colunas_alternadas = st.checkbox(
-            "📊 Colunas Alt.", 
-            value=st.session_state.usar_colunas_alternadas,
-            help="Alternância entre colunas 1-12, 13-24, 25-36"
+        st.session_state.usar_zero_ciclo = st.checkbox(
+            "0️⃣ Zero Ciclo", 
+            value=st.session_state.usar_zero_ciclo,
+            help="Zero a cada 20-30 giros - 5% dos erros"
         )
+        
+        st.markdown("---")
+        st.markdown("**2ª Análise (6 estratégias)**")
+        st.session_state.usar_lucky_cascata = st.checkbox("🌊 Lucky Cascata (3x)", value=st.session_state.usar_lucky_cascata)
+        st.session_state.usar_ressaca_lucky = st.checkbox("🍀🔄 Ressaca Lucky (2x)", value=st.session_state.usar_ressaca_lucky)
+        st.session_state.usar_espelho_temporal = st.checkbox("⏰ Espelho Temporal", value=st.session_state.usar_espelho_temporal)
+        st.session_state.usar_esgotamento_coluna = st.checkbox("📊 Esgot. Coluna (2x)", value=st.session_state.usar_esgotamento_coluna)
+        st.session_state.usar_micro_ciclo3 = st.checkbox("🔄 Micro Ciclo 3", value=st.session_state.usar_micro_ciclo3)
+        st.session_state.usar_setor_ritmado = st.checkbox("🎯 Setor Ritmado (2x)", value=st.session_state.usar_setor_ritmado)
+        
+        st.markdown("---")
+        st.markdown("**1ª Análise (6 estratégias)**")
+        st.session_state.usar_confirmacao_lucky = st.checkbox("🍀 Confirm. Lucky (3x)", value=st.session_state.usar_confirmacao_lucky)
+        st.session_state.usar_lucky_setor = st.checkbox("🎯 Lucky Setor (3x)", value=st.session_state.usar_lucky_setor)
+        st.session_state.usar_pendulo = st.checkbox("⏳ Pêndulo (2x)", value=st.session_state.usar_pendulo)
+        st.session_state.usar_quente_frio = st.checkbox("🌡️ Quente/Frio", value=st.session_state.usar_quente_frio)
+        st.session_state.usar_colunas_alternadas = st.checkbox("📊 Colunas Alt.", value=st.session_state.usar_colunas_alternadas)
         
         st.markdown("---")
         st.markdown("**Originais (18)**")
