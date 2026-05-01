@@ -3,6 +3,7 @@ import json
 import os
 import requests
 import logging
+import random
 from collections import Counter, deque, defaultdict
 from streamlit_autorefresh import st_autorefresh
 import pickle
@@ -63,9 +64,10 @@ def limpar_sessao():
     try:
         for path in [SESSION_DATA_PATH, HISTORICO_PATH, PERFORMANCE_PATH, ENTRADAS_PATH]:
             if os.path.exists(path): os.remove(path)
-        for key in list(st.session_state.keys()): del st.session_state[key]
+        st.session_state.clear()
         st.rerun()
-    except: pass
+    except Exception as e:
+        logging.error(f"Erro ao limpar sessão: {e}")
 
 # =============================
 # NOTIFICAÇÕES
@@ -101,8 +103,14 @@ def enviar_telegram(mensagem):
         token = st.session_state.get('telegram_token', '')
         chat_id = st.session_state.get('telegram_chat_id', '')
         if not token or not chat_id: return
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": mensagem, "parse_mode": "HTML"}, timeout=10)
-    except: pass
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage", 
+            json={"chat_id": chat_id, "text": mensagem, "parse_mode": "HTML"}, 
+            timeout=10
+        )
+        response.raise_for_status()
+    except Exception as e:
+        logging.error(f"Erro ao enviar Telegram: {e}")
 
 # =============================
 # API
@@ -507,16 +515,20 @@ class RoletaBotUnificado:
         return entrada
     
     def _inverter_entrada(self, entrada):
-        """Inverte todos os números da entrada pelos que NÃO estão nela"""
+        """Inverte os números, escolhendo aleatoriamente entre os não selecionados, evitando viés de números baixos"""
         numeros_originais = set(entrada['numeros_apostar'])
         todos_numeros = set(range(37))
-        numeros_invertidos = todos_numeros - numeros_originais
+        numeros_invertidos = list(todos_numeros - numeros_originais)
         
         qtd = len(entrada['numeros_apostar'])
-        invertidos_list = sorted(list(numeros_invertidos))
         
-        nao_problematicos = [n for n in invertidos_list if n not in {0, 32, 33, 34, 35}]
-        problematicos = [n for n in invertidos_list if n in {0, 32, 33, 34, 35}]
+        # Filtra os problemáticos conforme a lógica original
+        nao_problematicos = [n for n in numeros_invertidos if n not in {0, 32, 33, 34, 35}]
+        problematicos = [n for n in numeros_invertidos if n in {0, 32, 33, 34, 35}]
+        
+        # Embaralha para não pegar sempre 1, 2, 3...
+        random.shuffle(nao_problematicos)
+        random.shuffle(problematicos)
         
         final = nao_problematicos[:qtd]
         if len(final) < qtd:
@@ -635,16 +647,26 @@ def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
 
 def fetch_latest_result():
     try:
-        r = requests.get(API_URL, headers=HEADERS, timeout=5); r.raise_for_status()
-        d = r.json(); gd = d.get("data", {}); rs = gd.get("result", {})
-        nm = rs.get("outcome", {}).get("number"); ts = gd.get("startedAt")
+        r = requests.get(API_URL, headers=HEADERS, timeout=5)
+        r.raise_for_status()
+        d = r.json()
+        gd = d.get("data", {})
+        rs = gd.get("result", {})
+        nm = rs.get("outcome", {}).get("number")
+        ts = gd.get("startedAt")
+        
         ln, lm = [], {}
         for item in rs.get('luckyNumbersList', []):
             n = item.get('number')
-            if n is not None: ln.append(n); m = item.get('roundedMultiplier')
-            if m is not None: lm[n] = m
+            if n is not None: 
+                ln.append(n)
+                m = item.get('roundedMultiplier')
+                if m is not None: 
+                    lm[n] = m
         return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
-    except: return None
+    except Exception as e: 
+        logging.warning(f"Erro ao buscar API da Roleta: {e}")
+        return None
 
 def exportar_historico(historico, formato='json'):
     if formato == 'json': return json.dumps(historico, indent=2, ensure_ascii=False)
