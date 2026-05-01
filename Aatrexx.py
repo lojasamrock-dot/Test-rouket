@@ -176,7 +176,8 @@ class EstrategiaLuckyVizinhos:
         if len(h) < 3 or not lucky_hist: return None
         all_lucky = [n for sub in lucky_hist[-10:] for n in sub]
         if not all_lucky: return None
-        freq = Counter(all_lucky); top = [n for n, _ in freq.most_common(3)]
+        freq = Counter(all_lucky)
+        top = [n for n, _ in freq.most_common(3)]
         b = set(top)
         for n in top[:2]: b.update(self.roleta.get_vizinhos(n, 1)[:1])
         return {'base': set(list(b)[:7]), 'forca': 50+len(all_lucky)*2, 'estrategias': [f'Lucky {top[:2]}'], 'gatilho': f'Lucky {top[:2]}'}
@@ -186,7 +187,7 @@ class EstrategiaRepeticao:
     def analisar(self, h):
         if len(h) < 2: return None
         if h[-1] != h[-2]: return None
-        b = {h[-1]}; b.update(self.roleta.get_vizinhos(h[-1], 1)[:3])
+        b = set([h[-1]]); b.update(self.roleta.get_vizinhos(h[-1], 1)[:3])
         return {'base': b, 'forca': 80, 'estrategias': [f'Repetição {h[-1]}'], 'gatilho': f'Repetição {h[-1]}'}
 
 class EstrategiaGapCurto:
@@ -226,7 +227,8 @@ class EstrategiaEspelho:
         if len(h) < 2: return None
         u = h[-1]
         if u not in self.roleta.espelhos: return None
-        esp = self.roleta.espelhos[u]; b = {u, esp}
+        esp = self.roleta.espelhos[u]
+        b = {u, esp}
         b.update(self.roleta.get_vizinhos(esp, 1)[:2])
         return {'base': b, 'forca': 50, 'estrategias': [f'Espelho {u}'], 'gatilho': f'Espelho {u}↔{esp}'}
 
@@ -234,7 +236,8 @@ class EstrategiaSomaCinco:
     def __init__(self, roleta): self.roleta = roleta
     def analisar(self, h):
         if len(h) < 2: return None
-        u = h[-1]; prox = (u + 5) % 37; b = {u, prox}
+        u = h[-1]; prox = (u + 5) % 37
+        b = {u, prox}
         b.update(self.roleta.get_vizinhos(prox, 1)[:2])
         return {'base': b, 'forca': 50, 'estrategias': ['+5'], 'gatilho': f'Soma 5 de {u}'}
 
@@ -254,7 +257,8 @@ class EstrategiaCicloOito:
     def analisar(self, h):
         if len(h) < 8: return None
         if h[-8] == h[-1]:
-            b = {h[-1]}; b.update(self.roleta.get_vizinhos(h[-1], 2))
+            b = {h[-1]}
+            b.update(self.roleta.get_vizinhos(h[-1], 2))
             return {'base': b, 'forca': 55, 'estrategias': ['Ciclo 8'], 'gatilho': f'Ciclo 8: {h[-1]}'}
         return None
 
@@ -300,7 +304,8 @@ class EstrategiaVizinhosFisicos:
     def analisar(self, h):
         if len(h) < 2: return None
         if self.roleta.sao_vizinhos_fisicos(h[-1], h[-2]):
-            b = {h[-1], h[-2]}; b.update(self.roleta.get_vizinhos(h[-1], 1))
+            b = {h[-1], h[-2]}
+            b.update(self.roleta.get_vizinhos(h[-1], 1))
             return {'base': b, 'forca': 55, 'estrategias': ['Vizinhos Físicos'], 'gatilho': f'Proximidade {h[-1]}'}
         return None
 
@@ -327,7 +332,8 @@ class EstrategiaNumeroDoDia:
     def __init__(self, roleta): self.roleta = roleta
     def analisar(self, h):
         if len(h) < 20: return None
-        top = Counter(h).most_common(2); b = {n for n, _ in top}
+        top = Counter(h).most_common(2)
+        b = {n for n, _ in top}
         for n, _ in top: b.update(self.roleta.get_vizinhos(n, 1))
         return {'base': b, 'forca': 50, 'estrategias': ['Nº do Dia'], 'gatilho': 'Números Quentes'}
 
@@ -513,16 +519,21 @@ if "sistema" not in st.session_state:
             sis.historico_lucky.append(l)
         st.session_state.historico = dados.get('historico', [])
 
-st_autorefresh(interval=5000, key="bot_refresh")
-
+# Sidebar
 with st.sidebar:
     st.subheader("⚙️ Configurações")
     st.session_state.modo_inversao_auto = st.checkbox("🔄 Inversão Auto", value=st.session_state.get('modo_inversao_auto', False))
     st.session_state.forca_minima_entrada = st.slider("⚡ Força", 45, 65, st.session_state.get('forca_minima_entrada', 55))
     st.session_state.max_n_apostas = st.slider("📊 Máx Números", 5, 18, st.session_state.get('max_n_apostas', 7))
+    
+    st.session_state.telegram_token = st.text_input("Token Telegram", value=st.session_state.get('telegram_token', ''), type="password")
+    st.session_state.telegram_chat_id = st.text_input("Chat ID Telegram", value=st.session_state.get('telegram_chat_id', ''))
+    
     if st.button("🗑️ Limpar Tudo"):
         st.session_state.sistema.zerar()
         st.rerun()
+
+st_autorefresh(interval=5000, key="bot_refresh")
 
 def fetch_latest_result():
     try:
@@ -540,6 +551,7 @@ if res and (not st.session_state.get('historico') or res['timestamp'] != st.sess
     st.session_state.historico.append(res)
     st.session_state.sistema.processar_novo_numero(res)
 
+# Dashboard UI
 st.title("🎯 Roleta Bot Pro v16")
 sis = st.session_state.sistema
 
@@ -551,20 +563,20 @@ c4.metric("Último", sis.historico_numeros[-1] if sis.historico_numeros else "-"
 
 if sis.entrada_ativa:
     e = sis.entrada_ativa
-    color = "#FF4B4B" if e['invertido'] else "#00CC96"
+    color = "orange" if e['invertido'] else "green"
     st.markdown(f"""
-    <div style="background-color:rgba(0,0,0,0.05);padding:20px;border-radius:10px;border-left:8px solid {color}">
+    <div style="background-color:rgba(255,255,255,0.05);padding:20px;border-radius:10px;border-left:10px solid {color}">
         <h3>🎯 Sugestão: {e['motor']} ({e['forca_real']}%)</h3>
-        <h1 style="letter-spacing: 5px; color: {color};">{', '.join(map(str, e['numeros_apostar']))}</h1>
-        <p>Gatilho: {e['gatilho']}</p>
+        <h1 style="font-size: 3rem;">{', '.join(map(str, e['numeros_apostar']))}</h1>
+        <p><i>{e['gatilho']}</i></p>
     </div>
     """, unsafe_allow_html=True)
 else:
-    st.info("Aguardando nova rodada...")
+    st.info("Aguardando análise da API...")
 
 if sis.historico_entradas:
-    st.subheader("📋 Últimas Entradas")
+    st.subheader("📋 Últimas Rodadas")
     for ent in reversed(sis.historico_entradas[-5:]):
-        st.write(f"{'✅' if ent['acerto'] else '❌'} Num: {ent['resultado']} | {ent['motor']} {'(Invertido)' if ent['invertido'] else ''}")
+        st.write(f"{'✅' if ent['acerto'] else '❌'} Num: {ent['resultado']} | Motor: {ent['motor']} {'(Inv)' if ent['invertido'] else ''}")
 
 salvar_sessao()
