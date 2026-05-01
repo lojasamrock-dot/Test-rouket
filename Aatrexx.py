@@ -596,7 +596,7 @@ with st.sidebar:
             st.info(f"Estado: {estado} | Errou → Inverte")
     
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 50, 75, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 3, 8, st.session_state.max_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 13, 18, st.session_state.max_n_apostas)
     st.session_state.evitar_zero = st.checkbox("🚫 Evitar Zero", value=st.session_state.evitar_zero)
     
     with st.expander("🔔 Telegram", expanded=False):
