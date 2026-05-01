@@ -527,7 +527,7 @@ if dados:
         except: pass
 
 defaults = {
-    'modo_automatico': True, 'max_n_apostas': 9, 'min_n_apostas': 5,
+    'modo_automatico': True, 'max_n_apostas': 18, 'min_n_apostas': 12,
     'forca_minima_entrada': 55, 'modo_inversao_auto': False,
     'evitar_zero': True, 'evitar_terminal_zero': True, 'pausa_apos_erros': True,
 }
@@ -555,7 +555,7 @@ with st.sidebar:
             st.info(f"Estado: {estado} | Errou → Inverte")
     
     st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 45, 70, st.session_state.forca_minima_entrada, 5)
-    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 4, 12, st.session_state.max_n_apostas)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 12, 18, st.session_state.max_n_apostas)
     st.session_state.evitar_zero = st.checkbox("🚫 Evitar Zero", value=st.session_state.evitar_zero)
     st.session_state.evitar_terminal_zero = st.checkbox("🚫 Evitar Terminal 0", value=st.session_state.evitar_terminal_zero)
     st.session_state.pausa_apos_erros = st.checkbox("⏸️ Pausa após 3 erros", value=st.session_state.pausa_apos_erros)
