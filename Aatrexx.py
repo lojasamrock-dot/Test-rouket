@@ -1360,7 +1360,7 @@ with st.sidebar:
     
     st.session_state.forca_minima_entrada = st.slider(
         "⚡ Força Mínima",
-        45, 65,
+        25, 95,
         st.session_state.forca_minima_entrada,
         5
     )
