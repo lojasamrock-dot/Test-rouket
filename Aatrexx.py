@@ -1322,17 +1322,20 @@ class EstrategiaZeroCiclo:
         }
 
 # =============================
-# 🆕 MOTOR DE CONFLUÊNCIA - DÚZIAS & COLUNAS
+# 🆕 MOTOR DE CONFLUÊNCIA - DÚZIAS & COLUNAS (COM PESO DUPLO NOS TERMINAIS)
 # =============================
 
 class MotorConfluenciaDuziasColunas:
     """
     Motor de Confluência para Dúzias e Colunas
-    Avalia 4 estratégias simultâneas e gera um Score System
-    Estratégia 1: Interseção Quente (Coluna + Dúzia) = +1 ponto
-    Estratégia 2: Força de Terminais Dinâmicos = +1 ponto
-    Estratégia 3: Leitura do Cilindro (Setor da Roda) = +1 ponto
-    Estratégia 4: Detector de Alternância (Ping-Pong) = -1 ponto
+    Avalia 4 estratégias simultâneas e gera um Score System com PESOS DIFERENCIADOS
+    
+    ESTRATÉGIA 1 (Interseção Quente): +1 ponto (peso normal)
+    ESTRATÉGIA 2 (Terminais Dinâmicos): +2 pontos (PESO DUPLO - principal tese)
+    ESTRATÉGIA 3 (Cilindro/Roda): +1 ponto (peso normal)
+    ESTRATÉGIA 4 (Ping-Pong): -1 ponto (escudo protetor)
+    
+    PONTUAÇÃO MÁXIMA: 4 pontos
     """
     def __init__(self, roleta):
         self.roleta = roleta
@@ -1361,7 +1364,7 @@ class MotorConfluenciaDuziasColunas:
         detalhes_estrategias = {}
         
         # ---------------------------------------------------------
-        # ESTRATÉGIA 1: Interseção Quente (Coluna + Dúzia)
+        # ESTRATÉGIA 1: Interseção Quente (Coluna + Dúzia) = +1
         # ---------------------------------------------------------
         col_quente = Counter(colunas).most_common(1)[0][0]
         duz_quente = Counter(duzias).most_common(1)[0][0]
@@ -1374,23 +1377,23 @@ class MotorConfluenciaDuziasColunas:
         }
         
         # ---------------------------------------------------------
-        # ESTRATÉGIA 2: Terminais Dinâmicos da Janela
+        # ESTRATÉGIA 2: Terminais Dinâmicos da Janela = +2 (PESO DUPLO)
         # ---------------------------------------------------------
         top_terminais = [t[0] for t in Counter(terminais).most_common(3)]
         cols_dos_terminais = [get_coluna_real(t) if t != 0 else 0 for t in top_terminais]
         
         if cols_dos_terminais and any(c != 0 for c in cols_dos_terminais):
             col_terminal_dominante = Counter([c for c in cols_dos_terminais if c != 0]).most_common(1)[0][0]
-            score_colunas[col_terminal_dominante] += 1
-            sinais_detectados.append(f"Terminais puxam a Coluna {col_terminal_dominante}")
+            score_colunas[col_terminal_dominante] += 2  # 🎯 PESO DUPLO AQUI
+            sinais_detectados.append(f"🎯 TERMINAIS (PESO DUPLO) puxam Coluna {col_terminal_dominante}")
             detalhes_estrategias['terminais'] = {
                 'coluna': col_terminal_dominante,
                 'terminais': top_terminais,
-                'pontos': 1
+                'pontos': 2  # Peso duplo
             }
         
         # ---------------------------------------------------------
-        # ESTRATÉGIA 3: Ciclo Físico de Quadrantes (Roda)
+        # ESTRATÉGIA 3: Ciclo Físico de Quadrantes (Roda) = +1
         # ---------------------------------------------------------
         setor_quente = Counter(setores).most_common(1)[0][0]
         num_do_setor_quente = [n for n in validos if get_setor_roda(n) == setor_quente]
@@ -1407,13 +1410,12 @@ class MotorConfluenciaDuziasColunas:
                 }
         
         # ---------------------------------------------------------
-        # ESTRATÉGIA 4: Detector de Alternância (Ping-Pong)
+        # ESTRATÉGIA 4: Detector de Alternância (Ping-Pong) = -1
         # ---------------------------------------------------------
         ultimas_5_cols = colunas[-5:]
         tem_repeticao = any(ultimas_5_cols[i] == ultimas_5_cols[i+1] for i in range(len(ultimas_5_cols)-1))
         
         if not tem_repeticao and len(ultimas_5_cols) >= 5:
-            # Padrão Ping-Pong: penaliza a última coluna que saiu
             ultima_col = colunas[-1]
             score_colunas[ultima_col] -= 1
             detalhes_estrategias['pingpong'] = {
@@ -1430,6 +1432,7 @@ class MotorConfluenciaDuziasColunas:
         # Encontra a coluna vencedora
         coluna_vencedora = max(score_colunas, key=score_colunas.get)
         pontos = score_colunas[coluna_vencedora]
+        pontos_maximos = 4  # 1+2+1 = 4 pontos possíveis (antes do ping-pong)
         
         # Determina os números da coluna vencedora
         coluna_map = {
@@ -1439,8 +1442,6 @@ class MotorConfluenciaDuziasColunas:
         }
         
         numeros_coluna = coluna_map.get(coluna_vencedora, set())
-        
-        # Filtra números que saíram recentemente (quentes) e não saíram (frios)
         numeros_recentes = set(validos[-5:])
         numeros_quentes = numeros_coluna.intersection(numeros_recentes)
         numeros_frios = numeros_coluna - numeros_recentes
@@ -1448,22 +1449,21 @@ class MotorConfluenciaDuziasColunas:
         # Combina: prioridade para quentes, completa com frios
         numeros_apostar = list(numeros_quentes)[:4] + list(numeros_frios)[:3]
         
-        # Se ainda tem espaço, completa com mais números da coluna
         if len(numeros_apostar) < 6:
             restantes = [n for n in numeros_coluna if n not in numeros_apostar]
             numeros_apostar.extend(restantes[:6 - len(numeros_apostar)])
         
         # Determina força baseada nos pontos
         if pontos >= 3:
-            forca = 75
+            forca = 80
             qualidade = "EXCELENTE"
             mensagem = "ENTRADA FORTE"
         elif pontos == 2:
-            forca = 60
+            forca = 65
             qualidade = "BOA"
             mensagem = "ENTRADA MODERADA"
         elif pontos == 1:
-            forca = 45
+            forca = 50
             qualidade = "REGULAR"
             mensagem = "ENTRADA FRACA"
         else:
@@ -1474,6 +1474,7 @@ class MotorConfluenciaDuziasColunas:
         return {
             'coluna_vencedora': coluna_vencedora,
             'pontos': pontos,
+            'pontos_maximos': pontos_maximos,
             'score_colunas': score_colunas,
             'forca': forca,
             'qualidade': qualidade,
@@ -1533,7 +1534,7 @@ class RoletaBotUnificado:
         self.orfaos_setor = EstrategiaOrfaosSetor(self.roleta)
         self.zero_ciclo = EstrategiaZeroCiclo(self.roleta)
         
-        # 🆕 Motor de Confluência para Dúzias e Colunas
+        # 🆕 Motor de Confluência para Dúzias e Colunas (com peso duplo nos terminais)
         self.motor_confluencia = MotorConfluenciaDuziasColunas(self.roleta)
         
         self.historico = []
@@ -1555,7 +1556,7 @@ class RoletaBotUnificado:
             self.mults = self.mults[-200:]
     
     def gerar_entrada(self, motores=None, forcar_inversao=False, entradas_hist=None):
-        # Verifica se está no modo dúzias e colunas
+        # Verifica se está no modo confluência (dúzias e colunas)
         if st.session_state.get('modo_duzias_colunas', False):
             confluencia = self.motor_confluencia.analisar_confluencia(list(self.historico))
             if confluencia and confluencia['pontos'] >= 1:
@@ -1563,7 +1564,7 @@ class RoletaBotUnificado:
                     'numeros_apostar': confluencia['numeros_apostar'],
                     'forca_real': confluencia['forca'],
                     'motor': f"Confluência Col{confluencia['coluna_vencedora']}",
-                    'estrategias_ativas': [f"Score: {confluencia['pontos']}/4"],
+                    'estrategias_ativas': [f"Score: {confluencia['pontos']}/{confluencia['pontos_maximos']}"],
                     'qtd_motores': confluencia['pontos'],
                     'qualidade': confluencia['qualidade'],
                     'gatilho': confluencia['mensagem'],
@@ -1571,7 +1572,7 @@ class RoletaBotUnificado:
                 }
             return None
         
-        # Código original de geração de entrada
+        # Código original de geração de entrada (35 estratégias)
         if motores is None:
             motores = {k: True for k in [
                 'sniper_elite', 'lucky_vizinhos', 'repeticao', 'gap_curto', 'mineracao', 'duzia_dom',
@@ -1588,19 +1589,17 @@ class RoletaBotUnificado:
         forca_min = st.session_state.get('forca_minima_entrada', 55)
         
         ests = [
-            # PESO 4 - Estratégias de altíssima confiabilidade
+            # PESO 4
             (self.lucky_imediato, 'Lucky Imediato', 4, [list(self.historico), self.lucky]),
             (self.repeticao, 'Repetição', 4, [list(self.historico)]),
-            
-            # PESO 3 - Estratégias de alta confiabilidade
+            # PESO 3
             (self.lucky_recente_nao_saiu, 'Lucky Recente', 3, [list(self.historico), self.lucky]),
             (self.lucky_vizinhos, 'Lucky Vizinhos', 3, [list(self.historico), self.lucky]),
             (self.vizinhos_fisicos, 'Vizinhos Físicos', 3, [list(self.historico)]),
             (self.confirmacao_lucky, 'Confirm. Lucky', 3, [list(self.historico), self.lucky]),
             (self.lucky_cascata, 'Lucky Cascata', 3, [list(self.historico), self.lucky]),
             (self.lucky_setor, 'Lucky Setor', 3, [list(self.historico), self.lucky]),
-            
-            # PESO 2 - Estratégias de média-alta confiabilidade
+            # PESO 2
             (self.espelho_lucky, 'Espelho Lucky', 2, [list(self.historico), self.lucky]),
             (self.orfaos_setor, 'Órfãos Setor', 2, [list(self.historico)]),
             (self.sniper_elite, 'Sniper Elite', 2, [list(self.historico), self.lucky]),
@@ -1612,8 +1611,7 @@ class RoletaBotUnificado:
             (self.ressaca_lucky, 'Ressaca Lucky', 2, [list(self.historico), self.lucky, entradas_hist]),
             (self.esgotamento_coluna, 'Esgot. Coluna', 2, [list(self.historico)]),
             (self.setor_ritmado, 'Setor Ritmado', 2, [list(self.historico)]),
-            
-            # PESO 1 - Estratégias complementares
+            # PESO 1
             (self.zero_ciclo, 'Zero Ciclo', 1, [list(self.historico)]),
             (self.mineracao, 'Mineração', 1, [list(self.historico)]),
             (self.duzia_dom, 'Dúzia Dom.', 1, [list(self.historico)]),
@@ -1686,7 +1684,6 @@ class RoletaBotUnificado:
         
         lst = [n for n, _ in consenso.most_common(mx)]
         
-        # Filtros anti-erro
         if st.session_state.get('limitar_numeros_altos', True):
             prob = [n for n in lst if n in self.roleta.numeros_problematicos]
             if len(prob) > self.roleta.max_problematicos:
@@ -1737,7 +1734,6 @@ class RoletaBotUnificado:
         numeros_originais = set(entrada['numeros_apostar'])
         todos_numeros = set(range(37))
         numeros_invertidos = list(todos_numeros - numeros_originais)
-        
         qtd = len(entrada['numeros_apostar'])
         
         nao_problematicos = [n for n in numeros_invertidos if n not in {0, 32, 33, 34, 35}]
@@ -1912,8 +1908,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Roleta Bot Pro v20 - Motor de Confluência", layout="centered")
-st.title("🎯 Roleta Bot Pro v20 - Motor de Confluência Dúzias & Colunas")
+st.set_page_config(page_title="🎯 Roleta Bot Pro v21 - Motor de Confluência com Peso Duplo", layout="centered")
+st.title("🎯 Roleta Bot Pro v21 - Confluência Dúzias & Colunas")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -2011,107 +2007,59 @@ if "telegram_chat_id" not in st.session_state:
 with st.sidebar:
     st.subheader("⚙️ Config")
     
-    # 🆕 CHECKBOX DO MODO DÚZIAS E COLUNAS
     st.markdown("---")
     st.markdown("### 📐 MODO DE OPERAÇÃO")
     st.session_state.modo_duzias_colunas = st.checkbox(
-        "🎯 ATIVAR MODO CONFLUÊNCIA (Dúzias & Colunas)",
+        "🎯 ATIVAR MODO CONFLUÊNCIA (Peso Duplo nos Terminais)",
         value=st.session_state.modo_duzias_colunas,
-        help="Quando ativado, o bot usa o Motor de Confluência com 4 estratégias simultâneas para Dúzias e Colunas"
+        help="Ativa o Motor de Confluência com 4 estratégias e PESO DUPLO nos Terminais Dinâmicos"
     )
     
     if st.session_state.modo_duzias_colunas:
         st.success("""
         ✅ **MOTOR DE CONFLUÊNCIA ATIVO**
         
-        **4 Estratégias Simultâneas:**
-        1. 🔥 Interseção Quente (Coluna + Dúzia)
-        2. 🎯 Força de Terminais Dinâmicos
-        3. 🎡 Leitura do Cilindro (Setor da Roda)
-        4. 🏓 Detector de Ping-Pong
+        **Sistema de Pontuação:**
+        1. 🔥 Interseção Quente = +1
+        2. 🎯 **TERMINAIS = +2 (PESO DUPLO)**
+        3. 🎡 Cilindro/Roda = +1
+        4. 🏓 Ping-Pong = -1 (escudo)
         
-        **Score System:**
-        - 3-4 pontos = ENTRADA FORTE 🔥
-        - 2 pontos = ENTRADA MODERADA ⚠️
-        - 0-1 pontos = SEM PADRÃO 🛑
+        **Pontuação Máxima: 4 pontos**
         """)
-        st.info("💡 As 35 estratégias estão temporariamente desativadas.")
+        st.info("💡 As 35 estratégias estão desativadas.")
     else:
-        st.info("📊 Modo padrão: 35 estratégias ativas")
+        st.info("📊 Modo padrão: 35 estratégias")
     
     st.markdown("---")
     
     with st.expander("🔄 Inversão Automática", expanded=True):
         st.session_state.modo_inversao_auto = st.checkbox(
             "🔄 ATIVAR INVERSÃO AUTOMÁTICA",
-            value=st.session_state.modo_inversao_auto,
-            help="✅ Acertou → Mantém | ❌ Errou → Inverte (Normal↔Invertido)"
+            value=st.session_state.modo_inversao_auto
         )
         if st.session_state.modo_inversao_auto:
             estado = "🔄 INVERTIDO" if st.session_state.sistema.estado_inversao else "📊 NORMAL"
-            st.warning(f"""
-            **INVERSÃO ATIVA | Estado: {estado}**
-            
-            ✅ Acertou → Mantém estado
-            ❌ Errou → Inverte (Normal↔Invertido)
-            """)
-        else:
-            st.info("🔄 Inversão DESATIVADA")
+            st.warning(f"**INVERSÃO ATIVA | Estado: {estado}**")
     
-    st.session_state.forca_minima_entrada = st.slider(
-        "⚡ Força Mínima",
-        45, 65,
-        st.session_state.forca_minima_entrada,
-        5
-    )
-    st.session_state.max_n_apostas = st.slider(
-        "📊 Máx. números",
-        12, 18,
-        st.session_state.max_n_apostas
-    )
+    st.session_state.forca_minima_entrada = st.slider("⚡ Força Mínima", 45, 65, st.session_state.forca_minima_entrada, 5)
+    st.session_state.max_n_apostas = st.slider("📊 Máx. números", 12, 18, st.session_state.max_n_apostas)
     
-    # Só mostra as estratégias quando NÃO está no modo confluência
     if not st.session_state.modo_duzias_colunas:
         with st.expander("🛡️ Filtros", expanded=False):
-            st.session_state.limitar_numeros_altos = st.checkbox(
-                "Limitar 0,32,33,34,35",
-                value=st.session_state.limitar_numeros_altos
-            )
-            st.session_state.evitar_zero = st.checkbox(
-                "Evitar Zero",
-                value=st.session_state.evitar_zero
-            )
+            st.session_state.limitar_numeros_altos = st.checkbox("Limitar 0,32,33,34,35", value=st.session_state.limitar_numeros_altos)
+            st.session_state.evitar_zero = st.checkbox("Evitar Zero", value=st.session_state.evitar_zero)
         
         with st.expander("🤖 35 Estratégias", expanded=False):
-            st.markdown("**🆕 CORRETIVAS (Análise de Erros)**")
-            st.session_state.usar_lucky_imediato = st.checkbox(
-                "⚡ Lucky Imediato (4x)", 
-                value=st.session_state.usar_lucky_imediato,
-                help="Lucky do giro atual - 35% dos erros"
-            )
-            st.session_state.usar_lucky_recente_nao_saiu = st.checkbox(
-                "🍀 Lucky Recente (3x)", 
-                value=st.session_state.usar_lucky_recente_nao_saiu,
-                help="Lucky 3 giros que não saiu - 25% dos erros"
-            )
-            st.session_state.usar_espelho_lucky = st.checkbox(
-                "🪞 Espelho Lucky (2x)", 
-                value=st.session_state.usar_espelho_lucky,
-                help="Espelhos de lucky - 20% dos erros"
-            )
-            st.session_state.usar_orfaos_setor = st.checkbox(
-                "🎯 Órfãos Setor (2x)", 
-                value=st.session_state.usar_orfaos_setor,
-                help="Setor órfão quando domina 4+ giros - 15% dos erros"
-            )
-            st.session_state.usar_zero_ciclo = st.checkbox(
-                "0️⃣ Zero Ciclo", 
-                value=st.session_state.usar_zero_ciclo,
-                help="Zero a cada 20-30 giros - 5% dos erros"
-            )
+            st.markdown("**🆕 CORRETIVAS**")
+            st.session_state.usar_lucky_imediato = st.checkbox("⚡ Lucky Imediato (4x)", value=st.session_state.usar_lucky_imediato)
+            st.session_state.usar_lucky_recente_nao_saiu = st.checkbox("🍀 Lucky Recente (3x)", value=st.session_state.usar_lucky_recente_nao_saiu)
+            st.session_state.usar_espelho_lucky = st.checkbox("🪞 Espelho Lucky (2x)", value=st.session_state.usar_espelho_lucky)
+            st.session_state.usar_orfaos_setor = st.checkbox("🎯 Órfãos Setor (2x)", value=st.session_state.usar_orfaos_setor)
+            st.session_state.usar_zero_ciclo = st.checkbox("0️⃣ Zero Ciclo", value=st.session_state.usar_zero_ciclo)
             
             st.markdown("---")
-            st.markdown("**2ª Análise (6 estratégias)**")
+            st.markdown("**2ª Análise**")
             st.session_state.usar_lucky_cascata = st.checkbox("🌊 Lucky Cascata (3x)", value=st.session_state.usar_lucky_cascata)
             st.session_state.usar_ressaca_lucky = st.checkbox("🍀🔄 Ressaca Lucky (2x)", value=st.session_state.usar_ressaca_lucky)
             st.session_state.usar_espelho_temporal = st.checkbox("⏰ Espelho Temporal", value=st.session_state.usar_espelho_temporal)
@@ -2120,7 +2068,7 @@ with st.sidebar:
             st.session_state.usar_setor_ritmado = st.checkbox("🎯 Setor Ritmado (2x)", value=st.session_state.usar_setor_ritmado)
             
             st.markdown("---")
-            st.markdown("**1ª Análise (6 estratégias)**")
+            st.markdown("**1ª Análise**")
             st.session_state.usar_confirmacao_lucky = st.checkbox("🍀 Confirm. Lucky (3x)", value=st.session_state.usar_confirmacao_lucky)
             st.session_state.usar_lucky_setor = st.checkbox("🎯 Lucky Setor (3x)", value=st.session_state.usar_lucky_setor)
             st.session_state.usar_pendulo = st.checkbox("⏳ Pêndulo (2x)", value=st.session_state.usar_pendulo)
@@ -2128,7 +2076,7 @@ with st.sidebar:
             st.session_state.usar_colunas_alternadas = st.checkbox("📊 Colunas Alt.", value=st.session_state.usar_colunas_alternadas)
             
             st.markdown("---")
-            st.markdown("**Originais (18)**")
+            st.markdown("**Originais**")
             st.session_state.usar_repeticao = st.checkbox("🔄 Repetição (4x)", value=st.session_state.usar_repeticao)
             st.session_state.usar_lucky_vizinhos = st.checkbox("🍀 Lucky Vizinhos (3x)", value=st.session_state.usar_lucky_vizinhos)
             st.session_state.usar_vizinhos_fisicos = st.checkbox("🎰 Vizinhos Físicos (3x)", value=st.session_state.usar_vizinhos_fisicos)
@@ -2148,33 +2096,15 @@ with st.sidebar:
             st.session_state.usar_lucky_terminal = st.checkbox("🍀🔢 Lucky Terminal", value=st.session_state.usar_lucky_terminal)
             st.session_state.usar_faixa_numerica = st.checkbox("📏 Faixa Numérica", value=st.session_state.usar_faixa_numerica)
     
-    st.session_state.modo_automatico = st.checkbox(
-        "Modo Automático",
-        value=st.session_state.modo_automatico
-    )
+    st.session_state.modo_automatico = st.checkbox("Modo Automático", value=st.session_state.modo_automatico)
     
     with st.expander("🔔 Telegram", expanded=False):
-        st.session_state.telegram_token = st.text_input(
-            "Token",
-            value=st.session_state.telegram_token,
-            type="password"
-        )
-        st.session_state.telegram_chat_id = st.text_input(
-            "Chat ID",
-            value=st.session_state.telegram_chat_id
-        )
+        st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
+        st.session_state.telegram_chat_id = st.text_input("Chat ID", value=st.session_state.telegram_chat_id)
     
     c1, c2 = st.columns(2)
-    c1.button(
-        "💾 Salvar",
-        on_click=lambda: [salvar_resultado_em_arquivo(st.session_state.historico), salvar_sessao(), st.success("✅")],
-        use_container_width=True
-    )
-    c2.button(
-        "🗑️ Zerar",
-        on_click=lambda: st.session_state.sistema.zerar() or st.rerun(),
-        use_container_width=True
-    )
+    c1.button("💾 Salvar", on_click=lambda: [salvar_resultado_em_arquivo(st.session_state.historico), salvar_sessao(), st.success("✅")], use_container_width=True)
+    c2.button("🗑️ Zerar", on_click=lambda: st.session_state.sistema.zerar() or st.rerun(), use_container_width=True)
 
 # Conteúdo principal
 st.subheader("✍️ Inserir Números")
@@ -2186,12 +2116,7 @@ with c2:
         try:
             nums = [int(n) for n in entrada.split() if n.isdigit() and 0 <= int(n) <= 36]
             for n in nums:
-                item = {
-                    "number": n,
-                    "timestamp": f"m{len(st.session_state.historico)}",
-                    "luckyNumbers": [],
-                    "luckyMultipliers": {}
-                }
+                item = {"number": n, "timestamp": f"m{len(st.session_state.historico)}", "luckyNumbers": [], "luckyMultipliers": {}}
                 st.session_state.historico.append(item)
                 st.session_state.sistema.processar_novo_numero(item)
             salvar_resultado_em_arquivo(st.session_state.historico)
@@ -2243,64 +2168,56 @@ c4.metric("Modo", "Confluência" if st.session_state.get('modo_duzias_colunas', 
 c5.metric("Est Inv", "🔄INV" if sis.estado_inversao else "📊NOR")
 
 # ==========================================
-# 🆕 PAINEL DE ANÁLISE COM MOTOR DE CONFLUÊNCIA
+# 🆕 PAINEL DE ANÁLISE COM MOTOR DE CONFLUÊNCIA (PESO DUPLO NOS TERMINAIS)
 # ==========================================
 st.subheader("🎯 Painel de Análise")
 
 if st.session_state.get('modo_duzias_colunas', False):
-    # Modo Confluência: Motor de 4 estratégias simultâneas
+    # Modo Confluência com Peso Duplo nos Terminais
     hist_num = list(sis.historico_numeros)
     janela_analise = 20
     
-    st.markdown("### 🧠 Motor Analítico de Confluência")
+    st.markdown("### 🧠 Motor Analítico de Confluência (Terminais com Peso Duplo)")
     
     if len(hist_num) >= janela_analise:
         validos = [n for n in hist_num[-janela_analise:] if n != 0]
         
         if validos:
-            # Arrays base
             colunas = [get_coluna_real(n) for n in validos]
             duzias = [get_duzia_real(n) for n in validos]
             terminais = [n % 10 for n in validos]
             setores = [get_setor_roda(n) for n in validos]
             
-            # Placar de pontuação para as Colunas (1, 2 e 3)
             score_colunas = {1: 0, 2: 0, 3: 0}
             sinais_detectados = []
 
             c1, c2 = st.columns(2)
 
             with c1:
-                # ---------------------------------------------------------
-                # ESTRATÉGIA 1: Interseção Quente (Coluna + Dúzia)
-                # ---------------------------------------------------------
+                # ESTRATÉGIA 1: Interseção Quente (+1)
                 col_quente = Counter(colunas).most_common(1)[0][0]
                 duz_quente = Counter(duzias).most_common(1)[0][0]
                 
-                st.write("**1. Interseção Básica:**")
+                st.write("**1. Interseção Básica (+1):**")
                 st.info(f"🔥 Coluna {col_quente} + Dúzia {duz_quente}")
                 score_colunas[col_quente] += 1
                 
-                # ---------------------------------------------------------
-                # ESTRATÉGIA 2: Terminais Dinâmicos da Janela
-                # ---------------------------------------------------------
+                # ESTRATÉGIA 2: Terminais Dinâmicos (+2 PESO DUPLO)
                 top_terminais = [t[0] for t in Counter(terminais).most_common(3)]
                 cols_dos_terminais = [get_coluna_real(t) if t != 0 else 0 for t in top_terminais]
                 
                 if cols_dos_terminais and any(c != 0 for c in cols_dos_terminais):
                     col_terminal_dominante = Counter([c for c in cols_dos_terminais if c != 0]).most_common(1)[0][0]
-                    score_colunas[col_terminal_dominante] += 1
-                    sinais_detectados.append(f"Terminais puxam a Coluna {col_terminal_dominante}")
+                    score_colunas[col_terminal_dominante] += 2  # 🎯 PESO DUPLO
+                    sinais_detectados.append(f"🎯 TERMINAIS (PESO DUPLO +2) → Coluna {col_terminal_dominante}")
                 
-                st.write("**2. Força de Terminais:**")
-                st.success(f"🎯 Terminais Quentes: {top_terminais}")
+                st.write("**2. Força de Terminais (+2 PESO DUPLO):**")
+                st.success(f"🎯🎯 Terminais Quentes: {top_terminais}")
                 if col_terminal_dominante != 0:
-                    st.caption(f"→ Puxando Coluna {col_terminal_dominante}")
+                    st.caption(f"→ +2 pontos para Coluna {col_terminal_dominante}")
 
             with c2:
-                # ---------------------------------------------------------
-                # ESTRATÉGIA 3: Ciclo Físico de Quadrantes (Roda)
-                # ---------------------------------------------------------
+                # ESTRATÉGIA 3: Cilindro (+1)
                 setor_quente = Counter(setores).most_common(1)[0][0]
                 num_do_setor_quente = [n for n in validos if get_setor_roda(n) == setor_quente]
                 cols_do_setor = [get_coluna_real(n) for n in num_do_setor_quente]
@@ -2310,28 +2227,26 @@ if st.session_state.get('modo_duzias_colunas', False):
                     if col_dominante_setor != 0:
                         score_colunas[col_dominante_setor] += 1
                 
-                st.write("**3. Leitura do Cilindro:**")
+                st.write("**3. Leitura do Cilindro (+1):**")
                 st.warning(f"🎡 Setor dominando: {setor_quente}")
                 if col_dominante_setor != 0:
-                    st.caption(f"→ Coluna {col_dominante_setor} domina este setor")
+                    st.caption(f"→ +1 ponto para Coluna {col_dominante_setor}")
 
-                # ---------------------------------------------------------
-                # ESTRATÉGIA 4: Detector de Alternância (Ping-Pong)
-                # ---------------------------------------------------------
+                # ESTRATÉGIA 4: Ping-Pong (-1)
                 ultimas_5_cols = colunas[-5:]
                 tem_repeticao = any(ultimas_5_cols[i] == ultimas_5_cols[i+1] for i in range(len(ultimas_5_cols)-1))
                 
-                st.write("**4. Comportamento da Mesa:**")
+                st.write("**4. Comportamento da Mesa (-1 se Ping-Pong):**")
                 if not tem_repeticao and len(ultimas_5_cols) >= 5:
                     st.error("🏓 Padrão Ping-Pong Detectado! (Evite repetições)")
                     ultima_col = colunas[-1]
                     score_colunas[ultima_col] -= 1
-                    st.caption(f"→ Penalizando Coluna {ultima_col}")
+                    st.caption(f"→ -1 ponto da Coluna {ultima_col}")
                 else:
                     st.write("🌊 Fluxo Normal (Aceita repetições)")
 
             # ==========================================
-            # VEREDITO FINAL DO BOT
+            # VEREDITO FINAL
             # ==========================================
             st.markdown("---")
             st.markdown("### 🤖 Veredito do Algoritmo")
@@ -2341,6 +2256,7 @@ if st.session_state.get('modo_duzias_colunas', False):
             
             if pontos >= 3:
                 st.success(f"### 🎯 ENTRADA FORTE: Coluna {coluna_vencedora} ({pontos}/4 confirmações)")
+                st.balloons()
             elif pontos == 2:
                 st.warning(f"### ⚠️ ENTRADA MODERADA: Coluna {coluna_vencedora} ({pontos}/4 confirmações)")
             elif pontos == 1:
@@ -2352,11 +2268,7 @@ if st.session_state.get('modo_duzias_colunas', False):
             
             # Mostra números sugeridos da coluna vencedora
             if pontos >= 1:
-                coluna_map = {
-                    1: sis.bot.roleta.coluna1,
-                    2: sis.bot.roleta.coluna2,
-                    3: sis.bot.roleta.coluna3
-                }
+                coluna_map = {1: sis.bot.roleta.coluna1, 2: sis.bot.roleta.coluna2, 3: sis.bot.roleta.coluna3}
                 numeros_coluna = coluna_map.get(coluna_vencedora, set())
                 numeros_recentes = set(validos[-5:])
                 numeros_quentes = numeros_coluna.intersection(numeros_recentes)
@@ -2370,16 +2282,13 @@ if st.session_state.get('modo_duzias_colunas', False):
     else:
         st.info(f"⏳ Coletando dados... ({len(hist_num)}/{janela_analise} giros na janela de análise).")
     
-    # Mostra a entrada ativa do motor de confluência
+    # Mostra a entrada ativa
     st.markdown("---")
     st.subheader("🎯 Entrada Atual (Modo Confluência)")
     if sis.entrada_ativa:
         e = sis.entrada_ativa
-        if e.get('invertido'):
-            st.warning(f"### 🔄 INVERTIDA | {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
-        else:
-            emoji = "🔥" if e['forca_real'] >= 65 else "🎯" if e['forca_real'] >= 55 else "📊"
-            st.info(f"### {emoji} {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
+        emoji = "🔥" if e['forca_real'] >= 65 else "🎯" if e['forca_real'] >= 55 else "📊"
+        st.info(f"### {emoji} {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
         if e.get('gatilho'):
             st.caption(f"🎯 {e['gatilho']}")
         st.markdown(f"## {', '.join(map(str, sorted(e['numeros_apostar'])))}")
@@ -2437,13 +2346,13 @@ else:
                     col_terminal_dominante = Counter([c for c in cols_dos_terminais if c != 0]).most_common(1)[0][0] if any(c != 0 for c in cols_dos_terminais) else 0
                     
                     if col_terminal_dominante != 0:
-                        score_colunas[col_terminal_dominante] += 1
+                        score_colunas[col_terminal_dominante] += 2  # Peso duplo também aqui
                         sinais_detectados.append(f"Terminais puxam a Coluna {col_terminal_dominante}")
                     
-                    st.write("**2. Força de Terminais:**")
+                    st.write("**2. Força de Terminais (+2):**")
                     st.success(f"🎯 Terminais Quentes: {top_terminais}")
                     if col_terminal_dominante != 0:
-                        st.caption(f"→ Puxando Coluna {col_terminal_dominante}")
+                        st.caption(f"→ Puxando Coluna {col_terminal_dominante} (+2)")
 
                 with c2:
                     setor_quente = Counter(setores).most_common(1)[0][0]
@@ -2464,12 +2373,12 @@ else:
                     
                     st.write("**4. Comportamento da Mesa:**")
                     if not tem_repeticao and len(ultimas_5_cols) >= 5:
-                        st.error("🏓 Padrão Ping-Pong Detectado! (Evite repetições)")
+                        st.error("🏓 Padrão Ping-Pong Detectado!")
                         ultima_col = colunas[-1]
                         score_colunas[ultima_col] -= 1
                         st.caption(f"→ Penalizando Coluna {ultima_col}")
                     else:
-                        st.write("🌊 Fluxo Normal (Aceita repetições)")
+                        st.write("🌊 Fluxo Normal")
 
                 st.markdown("---")
                 st.markdown("### 🤖 Veredito do Algoritmo")
@@ -2484,11 +2393,11 @@ else:
                 elif pontos == 1:
                     st.info(f"### 💡 ENTRADA FRACA: Coluna {coluna_vencedora} ({pontos}/4 confirmações)")
                 else:
-                    st.error("### 🛑 SEM PADRÃO CLARO: Fique de fora. Mercado confuso.")
+                    st.error("### 🛑 SEM PADRÃO CLARO: Fique de fora.")
                 
                 st.caption(f"Placar Interno: Col 1 ({score_colunas[1]} pts) | Col 2 ({score_colunas[2]} pts) | Col 3 ({score_colunas[3]} pts)")
         else:
-            st.info(f"⏳ Coletando dados... ({len(hist_num)}/{janela_analise} giros na janela de análise).")
+            st.info(f"⏳ Coletando dados... ({len(hist_num)}/{janela_analise} giros).")
 
 # Histórico de entradas
 st.subheader("📋 Últimas")
