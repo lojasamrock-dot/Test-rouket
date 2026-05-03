@@ -139,7 +139,7 @@ def get_duzia(numero):
     else: return 3
 
 # =============================
-# 🧠 DUZIA AI V3.5 PRO
+# 🧠 DUZIA AI V3.5 PRO - CORRIGIDA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -255,6 +255,7 @@ class DuziaAI:
             return "TRANSICAO"
     
     def calcular_score(self):
+        """🆕 CORRIGIDO: Verifica se a dúzia não é zero antes de usar como chave"""
         score = {1: 0, 2: 0, 3: 0}
         freq = self.frequencia_ponderada()
         streak_count, streak_d = self.streak()
@@ -262,43 +263,55 @@ class DuziaAI:
         prob = self.matriz_transicao()
         regime = self.detectar_regime()
         
+        # PESO 1: Frequência Ponderada
         for d in score:
             score[d] += freq[d] * 0.7
         
-        if streak_d:
+        # PESO 2: Streak (verifica se não é zero)
+        if streak_d and streak_d != 0:
             score[streak_d] += streak_count * (2.5 if regime == "DOMINANTE" else 1.5)
         
+        # PESO 3: Rebote (verifica se anterior não é zero)
         if trans and regime != "DOMINANTE":
             ant, _ = trans
             if ant != 0:
                 score[ant] += 2
         
-        if streak_count >= 3:
+        # PESO 4: Quebra de sequência (verifica se não é zero)
+        if streak_count >= 3 and streak_d and streak_d != 0:
             viz = {1: 2, 2: 3, 3: 2}
             if streak_d in viz:
                 score[viz[streak_d]] += 4
         
+        # PESO 5: Matriz de Transição (🆕 CORRIGIDO: verifica ultima != 0)
         if self.historico:
             ultima = self.historico[-1]
-            for d in score:
-                p = prob[ultima][d]
-                if p > 45:
-                    score[d] += (p - 35) / 10
+            if ultima != 0 and ultima in prob:
+                for d in score:
+                    p = prob[ultima][d]
+                    if p > 45:
+                        score[d] += (p - 35) / 10
         
+        # PESO 6: Ciclos (verifica se não é zero)
         ciclo = self.detectar_ciclos()
-        if ciclo and max(score.values()) > 5:
+        if ciclo and ciclo != 0 and max(score.values()) > 5:
             score[ciclo] += 4
         
+        # PESO 7: Ausência (verifica se não é zero)
         aus = self.ausencia()
         if aus:
             dz, g = aus
-            score[dz] += min(4, g * 0.4)
+            if dz != 0:
+                score[dz] += min(4, g * 0.4)
         
+        # PESO 8: Terminais (verifica se não é zero)
         term = self.terminais()
         if term:
             dz, q = term
-            score[dz] += q * 0.2
+            if dz != 0:
+                score[dz] += q * 0.2
         
+        # NORMALIZAÇÃO
         total = sum(score.values())
         if total > 0:
             for d in score:
