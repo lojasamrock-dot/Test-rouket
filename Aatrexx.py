@@ -50,6 +50,7 @@ def salvar_sessao():
             'erros_duzia_sec': st.session_state.get('erros_duzia_sec', 0),
             'modo_agressivo': st.session_state.get('modo_agressivo', False),
             'confianca_minima': st.session_state.get('confianca_minima', 3.2),
+            'agressividade': st.session_state.get('agressividade', 2),
             'telegram_token': st.session_state.get('telegram_token', ''),
             'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
             'modo_automatico': st.session_state.get('modo_automatico', True),
@@ -147,7 +148,8 @@ class DuziaAI:
         self.historico = deque(maxlen=window)
         self.historico_completo = []
         self.numeros_completos = []
-        self.ultimas_entradas = []  # 🆕 Histórico de previsões para análise de performance
+        self.ultimas_entradas = []
+        self.sinais_entrada = []  # 🆕 Guarda (índice, dúzia) quando houve sinal
     
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -158,6 +160,11 @@ class DuziaAI:
             self.historico_completo = self.historico_completo[-200:]
         if len(self.numeros_completos) > 200:
             self.numeros_completos = self.numeros_completos[-200:]
+    
+    def registrar_sinal(self, duzia):
+        """Chamado externamente quando uma entrada é gerada"""
+        idx = len(self.historico_completo) - 1
+        self.sinais_entrada.append((idx, duzia))
     
     def frequencia_ponderada(self):
         freq = Counter()
@@ -207,112 +214,57 @@ class DuziaAI:
                 prob[o][d] = (matriz[o][d] / totais[o] * 100) if totais[o] > 0 else 33.3
         return prob
     
-    # =============================
-    # 🆕 DETECTOR 1: PADRÃO DE REPETIÇÃO IMEDIATA
-    # =============================
     def detectar_repeticao_imediata(self):
-        """
-        Detecta quando a mesma dúzia sai 2x seguidas
-        Baseado no erro: 18(D2)→2(D1) - previu D2, mas veio D1
-        Quando D2 sai, a chance de repetir D2 é alta se houve troca D1↔D2 antes
-        """
         if len(self.historico) < 3:
             return None
-        
         ultimos_3 = list(self.historico)[-3:]
-        
-        # Padrão: A → B → B (ex: D1→D2→D2)
         if ultimos_3[0] != ultimos_3[1] and ultimos_3[1] == ultimos_3[2] and ultimos_3[1] != 0:
-            return ultimos_3[1], 6  # Aposta na repetição com força 6
-        
-        # Padrão: A → A → ? (streak de 2 já)
+            return ultimos_3[1], 6
         if len(self.historico) >= 2:
             u2 = list(self.historico)[-2:]
             if u2[0] == u2[1] and u2[0] != 0:
-                return u2[0], 4  # Força 4 para continuar
-        
+                return u2[0], 4
         return None
     
-    # =============================
-    # 🆕 DETECTOR 2: TROCA FREQUENTE D1↔D2
-    # =============================
     def detectar_troca_d1_d2(self):
-        """
-        Detecta padrão de alternância entre D1 e D2
-        Baseado nos 🟡 do CSV: muitas previsões D2 acertaram D1 (secundário)
-        Quando D1 e D2 estão trocando frequentemente, a próxima após D2 é D1
-        """
         if len(self.historico) < 6:
             return None
-        
         ultimos_6 = list(self.historico)[-6:]
-        
-        # Conta trocas D1↔D2 (ignorando D3 e 0)
         trocas = 0
         for i in range(1, len(ultimos_6)):
             if (ultimos_6[i-1] == 1 and ultimos_6[i] == 2) or (ultimos_6[i-1] == 2 and ultimos_6[i] == 1):
                 trocas += 1
-        
-        # Se há 3+ trocas D1↔D2 nos últimos 6 giros
         if trocas >= 3:
             ultima = ultimos_6[-1]
             if ultima == 1:
-                return 2, 5  # Espera D2
+                return 2, 5
             elif ultima == 2:
-                return 1, 5  # Espera D1
-        
+                return 1, 5
         return None
     
-    # =============================
-    # 🆕 DETECTOR 3: BLOCO DE D3
-    # =============================
     def detectar_bloco_d3(self):
-        """
-        Detecta quando D3 começa a aparecer em bloco
-        Baseado nos erros: 28,32,29,27,34 - D3 aparecendo concentrada
-        Se D3 apareceu 2x nos últimos 4 giros, alta chance de continuar
-        """
         if len(self.historico) < 5:
             return None
-        
         ultimos_5 = list(self.historico)[-5:]
-        
-        # Conta D3 nos últimos 4 giros
         d3_count = ultimos_5[-4:].count(3)
-        
         if d3_count >= 2:
-            return 3, 5  # Aposta em D3 com força 5
-        
-        # Se D3 apareceu no último giro e 1x nos últimos 4
+            return 3, 5
         if ultimos_5[-1] == 3 and d3_count >= 1:
-            return 3, 3  # Força 3
-        
+            return 3, 3
         return None
     
-    # =============================
-    # 🆕 DETECTOR 4: PADRÃO D2→D1→D2→D1 (ALTERNÂNCIA PERFEITA)
-    # =============================
     def detectar_alternancia_perfeita(self):
-        """
-        Detecta padrão ABAB perfeito nos últimos 4-6 giros
-        """
         if len(self.historico) < 4:
             return None
-        
         ultimos_4 = list(self.historico)[-4:]
-        
-        # ABAB perfeito
         if ultimos_4[0] == ultimos_4[2] and ultimos_4[1] == ultimos_4[3] and ultimos_4[0] != ultimos_4[1]:
             if ultimos_4[0] != 0 and ultimos_4[1] != 0:
-                return ultimos_4[1], 7  # Próximo será B (força 7)
-        
-        # ABABA (5 giros)
+                return ultimos_4[1], 7
         if len(self.historico) >= 5:
             ultimos_5 = list(self.historico)[-5:]
             if ultimos_5[0] == ultimos_5[2] == ultimos_5[4] and ultimos_5[1] == ultimos_5[3] and ultimos_5[0] != ultimos_5[1]:
                 if ultimos_5[0] != 0 and ultimos_5[1] != 0:
-                    return ultimos_5[1], 8  # Força máxima
-        
+                    return ultimos_5[1], 8
         return None
     
     def detectar_ciclos(self):
@@ -414,7 +366,7 @@ class DuziaAI:
                     if p > 40:
                         score[d] += (p - 30) / 8
         
-        # 🆕 PESO 7: Detector de Repetição Imediata
+        # PESO 7: Repetição Imediata
         rep = self.detectar_repeticao_imediata()
         if rep:
             dz, forca = rep
@@ -422,7 +374,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Repetição: +{forca}")
         
-        # 🆕 PESO 8: Detector de Troca D1↔D2
+        # PESO 8: Troca D1↔D2
         troca = self.detectar_troca_d1_d2()
         if troca:
             dz, forca = troca
@@ -430,7 +382,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Troca D1↔D2: +{forca}")
         
-        # 🆕 PESO 9: Detector de Bloco D3
+        # PESO 9: Bloco D3
         bloco = self.detectar_bloco_d3()
         if bloco:
             dz, forca = bloco
@@ -438,7 +390,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Bloco D3: +{forca}")
         
-        # 🆕 PESO 10: Detector de Alternância Perfeita
+        # PESO 10: Alternância Perfeita
         alt = self.detectar_alternancia_perfeita()
         if alt:
             dz, forca = alt
@@ -473,7 +425,7 @@ class DuziaAI:
         
         return score, regime, detalhes
     
-    def prever(self, confianca_minima=3.2):
+    def prever(self, confianca_minima=3.2, agressividade=2):
         score, regime, detalhes = self.calcular_score()
         ranking = sorted(score.items(), key=lambda x: x[1], reverse=True)
         d1, s1 = ranking[0]
@@ -483,15 +435,32 @@ class DuziaAI:
         vol = np.std(list(score.values()))
         confianca = (ratio * 2.2) + (1.5 / (1 + vol))
         
+        # Ajuste por agressividade
+        confianca_ajustada = confianca_minima - (0.4 * (2 - agressividade))
+        
+        # Verifica força dos detectores
+        forca_detectores = 0
+        for dz in detalhes:
+            for det in detalhes[dz]:
+                if '+' in det:
+                    try:
+                        forca = float(det.split('+')[1].strip())
+                        forca_detectores += forca
+                    except:
+                        pass
+        tem_detector_forte = forca_detectores >= 5
+        
         pode_entrar = False
         motivo = ""
         
-        if regime == "DISTRIBUIDO":
-            motivo = "Mercado distribuído (aleatório)"
-        elif confianca < confianca_minima:
-            motivo = f"Confiança baixa ({confianca:.2f} < {confianca_minima})"
-        elif regime == "TRANSICAO" and confianca < 3.5:
-            motivo = f"Transição com confiança insuficiente ({confianca:.2f})"
+        if regime == "DISTRIBUIDO" and not tem_detector_forte:
+            motivo = "Mercado distribuído sem padrão claro"
+        elif regime == "DISTRIBUIDO" and tem_detector_forte and confianca < 2.5:
+            motivo = f"Distribuído com padrão fraco (confiança {confianca:.2f})"
+        elif confianca < confianca_ajustada and not tem_detector_forte:
+            motivo = f"Confiança baixa ({confianca:.2f} < {confianca_ajustada})"
+        elif regime == "TRANSICAO" and confianca < 3.0 and not tem_detector_forte:
+            motivo = f"Transição sem padrão (confiança {confianca:.2f})"
         else:
             pode_entrar = True
         
@@ -530,6 +499,7 @@ class SistemaBot:
         self.acertos = 0
         self.erros = 0
         self.ultimo_numero = None
+        self.sinais_grafico = []  # 🆕 Armazena índices e dúzias previstas para plotagem
     
     def processar_novo_numero(self, numero_data):
         if isinstance(numero_data, dict):
@@ -580,7 +550,8 @@ class SistemaBot:
         
         # Gera nova previsão
         confianca_minima = st.session_state.get('confianca_minima', 3.2)
-        previsao = self.duzia_ai.prever(confianca_minima=confianca_minima)
+        agressividade = st.session_state.get('agressividade', 2)
+        previsao = self.duzia_ai.prever(confianca_minima=confianca_minima, agressividade=agressividade)
         
         if previsao['entrar']:
             duzia_map = {
@@ -607,6 +578,11 @@ class SistemaBot:
                 'detalhes': previsao.get('detalhes', {})
             }
             
+            # 🆕 Registra sinal para o gráfico
+            idx_atual = len(self.historico_numeros) - 1
+            self.sinais_grafico.append((idx_atual, previsao['duzia']))
+            self.duzia_ai.sinais_entrada.append((idx_atual, previsao['duzia']))
+            
             enviar_previsao_auto({
                 'numeros_apostar': numeros_apostar,
                 'forca_real': min(95, previsao.get('confianca', 0) * 8),
@@ -621,6 +597,7 @@ class SistemaBot:
         self.historico_numeros.clear()
         self.entrada_ativa = None
         self.ultimo_numero = None
+        self.sinais_grafico = []
         janela = st.session_state.get('janela_duzia_ai', 30)
         self.duzia_ai = DuziaAI(window=janela)
         st.session_state.acertos_duzia = 0
@@ -676,8 +653,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V4.0 - Detectores de Padrão", layout="wide")
-st.title("🎰 DuziaAI V4.0 - Detectores Avançados de Padrão")
+st.set_page_config(page_title="🎰 DuziaAI V4.1 - Sinais no Gráfico", layout="wide")
+st.title("🎰 DuziaAI V4.1 - Sinais de Entrada no Gráfico")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -698,6 +675,7 @@ if dados:
     st.session_state.erros_duzia_sec = dados.get('erros_duzia_sec', 0)
     st.session_state.modo_agressivo = dados.get('modo_agressivo', False)
     st.session_state.confianca_minima = dados.get('confianca_minima', 3.2)
+    st.session_state.agressividade = dados.get('agressividade', 2)
     if os.path.exists(ENTRADAS_PATH):
         try:
             with open(ENTRADAS_PATH, 'r') as f:
@@ -711,6 +689,7 @@ defaults = {
     'modo_agressivo': False,
     'janela_duzia_ai': 30,
     'confianca_minima': 3.2,
+    'agressividade': 2,
     'acertos_duzia': 0,
     'erros_duzia': 0,
     'acertos_duzia_sec': 0,
@@ -751,6 +730,13 @@ with st.sidebar:
         "🎯 Confiança Mínima",
         2.0, 5.0, st.session_state.confianca_minima, 0.2,
         help="Menor = mais entradas | Maior = mais filtro"
+    )
+    
+    st.session_state.agressividade = st.select_slider(
+        "🎚️ Agressividade",
+        options=[1, 2, 3],
+        value=st.session_state.agressividade,
+        help="1 = Mais entradas (mais risco) | 2 = Normal | 3 = Conservador"
     )
     
     st.session_state.modo_agressivo = st.checkbox(
@@ -884,35 +870,66 @@ with col_grafico:
         )
         st.plotly_chart(fig, use_container_width=True)
         
-        # 🆕 Mostra detalhes dos detectores
         st.caption("**🔍 Detectores Ativos:**")
         for dz in [1, 2, 3]:
             if detalhes.get(dz):
                 st.caption(f"D{dz}: " + " | ".join(detalhes[dz]))
         
-        # Gráfico de linha do histórico de dúzias
+        # Gráfico de linha do histórico de dúzias COM SINAIS
         if len(sis.historico_numeros) >= 10:
             ultimos_20 = list(sis.historico_numeros)[-20:]
             duzias_hist = [get_duzia(n) for n in ultimos_20]
+            x_vals = list(range(len(duzias_hist)))
             
             fig2 = go.Figure()
             fig2.add_trace(go.Scatter(
+                x=x_vals,
                 y=duzias_hist,
                 mode='lines+markers',
                 name='Dúzia',
                 line=dict(color='#FFD700', width=2),
                 marker=dict(size=8)
             ))
+            
+            # 🆕 Marca os sinais de entrada no gráfico
+            if sis.sinais_grafico:
+                sinal_x = []
+                sinal_y = []
+                sinal_text = []
+                offset = len(duzias_hist) - 20
+                for idx, dz in sis.sinais_grafico:
+                    pos = idx - offset
+                    if 0 <= pos < 20:
+                        sinal_x.append(pos)
+                        sinal_y.append(dz)
+                        sinal_text.append(f"Entrada D{dz}")
+                
+                if sinal_x:
+                    fig2.add_trace(go.Scatter(
+                        x=sinal_x,
+                        y=sinal_y,
+                        mode='markers',
+                        name='Sinal de Entrada',
+                        marker=dict(
+                            symbol='star',
+                            size=15,
+                            color='red',
+                            line=dict(width=2, color='darkred')
+                        ),
+                        text=sinal_text,
+                        hoverinfo='text'
+                    ))
+            
             fig2.update_layout(
-                title="📉 Histórico de Dúzias (Últimos 20 giros)",
+                title="📉 Histórico de Dúzias (Últimos 20 giros) c/ Sinais",
                 yaxis=dict(
                     title="Dúzia",
                     tickvals=[1, 2, 3],
                     ticktext=['D1', 'D2', 'D3'],
                     range=[0.5, 3.5]
                 ),
-                height=250,
-                showlegend=False
+                height=300,
+                showlegend=True
             )
             st.plotly_chart(fig2, use_container_width=True)
     else:
@@ -955,7 +972,6 @@ with col_entrada:
         </div>
         """, unsafe_allow_html=True)
         
-        # 🆕 Mostra detalhes dos detectores na entrada
         if detalhes_entrada.get(duzia_prevista):
             st.caption(f"🔍 " + " | ".join(detalhes_entrada[duzia_prevista]))
         
@@ -966,6 +982,9 @@ with col_entrada:
                 cols[i % 6].button(str(n), key=f"num_{n}", use_container_width=True)
         else:
             st.warning("Nenhum número disponível para aposta.")
+        
+        # Barra de confiança
+        st.progress(confianca / 10.0)
         
     else:
         st.info("🔍 Analisando padrões... Aguardando sinal de entrada.")
@@ -1003,6 +1022,6 @@ else:
 
 # Rodapé
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V4.0 | 4 Detectores de Padrão | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V4.1 | Sinais no Gráfico + Agressividade | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
 salvar_sessao()
