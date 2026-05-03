@@ -1,4 +1,3 @@
-
 import streamlit as st
 import json
 import os
@@ -46,6 +45,7 @@ def salvar_sessao():
             'sistema_acertos': sis.acertos,
             'sistema_erros': sis.erros,
             'estado_inversao': sis.estado_inversao,
+            'modo_duzias_colunas': st.session_state.get('modo_duzias_colunas', False),
             'telegram_token': st.session_state.get('telegram_token', ''),
             'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
             'modo_automatico': st.session_state.get('modo_automatico', True),
@@ -189,6 +189,15 @@ class RoletaBase:
         elif n in self.coluna2:
             return 2
         elif n in self.coluna3:
+            return 3
+        return 0
+    
+    def get_duzia(self, n):
+        if 1 <= n <= 12:
+            return 1
+        elif 13 <= n <= 24:
+            return 2
+        elif 25 <= n <= 36:
             return 3
         return 0
     
@@ -1308,6 +1317,171 @@ class EstrategiaZeroCiclo:
         }
 
 # =============================
+# 🆕 NOVO MOTOR DE DÚZIAS E COLUNAS
+# =============================
+
+class MotorDuziasColunas:
+    """Motor focado exclusivamente em análise estatística de Dúzias e Colunas"""
+    def __init__(self, roleta):
+        self.roleta = roleta
+    
+    def gerar_entrada_duzias_colunas(self, historico_numeros, max_apostas=7):
+        """
+        Gera uma entrada baseada puramente em padrões de dúzias e colunas
+        """
+        if len(historico_numeros) < 10:
+            return None
+        
+        # Remove zeros e pega os últimos números válidos
+        validos = [n for n in historico_numeros[-20:] if n != 0]
+        if len(validos) < 10:
+            return None
+        
+        # Mapeia dúzias e colunas
+        duzias = [self.roleta.get_duzia(n) for n in validos]
+        colunas = [self.roleta.get_coluna(n) for n in validos]
+        
+        # Contagem
+        cont_duzias = Counter(duzias)
+        cont_colunas = Counter(colunas)
+        
+        # Encontra a dúzia mais quente e a mais fria
+        duzia_quente = cont_duzias.most_common(1)[0] if cont_duzias else None
+        duzia_fria = cont_duzias.most_common()[-1] if cont_duzias else None
+        
+        # Encontra a coluna mais quente e a mais fria
+        coluna_quente = cont_colunas.most_common(1)[0] if cont_colunas else None
+        coluna_fria = cont_colunas.most_common()[-1] if cont_colunas else None
+        
+        # Estratégia 1: Dúzia Dominante (se >= 60% dos últimos 10 giros)
+        if duzia_quente and len(validos) >= 10:
+            ultimos_10_duzias = duzias[-10:]
+            freq_quente = ultimos_10_duzias.count(duzia_quente[0])
+            if freq_quente >= 6:
+                # Aposta nos números desta dúzia que ainda não saíram recentemente
+                duzia_map = {
+                    1: set(range(1, 13)),
+                    2: set(range(13, 25)),
+                    3: set(range(25, 37))
+                }
+                numeros_duzia = duzia_map.get(duzia_quente[0], set())
+                nao_sairam = numeros_duzia - set(validos[-5:])
+                numeros_apostar = list(nao_sairam)[:max_apostas]
+                
+                if len(numeros_apostar) >= 3:
+                    return {
+                        'numeros_apostar': sorted(numeros_apostar),
+                        'forca_real': 60 + freq_quente * 3,
+                        'motor': 'Dúzia Dominante',
+                        'estrategias_ativas': ['Dúzia Dominante'],
+                        'qtd_motores': 1,
+                        'qualidade': 'ALTA',
+                        'gatilho': f'Dúzia {duzia_quente[0]} ({freq_quente}/10)',
+                        'invertido': False
+                    }
+        
+        # Estratégia 2: Coluna Atrasada (se não aparece há 5+ giros)
+        if coluna_fria and len(colunas) >= 5:
+            ultima_aparicao = None
+            for i in range(len(colunas)-1, -1, -1):
+                if colunas[i] == coluna_fria[0]:
+                    ultima_aparicao = len(colunas) - 1 - i
+                    break
+            
+            if ultima_aparicao and ultima_aparicao >= 5:
+                coluna_map = {
+                    1: self.roleta.coluna1,
+                    2: self.roleta.coluna2,
+                    3: self.roleta.coluna3
+                }
+                numeros_coluna = coluna_map.get(coluna_fria[0], set())
+                numeros_apostar = list(numeros_coluna.intersection(set(validos[-15:])))
+                if len(numeros_apostar) < 4:
+                    numeros_apostar = list(numeros_coluna)[:max_apostas]
+                
+                return {
+                    'numeros_apostar': sorted(numeros_apostar[:max_apostas]),
+                    'forca_real': 50 + ultima_aparicao * 2,
+                    'motor': 'Coluna Atrasada',
+                    'estrategias_ativas': ['Coluna Atrasada'],
+                    'qtd_motores': 1,
+                    'qualidade': 'MÉDIA',
+                    'gatilho': f'Col {coluna_fria[0]} atrasada {ultima_aparicao}g',
+                    'invertido': False
+                }
+        
+        # Estratégia 3: Cruzamento Dúzia Fria + Coluna Quente
+        if duzia_fria and coluna_quente and duzia_fria[1] <= 2 and coluna_quente[1] >= 4:
+            duzia_map = {
+                1: set(range(1, 13)),
+                2: set(range(13, 25)),
+                3: set(range(25, 37))
+            }
+            coluna_map = {
+                1: self.roleta.coluna1,
+                2: self.roleta.coluna2,
+                3: self.roleta.coluna3
+            }
+            
+            numeros_duzia_fria = duzia_map.get(duzia_fria[0], set())
+            numeros_coluna_quente = coluna_map.get(coluna_quente[0], set())
+            
+            cruzamento = numeros_duzia_fria.intersection(numeros_coluna_quente)
+            
+            if len(cruzamento) >= 3:
+                return {
+                    'numeros_apostar': sorted(list(cruzamento)[:max_apostas]),
+                    'forca_real': 55 + coluna_quente[1] * 2,
+                    'motor': 'Cruzamento DxC',
+                    'estrategias_ativas': ['Dúzia Fria', 'Coluna Quente'],
+                    'qtd_motores': 2,
+                    'qualidade': 'ALTA',
+                    'gatilho': f'Dz{duzia_fria[0]} fria x Col{coluna_quente[0]} quente',
+                    'invertido': False
+                }
+        
+        # Estratégia 4: Alternância de Coluna (padrão alternado nas últimas 5)
+        if len(colunas) >= 5:
+            ultimas_5 = colunas[-5:]
+            padrao_alternado = True
+            for i in range(1, len(ultimas_5)):
+                if ultimas_5[i] == ultimas_5[i-1]:
+                    padrao_alternado = False
+                    break
+            
+            if padrao_alternado:
+                # Prevê a coluna que deve aparecer (diferente da última)
+                ultima_col = colunas[-1]
+                colunas_possiveis = [c for c in [1, 2, 3] if c != ultima_col]
+                
+                # Escolhe a que mais apareceu nesse padrão
+                coluna_prevista = colunas_possiveis[0]
+                
+                coluna_map = {
+                    1: self.roleta.coluna1,
+                    2: self.roleta.coluna2,
+                    3: self.roleta.coluna3
+                }
+                
+                numeros_coluna = coluna_map.get(coluna_prevista, set())
+                numeros_apostar = list(numeros_coluna.intersection(set(validos[-10:])))
+                if len(numeros_apostar) < 4:
+                    numeros_apostar = list(numeros_coluna)[:max_apostas]
+                
+                return {
+                    'numeros_apostar': sorted(numeros_apostar[:max_apostas]),
+                    'forca_real': 45,
+                    'motor': 'Alternância Coluna',
+                    'estrategias_ativas': ['Colunas Alternadas'],
+                    'qtd_motores': 1,
+                    'qualidade': 'MÉDIA',
+                    'gatilho': f'Alternância → Col{coluna_prevista}',
+                    'invertido': False
+                }
+        
+        return None
+
+# =============================
 # BOT UNIFICADO (35 ESTRATÉGIAS)
 # =============================
 class RoletaBotUnificado:
@@ -1357,6 +1531,9 @@ class RoletaBotUnificado:
         self.orfaos_setor = EstrategiaOrfaosSetor(self.roleta)
         self.zero_ciclo = EstrategiaZeroCiclo(self.roleta)
         
+        # Motor de dúzias e colunas
+        self.motor_duzias_colunas = MotorDuziasColunas(self.roleta)
+        
         self.historico = []
         self.lucky = []
         self.mults = []
@@ -1376,6 +1553,14 @@ class RoletaBotUnificado:
             self.mults = self.mults[-200:]
     
     def gerar_entrada(self, motores=None, forcar_inversao=False, entradas_hist=None):
+        # Verifica se está no modo dúzias e colunas
+        if st.session_state.get('modo_duzias_colunas', False):
+            return self.motor_duzias_colunas.gerar_entrada_duzias_colunas(
+                list(self.historico),
+                st.session_state.get('max_n_apostas', 7)
+            )
+        
+        # Código original de geração de entrada
         if motores is None:
             motores = {k: True for k in [
                 'sniper_elite', 'lucky_vizinhos', 'repeticao', 'gap_curto', 'mineracao', 'duzia_dom',
@@ -1789,7 +1974,8 @@ defaults.update({
     'min_n_apostas': 4,
     'forca_minima_entrada': 55,
     'max_gatilhos': 2,
-    'modo_inversao_auto': False
+    'modo_inversao_auto': False,
+    'modo_duzias_colunas': False
 })
 
 for k, v in defaults.items():
@@ -1813,6 +1999,23 @@ if "telegram_chat_id" not in st.session_state:
 # Sidebar
 with st.sidebar:
     st.subheader("⚙️ Config")
+    
+    # 🆕 CHECKBOX DO MODO DÚZIAS E COLUNAS
+    st.markdown("---")
+    st.markdown("### 📐 MODO DE OPERAÇÃO")
+    st.session_state.modo_duzias_colunas = st.checkbox(
+        "🎯 ATIVAR MODO DÚZIAS & COLUNAS",
+        value=st.session_state.modo_duzias_colunas,
+        help="Quando ativado, o bot ignora as 35 estratégias e foca EXCLUSIVAMENTE em análise estatística de Dúzias e Colunas"
+    )
+    
+    if st.session_state.modo_duzias_colunas:
+        st.success("✅ **MODO DÚZIAS & COLUNAS ATIVO**\n\nO bot está focado em:\n- Dúzia Dominante\n- Coluna Atrasada\n- Cruzamento Dúzia/Coluna\n- Alternância de Coluna")
+        st.info("💡 As 35 estratégias estão temporariamente desativadas.")
+    else:
+        st.info("📊 Modo padrão: 35 estratégias ativas")
+    
+    st.markdown("---")
     
     with st.expander("🔄 Inversão Automática", expanded=True):
         st.session_state.modo_inversao_auto = st.checkbox(
@@ -1843,81 +2046,83 @@ with st.sidebar:
         st.session_state.max_n_apostas
     )
     
-    with st.expander("🛡️ Filtros", expanded=False):
-        st.session_state.limitar_numeros_altos = st.checkbox(
-            "Limitar 0,32,33,34,35",
-            value=st.session_state.limitar_numeros_altos
-        )
-        st.session_state.evitar_zero = st.checkbox(
-            "Evitar Zero",
-            value=st.session_state.evitar_zero
-        )
-    
-    with st.expander("🤖 35 Estratégias", expanded=False):
-        st.markdown("**🆕 CORRETIVAS (Análise de Erros)**")
-        st.session_state.usar_lucky_imediato = st.checkbox(
-            "⚡ Lucky Imediato (4x)", 
-            value=st.session_state.usar_lucky_imediato,
-            help="Lucky do giro atual - 35% dos erros"
-        )
-        st.session_state.usar_lucky_recente_nao_saiu = st.checkbox(
-            "🍀 Lucky Recente (3x)", 
-            value=st.session_state.usar_lucky_recente_nao_saiu,
-            help="Lucky 3 giros que não saiu - 25% dos erros"
-        )
-        st.session_state.usar_espelho_lucky = st.checkbox(
-            "🪞 Espelho Lucky (2x)", 
-            value=st.session_state.usar_espelho_lucky,
-            help="Espelhos de lucky - 20% dos erros"
-        )
-        st.session_state.usar_orfaos_setor = st.checkbox(
-            "🎯 Órfãos Setor (2x)", 
-            value=st.session_state.usar_orfaos_setor,
-            help="Setor órfão quando domina 4+ giros - 15% dos erros"
-        )
-        st.session_state.usar_zero_ciclo = st.checkbox(
-            "0️⃣ Zero Ciclo", 
-            value=st.session_state.usar_zero_ciclo,
-            help="Zero a cada 20-30 giros - 5% dos erros"
-        )
+    # Só mostra as estratégias quando NÃO está no modo dúzias e colunas
+    if not st.session_state.modo_duzias_colunas:
+        with st.expander("🛡️ Filtros", expanded=False):
+            st.session_state.limitar_numeros_altos = st.checkbox(
+                "Limitar 0,32,33,34,35",
+                value=st.session_state.limitar_numeros_altos
+            )
+            st.session_state.evitar_zero = st.checkbox(
+                "Evitar Zero",
+                value=st.session_state.evitar_zero
+            )
         
-        st.markdown("---")
-        st.markdown("**2ª Análise (6 estratégias)**")
-        st.session_state.usar_lucky_cascata = st.checkbox("🌊 Lucky Cascata (3x)", value=st.session_state.usar_lucky_cascata)
-        st.session_state.usar_ressaca_lucky = st.checkbox("🍀🔄 Ressaca Lucky (2x)", value=st.session_state.usar_ressaca_lucky)
-        st.session_state.usar_espelho_temporal = st.checkbox("⏰ Espelho Temporal", value=st.session_state.usar_espelho_temporal)
-        st.session_state.usar_esgotamento_coluna = st.checkbox("📊 Esgot. Coluna (2x)", value=st.session_state.usar_esgotamento_coluna)
-        st.session_state.usar_micro_ciclo3 = st.checkbox("🔄 Micro Ciclo 3", value=st.session_state.usar_micro_ciclo3)
-        st.session_state.usar_setor_ritmado = st.checkbox("🎯 Setor Ritmado (2x)", value=st.session_state.usar_setor_ritmado)
-        
-        st.markdown("---")
-        st.markdown("**1ª Análise (6 estratégias)**")
-        st.session_state.usar_confirmacao_lucky = st.checkbox("🍀 Confirm. Lucky (3x)", value=st.session_state.usar_confirmacao_lucky)
-        st.session_state.usar_lucky_setor = st.checkbox("🎯 Lucky Setor (3x)", value=st.session_state.usar_lucky_setor)
-        st.session_state.usar_pendulo = st.checkbox("⏳ Pêndulo (2x)", value=st.session_state.usar_pendulo)
-        st.session_state.usar_quente_frio = st.checkbox("🌡️ Quente/Frio", value=st.session_state.usar_quente_frio)
-        st.session_state.usar_colunas_alternadas = st.checkbox("📊 Colunas Alt.", value=st.session_state.usar_colunas_alternadas)
-        
-        st.markdown("---")
-        st.markdown("**Originais (18)**")
-        st.session_state.usar_repeticao = st.checkbox("🔄 Repetição (4x)", value=st.session_state.usar_repeticao)
-        st.session_state.usar_lucky_vizinhos = st.checkbox("🍀 Lucky Vizinhos (3x)", value=st.session_state.usar_lucky_vizinhos)
-        st.session_state.usar_vizinhos_fisicos = st.checkbox("🎰 Vizinhos Físicos (3x)", value=st.session_state.usar_vizinhos_fisicos)
-        st.session_state.usar_sniper_elite = st.checkbox("🎯 Sniper Elite", value=st.session_state.usar_sniper_elite)
-        st.session_state.usar_gap_curto = st.checkbox("⏭️ Gap Curto", value=st.session_state.usar_gap_curto)
-        st.session_state.usar_espelho = st.checkbox("🪞 Espelho", value=st.session_state.usar_espelho)
-        st.session_state.usar_lucky_alto = st.checkbox("💎 Lucky Alto", value=st.session_state.usar_lucky_alto)
-        st.session_state.usar_numero_do_dia = st.checkbox("🌟 Nº do Dia", value=st.session_state.usar_numero_do_dia)
-        st.session_state.usar_mineracao = st.checkbox("⛏️ Mineração", value=st.session_state.usar_mineracao)
-        st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dom.", value=st.session_state.usar_duzia_dom)
-        st.session_state.usar_soma_cinco = st.checkbox("➕5 Soma Cinco", value=st.session_state.usar_soma_cinco)
-        st.session_state.usar_ciclo_oito = st.checkbox("8️⃣ Ciclo Oito", value=st.session_state.usar_ciclo_oito)
-        st.session_state.usar_alternancia_cor = st.checkbox("🎨 Alternância", value=st.session_state.usar_alternancia_cor)
-        st.session_state.usar_setor_cilindro = st.checkbox("🎡 Setor Cilindro", value=st.session_state.usar_setor_cilindro)
-        st.session_state.usar_zero_virada = st.checkbox("0️⃣ Zero Virada", value=st.session_state.usar_zero_virada)
-        st.session_state.usar_primos = st.checkbox("🔢 Primos", value=st.session_state.usar_primos)
-        st.session_state.usar_lucky_terminal = st.checkbox("🍀🔢 Lucky Terminal", value=st.session_state.usar_lucky_terminal)
-        st.session_state.usar_faixa_numerica = st.checkbox("📏 Faixa Numérica", value=st.session_state.usar_faixa_numerica)
+        with st.expander("🤖 35 Estratégias", expanded=False):
+            st.markdown("**🆕 CORRETIVAS (Análise de Erros)**")
+            st.session_state.usar_lucky_imediato = st.checkbox(
+                "⚡ Lucky Imediato (4x)", 
+                value=st.session_state.usar_lucky_imediato,
+                help="Lucky do giro atual - 35% dos erros"
+            )
+            st.session_state.usar_lucky_recente_nao_saiu = st.checkbox(
+                "🍀 Lucky Recente (3x)", 
+                value=st.session_state.usar_lucky_recente_nao_saiu,
+                help="Lucky 3 giros que não saiu - 25% dos erros"
+            )
+            st.session_state.usar_espelho_lucky = st.checkbox(
+                "🪞 Espelho Lucky (2x)", 
+                value=st.session_state.usar_espelho_lucky,
+                help="Espelhos de lucky - 20% dos erros"
+            )
+            st.session_state.usar_orfaos_setor = st.checkbox(
+                "🎯 Órfãos Setor (2x)", 
+                value=st.session_state.usar_orfaos_setor,
+                help="Setor órfão quando domina 4+ giros - 15% dos erros"
+            )
+            st.session_state.usar_zero_ciclo = st.checkbox(
+                "0️⃣ Zero Ciclo", 
+                value=st.session_state.usar_zero_ciclo,
+                help="Zero a cada 20-30 giros - 5% dos erros"
+            )
+            
+            st.markdown("---")
+            st.markdown("**2ª Análise (6 estratégias)**")
+            st.session_state.usar_lucky_cascata = st.checkbox("🌊 Lucky Cascata (3x)", value=st.session_state.usar_lucky_cascata)
+            st.session_state.usar_ressaca_lucky = st.checkbox("🍀🔄 Ressaca Lucky (2x)", value=st.session_state.usar_ressaca_lucky)
+            st.session_state.usar_espelho_temporal = st.checkbox("⏰ Espelho Temporal", value=st.session_state.usar_espelho_temporal)
+            st.session_state.usar_esgotamento_coluna = st.checkbox("📊 Esgot. Coluna (2x)", value=st.session_state.usar_esgotamento_coluna)
+            st.session_state.usar_micro_ciclo3 = st.checkbox("🔄 Micro Ciclo 3", value=st.session_state.usar_micro_ciclo3)
+            st.session_state.usar_setor_ritmado = st.checkbox("🎯 Setor Ritmado (2x)", value=st.session_state.usar_setor_ritmado)
+            
+            st.markdown("---")
+            st.markdown("**1ª Análise (6 estratégias)**")
+            st.session_state.usar_confirmacao_lucky = st.checkbox("🍀 Confirm. Lucky (3x)", value=st.session_state.usar_confirmacao_lucky)
+            st.session_state.usar_lucky_setor = st.checkbox("🎯 Lucky Setor (3x)", value=st.session_state.usar_lucky_setor)
+            st.session_state.usar_pendulo = st.checkbox("⏳ Pêndulo (2x)", value=st.session_state.usar_pendulo)
+            st.session_state.usar_quente_frio = st.checkbox("🌡️ Quente/Frio", value=st.session_state.usar_quente_frio)
+            st.session_state.usar_colunas_alternadas = st.checkbox("📊 Colunas Alt.", value=st.session_state.usar_colunas_alternadas)
+            
+            st.markdown("---")
+            st.markdown("**Originais (18)**")
+            st.session_state.usar_repeticao = st.checkbox("🔄 Repetição (4x)", value=st.session_state.usar_repeticao)
+            st.session_state.usar_lucky_vizinhos = st.checkbox("🍀 Lucky Vizinhos (3x)", value=st.session_state.usar_lucky_vizinhos)
+            st.session_state.usar_vizinhos_fisicos = st.checkbox("🎰 Vizinhos Físicos (3x)", value=st.session_state.usar_vizinhos_fisicos)
+            st.session_state.usar_sniper_elite = st.checkbox("🎯 Sniper Elite", value=st.session_state.usar_sniper_elite)
+            st.session_state.usar_gap_curto = st.checkbox("⏭️ Gap Curto", value=st.session_state.usar_gap_curto)
+            st.session_state.usar_espelho = st.checkbox("🪞 Espelho", value=st.session_state.usar_espelho)
+            st.session_state.usar_lucky_alto = st.checkbox("💎 Lucky Alto", value=st.session_state.usar_lucky_alto)
+            st.session_state.usar_numero_do_dia = st.checkbox("🌟 Nº do Dia", value=st.session_state.usar_numero_do_dia)
+            st.session_state.usar_mineracao = st.checkbox("⛏️ Mineração", value=st.session_state.usar_mineracao)
+            st.session_state.usar_duzia_dom = st.checkbox("📐 Dúzia Dom.", value=st.session_state.usar_duzia_dom)
+            st.session_state.usar_soma_cinco = st.checkbox("➕5 Soma Cinco", value=st.session_state.usar_soma_cinco)
+            st.session_state.usar_ciclo_oito = st.checkbox("8️⃣ Ciclo Oito", value=st.session_state.usar_ciclo_oito)
+            st.session_state.usar_alternancia_cor = st.checkbox("🎨 Alternância", value=st.session_state.usar_alternancia_cor)
+            st.session_state.usar_setor_cilindro = st.checkbox("🎡 Setor Cilindro", value=st.session_state.usar_setor_cilindro)
+            st.session_state.usar_zero_virada = st.checkbox("0️⃣ Zero Virada", value=st.session_state.usar_zero_virada)
+            st.session_state.usar_primos = st.checkbox("🔢 Primos", value=st.session_state.usar_primos)
+            st.session_state.usar_lucky_terminal = st.checkbox("🍀🔢 Lucky Terminal", value=st.session_state.usar_lucky_terminal)
+            st.session_state.usar_faixa_numerica = st.checkbox("📏 Faixa Numérica", value=st.session_state.usar_faixa_numerica)
     
     st.session_state.modo_automatico = st.checkbox(
         "Modo Automático",
@@ -2010,23 +2215,136 @@ c1.metric("🟢 Acertos", sis.acertos)
 c2.metric("🔴 Erros", sis.erros)
 tx = sis.acertos/(sis.acertos+sis.erros)*100 if (sis.acertos+sis.erros) > 0 else 0
 c3.metric("📊 Taxa", f"{tx:.0f}%")
-c4.metric("🔄 Inv", "ON" if st.session_state.get('modo_inversao_auto', False) else "OFF")
-c5.metric("Estado", "🔄INV" if sis.estado_inversao else "📊NOR")
+c4.metric("Modo", "Dz&Col" if st.session_state.get('modo_duzias_colunas', False) else "35 Est")
+c5.metric("Est Inv", "🔄INV" if sis.estado_inversao else "📊NOR")
 
-# Entrada atual
-st.subheader("🎯 Entrada Atual")
-if sis.entrada_ativa:
-    e = sis.entrada_ativa
-    if e.get('invertido'):
-        st.warning(f"### 🔄 INVERTIDA | {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
+# ==========================================
+# 🆕 PAINEL DE ANÁLISE COM ABAS
+# ==========================================
+st.subheader("🎯 Painel de Análise")
+
+if st.session_state.get('modo_duzias_colunas', False):
+    # Modo exclusivo de Dúzias e Colunas
+    hist_num = list(sis.historico_numeros)
+    janela_analise = 15
+    
+    st.markdown("### 📐 Análise de Dúzias & Colunas")
+    
+    if len(hist_num) >= janela_analise:
+        validos = [n for n in hist_num[-janela_analise:] if n != 0]
+        
+        if validos:
+            colunas = [sis.bot.roleta.get_coluna(n) for n in validos]
+            duzias = [sis.bot.roleta.get_duzia(n) for n in validos]
+            
+            c1, c2 = st.columns(2)
+            
+            with c1:
+                st.markdown("### 🏛️ Colunas (Últimos 15 giros)")
+                cont_col = Counter(colunas)
+                col_quente = cont_col.most_common(1)[0]
+                col_fria = cont_col.most_common()[-1]
+                
+                st.success(f"🔥 **Mais Forte:** Coluna {col_quente[0]} ({col_quente[1]}x)")
+                st.error(f"❄️ **Mais Atrasada:** Coluna {col_fria[0]} ({col_fria[1]}x)")
+                
+                if len(colunas) >= 3 and colunas[-1] == colunas[-2] == colunas[-3]:
+                    st.warning(f"⚠️ Forte Tendência: Coluna {colunas[-1]} repetiu nas últimas 3 rodadas!")
+                elif col_fria[1] <= 2:
+                    st.info(f"💡 Dica de Esgotamento: Coluna {col_fria[0]} prestes a estourar.")
+            
+            with c2:
+                st.markdown("### 📦 Dúzias (Últimos 15 giros)")
+                cont_duz = Counter(duzias)
+                duz_quente = cont_duz.most_common(1)[0]
+                duz_fria = cont_duz.most_common()[-1]
+                
+                st.success(f"🔥 **Mais Forte:** Dúzia {duz_quente[0]} ({duz_quente[1]}x)")
+                st.error(f"❄️ **Mais Atrasada:** Dúzia {duz_fria[0]} ({duz_fria[1]}x)")
+                
+                if len(duzias) >= 3 and duzias[-1] == duzias[-2] == duzias[-3]:
+                    st.warning(f"⚠️ Forte Tendência: Dúzia {duzias[-1]} repetiu nas últimas 3 rodadas!")
+                elif duz_fria[1] <= 2:
+                    st.info(f"💡 Dica de Esgotamento: Dúzia {duz_fria[0]} prestes a estourar.")
     else:
-        emoji = "🔥" if e['forca_real'] >= 65 else "🎯" if e['forca_real'] >= 55 else "📊"
-        st.info(f"### {emoji} {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
-    if e.get('gatilho'):
-        st.caption(f"🎯 {e['gatilho']}")
-    st.markdown(f"## {', '.join(map(str, sorted(e['numeros_apostar'])))}")
+        st.info(f"⏳ O bot precisa capturar pelo menos {janela_analise} giros na roleta para cruzar as tendências. Faltam {janela_analise - len(hist_num)}.")
+    
+    # Mostra a entrada ativa do motor de dúzias e colunas
+    st.markdown("---")
+    st.subheader("🎯 Entrada Atual (Modo Dúzias & Colunas)")
+    if sis.entrada_ativa:
+        e = sis.entrada_ativa
+        if e.get('invertido'):
+            st.warning(f"### 🔄 INVERTIDA | {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
+        else:
+            emoji = "🔥" if e['forca_real'] >= 65 else "🎯" if e['forca_real'] >= 55 else "📊"
+            st.info(f"### {emoji} {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
+        if e.get('gatilho'):
+            st.caption(f"🎯 {e['gatilho']}")
+        st.markdown(f"## {', '.join(map(str, sorted(e['numeros_apostar'])))}")
+    else:
+        st.info("🔍 Analisando padrões de Dúzias e Colunas...")
+
 else:
-    st.info("🔍 Analisando...")
+    # Modo padrão com duas abas
+    tab_geral, tab_duz_col = st.tabs(["📊 Visão Geral", "📐 Dúzias & Colunas"])
+    
+    with tab_geral:
+        if sis.entrada_ativa:
+            e = sis.entrada_ativa
+            if e.get('invertido'):
+                st.warning(f"### 🔄 INVERTIDA | {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
+            else:
+                emoji = "🔥" if e['forca_real'] >= 65 else "🎯" if e['forca_real'] >= 55 else "📊"
+                st.info(f"### {emoji} {e['motor']} | {e['forca_real']}% | {len(e['numeros_apostar'])}n")
+            if e.get('gatilho'):
+                st.caption(f"🎯 {e['gatilho']}")
+            st.markdown(f"## {', '.join(map(str, sorted(e['numeros_apostar'])))}")
+        else:
+            st.info("🔍 Analisando...")
+    
+    with tab_duz_col:
+        hist_num = list(sis.historico_numeros)
+        janela_analise = 15
+        
+        if len(hist_num) >= janela_analise:
+            validos = [n for n in hist_num[-janela_analise:] if n != 0]
+            
+            if validos:
+                colunas = [sis.bot.roleta.get_coluna(n) for n in validos]
+                duzias = [sis.bot.roleta.get_duzia(n) for n in validos]
+                
+                c1, c2 = st.columns(2)
+                
+                with c1:
+                    st.markdown("### 🏛️ Colunas (Últimos 15 giros)")
+                    cont_col = Counter(colunas)
+                    col_quente = cont_col.most_common(1)[0]
+                    col_fria = cont_col.most_common()[-1]
+                    
+                    st.success(f"🔥 **Mais Forte:** Coluna {col_quente[0]} ({col_quente[1]}x)")
+                    st.error(f"❄️ **Mais Atrasada:** Coluna {col_fria[0]} ({col_fria[1]}x)")
+                    
+                    if len(colunas) >= 3 and colunas[-1] == colunas[-2] == colunas[-3]:
+                        st.warning(f"⚠️ Forte Tendência: Coluna {colunas[-1]} repetiu nas últimas 3 rodadas!")
+                    elif col_fria[1] <= 2:
+                        st.info(f"💡 Dica de Esgotamento: Coluna {col_fria[0]} prestes a estourar.")
+                
+                with c2:
+                    st.markdown("### 📦 Dúzias (Últimos 15 giros)")
+                    cont_duz = Counter(duzias)
+                    duz_quente = cont_duz.most_common(1)[0]
+                    duz_fria = cont_duz.most_common()[-1]
+                    
+                    st.success(f"🔥 **Mais Forte:** Dúzia {duz_quente[0]} ({duz_quente[1]}x)")
+                    st.error(f"❄️ **Mais Atrasada:** Dúzia {duz_fria[0]} ({duz_fria[1]}x)")
+                    
+                    if len(duzias) >= 3 and duzias[-1] == duzias[-2] == duzias[-3]:
+                        st.warning(f"⚠️ Forte Tendência: Dúzia {duzias[-1]} repetiu nas últimas 3 rodadas!")
+                    elif duz_fria[1] <= 2:
+                        st.info(f"💡 Dica de Esgotamento: Dúzia {duz_fria[0]} prestes a estourar.")
+        else:
+            st.info(f"⏳ O bot precisa capturar pelo menos {janela_analise} giros na roleta para cruzar as tendências de Dúzias e Colunas. Faltam {janela_analise - len(hist_num)}.")
 
 # Histórico de entradas
 st.subheader("📋 Últimas")
