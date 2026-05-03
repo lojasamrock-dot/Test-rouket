@@ -218,6 +218,29 @@ class RoletaBase:
         return None
 
 # =============================
+# FUNÇÕES DE MAPEAMENTO REAL (MATEMÁTICA PURA)
+# =============================
+def get_coluna_real(n):
+    """Retorna a coluna real baseada na matemática da roleta: 3,6,9..."""
+    if n == 0: return 0
+    return 3 if n % 3 == 0 else n % 3
+
+def get_duzia_real(n):
+    """Retorna a dúzia real: 1-12=1, 13-24=2, 25-36=3"""
+    if n == 0: return 0
+    return (n - 1) // 12 + 1
+
+def get_setor_roda(n):
+    """Retorna o setor físico do cilindro"""
+    voisins = [22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25]
+    tiers = [27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33]
+    orphelins = [1, 20, 14, 31, 9, 17, 34]
+    if n in voisins: return "Voisins (Vizinhos do Zero)"
+    if n in tiers: return "Tiers (Terço)"
+    if n in orphelins: return "Orphelins (Órfãos)"
+    return "Zero"
+
+# =============================
 # ESTRATÉGIAS ORIGINAIS (18)
 # =============================
 
@@ -1128,16 +1151,13 @@ class EstrategiaLuckyImediato:
         if len(h) < 1 or not lucky_hist:
             return None
         
-        # Pega os lucky numbers do último giro
         ultimo_lucky = lucky_hist[-1] if lucky_hist else []
         
         if len(ultimo_lucky) < 2:
             return None
         
-        # Lucky com multiplicadores altos têm prioridade
         b = set(ultimo_lucky[:5])
         
-        # Adiciona vizinhos dos top 2 lucky
         for n in ultimo_lucky[:2]:
             b.update(self.roleta.get_vizinhos(n, 1)[:2])
         
@@ -1158,7 +1178,6 @@ class EstrategiaLuckyRecenteNaoSaiu:
         if len(h) < 3 or not lucky_hist:
             return None
         
-        # Coleta lucky dos últimos 3 giros
         lucky_recentes = []
         for i in range(max(0, len(lucky_hist)-3), len(lucky_hist)):
             lucky_recentes.extend(lucky_hist[i])
@@ -1166,7 +1185,6 @@ class EstrategiaLuckyRecenteNaoSaiu:
         if not lucky_recentes:
             return None
         
-        # Filtra os que já não saíram como resultado
         lucky_set = set(lucky_recentes)
         resultados_recentes = set(h[-5:])
         nao_sairam = lucky_set - resultados_recentes
@@ -1174,7 +1192,6 @@ class EstrategiaLuckyRecenteNaoSaiu:
         if len(nao_sairam) < 2:
             return None
         
-        # Prioriza por frequência
         freq = Counter(lucky_recentes)
         top = sorted(nao_sairam, key=lambda x: freq[x], reverse=True)[:4]
         
@@ -1199,7 +1216,6 @@ class EstrategiaEspelhoLucky:
         if len(h) < 2 or not lucky_hist:
             return None
         
-        # Pega lucky dos últimos 2 giros
         lucky_recentes = []
         for i in range(max(0, len(lucky_hist)-2), len(lucky_hist)):
             lucky_recentes.extend(lucky_hist[i])
@@ -1207,7 +1223,6 @@ class EstrategiaEspelhoLucky:
         if not lucky_recentes:
             return None
         
-        # Encontra espelhos
         b = set()
         for n in lucky_recentes:
             if n in self.roleta.espelhos:
@@ -1218,7 +1233,6 @@ class EstrategiaEspelhoLucky:
         if len(b) < 2:
             return None
         
-        # Adiciona os próprios lucky também
         b.update(lucky_recentes[:3])
         
         forca = 55 + len(b) * 3
@@ -1238,15 +1252,12 @@ class EstrategiaOrfaosSetor:
         if len(h) < 6:
             return None
         
-        # Analisa os últimos 6 setores
         setores = [self.roleta.get_setor_cilindro(n) for n in h[-6:] if n != 0]
         if len(setores) < 5:
             return None
         
-        # Conta setores
         contagem = Counter(setores)
         
-        # Encontra setores que NÃO apareceram
         todos_setores = {'Voisins', 'Tiers', 'Orphelins'}
         setores_presentes = set(contagem.keys())
         setores_orfãos = todos_setores - setores_presentes
@@ -1254,12 +1265,10 @@ class EstrategiaOrfaosSetor:
         if not setores_orfãos:
             return None
         
-        # Se tem setor dominante com 4+ aparições
         setor_dom, freq = contagem.most_common(1)[0]
         if freq < 4:
             return None
         
-        # Aposta no setor órfão mais provável
         sn = {
             'Voisins': self.roleta.voisins,
             'Tiers': self.roleta.tiers,
@@ -1291,7 +1300,6 @@ class EstrategiaZeroCiclo:
         if len(h) < 15:
             return None
         
-        # Conta giros desde o último zero
         giros_sem_zero = 0
         for n in reversed(h):
             if n == 0:
@@ -1301,11 +1309,8 @@ class EstrategiaZeroCiclo:
         if giros_sem_zero < 20:
             return None
         
-        # Zero está atrasado, incluir zero e vizinhos
         b = set([0])
         b.update(self.roleta.get_vizinhos(0, 2)[:4])
-        
-        # Adiciona números do setor Voisins (onde zero está)
         b.update(list(self.roleta.voisins)[:4])
         
         forca = 50 + min(30, (giros_sem_zero - 20) * 2)
@@ -1317,172 +1322,169 @@ class EstrategiaZeroCiclo:
         }
 
 # =============================
-# 🆕 NOVO MOTOR DE DÚZIAS E COLUNAS
+# 🆕 MOTOR DE CONFLUÊNCIA - DÚZIAS & COLUNAS
 # =============================
 
-class MotorDuziasColunas:
-    """Motor focado exclusivamente em análise estatística de Dúzias e Colunas"""
+class MotorConfluenciaDuziasColunas:
+    """
+    Motor de Confluência para Dúzias e Colunas
+    Avalia 4 estratégias simultâneas e gera um Score System
+    Estratégia 1: Interseção Quente (Coluna + Dúzia) = +1 ponto
+    Estratégia 2: Força de Terminais Dinâmicos = +1 ponto
+    Estratégia 3: Leitura do Cilindro (Setor da Roda) = +1 ponto
+    Estratégia 4: Detector de Alternância (Ping-Pong) = -1 ponto
+    """
     def __init__(self, roleta):
         self.roleta = roleta
     
-    def gerar_entrada_duzias_colunas(self, historico_numeros, max_apostas=7):
+    def analisar_confluencia(self, historico_numeros):
         """
-        Gera uma entrada baseada puramente em padrões de dúzias e colunas
+        Analisa os últimos 20 giros e retorna a confluência de sinais
         """
-        if len(historico_numeros) < 10:
+        janela = 20
+        if len(historico_numeros) < janela:
             return None
         
-        # Remove zeros e pega os últimos números válidos
-        validos = [n for n in historico_numeros[-20:] if n != 0]
+        validos = [n for n in historico_numeros[-janela:] if n != 0]
         if len(validos) < 10:
             return None
         
-        # Mapeia dúzias e colunas
-        duzias = [self.roleta.get_duzia(n) for n in validos]
-        colunas = [self.roleta.get_coluna(n) for n in validos]
+        # Arrays base
+        colunas = [get_coluna_real(n) for n in validos]
+        duzias = [get_duzia_real(n) for n in validos]
+        terminais = [n % 10 for n in validos]
+        setores = [get_setor_roda(n) for n in validos]
         
-        # Contagem
-        cont_duzias = Counter(duzias)
-        cont_colunas = Counter(colunas)
+        # Placar de pontuação para as Colunas (1, 2 e 3)
+        score_colunas = {1: 0, 2: 0, 3: 0}
+        sinais_detectados = []
+        detalhes_estrategias = {}
         
-        # Encontra a dúzia mais quente e a mais fria
-        duzia_quente = cont_duzias.most_common(1)[0] if cont_duzias else None
-        duzia_fria = cont_duzias.most_common()[-1] if cont_duzias else None
+        # ---------------------------------------------------------
+        # ESTRATÉGIA 1: Interseção Quente (Coluna + Dúzia)
+        # ---------------------------------------------------------
+        col_quente = Counter(colunas).most_common(1)[0][0]
+        duz_quente = Counter(duzias).most_common(1)[0][0]
         
-        # Encontra a coluna mais quente e a mais fria
-        coluna_quente = cont_colunas.most_common(1)[0] if cont_colunas else None
-        coluna_fria = cont_colunas.most_common()[-1] if cont_colunas else None
+        score_colunas[col_quente] += 1
+        detalhes_estrategias['intersecao'] = {
+            'coluna': col_quente,
+            'duzia': duz_quente,
+            'pontos': 1
+        }
         
-        # Estratégia 1: Dúzia Dominante (se >= 60% dos últimos 10 giros)
-        if duzia_quente and len(validos) >= 10:
-            ultimos_10_duzias = duzias[-10:]
-            freq_quente = ultimos_10_duzias.count(duzia_quente[0])
-            if freq_quente >= 6:
-                # Aposta nos números desta dúzia que ainda não saíram recentemente
-                duzia_map = {
-                    1: set(range(1, 13)),
-                    2: set(range(13, 25)),
-                    3: set(range(25, 37))
-                }
-                numeros_duzia = duzia_map.get(duzia_quente[0], set())
-                nao_sairam = numeros_duzia - set(validos[-5:])
-                numeros_apostar = list(nao_sairam)[:max_apostas]
-                
-                if len(numeros_apostar) >= 3:
-                    return {
-                        'numeros_apostar': sorted(numeros_apostar),
-                        'forca_real': 60 + freq_quente * 3,
-                        'motor': 'Dúzia Dominante',
-                        'estrategias_ativas': ['Dúzia Dominante'],
-                        'qtd_motores': 1,
-                        'qualidade': 'ALTA',
-                        'gatilho': f'Dúzia {duzia_quente[0]} ({freq_quente}/10)',
-                        'invertido': False
-                    }
+        # ---------------------------------------------------------
+        # ESTRATÉGIA 2: Terminais Dinâmicos da Janela
+        # ---------------------------------------------------------
+        top_terminais = [t[0] for t in Counter(terminais).most_common(3)]
+        cols_dos_terminais = [get_coluna_real(t) if t != 0 else 0 for t in top_terminais]
         
-        # Estratégia 2: Coluna Atrasada (se não aparece há 5+ giros)
-        if coluna_fria and len(colunas) >= 5:
-            ultima_aparicao = None
-            for i in range(len(colunas)-1, -1, -1):
-                if colunas[i] == coluna_fria[0]:
-                    ultima_aparicao = len(colunas) - 1 - i
-                    break
-            
-            if ultima_aparicao and ultima_aparicao >= 5:
-                coluna_map = {
-                    1: self.roleta.coluna1,
-                    2: self.roleta.coluna2,
-                    3: self.roleta.coluna3
-                }
-                numeros_coluna = coluna_map.get(coluna_fria[0], set())
-                numeros_apostar = list(numeros_coluna.intersection(set(validos[-15:])))
-                if len(numeros_apostar) < 4:
-                    numeros_apostar = list(numeros_coluna)[:max_apostas]
-                
-                return {
-                    'numeros_apostar': sorted(numeros_apostar[:max_apostas]),
-                    'forca_real': 50 + ultima_aparicao * 2,
-                    'motor': 'Coluna Atrasada',
-                    'estrategias_ativas': ['Coluna Atrasada'],
-                    'qtd_motores': 1,
-                    'qualidade': 'MÉDIA',
-                    'gatilho': f'Col {coluna_fria[0]} atrasada {ultima_aparicao}g',
-                    'invertido': False
-                }
-        
-        # Estratégia 3: Cruzamento Dúzia Fria + Coluna Quente
-        if duzia_fria and coluna_quente and duzia_fria[1] <= 2 and coluna_quente[1] >= 4:
-            duzia_map = {
-                1: set(range(1, 13)),
-                2: set(range(13, 25)),
-                3: set(range(25, 37))
+        if cols_dos_terminais and any(c != 0 for c in cols_dos_terminais):
+            col_terminal_dominante = Counter([c for c in cols_dos_terminais if c != 0]).most_common(1)[0][0]
+            score_colunas[col_terminal_dominante] += 1
+            sinais_detectados.append(f"Terminais puxam a Coluna {col_terminal_dominante}")
+            detalhes_estrategias['terminais'] = {
+                'coluna': col_terminal_dominante,
+                'terminais': top_terminais,
+                'pontos': 1
             }
-            coluna_map = {
-                1: self.roleta.coluna1,
-                2: self.roleta.coluna2,
-                3: self.roleta.coluna3
+        
+        # ---------------------------------------------------------
+        # ESTRATÉGIA 3: Ciclo Físico de Quadrantes (Roda)
+        # ---------------------------------------------------------
+        setor_quente = Counter(setores).most_common(1)[0][0]
+        num_do_setor_quente = [n for n in validos if get_setor_roda(n) == setor_quente]
+        cols_do_setor = [get_coluna_real(n) for n in num_do_setor_quente]
+        
+        if cols_do_setor:
+            col_dominante_setor = Counter(cols_do_setor).most_common(1)[0][0]
+            if col_dominante_setor != 0:
+                score_colunas[col_dominante_setor] += 1
+                detalhes_estrategias['cilindro'] = {
+                    'coluna': col_dominante_setor,
+                    'setor': setor_quente,
+                    'pontos': 1
+                }
+        
+        # ---------------------------------------------------------
+        # ESTRATÉGIA 4: Detector de Alternância (Ping-Pong)
+        # ---------------------------------------------------------
+        ultimas_5_cols = colunas[-5:]
+        tem_repeticao = any(ultimas_5_cols[i] == ultimas_5_cols[i+1] for i in range(len(ultimas_5_cols)-1))
+        
+        if not tem_repeticao and len(ultimas_5_cols) >= 5:
+            # Padrão Ping-Pong: penaliza a última coluna que saiu
+            ultima_col = colunas[-1]
+            score_colunas[ultima_col] -= 1
+            detalhes_estrategias['pingpong'] = {
+                'penalizada': ultima_col,
+                'pontos': -1,
+                'padrao': 'Ping-Pong Detectado'
             }
-            
-            numeros_duzia_fria = duzia_map.get(duzia_fria[0], set())
-            numeros_coluna_quente = coluna_map.get(coluna_quente[0], set())
-            
-            cruzamento = numeros_duzia_fria.intersection(numeros_coluna_quente)
-            
-            if len(cruzamento) >= 3:
-                return {
-                    'numeros_apostar': sorted(list(cruzamento)[:max_apostas]),
-                    'forca_real': 55 + coluna_quente[1] * 2,
-                    'motor': 'Cruzamento DxC',
-                    'estrategias_ativas': ['Dúzia Fria', 'Coluna Quente'],
-                    'qtd_motores': 2,
-                    'qualidade': 'ALTA',
-                    'gatilho': f'Dz{duzia_fria[0]} fria x Col{coluna_quente[0]} quente',
-                    'invertido': False
-                }
+        else:
+            detalhes_estrategias['pingpong'] = {
+                'pontos': 0,
+                'padrao': 'Fluxo Normal'
+            }
         
-        # Estratégia 4: Alternância de Coluna (padrão alternado nas últimas 5)
-        if len(colunas) >= 5:
-            ultimas_5 = colunas[-5:]
-            padrao_alternado = True
-            for i in range(1, len(ultimas_5)):
-                if ultimas_5[i] == ultimas_5[i-1]:
-                    padrao_alternado = False
-                    break
-            
-            if padrao_alternado:
-                # Prevê a coluna que deve aparecer (diferente da última)
-                ultima_col = colunas[-1]
-                colunas_possiveis = [c for c in [1, 2, 3] if c != ultima_col]
-                
-                # Escolhe a que mais apareceu nesse padrão
-                coluna_prevista = colunas_possiveis[0]
-                
-                coluna_map = {
-                    1: self.roleta.coluna1,
-                    2: self.roleta.coluna2,
-                    3: self.roleta.coluna3
-                }
-                
-                numeros_coluna = coluna_map.get(coluna_prevista, set())
-                numeros_apostar = list(numeros_coluna.intersection(set(validos[-10:])))
-                if len(numeros_apostar) < 4:
-                    numeros_apostar = list(numeros_coluna)[:max_apostas]
-                
-                return {
-                    'numeros_apostar': sorted(numeros_apostar[:max_apostas]),
-                    'forca_real': 45,
-                    'motor': 'Alternância Coluna',
-                    'estrategias_ativas': ['Colunas Alternadas'],
-                    'qtd_motores': 1,
-                    'qualidade': 'MÉDIA',
-                    'gatilho': f'Alternância → Col{coluna_prevista}',
-                    'invertido': False
-                }
+        # Encontra a coluna vencedora
+        coluna_vencedora = max(score_colunas, key=score_colunas.get)
+        pontos = score_colunas[coluna_vencedora]
         
-        return None
+        # Determina os números da coluna vencedora
+        coluna_map = {
+            1: self.roleta.coluna1,
+            2: self.roleta.coluna2,
+            3: self.roleta.coluna3
+        }
+        
+        numeros_coluna = coluna_map.get(coluna_vencedora, set())
+        
+        # Filtra números que saíram recentemente (quentes) e não saíram (frios)
+        numeros_recentes = set(validos[-5:])
+        numeros_quentes = numeros_coluna.intersection(numeros_recentes)
+        numeros_frios = numeros_coluna - numeros_recentes
+        
+        # Combina: prioridade para quentes, completa com frios
+        numeros_apostar = list(numeros_quentes)[:4] + list(numeros_frios)[:3]
+        
+        # Se ainda tem espaço, completa com mais números da coluna
+        if len(numeros_apostar) < 6:
+            restantes = [n for n in numeros_coluna if n not in numeros_apostar]
+            numeros_apostar.extend(restantes[:6 - len(numeros_apostar)])
+        
+        # Determina força baseada nos pontos
+        if pontos >= 3:
+            forca = 75
+            qualidade = "EXCELENTE"
+            mensagem = "ENTRADA FORTE"
+        elif pontos == 2:
+            forca = 60
+            qualidade = "BOA"
+            mensagem = "ENTRADA MODERADA"
+        elif pontos == 1:
+            forca = 45
+            qualidade = "REGULAR"
+            mensagem = "ENTRADA FRACA"
+        else:
+            forca = 30
+            qualidade = "RUIM"
+            mensagem = "SEM PADRÃO CLARO"
+        
+        return {
+            'coluna_vencedora': coluna_vencedora,
+            'pontos': pontos,
+            'score_colunas': score_colunas,
+            'forca': forca,
+            'qualidade': qualidade,
+            'mensagem': mensagem,
+            'numeros_apostar': sorted(numeros_apostar[:7]),
+            'detalhes': detalhes_estrategias,
+            'sinais': sinais_detectados
+        }
 
 # =============================
-# BOT UNIFICADO (35 ESTRATÉGIAS)
+# BOT UNIFICADO (35 ESTRATÉGIAS + MOTOR DE CONFLUÊNCIA)
 # =============================
 class RoletaBotUnificado:
     def __init__(self):
@@ -1531,8 +1533,8 @@ class RoletaBotUnificado:
         self.orfaos_setor = EstrategiaOrfaosSetor(self.roleta)
         self.zero_ciclo = EstrategiaZeroCiclo(self.roleta)
         
-        # Motor de dúzias e colunas
-        self.motor_duzias_colunas = MotorDuziasColunas(self.roleta)
+        # 🆕 Motor de Confluência para Dúzias e Colunas
+        self.motor_confluencia = MotorConfluenciaDuziasColunas(self.roleta)
         
         self.historico = []
         self.lucky = []
@@ -1555,10 +1557,19 @@ class RoletaBotUnificado:
     def gerar_entrada(self, motores=None, forcar_inversao=False, entradas_hist=None):
         # Verifica se está no modo dúzias e colunas
         if st.session_state.get('modo_duzias_colunas', False):
-            return self.motor_duzias_colunas.gerar_entrada_duzias_colunas(
-                list(self.historico),
-                st.session_state.get('max_n_apostas', 7)
-            )
+            confluencia = self.motor_confluencia.analisar_confluencia(list(self.historico))
+            if confluencia and confluencia['pontos'] >= 1:
+                return {
+                    'numeros_apostar': confluencia['numeros_apostar'],
+                    'forca_real': confluencia['forca'],
+                    'motor': f"Confluência Col{confluencia['coluna_vencedora']}",
+                    'estrategias_ativas': [f"Score: {confluencia['pontos']}/4"],
+                    'qtd_motores': confluencia['pontos'],
+                    'qualidade': confluencia['qualidade'],
+                    'gatilho': confluencia['mensagem'],
+                    'invertido': False
+                }
+            return None
         
         # Código original de geração de entrada
         if motores is None:
@@ -1901,8 +1912,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎯 Roleta Bot Pro v19 - 35 Estratégias Corretivas", layout="centered")
-st.title("🎯 Roleta Bot Pro v19 - Correção de Erros")
+st.set_page_config(page_title="🎯 Roleta Bot Pro v20 - Motor de Confluência", layout="centered")
+st.title("🎯 Roleta Bot Pro v20 - Motor de Confluência Dúzias & Colunas")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -2004,13 +2015,26 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📐 MODO DE OPERAÇÃO")
     st.session_state.modo_duzias_colunas = st.checkbox(
-        "🎯 ATIVAR MODO DÚZIAS & COLUNAS",
+        "🎯 ATIVAR MODO CONFLUÊNCIA (Dúzias & Colunas)",
         value=st.session_state.modo_duzias_colunas,
-        help="Quando ativado, o bot ignora as 35 estratégias e foca EXCLUSIVAMENTE em análise estatística de Dúzias e Colunas"
+        help="Quando ativado, o bot usa o Motor de Confluência com 4 estratégias simultâneas para Dúzias e Colunas"
     )
     
     if st.session_state.modo_duzias_colunas:
-        st.success("✅ **MODO DÚZIAS & COLUNAS ATIVO**\n\nO bot está focado em:\n- Dúzia Dominante\n- Coluna Atrasada\n- Cruzamento Dúzia/Coluna\n- Alternância de Coluna")
+        st.success("""
+        ✅ **MOTOR DE CONFLUÊNCIA ATIVO**
+        
+        **4 Estratégias Simultâneas:**
+        1. 🔥 Interseção Quente (Coluna + Dúzia)
+        2. 🎯 Força de Terminais Dinâmicos
+        3. 🎡 Leitura do Cilindro (Setor da Roda)
+        4. 🏓 Detector de Ping-Pong
+        
+        **Score System:**
+        - 3-4 pontos = ENTRADA FORTE 🔥
+        - 2 pontos = ENTRADA MODERADA ⚠️
+        - 0-1 pontos = SEM PADRÃO 🛑
+        """)
         st.info("💡 As 35 estratégias estão temporariamente desativadas.")
     else:
         st.info("📊 Modo padrão: 35 estratégias ativas")
@@ -2046,7 +2070,7 @@ with st.sidebar:
         st.session_state.max_n_apostas
     )
     
-    # Só mostra as estratégias quando NÃO está no modo dúzias e colunas
+    # Só mostra as estratégias quando NÃO está no modo confluência
     if not st.session_state.modo_duzias_colunas:
         with st.expander("🛡️ Filtros", expanded=False):
             st.session_state.limitar_numeros_altos = st.checkbox(
@@ -2215,63 +2239,140 @@ c1.metric("🟢 Acertos", sis.acertos)
 c2.metric("🔴 Erros", sis.erros)
 tx = sis.acertos/(sis.acertos+sis.erros)*100 if (sis.acertos+sis.erros) > 0 else 0
 c3.metric("📊 Taxa", f"{tx:.0f}%")
-c4.metric("Modo", "Dz&Col" if st.session_state.get('modo_duzias_colunas', False) else "35 Est")
+c4.metric("Modo", "Confluência" if st.session_state.get('modo_duzias_colunas', False) else "35 Est")
 c5.metric("Est Inv", "🔄INV" if sis.estado_inversao else "📊NOR")
 
 # ==========================================
-# 🆕 PAINEL DE ANÁLISE COM ABAS
+# 🆕 PAINEL DE ANÁLISE COM MOTOR DE CONFLUÊNCIA
 # ==========================================
 st.subheader("🎯 Painel de Análise")
 
 if st.session_state.get('modo_duzias_colunas', False):
-    # Modo exclusivo de Dúzias e Colunas
+    # Modo Confluência: Motor de 4 estratégias simultâneas
     hist_num = list(sis.historico_numeros)
-    janela_analise = 15
+    janela_analise = 20
     
-    st.markdown("### 📐 Análise de Dúzias & Colunas")
+    st.markdown("### 🧠 Motor Analítico de Confluência")
     
     if len(hist_num) >= janela_analise:
         validos = [n for n in hist_num[-janela_analise:] if n != 0]
         
         if validos:
-            colunas = [sis.bot.roleta.get_coluna(n) for n in validos]
-            duzias = [sis.bot.roleta.get_duzia(n) for n in validos]
+            # Arrays base
+            colunas = [get_coluna_real(n) for n in validos]
+            duzias = [get_duzia_real(n) for n in validos]
+            terminais = [n % 10 for n in validos]
+            setores = [get_setor_roda(n) for n in validos]
             
+            # Placar de pontuação para as Colunas (1, 2 e 3)
+            score_colunas = {1: 0, 2: 0, 3: 0}
+            sinais_detectados = []
+
             c1, c2 = st.columns(2)
-            
+
             with c1:
-                st.markdown("### 🏛️ Colunas (Últimos 15 giros)")
-                cont_col = Counter(colunas)
-                col_quente = cont_col.most_common(1)[0]
-                col_fria = cont_col.most_common()[-1]
+                # ---------------------------------------------------------
+                # ESTRATÉGIA 1: Interseção Quente (Coluna + Dúzia)
+                # ---------------------------------------------------------
+                col_quente = Counter(colunas).most_common(1)[0][0]
+                duz_quente = Counter(duzias).most_common(1)[0][0]
                 
-                st.success(f"🔥 **Mais Forte:** Coluna {col_quente[0]} ({col_quente[1]}x)")
-                st.error(f"❄️ **Mais Atrasada:** Coluna {col_fria[0]} ({col_fria[1]}x)")
+                st.write("**1. Interseção Básica:**")
+                st.info(f"🔥 Coluna {col_quente} + Dúzia {duz_quente}")
+                score_colunas[col_quente] += 1
                 
-                if len(colunas) >= 3 and colunas[-1] == colunas[-2] == colunas[-3]:
-                    st.warning(f"⚠️ Forte Tendência: Coluna {colunas[-1]} repetiu nas últimas 3 rodadas!")
-                elif col_fria[1] <= 2:
-                    st.info(f"💡 Dica de Esgotamento: Coluna {col_fria[0]} prestes a estourar.")
-            
+                # ---------------------------------------------------------
+                # ESTRATÉGIA 2: Terminais Dinâmicos da Janela
+                # ---------------------------------------------------------
+                top_terminais = [t[0] for t in Counter(terminais).most_common(3)]
+                cols_dos_terminais = [get_coluna_real(t) if t != 0 else 0 for t in top_terminais]
+                
+                if cols_dos_terminais and any(c != 0 for c in cols_dos_terminais):
+                    col_terminal_dominante = Counter([c for c in cols_dos_terminais if c != 0]).most_common(1)[0][0]
+                    score_colunas[col_terminal_dominante] += 1
+                    sinais_detectados.append(f"Terminais puxam a Coluna {col_terminal_dominante}")
+                
+                st.write("**2. Força de Terminais:**")
+                st.success(f"🎯 Terminais Quentes: {top_terminais}")
+                if col_terminal_dominante != 0:
+                    st.caption(f"→ Puxando Coluna {col_terminal_dominante}")
+
             with c2:
-                st.markdown("### 📦 Dúzias (Últimos 15 giros)")
-                cont_duz = Counter(duzias)
-                duz_quente = cont_duz.most_common(1)[0]
-                duz_fria = cont_duz.most_common()[-1]
+                # ---------------------------------------------------------
+                # ESTRATÉGIA 3: Ciclo Físico de Quadrantes (Roda)
+                # ---------------------------------------------------------
+                setor_quente = Counter(setores).most_common(1)[0][0]
+                num_do_setor_quente = [n for n in validos if get_setor_roda(n) == setor_quente]
+                cols_do_setor = [get_coluna_real(n) for n in num_do_setor_quente]
                 
-                st.success(f"🔥 **Mais Forte:** Dúzia {duz_quente[0]} ({duz_quente[1]}x)")
-                st.error(f"❄️ **Mais Atrasada:** Dúzia {duz_fria[0]} ({duz_fria[1]}x)")
+                if cols_do_setor:
+                    col_dominante_setor = Counter(cols_do_setor).most_common(1)[0][0]
+                    if col_dominante_setor != 0:
+                        score_colunas[col_dominante_setor] += 1
                 
-                if len(duzias) >= 3 and duzias[-1] == duzias[-2] == duzias[-3]:
-                    st.warning(f"⚠️ Forte Tendência: Dúzia {duzias[-1]} repetiu nas últimas 3 rodadas!")
-                elif duz_fria[1] <= 2:
-                    st.info(f"💡 Dica de Esgotamento: Dúzia {duz_fria[0]} prestes a estourar.")
+                st.write("**3. Leitura do Cilindro:**")
+                st.warning(f"🎡 Setor dominando: {setor_quente}")
+                if col_dominante_setor != 0:
+                    st.caption(f"→ Coluna {col_dominante_setor} domina este setor")
+
+                # ---------------------------------------------------------
+                # ESTRATÉGIA 4: Detector de Alternância (Ping-Pong)
+                # ---------------------------------------------------------
+                ultimas_5_cols = colunas[-5:]
+                tem_repeticao = any(ultimas_5_cols[i] == ultimas_5_cols[i+1] for i in range(len(ultimas_5_cols)-1))
+                
+                st.write("**4. Comportamento da Mesa:**")
+                if not tem_repeticao and len(ultimas_5_cols) >= 5:
+                    st.error("🏓 Padrão Ping-Pong Detectado! (Evite repetições)")
+                    ultima_col = colunas[-1]
+                    score_colunas[ultima_col] -= 1
+                    st.caption(f"→ Penalizando Coluna {ultima_col}")
+                else:
+                    st.write("🌊 Fluxo Normal (Aceita repetições)")
+
+            # ==========================================
+            # VEREDITO FINAL DO BOT
+            # ==========================================
+            st.markdown("---")
+            st.markdown("### 🤖 Veredito do Algoritmo")
+            
+            coluna_vencedora = max(score_colunas, key=score_colunas.get)
+            pontos = score_colunas[coluna_vencedora]
+            
+            if pontos >= 3:
+                st.success(f"### 🎯 ENTRADA FORTE: Coluna {coluna_vencedora} ({pontos}/4 confirmações)")
+            elif pontos == 2:
+                st.warning(f"### ⚠️ ENTRADA MODERADA: Coluna {coluna_vencedora} ({pontos}/4 confirmações)")
+            elif pontos == 1:
+                st.info(f"### 💡 ENTRADA FRACA: Coluna {coluna_vencedora} ({pontos}/4 confirmações)")
+            else:
+                st.error("### 🛑 SEM PADRÃO CLARO: Fique de fora. Mercado confuso.")
+            
+            st.caption(f"Placar Interno: Col 1 ({score_colunas[1]} pts) | Col 2 ({score_colunas[2]} pts) | Col 3 ({score_colunas[3]} pts)")
+            
+            # Mostra números sugeridos da coluna vencedora
+            if pontos >= 1:
+                coluna_map = {
+                    1: sis.bot.roleta.coluna1,
+                    2: sis.bot.roleta.coluna2,
+                    3: sis.bot.roleta.coluna3
+                }
+                numeros_coluna = coluna_map.get(coluna_vencedora, set())
+                numeros_recentes = set(validos[-5:])
+                numeros_quentes = numeros_coluna.intersection(numeros_recentes)
+                numeros_frios = numeros_coluna - numeros_recentes
+                
+                st.markdown("**🎲 Números da Coluna:**")
+                if numeros_quentes:
+                    st.success(f"🔥 Quentes: {sorted(numeros_quentes)}")
+                if numeros_frios:
+                    st.info(f"❄️ Frios: {sorted(list(numeros_frios)[:5])}")
     else:
-        st.info(f"⏳ O bot precisa capturar pelo menos {janela_analise} giros na roleta para cruzar as tendências. Faltam {janela_analise - len(hist_num)}.")
+        st.info(f"⏳ Coletando dados... ({len(hist_num)}/{janela_analise} giros na janela de análise).")
     
-    # Mostra a entrada ativa do motor de dúzias e colunas
+    # Mostra a entrada ativa do motor de confluência
     st.markdown("---")
-    st.subheader("🎯 Entrada Atual (Modo Dúzias & Colunas)")
+    st.subheader("🎯 Entrada Atual (Modo Confluência)")
     if sis.entrada_ativa:
         e = sis.entrada_ativa
         if e.get('invertido'):
@@ -2283,7 +2384,7 @@ if st.session_state.get('modo_duzias_colunas', False):
             st.caption(f"🎯 {e['gatilho']}")
         st.markdown(f"## {', '.join(map(str, sorted(e['numeros_apostar'])))}")
     else:
-        st.info("🔍 Analisando padrões de Dúzias e Colunas...")
+        st.info("🔍 Analisando padrões de confluência...")
 
 else:
     # Modo padrão com duas abas
@@ -2305,46 +2406,89 @@ else:
     
     with tab_duz_col:
         hist_num = list(sis.historico_numeros)
-        janela_analise = 15
+        janela_analise = 20
+        
+        st.markdown("### 🧠 Motor Analítico de Sinais")
         
         if len(hist_num) >= janela_analise:
             validos = [n for n in hist_num[-janela_analise:] if n != 0]
             
             if validos:
-                colunas = [sis.bot.roleta.get_coluna(n) for n in validos]
-                duzias = [sis.bot.roleta.get_duzia(n) for n in validos]
+                colunas = [get_coluna_real(n) for n in validos]
+                duzias = [get_duzia_real(n) for n in validos]
+                terminais = [n % 10 for n in validos]
+                setores = [get_setor_roda(n) for n in validos]
                 
+                score_colunas = {1: 0, 2: 0, 3: 0}
+                sinais_detectados = []
+
                 c1, c2 = st.columns(2)
-                
+
                 with c1:
-                    st.markdown("### 🏛️ Colunas (Últimos 15 giros)")
-                    cont_col = Counter(colunas)
-                    col_quente = cont_col.most_common(1)[0]
-                    col_fria = cont_col.most_common()[-1]
+                    col_quente = Counter(colunas).most_common(1)[0][0]
+                    duz_quente = Counter(duzias).most_common(1)[0][0]
                     
-                    st.success(f"🔥 **Mais Forte:** Coluna {col_quente[0]} ({col_quente[1]}x)")
-                    st.error(f"❄️ **Mais Atrasada:** Coluna {col_fria[0]} ({col_fria[1]}x)")
+                    st.write("**1. Interseção Básica:**")
+                    st.info(f"🔥 Coluna {col_quente} + Dúzia {duz_quente}")
+                    score_colunas[col_quente] += 1
                     
-                    if len(colunas) >= 3 and colunas[-1] == colunas[-2] == colunas[-3]:
-                        st.warning(f"⚠️ Forte Tendência: Coluna {colunas[-1]} repetiu nas últimas 3 rodadas!")
-                    elif col_fria[1] <= 2:
-                        st.info(f"💡 Dica de Esgotamento: Coluna {col_fria[0]} prestes a estourar.")
-                
+                    top_terminais = [t[0] for t in Counter(terminais).most_common(3)]
+                    cols_dos_terminais = [get_coluna_real(t) if t != 0 else 0 for t in top_terminais]
+                    col_terminal_dominante = Counter([c for c in cols_dos_terminais if c != 0]).most_common(1)[0][0] if any(c != 0 for c in cols_dos_terminais) else 0
+                    
+                    if col_terminal_dominante != 0:
+                        score_colunas[col_terminal_dominante] += 1
+                        sinais_detectados.append(f"Terminais puxam a Coluna {col_terminal_dominante}")
+                    
+                    st.write("**2. Força de Terminais:**")
+                    st.success(f"🎯 Terminais Quentes: {top_terminais}")
+                    if col_terminal_dominante != 0:
+                        st.caption(f"→ Puxando Coluna {col_terminal_dominante}")
+
                 with c2:
-                    st.markdown("### 📦 Dúzias (Últimos 15 giros)")
-                    cont_duz = Counter(duzias)
-                    duz_quente = cont_duz.most_common(1)[0]
-                    duz_fria = cont_duz.most_common()[-1]
+                    setor_quente = Counter(setores).most_common(1)[0][0]
+                    num_do_setor_quente = [n for n in validos if get_setor_roda(n) == setor_quente]
+                    cols_do_setor = [get_coluna_real(n) for n in num_do_setor_quente]
+                    col_dominante_setor = Counter(cols_do_setor).most_common(1)[0][0] if cols_do_setor else 0
                     
-                    st.success(f"🔥 **Mais Forte:** Dúzia {duz_quente[0]} ({duz_quente[1]}x)")
-                    st.error(f"❄️ **Mais Atrasada:** Dúzia {duz_fria[0]} ({duz_fria[1]}x)")
+                    if col_dominante_setor != 0:
+                        score_colunas[col_dominante_setor] += 1
                     
-                    if len(duzias) >= 3 and duzias[-1] == duzias[-2] == duzias[-3]:
-                        st.warning(f"⚠️ Forte Tendência: Dúzia {duzias[-1]} repetiu nas últimas 3 rodadas!")
-                    elif duz_fria[1] <= 2:
-                        st.info(f"💡 Dica de Esgotamento: Dúzia {duz_fria[0]} prestes a estourar.")
+                    st.write("**3. Leitura do Cilindro:**")
+                    st.warning(f"🎡 Setor dominando: {setor_quente}")
+                    if col_dominante_setor != 0:
+                        st.caption(f"→ Coluna {col_dominante_setor} domina este setor")
+                    
+                    ultimas_5_cols = colunas[-5:]
+                    tem_repeticao = any(ultimas_5_cols[i] == ultimas_5_cols[i+1] for i in range(len(ultimas_5_cols)-1))
+                    
+                    st.write("**4. Comportamento da Mesa:**")
+                    if not tem_repeticao and len(ultimas_5_cols) >= 5:
+                        st.error("🏓 Padrão Ping-Pong Detectado! (Evite repetições)")
+                        ultima_col = colunas[-1]
+                        score_colunas[ultima_col] -= 1
+                        st.caption(f"→ Penalizando Coluna {ultima_col}")
+                    else:
+                        st.write("🌊 Fluxo Normal (Aceita repetições)")
+
+                st.markdown("---")
+                st.markdown("### 🤖 Veredito do Algoritmo")
+                
+                coluna_vencedora = max(score_colunas, key=score_colunas.get)
+                pontos = score_colunas[coluna_vencedora]
+                
+                if pontos >= 3:
+                    st.success(f"### 🎯 ENTRADA FORTE: Coluna {coluna_vencedora} ({pontos}/4 confirmações)")
+                elif pontos == 2:
+                    st.warning(f"### ⚠️ ENTRADA MODERADA: Coluna {coluna_vencedora} ({pontos}/4 confirmações)")
+                elif pontos == 1:
+                    st.info(f"### 💡 ENTRADA FRACA: Coluna {coluna_vencedora} ({pontos}/4 confirmações)")
+                else:
+                    st.error("### 🛑 SEM PADRÃO CLARO: Fique de fora. Mercado confuso.")
+                
+                st.caption(f"Placar Interno: Col 1 ({score_colunas[1]} pts) | Col 2 ({score_colunas[2]} pts) | Col 3 ({score_colunas[3]} pts)")
         else:
-            st.info(f"⏳ O bot precisa capturar pelo menos {janela_analise} giros na roleta para cruzar as tendências de Dúzias e Colunas. Faltam {janela_analise - len(hist_num)}.")
+            st.info(f"⏳ Coletando dados... ({len(hist_num)}/{janela_analise} giros na janela de análise).")
 
 # Histórico de entradas
 st.subheader("📋 Últimas")
