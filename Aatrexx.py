@@ -1529,4 +1529,4 @@ with st.expander("📥 Download", expanded=False):
 st.markdown("---")
 st.caption(f"🤖 Bot Operacional v22 | Elite Master | {datetime.now().strftime('%H:%M:%S')}")
 
-salvar_sessao()p
+salvar_sessao()
