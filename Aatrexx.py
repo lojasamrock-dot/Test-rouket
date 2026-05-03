@@ -49,6 +49,7 @@ def salvar_sessao():
             'acertos_duzia_sec': st.session_state.get('acertos_duzia_sec', 0),
             'erros_duzia_sec': st.session_state.get('erros_duzia_sec', 0),
             'modo_agressivo': st.session_state.get('modo_agressivo', False),
+            'confianca_minima': st.session_state.get('confianca_minima', 3.2),
             'telegram_token': st.session_state.get('telegram_token', ''),
             'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
             'modo_automatico': st.session_state.get('modo_automatico', True),
@@ -139,7 +140,7 @@ def get_duzia(numero):
     else: return 3
 
 # =============================
-# 🧠 DUZIA AI V3.5 PRO - CORRIGIDA
+# 🧠 DUZIA AI V3.8 - OTIMIZADA PARA MAIS ENTRADAS
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -222,7 +223,7 @@ class DuziaAI:
                 if d != dz:
                     aus[dz] += 1
         dz = max(aus, key=aus.get)
-        if aus[dz] >= 6:
+        if aus[dz] >= 5:  # 🆕 Reduzido de 6 para 5
             return dz, aus[dz]
         return None
     
@@ -238,7 +239,7 @@ class DuziaAI:
             if n % 10 in top:
                 score[dz] += 1
         best = max(score, key=score.get)
-        if score[best] >= 4:
+        if score[best] >= 3:  # 🆕 Reduzido de 4 para 3
             return best, score[best]
         return None
     
@@ -247,17 +248,20 @@ class DuziaAI:
         total = sum(freq.values())
         if total == 0:
             return "NEUTRO"
-        if max(freq.values()) / total > 0.5:
+        razao = max(freq.values()) / total
+        if razao > 0.5:
             return "DOMINANTE"
+        elif razao > 0.4:  # 🆕 Nova categoria
+            return "TENDENCIA"
         elif len([d for d in freq if freq[d] > 0]) == 3:
             return "DISTRIBUIDO"
         else:
             return "TRANSICAO"
     
     def calcular_score(self):
-        """🆕 CORRIGIDO: Verifica se a dúzia não é zero antes de usar como chave"""
         score = {1: 0, 2: 0, 3: 0}
         freq = self.frequencia_ponderada()
+        freq_normal = self.frequencia()
         streak_count, streak_d = self.streak()
         trans = self.transicao()
         prob = self.matriz_transicao()
@@ -265,51 +269,58 @@ class DuziaAI:
         
         # PESO 1: Frequência Ponderada
         for d in score:
-            score[d] += freq[d] * 0.7
+            score[d] += freq[d] * 0.8  # 🆕 Aumentado de 0.7 para 0.8
         
-        # PESO 2: Streak (verifica se não é zero)
+        # PESO 2: Frequência simples (reforço)
+        total_normal = sum(freq_normal.values())
+        if total_normal > 0:
+            for d in score:
+                score[d] += (freq_normal[d] / total_normal) * 10  # 🆕 Bônus proporcional
+        
+        # PESO 3: Streak
         if streak_d and streak_d != 0:
-            score[streak_d] += streak_count * (2.5 if regime == "DOMINANTE" else 1.5)
+            multiplicador = 3.0 if regime == "DOMINANTE" else 2.0 if regime == "TENDENCIA" else 1.5
+            score[streak_d] += streak_count * multiplicador
         
-        # PESO 3: Rebote (verifica se anterior não é zero)
-        if trans and regime != "DOMINANTE":
+        # PESO 4: Rebote
+        if trans and regime not in ["DOMINANTE", "TENDENCIA"]:
             ant, _ = trans
             if ant != 0:
-                score[ant] += 2
+                score[ant] += 2.5  # 🆕 Aumentado de 2 para 2.5
         
-        # PESO 4: Quebra de sequência (verifica se não é zero)
+        # PESO 5: Quebra de sequência
         if streak_count >= 3 and streak_d and streak_d != 0:
             viz = {1: 2, 2: 3, 3: 2}
             if streak_d in viz:
-                score[viz[streak_d]] += 4
+                score[viz[streak_d]] += 5  # 🆕 Aumentado de 4 para 5
         
-        # PESO 5: Matriz de Transição (🆕 CORRIGIDO: verifica ultima != 0)
+        # PESO 6: Matriz de Transição
         if self.historico:
             ultima = self.historico[-1]
             if ultima != 0 and ultima in prob:
                 for d in score:
                     p = prob[ultima][d]
-                    if p > 45:
-                        score[d] += (p - 35) / 10
+                    if p > 40:  # 🆕 Reduzido de 45 para 40
+                        score[d] += (p - 30) / 8  # 🆕 Ajustado
         
-        # PESO 6: Ciclos (verifica se não é zero)
+        # PESO 7: Ciclos
         ciclo = self.detectar_ciclos()
-        if ciclo and ciclo != 0 and max(score.values()) > 5:
-            score[ciclo] += 4
+        if ciclo and ciclo != 0 and max(score.values()) > 3:  # 🆕 Reduzido de 5 para 3
+            score[ciclo] += 5  # 🆕 Aumentado de 4 para 5
         
-        # PESO 7: Ausência (verifica se não é zero)
+        # PESO 8: Ausência
         aus = self.ausencia()
         if aus:
             dz, g = aus
             if dz != 0:
-                score[dz] += min(4, g * 0.4)
+                score[dz] += min(5, g * 0.5)  # 🆕 Aumentado
         
-        # PESO 8: Terminais (verifica se não é zero)
+        # PESO 9: Terminais
         term = self.terminais()
         if term:
             dz, q = term
             if dz != 0:
-                score[dz] += q * 0.2
+                score[dz] += q * 0.3  # 🆕 Aumentado de 0.2 para 0.3
         
         # NORMALIZAÇÃO
         total = sum(score.values())
@@ -319,7 +330,8 @@ class DuziaAI:
         
         return score, regime
     
-    def prever(self):
+    def prever(self, confianca_minima=3.2):
+        """🆕 Threshold de confiança reduzido e regime TRANSIÇÃO permitido"""
         score, regime = self.calcular_score()
         ranking = sorted(score.items(), key=lambda x: x[1], reverse=True)
         d1, s1 = ranking[0]
@@ -327,12 +339,25 @@ class DuziaAI:
         
         ratio = s1 / max(1, s2)
         vol = np.std(list(score.values()))
-        confianca = (ratio * 2) + (1 / (1 + vol))
+        confianca = (ratio * 2.2) + (1.5 / (1 + vol))  # 🆕 Ajustado para dar mais peso
         
-        if regime == "DISTRIBUIDO" or confianca < 4:
+        # 🆕 NOVOS CRITÉRIOS DE ENTRADA
+        pode_entrar = False
+        motivo = ""
+        
+        if regime == "DISTRIBUIDO":
+            motivo = "Mercado distribuído (aleatório)"
+        elif confianca < confianca_minima:
+            motivo = f"Confiança baixa ({confianca:.2f} < {confianca_minima})"
+        elif regime == "TRANSICAO" and confianca < 3.8:  # 🆕 TRANSIÇÃO precisa de confiança maior
+            motivo = f"Transição com confiança insuficiente ({confianca:.2f})"
+        else:
+            pode_entrar = True
+        
+        if not pode_entrar:
             return {
                 "entrar": False,
-                "motivo": "Mercado ruim" if regime == "DISTRIBUIDO" else "Confiança baixa",
+                "motivo": motivo,
                 "score": score,
                 "regime": regime,
                 "confianca": round(confianca, 2),
@@ -411,7 +436,8 @@ class SistemaBot:
             self.entrada_ativa = None
         
         # Gera nova previsão
-        previsao = self.duzia_ai.prever()
+        confianca_minima = st.session_state.get('confianca_minima', 3.2)
+        previsao = self.duzia_ai.prever(confianca_minima=confianca_minima)
         
         if previsao['entrar']:
             duzia_map = {
@@ -506,8 +532,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V3.5 PRO - Dashboard", layout="wide")
-st.title("🎰 DuziaAI V3.5 PRO - Dashboard Profissional")
+st.set_page_config(page_title="🎰 DuziaAI V3.8 - Dashboard Otimizado", layout="wide")
+st.title("🎰 DuziaAI V3.8 - Mais Entradas, Mais Precisão")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -527,6 +553,7 @@ if dados:
     st.session_state.acertos_duzia_sec = dados.get('acertos_duzia_sec', 0)
     st.session_state.erros_duzia_sec = dados.get('erros_duzia_sec', 0)
     st.session_state.modo_agressivo = dados.get('modo_agressivo', False)
+    st.session_state.confianca_minima = dados.get('confianca_minima', 3.2)
     if os.path.exists(ENTRADAS_PATH):
         try:
             with open(ENTRADAS_PATH, 'r') as f:
@@ -539,6 +566,7 @@ defaults = {
     'modo_duzia_ai': True,
     'modo_agressivo': False,
     'janela_duzia_ai': 30,
+    'confianca_minima': 3.2,
     'acertos_duzia': 0,
     'erros_duzia': 0,
     'acertos_duzia_sec': 0,
@@ -573,6 +601,12 @@ with st.sidebar:
         "📏 Janela de Análise",
         10, 50, st.session_state.janela_duzia_ai, 5,
         help="Quantos giros o motor analisa"
+    )
+    
+    st.session_state.confianca_minima = st.slider(
+        "🎯 Confiança Mínima",
+        2.0, 5.0, st.session_state.confianca_minima, 0.2,
+        help="Menor = mais entradas | Maior = mais filtro"
     )
     
     st.session_state.modo_agressivo = st.checkbox(
@@ -746,9 +780,9 @@ with col_entrada:
         regime = ent.get('regime', 'NEUTRO')
         numeros_apostar = ent.get('numeros_apostar', [])
         
-        if confianca >= 6:
+        if confianca >= 5:
             cor = "#00CC00"
-        elif confianca >= 4:
+        elif confianca >= 3.5:
             cor = "#FFA500"
         else:
             cor = "#FF4444"
@@ -814,6 +848,6 @@ else:
 
 # Rodapé
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V3.5 PRO | Dashboard Profissional | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V3.8 | Mais Entradas, Mais Precisão | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
 salvar_sessao()
