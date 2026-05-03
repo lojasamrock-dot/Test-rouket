@@ -141,15 +141,14 @@ def get_duzia(numero):
     else: return 3
 
 # =============================
-# 🧠 DUZIA AI V4.0 - COM DETECTORES DE PADRÃO AVANÇADOS
+# 🧠 DUZIA AI V4.2 - DETECTORES MELHORADOS PARA REPETIÇÕES
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
         self.historico = deque(maxlen=window)
         self.historico_completo = []
         self.numeros_completos = []
-        self.ultimas_entradas = []
-        self.sinais_entrada = []  # 🆕 Guarda (índice, dúzia) quando houve sinal
+        self.sinais_entrada = []
     
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -160,11 +159,6 @@ class DuziaAI:
             self.historico_completo = self.historico_completo[-200:]
         if len(self.numeros_completos) > 200:
             self.numeros_completos = self.numeros_completos[-200:]
-    
-    def registrar_sinal(self, duzia):
-        """Chamado externamente quando uma entrada é gerada"""
-        idx = len(self.historico_completo) - 1
-        self.sinais_entrada.append((idx, duzia))
     
     def frequencia_ponderada(self):
         freq = Counter()
@@ -214,6 +208,60 @@ class DuziaAI:
                 prob[o][d] = (matriz[o][d] / totais[o] * 100) if totais[o] > 0 else 33.3
         return prob
     
+    # =============================
+    # 🆕 DETECTOR 1: STREAK LONGO (3+ repetições) - FORÇA MÁXIMA
+    # =============================
+    def detectar_streak_longo(self):
+        """
+        Se a mesma dúzia saiu 3 ou mais vezes seguidas, a chance de continuar é alta.
+        Este detector dá força máxima para furar qualquer barreira de regime.
+        """
+        streak_count, streak_d = self.streak()
+        if streak_count >= 3 and streak_d != 0:
+            # Força: 4 para 3x, 6 para 4x, 8 para 5x, 10 para 6x+
+            forca = min(10, 4 + (streak_count - 3) * 2)
+            return streak_d, forca
+        return None
+    
+    # =============================
+    # 🆕 DETECTOR 2: REPETIÇÃO PÓS-ZERO
+    # =============================
+    def detectar_pos_zero(self):
+        """
+        Após um zero, a tendência é repetir a dúzia que estava saindo antes do zero.
+        Ex: D1, D1, 0 → alta probabilidade de D1
+        """
+        if len(self.historico) < 3:
+            return None
+        u = list(self.historico)[-3:]
+        if u[-1] == 0 or u[-2] == 0:
+            # Pega a última dúzia antes do zero
+            for d in reversed(u[:-1]):
+                if d != 0:
+                    return d, 5
+        return None
+    
+    # =============================
+    # 🆕 DETECTOR 3: PADRÃO "VAI E VOLTA" COM CONFIRMAÇÃO
+    # =============================
+    def detectar_vai_e_volta(self):
+        """
+        Padrão A B A B A (5 giros) ou A B A B (4 giros).
+        Aqui a força aumenta com o número de alternâncias confirmadas.
+        """
+        if len(self.historico) < 4:
+            return None
+        u = list(self.historico)
+        # ABAB (4 giros)
+        if len(u) >= 4 and u[-4] == u[-2] and u[-3] == u[-1] and u[-4] != u[-3]:
+            if u[-4] != 0 and u[-3] != 0:
+                return u[-3], 6
+        # ABABA (5 giros)
+        if len(u) >= 5 and u[-5] == u[-3] == u[-1] and u[-4] == u[-2] and u[-5] != u[-4]:
+            if u[-5] != 0 and u[-4] != 0:
+                return u[-4], 8
+        return None
+    
     def detectar_repeticao_imediata(self):
         if len(self.historico) < 3:
             return None
@@ -254,18 +302,7 @@ class DuziaAI:
         return None
     
     def detectar_alternancia_perfeita(self):
-        if len(self.historico) < 4:
-            return None
-        ultimos_4 = list(self.historico)[-4:]
-        if ultimos_4[0] == ultimos_4[2] and ultimos_4[1] == ultimos_4[3] and ultimos_4[0] != ultimos_4[1]:
-            if ultimos_4[0] != 0 and ultimos_4[1] != 0:
-                return ultimos_4[1], 7
-        if len(self.historico) >= 5:
-            ultimos_5 = list(self.historico)[-5:]
-            if ultimos_5[0] == ultimos_5[2] == ultimos_5[4] and ultimos_5[1] == ultimos_5[3] and ultimos_5[0] != ultimos_5[1]:
-                if ultimos_5[0] != 0 and ultimos_5[1] != 0:
-                    return ultimos_5[1], 8
-        return None
+        return self.detectar_vai_e_volta()  # já incluso
     
     def detectar_ciclos(self):
         if len(self.historico) < 6:
@@ -340,7 +377,7 @@ class DuziaAI:
             for d in score:
                 score[d] += (freq_normal[d] / total_normal) * 10
         
-        # PESO 3: Streak
+        # PESO 3: Streak (aumentado)
         if streak_d and streak_d != 0:
             multiplicador = 3.0 if regime == "DOMINANTE" else 2.0 if regime == "TENDENCIA" else 1.5
             score[streak_d] += streak_count * multiplicador
@@ -374,7 +411,31 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Repetição: +{forca}")
         
-        # PESO 8: Troca D1↔D2
+        # 🆕 PESO 8: Streak Longo (FURADOR DE BARREIRA)
+        sl = self.detectar_streak_longo()
+        if sl:
+            dz, forca = sl
+            if dz != 0:
+                score[dz] += forca
+                detalhes[dz].append(f"Streak Longo {streak_count}x: +{forca}")
+        
+        # 🆕 PESO 9: Pós-Zero
+        pz = self.detectar_pos_zero()
+        if pz:
+            dz, forca = pz
+            if dz != 0:
+                score[dz] += forca
+                detalhes[dz].append(f"Pós-Zero: +{forca}")
+        
+        # 🆕 PESO 10: Vai e Volta (já incluso na alternância, mas com mais força)
+        vv = self.detectar_vai_e_volta()
+        if vv:
+            dz, forca = vv
+            if dz != 0:
+                score[dz] += forca
+                detalhes[dz].append(f"Vai-e-Volta: +{forca}")
+        
+        # PESO 11: Troca D1↔D2
         troca = self.detectar_troca_d1_d2()
         if troca:
             dz, forca = troca
@@ -382,7 +443,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Troca D1↔D2: +{forca}")
         
-        # PESO 9: Bloco D3
+        # PESO 12: Bloco D3
         bloco = self.detectar_bloco_d3()
         if bloco:
             dz, forca = bloco
@@ -390,27 +451,19 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Bloco D3: +{forca}")
         
-        # PESO 10: Alternância Perfeita
-        alt = self.detectar_alternancia_perfeita()
-        if alt:
-            dz, forca = alt
-            if dz != 0:
-                score[dz] += forca
-                detalhes[dz].append(f"Alternância: +{forca}")
-        
-        # PESO 11: Ciclos
+        # PESO 13: Ciclos
         ciclo = self.detectar_ciclos()
         if ciclo and ciclo != 0 and max(score.values()) > 3:
             score[ciclo] += 5
         
-        # PESO 12: Ausência
+        # PESO 14: Ausência
         aus = self.ausencia()
         if aus:
             dz, g = aus
             if dz != 0:
                 score[dz] += min(5, g * 0.5)
         
-        # PESO 13: Terminais
+        # PESO 15: Terminais
         term = self.terminais()
         if term:
             dz, q = term
@@ -438,7 +491,7 @@ class DuziaAI:
         # Ajuste por agressividade
         confianca_ajustada = confianca_minima - (0.4 * (2 - agressividade))
         
-        # Verifica força dos detectores
+        # Força total dos detectores
         forca_detectores = 0
         for dz in detalhes:
             for det in detalhes[dz]:
@@ -448,18 +501,21 @@ class DuziaAI:
                         forca_detectores += forca
                     except:
                         pass
-        tem_detector_forte = forca_detectores >= 5
+        
+        # 🆕 Se há streak longo (>=3), reduz drasticamente a exigência
+        streak_count, _ = self.streak()
+        tem_streak_longo = streak_count >= 3
         
         pode_entrar = False
         motivo = ""
         
-        if regime == "DISTRIBUIDO" and not tem_detector_forte:
+        if regime == "DISTRIBUIDO" and not tem_streak_longo and forca_detectores < 5:
             motivo = "Mercado distribuído sem padrão claro"
-        elif regime == "DISTRIBUIDO" and tem_detector_forte and confianca < 2.5:
-            motivo = f"Distribuído com padrão fraco (confiança {confianca:.2f})"
-        elif confianca < confianca_ajustada and not tem_detector_forte:
+        elif regime == "DISTRIBUIDO" and tem_streak_longo and confianca < 2.0:
+            motivo = f"Distribuído com streak fraco (confiança {confianca:.2f})"
+        elif confianca < confianca_ajustada and not tem_streak_longo and forca_detectores < 5:
             motivo = f"Confiança baixa ({confianca:.2f} < {confianca_ajustada})"
-        elif regime == "TRANSICAO" and confianca < 3.0 and not tem_detector_forte:
+        elif regime == "TRANSICAO" and confianca < 2.8 and not tem_streak_longo:
             motivo = f"Transição sem padrão (confiança {confianca:.2f})"
         else:
             pode_entrar = True
@@ -499,7 +555,7 @@ class SistemaBot:
         self.acertos = 0
         self.erros = 0
         self.ultimo_numero = None
-        self.sinais_grafico = []  # 🆕 Armazena índices e dúzias previstas para plotagem
+        self.sinais_grafico = []
     
     def processar_novo_numero(self, numero_data):
         if isinstance(numero_data, dict):
@@ -511,7 +567,6 @@ class SistemaBot:
         self.historico_numeros.append(nr)
         self.ultimo_numero = nr
         
-        # Verifica acerto da entrada anterior
         if self.entrada_ativa:
             duzia_real = get_duzia(nr)
             duzia_prevista = self.entrada_ativa.get('duzia_prevista')
@@ -548,7 +603,6 @@ class SistemaBot:
             enviar_resultado_auto(nr, acerto_primaria or acerto_secundaria)
             self.entrada_ativa = None
         
-        # Gera nova previsão
         confianca_minima = st.session_state.get('confianca_minima', 3.2)
         agressividade = st.session_state.get('agressividade', 2)
         previsao = self.duzia_ai.prever(confianca_minima=confianca_minima, agressividade=agressividade)
@@ -578,7 +632,6 @@ class SistemaBot:
                 'detalhes': previsao.get('detalhes', {})
             }
             
-            # 🆕 Registra sinal para o gráfico
             idx_atual = len(self.historico_numeros) - 1
             self.sinais_grafico.append((idx_atual, previsao['duzia']))
             self.duzia_ai.sinais_entrada.append((idx_atual, previsao['duzia']))
@@ -653,8 +706,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V4.1 - Sinais no Gráfico", layout="wide")
-st.title("🎰 DuziaAI V4.1 - Sinais de Entrada no Gráfico")
+st.set_page_config(page_title="🎰 DuziaAI V4.2 - Streak & Repetições", layout="wide")
+st.title("🎰 DuziaAI V4.2 - Captura de Repetições Fortes")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -891,7 +944,7 @@ with col_grafico:
                 marker=dict(size=8)
             ))
             
-            # 🆕 Marca os sinais de entrada no gráfico
+            # Sinais de entrada no gráfico
             if sis.sinais_grafico:
                 sinal_x = []
                 sinal_y = []
@@ -983,7 +1036,6 @@ with col_entrada:
         else:
             st.warning("Nenhum número disponível para aposta.")
         
-        # Barra de confiança
         st.progress(confianca / 10.0)
         
     else:
@@ -1022,6 +1074,6 @@ else:
 
 # Rodapé
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V4.1 | Sinais no Gráfico + Agressividade | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V4.2 | Streak Longo + Pós-Zero + Vai-e-Volta | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
 salvar_sessao()
