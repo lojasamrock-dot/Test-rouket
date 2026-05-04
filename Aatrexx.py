@@ -54,6 +54,7 @@ def salvar_sessao():
             'confianca_minima': st.session_state.get('confianca_minima', 3.2),
             'agressividade': st.session_state.get('agressividade', 2),
             'confianca_ml': st.session_state.get('confianca_ml', 0.15),
+            'giros_minimos_ml': st.session_state.get('giros_minimos_ml', 15),
             'telegram_token': st.session_state.get('telegram_token', ''),
             'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
             'modo_automatico': st.session_state.get('modo_automatico', True),
@@ -220,17 +221,17 @@ class MLPredictor:
         
         return features
     
-    def treinar(self, historico_completo_duzias, historico_completo_numeros):
+    def treinar(self, historico_completo_duzias, historico_completo_numeros, giros_minimos=15):
         """Treina o modelo com todo o histórico disponível"""
-        if len(historico_completo_duzias) < 50:
+        if len(historico_completo_duzias) < giros_minimos:
             return False
         
         X_data = []
         y_data = []
         
-        for i in range(20, len(historico_completo_duzias)):
-            janela_duzias = historico_completo_duzias[i-20:i]
-            janela_numeros = historico_completo_numeros[i-20:i] if i-20 >= 0 else []
+        for i in range(giros_minimos, len(historico_completo_duzias)):
+            janela_duzias = historico_completo_duzias[max(0, i-giros_minimos):i]
+            janela_numeros = historico_completo_numeros[max(0, i-giros_minimos):i]
             features = self.extrair_features(janela_duzias, janela_numeros)
             
             if i < len(historico_completo_duzias):
@@ -239,7 +240,7 @@ class MLPredictor:
                     X_data.append(features)
                     y_data.append(target - 1)  # 0=D1, 1=D2, 2=D3
         
-        if len(X_data) < 30:
+        if len(X_data) < 10:
             return False
         
         try:
@@ -250,9 +251,9 @@ class MLPredictor:
             y_array = np.array(y_data)
             
             self.model = XGBClassifier(
-                n_estimators=50,
-                max_depth=3,
-                learning_rate=0.1,
+                n_estimators=100,
+                max_depth=4,
+                learning_rate=0.05,
                 subsample=0.8,
                 colsample_bytree=0.8,
                 objective='multi:softprob',
@@ -267,11 +268,15 @@ class MLPredictor:
             self.last_training = datetime.now()
             self.ready = True
             
-            # Salva modelo
             self.salvar()
             return True
-        except ImportError:
-            logging.warning("XGBoost não instalado. Usando fallback simples.")
+            
+        except ImportError as e:
+            logging.error(f"XGBoost não instalado: {e}")
+            self.ready = False
+            return False
+        except Exception as e:
+            logging.error(f"Erro no treinamento ML: {e}")
             self.ready = False
             return False
     
@@ -707,7 +712,6 @@ class SistemaBot:
             if len(self.historico_entradas)>50:
                 self.historico_entradas = self.historico_entradas[-50:]
             
-            # Atualiza métricas do ML
             if self.entrada_ativa.get('modo') == 'ml':
                 self.ml_entradas_count += 1
                 self.ml_accuracy_recente.append(1 if acerto_primaria else 0.5 if acerto_secundaria else 0)
@@ -717,12 +721,28 @@ class SistemaBot:
             enviar_resultado_auto(nr, acerto_primaria or acerto_secundaria)
             self.entrada_ativa = None
         
-        # 🆕 TENTA TREINAR/ATUALIZAR ML A CADA 30 GIROS
-        if st.session_state.get('modo_ml', False) and len(self.historico_numeros) >= 50 and len(self.historico_numeros) % 30 == 0:
-            self.ml_predictor.treinar(
-                list(self.duzia_ai.historico_completo),
-                list(self.duzia_ai.numeros_completos)
-            )
+        # 🆕 TENTA TREINAR/ATUALIZAR ML AUTOMATICAMENTE
+        if st.session_state.get('modo_ml', False):
+            total_giros = len(self.historico_numeros)
+            giros_minimos = st.session_state.get('giros_minimos_ml', 15)
+            
+            # Primeiro treinamento: assim que atinge o mínimo de giros
+            if total_giros >= giros_minimos and not self.ml_predictor.ready:
+                sucesso = self.ml_predictor.treinar(
+                    list(self.duzia_ai.historico_completo),
+                    list(self.duzia_ai.numeros_completos),
+                    giros_minimos=giros_minimos
+                )
+                if sucesso:
+                    st.toast(f"✅ IA treinada com {self.ml_predictor.training_samples} amostras!")
+            
+            # Re-treinamento: a cada 30 giros após o primeiro treino
+            elif total_giros >= giros_minimos + 30 and self.ml_predictor.ready and total_giros % 30 == 0:
+                self.ml_predictor.treinar(
+                    list(self.duzia_ai.historico_completo),
+                    list(self.duzia_ai.numeros_completos),
+                    giros_minimos=giros_minimos
+                )
         
         # GERA PREVISÃO
         confianca_minima = st.session_state.get('confianca_minima', 3.2)
@@ -739,7 +759,6 @@ class SistemaBot:
                 duzia_map = {1: list(range(1,13)), 2: list(range(13,25)), 3: list(range(25,37))}
                 numeros = duzia_map.get(previsao_ml['duzia'], [])
                 
-                # Modo agressivo: adiciona segunda dúzia
                 if st.session_state.get('modo_agressivo', False) and previsao_ml.get('duzia_secundaria'):
                     numeros = list(set(numeros + duzia_map.get(previsao_ml['duzia_secundaria'], [])))
                 
@@ -854,8 +873,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V5.0 - ML + Regras", layout="wide")
-st.title("🎰 DuziaAI V5.0 - Machine Learning + Regras")
+st.set_page_config(page_title="🎰 DuziaAI V5.1 - ML 15 giros", layout="wide")
+st.title("🎰 DuziaAI V5.1 - Machine Learning + Regras (15 giros)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -879,6 +898,7 @@ if dados:
     st.session_state.agressividade = dados.get('agressividade', 2)
     st.session_state.modo_ml = dados.get('modo_ml', False)
     st.session_state.confianca_ml = dados.get('confianca_ml', 0.15)
+    st.session_state.giros_minimos_ml = dados.get('giros_minimos_ml', 15)
     if os.path.exists(ENTRADAS_PATH):
         try:
             with open(ENTRADAS_PATH, 'r') as f: sis.historico_entradas = json.load(f)
@@ -887,7 +907,8 @@ if dados:
 defaults = {
     'modo_automatico': True, 'modo_agressivo': False, 'modo_ml': False,
     'janela_duzia_ai': 30, 'confianca_minima': 3.2, 'agressividade': 2,
-    'confianca_ml': 0.15, 'acertos_duzia': 0, 'erros_duzia': 0,
+    'confianca_ml': 0.15, 'giros_minimos_ml': 15,
+    'acertos_duzia': 0, 'erros_duzia': 0,
     'acertos_duzia_sec': 0, 'erros_duzia_sec': 0,
 }
 for k, v in defaults.items():
@@ -918,24 +939,53 @@ with st.sidebar:
     
     if st.session_state.modo_ml:
         st.success("🤖 **MODO ML ATIVO** - O bot aprende com os dados!")
+        
         st.session_state.confianca_ml = st.slider(
             "🎯 Confiança Mínima ML",
             0.05, 0.35, st.session_state.confianca_ml, 0.05,
             help="Menor = mais entradas | 0.15 recomendado"
         )
         
+        st.session_state.giros_minimos_ml = st.slider(
+            "📏 Giros para Treinar ML",
+            10, 50, st.session_state.giros_minimos_ml, 5,
+            help="Quantos giros o ML precisa para começar a aprender"
+        )
+        
         # Status do modelo
+        sis = st.session_state.sistema
         if sis.ml_predictor.ready:
-            st.info(f"✅ Modelo treinado com {sis.ml_predictor.training_samples} amostras")
+            st.success(f"✅ Modelo treinado com {sis.ml_predictor.training_samples} amostras")
+            if sis.ml_predictor.last_training:
+                st.caption(f"Último treino: {sis.ml_predictor.last_training.strftime('%H:%M:%S')}")
         else:
-            st.warning(f"⏳ Modelo em aquecimento... ({len(sis.historico_numeros)}/50 giros)")
-            st.caption("O ML precisa de 50+ giros para começar. Usando regras fixas enquanto isso.")
+            giros_atuais = len(sis.historico_numeros)
+            giros_minimos = st.session_state.giros_minimos_ml
+            if giros_atuais >= giros_minimos:
+                st.warning(f"⚠️ {giros_atuais} giros acumulados. O modelo deveria ter treinado!")
+                
+                # Botão de treinamento manual
+                if st.button("🧠 FORÇAR TREINAMENTO DA IA", use_container_width=True, type="primary"):
+                    with st.spinner("Treinando XGBoost..."):
+                        sucesso = sis.ml_predictor.treinar(
+                            list(sis.duzia_ai.historico_completo),
+                            list(sis.duzia_ai.numeros_completos),
+                            giros_minimos=giros_minimos
+                        )
+                        if sucesso:
+                            st.success(f"✅ IA treinada com {sis.ml_predictor.training_samples} amostras!")
+                            salvar_sessao()
+                            st.rerun()
+                        else:
+                            st.error("❌ Falha no treinamento. Execute: pip install xgboost scikit-learn")
+            else:
+                st.info(f"⏳ Aguardando {giros_minimos} giros para treinar IA... ({giros_atuais}/{giros_minimos})")
     else:
         st.info("📊 **MODO REGRAS FIXAS** - Detectores programados")
     
     st.markdown("---")
     
-    st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
+    st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise (Regras)", 10, 50, st.session_state.janela_duzia_ai, 5)
     st.session_state.confianca_minima = st.slider("🎯 Confiança Mínima (Regras)", 2.0, 5.0, st.session_state.confianca_minima, 0.2)
     st.session_state.agressividade = st.select_slider("🎚️ Agressividade", options=[1,2,3], value=st.session_state.agressividade)
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
@@ -1003,7 +1053,6 @@ c4.metric("🎯 Tx Dúzia Primária", f"{tx_dz:.1f}%")
 c5.metric("📦 Total Entradas", total_entradas)
 c6.metric("🧠 Modo", "🤖 ML" if st.session_state.modo_ml else "📊 Regras")
 
-# Métricas ML
 if st.session_state.modo_ml and sis.ml_predictor.ready:
     st.metric("🤖 Amostras ML", sis.ml_predictor.training_samples)
 
@@ -1109,5 +1158,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V5.0 | ML + Regras | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V5.1 | ML treina com 15 giros | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
