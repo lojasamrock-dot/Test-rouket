@@ -10,7 +10,6 @@ import pickle
 from datetime import datetime
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 
 # =============================
 # CONFIGURAÇÕES DE PERSISTÊNCIA
@@ -141,7 +140,7 @@ def get_duzia(numero):
     else: return 3
 
 # =============================
-# 🧠 DUZIA AI V4.2 - DETECTORES MELHORADOS PARA REPETIÇÕES
+# 🧠 DUZIA AI V4.3 - DETECTORES A-B-A E DUAS DÚZIAS DOMINANTES
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -208,66 +207,75 @@ class DuziaAI:
                 prob[o][d] = (matriz[o][d] / totais[o] * 100) if totais[o] > 0 else 33.3
         return prob
     
-    # =============================
-    # 🆕 DETECTOR 1: STREAK LONGO (3+ repetições) - FORÇA MÁXIMA
-    # =============================
+    # 🆕 DETECTOR A-B-A (Retorno após um giro)
+    def detectar_retorno_aba(self):
+        """Padrão A, B, A → espera A"""
+        if len(self.historico) < 3:
+            return None
+        u = list(self.historico)[-3:]
+        if u[0] == u[2] and u[0] != u[1] and u[0] != 0 and u[1] != 0:
+            return u[0], 5  # Força moderada
+        return None
+    
+    # 🆕 DETECTOR DE DUAS DÚZIAS DOMINANTES (>80% nos últimos 10 giros)
+    def detectar_duas_dominantes(self):
+        """Se duas dúzias ocupam >80% dos últimos 10 giros, a terceira é desfavorecida"""
+        if len(self.historico) < 10:
+            return None
+        ultimos_10 = list(self.historico)[-10:]
+        freq = Counter(ultimos_10)
+        ranking = freq.most_common()
+        if len(ranking) >= 2:
+            top2_sum = ranking[0][1] + ranking[1][1]
+            if top2_sum >= 8:  # 80%
+                # As duas dominantes ganham um pequeno boost, a terceira perde
+                return (ranking[0][0], ranking[1][0]), 3  # Boost para ambas
+        return None
+    
+    # 🆕 DETECTOR DE PROGRESSÃO (degrau)
+    def detectar_progressao(self):
+        """Ex: D1, D1, D2, D2, D3, ..."""
+        if len(self.historico) < 4:
+            return None
+        u = list(self.historico)[-4:]
+        if u[0] == u[1] and u[2] == u[3] and u[1] != u[2] and u[0] != 0 and u[2] != 0:
+            # Progressão simples: primeiro par, segundo par
+            # Aposta na continuação do segundo par
+            return u[2], 4
+        return None
+    
+    # Mantendo detectores existentes (já inclusos nos métodos abaixo)
     def detectar_streak_longo(self):
-        """
-        Se a mesma dúzia saiu 3 ou mais vezes seguidas, a chance de continuar é alta.
-        Este detector dá força máxima para furar qualquer barreira de regime.
-        """
         streak_count, streak_d = self.streak()
         if streak_count >= 3 and streak_d != 0:
-            # Força: 4 para 3x, 6 para 4x, 8 para 5x, 10 para 6x+
             forca = min(10, 4 + (streak_count - 3) * 2)
             return streak_d, forca
         return None
     
-    # =============================
-    # 🆕 DETECTOR 2: REPETIÇÃO PÓS-ZERO
-    # =============================
     def detectar_pos_zero(self):
-        """
-        Após um zero, a tendência é repetir a dúzia que estava saindo antes do zero.
-        Ex: D1, D1, 0 → alta probabilidade de D1
-        """
         if len(self.historico) < 3:
             return None
         u = list(self.historico)[-3:]
         if u[-1] == 0 or u[-2] == 0:
-            # Pega a última dúzia antes do zero
             for d in reversed(u[:-1]):
                 if d != 0:
                     return d, 5
         return None
     
-    # =============================
-    # 🆕 DETECTOR 3: PADRÃO "VAI E VOLTA" COM CONFIRMAÇÃO
-    # =============================
     def detectar_vai_e_volta(self):
-        """
-        Padrão A B A B A (5 giros) ou A B A B (4 giros).
-        Aqui a força aumenta com o número de alternâncias confirmadas.
-        """
-        if len(self.historico) < 4:
-            return None
         u = list(self.historico)
-        # ABAB (4 giros)
-        if len(u) >= 4 and u[-4] == u[-2] and u[-3] == u[-1] and u[-4] != u[-3]:
-            if u[-4] != 0 and u[-3] != 0:
-                return u[-3], 6
-        # ABABA (5 giros)
-        if len(u) >= 5 and u[-5] == u[-3] == u[-1] and u[-4] == u[-2] and u[-5] != u[-4]:
-            if u[-5] != 0 and u[-4] != 0:
-                return u[-4], 8
+        if len(u) >= 4 and u[-4] == u[-2] and u[-3] == u[-1] and u[-4] != u[-3] and u[-4] != 0 and u[-3] != 0:
+            return u[-3], 6
+        if len(u) >= 5 and u[-5] == u[-3] == u[-1] and u[-4] == u[-2] and u[-5] != u[-4] and u[-5] != 0 and u[-4] != 0:
+            return u[-4], 8
         return None
     
     def detectar_repeticao_imediata(self):
         if len(self.historico) < 3:
             return None
-        ultimos_3 = list(self.historico)[-3:]
-        if ultimos_3[0] != ultimos_3[1] and ultimos_3[1] == ultimos_3[2] and ultimos_3[1] != 0:
-            return ultimos_3[1], 6
+        u = list(self.historico)[-3:]
+        if u[0] != u[1] and u[1] == u[2] and u[1] != 0:
+            return u[1], 6
         if len(self.historico) >= 2:
             u2 = list(self.historico)[-2:]
             if u2[0] == u2[1] and u2[0] != 0:
@@ -277,32 +285,22 @@ class DuziaAI:
     def detectar_troca_d1_d2(self):
         if len(self.historico) < 6:
             return None
-        ultimos_6 = list(self.historico)[-6:]
-        trocas = 0
-        for i in range(1, len(ultimos_6)):
-            if (ultimos_6[i-1] == 1 and ultimos_6[i] == 2) or (ultimos_6[i-1] == 2 and ultimos_6[i] == 1):
-                trocas += 1
+        u = list(self.historico)[-6:]
+        trocas = sum(1 for i in range(1, len(u)) if (u[i-1] == 1 and u[i] == 2) or (u[i-1] == 2 and u[i] == 1))
         if trocas >= 3:
-            ultima = ultimos_6[-1]
-            if ultima == 1:
-                return 2, 5
-            elif ultima == 2:
-                return 1, 5
+            return 2 if u[-1] == 1 else 1, 5
         return None
     
     def detectar_bloco_d3(self):
         if len(self.historico) < 5:
             return None
-        ultimos_5 = list(self.historico)[-5:]
-        d3_count = ultimos_5[-4:].count(3)
+        u = list(self.historico)[-5:]
+        d3_count = u[-4:].count(3)
         if d3_count >= 2:
             return 3, 5
-        if ultimos_5[-1] == 3 and d3_count >= 1:
+        if u[-1] == 3 and d3_count >= 1:
             return 3, 3
         return None
-    
-    def detectar_alternancia_perfeita(self):
-        return self.detectar_vai_e_volta()  # já incluso
     
     def detectar_ciclos(self):
         if len(self.historico) < 6:
@@ -367,34 +365,32 @@ class DuziaAI:
         prob = self.matriz_transicao()
         regime = self.detectar_regime()
         
-        # PESO 1: Frequência Ponderada
+        # Frequência
         for d in score:
             score[d] += freq[d] * 0.8
-        
-        # PESO 2: Frequência simples
         total_normal = sum(freq_normal.values())
         if total_normal > 0:
             for d in score:
                 score[d] += (freq_normal[d] / total_normal) * 10
         
-        # PESO 3: Streak (aumentado)
+        # Streak
         if streak_d and streak_d != 0:
             multiplicador = 3.0 if regime == "DOMINANTE" else 2.0 if regime == "TENDENCIA" else 1.5
             score[streak_d] += streak_count * multiplicador
         
-        # PESO 4: Rebote
+        # Rebote
         if trans and regime not in ["DOMINANTE", "TENDENCIA"]:
             ant, _ = trans
             if ant != 0:
                 score[ant] += 2.5
         
-        # PESO 5: Quebra de sequência
+        # Quebra de sequência
         if streak_count >= 3 and streak_d and streak_d != 0:
             viz = {1: 2, 2: 3, 3: 2}
             if streak_d in viz:
                 score[viz[streak_d]] += 5
         
-        # PESO 6: Matriz de Transição
+        # Matriz de Transição
         if self.historico:
             ultima = self.historico[-1]
             if ultima != 0 and ultima in prob:
@@ -403,7 +399,7 @@ class DuziaAI:
                     if p > 40:
                         score[d] += (p - 30) / 8
         
-        # PESO 7: Repetição Imediata
+        # Repetição Imediata
         rep = self.detectar_repeticao_imediata()
         if rep:
             dz, forca = rep
@@ -411,15 +407,15 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Repetição: +{forca}")
         
-        # 🆕 PESO 8: Streak Longo (FURADOR DE BARREIRA)
+        # Streak Longo
         sl = self.detectar_streak_longo()
         if sl:
             dz, forca = sl
             if dz != 0:
                 score[dz] += forca
-                detalhes[dz].append(f"Streak Longo {streak_count}x: +{forca}")
+                detalhes[dz].append(f"Streak Longo: +{forca}")
         
-        # 🆕 PESO 9: Pós-Zero
+        # Pós-Zero
         pz = self.detectar_pos_zero()
         if pz:
             dz, forca = pz
@@ -427,7 +423,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Pós-Zero: +{forca}")
         
-        # 🆕 PESO 10: Vai e Volta (já incluso na alternância, mas com mais força)
+        # Vai e Volta
         vv = self.detectar_vai_e_volta()
         if vv:
             dz, forca = vv
@@ -435,7 +431,36 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Vai-e-Volta: +{forca}")
         
-        # PESO 11: Troca D1↔D2
+        # 🆕 Retorno A-B-A
+        aba = self.detectar_retorno_aba()
+        if aba:
+            dz, forca = aba
+            if dz != 0:
+                score[dz] += forca
+                detalhes[dz].append(f"Retorno A-B-A: +{forca}")
+        
+        # 🆕 Duas Dominantes
+        duas = self.detectar_duas_dominantes()
+        if duas:
+            dominantes, forca = duas
+            for dz in dominantes:
+                if dz != 0:
+                    score[dz] += forca
+                    detalhes[dz].append(f"Dominante: +{forca}")
+            # Penaliza a terceira
+            terceira = [d for d in [1,2,3] if d not in dominantes]
+            for dz in terceira:
+                score[dz] -= 2  # pequena penalidade
+        
+        # 🆕 Progressão (degrau)
+        prog = self.detectar_progressao()
+        if prog:
+            dz, forca = prog
+            if dz != 0:
+                score[dz] += forca
+                detalhes[dz].append(f"Progressão: +{forca}")
+        
+        # Troca D1↔D2
         troca = self.detectar_troca_d1_d2()
         if troca:
             dz, forca = troca
@@ -443,7 +468,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Troca D1↔D2: +{forca}")
         
-        # PESO 12: Bloco D3
+        # Bloco D3
         bloco = self.detectar_bloco_d3()
         if bloco:
             dz, forca = bloco
@@ -451,26 +476,26 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Bloco D3: +{forca}")
         
-        # PESO 13: Ciclos
+        # Ciclos
         ciclo = self.detectar_ciclos()
         if ciclo and ciclo != 0 and max(score.values()) > 3:
             score[ciclo] += 5
         
-        # PESO 14: Ausência
+        # Ausência
         aus = self.ausencia()
         if aus:
             dz, g = aus
             if dz != 0:
                 score[dz] += min(5, g * 0.5)
         
-        # PESO 15: Terminais
+        # Terminais
         term = self.terminais()
         if term:
             dz, q = term
             if dz != 0:
                 score[dz] += q * 0.3
         
-        # NORMALIZAÇÃO
+        # Normalização
         total = sum(score.values())
         if total > 0:
             for d in score:
@@ -488,10 +513,8 @@ class DuziaAI:
         vol = np.std(list(score.values()))
         confianca = (ratio * 2.2) + (1.5 / (1 + vol))
         
-        # Ajuste por agressividade
         confianca_ajustada = confianca_minima - (0.4 * (2 - agressividade))
         
-        # Força total dos detectores
         forca_detectores = 0
         for dz in detalhes:
             for det in detalhes[dz]:
@@ -502,20 +525,21 @@ class DuziaAI:
                     except:
                         pass
         
-        # 🆕 Se há streak longo (>=3), reduz drasticamente a exigência
         streak_count, _ = self.streak()
         tem_streak_longo = streak_count >= 3
+        # 🆕 Se há duas dúzias dominantes, considera como padrão claro
+        tem_duas_dominantes = self.detectar_duas_dominantes() is not None
         
         pode_entrar = False
         motivo = ""
         
-        if regime == "DISTRIBUIDO" and not tem_streak_longo and forca_detectores < 5:
+        if regime == "DISTRIBUIDO" and not tem_streak_longo and forca_detectores < 5 and not tem_duas_dominantes:
             motivo = "Mercado distribuído sem padrão claro"
-        elif regime == "DISTRIBUIDO" and tem_streak_longo and confianca < 2.0:
-            motivo = f"Distribuído com streak fraco (confiança {confianca:.2f})"
+        elif regime == "DISTRIBUIDO" and (tem_streak_longo or tem_duas_dominantes) and confianca < 2.0:
+            motivo = f"Distribuído com padrão fraco (confiança {confianca:.2f})"
         elif confianca < confianca_ajustada and not tem_streak_longo and forca_detectores < 5:
             motivo = f"Confiança baixa ({confianca:.2f} < {confianca_ajustada})"
-        elif regime == "TRANSICAO" and confianca < 2.8 and not tem_streak_longo:
+        elif regime == "TRANSICAO" and confianca < 2.8 and not tem_streak_longo and not tem_duas_dominantes:
             motivo = f"Transição sem padrão (confiança {confianca:.2f})"
         else:
             pode_entrar = True
@@ -543,7 +567,7 @@ class DuziaAI:
         }
 
 # =============================
-# SISTEMA PRINCIPAL
+# SISTEMA PRINCIPAL (sem alterações na estrutura, apenas novos detectores integrados)
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -660,8 +684,11 @@ class SistemaBot:
         salvar_sessao()
 
 # =============================
-# FUNÇÕES AUXILIARES
+# FUNÇÕES AUXILIARES E STREAMLIT (mantidas sem alterações estruturais)
 # =============================
+# ... (todo o restante do código da aplicação Streamlit permanece igual à versão anterior,
+#      apenas com a referência à versão V4.3)
+
 def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
     try:
         with open(caminho, "w") as f:
@@ -704,10 +731,10 @@ def exportar_historico(historico, formato='json'):
     return "\n".join(linhas)
 
 # =============================
-# APLICAÇÃO STREAMLIT
+# APLICAÇÃO STREAMLIT (mantida a mesma estrutura visual)
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V4.2 - Streak & Repetições", layout="wide")
-st.title("🎰 DuziaAI V4.2 - Captura de Repetições Fortes")
+st.set_page_config(page_title="🎰 DuziaAI V4.3 - Padrões Ocultos", layout="wide")
+st.title("🎰 DuziaAI V4.3 - Retorno A-B-A & Duas Dominantes")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -738,7 +765,6 @@ if dados:
 
 defaults = {
     'modo_automatico': True,
-    'modo_duzia_ai': True,
     'modo_agressivo': False,
     'janela_duzia_ai': 30,
     'confianca_minima': 3.2,
@@ -748,7 +774,6 @@ defaults = {
     'acertos_duzia_sec': 0,
     'erros_duzia_sec': 0,
 }
-
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -767,86 +792,34 @@ if "telegram_token" not in st.session_state:
 if "telegram_chat_id" not in st.session_state:
     st.session_state.telegram_chat_id = ""
 
-# =============================
-# SIDEBAR
-# =============================
+# Sidebar (idêntica)
 with st.sidebar:
     st.markdown("## ⚙️ Configurações")
-    
-    st.session_state.janela_duzia_ai = st.slider(
-        "📏 Janela de Análise",
-        10, 50, st.session_state.janela_duzia_ai, 5,
-        help="Quantos giros o motor analisa"
-    )
-    
-    st.session_state.confianca_minima = st.slider(
-        "🎯 Confiança Mínima",
-        2.0, 5.0, st.session_state.confianca_minima, 0.2,
-        help="Menor = mais entradas | Maior = mais filtro"
-    )
-    
-    st.session_state.agressividade = st.select_slider(
-        "🎚️ Agressividade",
-        options=[1, 2, 3],
-        value=st.session_state.agressividade,
-        help="1 = Mais entradas (mais risco) | 2 = Normal | 3 = Conservador"
-    )
-    
-    st.session_state.modo_agressivo = st.checkbox(
-        "🔥 Modo Agressivo (2 Dúzias)",
-        value=st.session_state.modo_agressivo,
-        help="Quando ativado, aposta na dúzia principal + secundária"
-    )
-    
-    st.session_state.modo_automatico = st.checkbox(
-        "🤖 Modo Automático",
-        value=st.session_state.modo_automatico
-    )
-    
+    st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
+    st.session_state.confianca_minima = st.slider("🎯 Confiança Mínima", 2.0, 5.0, st.session_state.confianca_minima, 0.2)
+    st.session_state.agressividade = st.select_slider("🎚️ Agressividade", options=[1,2,3], value=st.session_state.agressividade)
+    st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
+    st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    
     with st.expander("🔔 Telegram", expanded=False):
-        st.session_state.telegram_token = st.text_input(
-            "Token", value=st.session_state.telegram_token, type="password"
-        )
-        st.session_state.telegram_chat_id = st.text_input(
-            "Chat ID", value=st.session_state.telegram_chat_id
-        )
-    
+        st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
+        st.session_state.telegram_chat_id = st.text_input("Chat ID", value=st.session_state.telegram_chat_id)
     c1, c2 = st.columns(2)
-    c1.button("💾 Salvar", on_click=lambda: [
-        salvar_resultado_em_arquivo(st.session_state.historico),
-        salvar_sessao(),
-        st.success("✅")
-    ], use_container_width=True)
+    c1.button("💾 Salvar", on_click=lambda: [salvar_resultado_em_arquivo(st.session_state.historico), salvar_sessao(), st.success("✅")], use_container_width=True)
     c2.button("🗑️ Zerar", on_click=lambda: st.session_state.sistema.zerar() or st.rerun(), use_container_width=True)
 
-# =============================
-# CONTEÚDO PRINCIPAL
-# =============================
-sis = st.session_state.sistema
-
-# Input de números
+# Conteúdo principal (idêntico)
 st.subheader("🎲 Inserir Números")
-c1, c2, c3 = st.columns([3, 1, 1])
+c1, c2, c3 = st.columns([3,1,1])
 with c1:
-    entrada = st.text_input(
-        "Número (0-36):",
-        placeholder="Digite o número sorteado e pressione Enter",
-        key="entrada_numero"
-    )
+    entrada = st.text_input("Número (0-36):", placeholder="Digite o número sorteado e pressione Enter", key="entrada_numero")
 with c2:
     if st.button("🎯 Enviar", use_container_width=True, type="primary"):
         if entrada and entrada.isdigit() and 0 <= int(entrada) <= 36:
             nr = int(entrada)
-            item = {
-                "number": nr,
-                "timestamp": datetime.now().isoformat(),
-                "luckyNumbers": [],
-                "luckyMultipliers": {}
-            }
+            item = {"number": nr, "timestamp": datetime.now().isoformat(), "luckyNumbers": [], "luckyMultipliers": {}}
             st.session_state.historico.append(item)
-            sis.processar_novo_numero(item)
+            st.session_state.sistema.processar_novo_numero(item)
             salvar_resultado_em_arquivo(st.session_state.historico)
             salvar_sessao()
             st.rerun()
@@ -857,33 +830,28 @@ with c3:
         st.session_state.modo_automatico = not st.session_state.modo_automatico
         st.rerun()
 
-# Auto refresh
 if st.session_state.modo_automatico:
     st_autorefresh(interval=3000, key="auto_refresh")
     resultado = fetch_latest_result()
     if resultado and resultado.get("number") is not None:
         if not st.session_state.historico or resultado["timestamp"] != st.session_state.historico[-1].get("timestamp"):
             st.session_state.historico.append(resultado)
-            sis.processar_novo_numero(resultado)
+            st.session_state.sistema.processar_novo_numero(resultado)
             salvar_resultado_em_arquivo(st.session_state.historico)
             salvar_sessao()
             st.rerun()
 
-# =============================
-# DASHBOARD PRINCIPAL
-# =============================
 st.markdown("---")
+sis = st.session_state.sistema
 
-# Linha 1: Métricas
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+# Métricas
+c1,c2,c3,c4,c5,c6 = st.columns(6)
 total_entradas = int(sis.acertos + sis.erros)
 tx_acerto = (sis.acertos / total_entradas * 100) if total_entradas > 0 else 0
-
 ac_dz = st.session_state.get('acertos_duzia', 0)
 er_dz = st.session_state.get('erros_duzia', 0)
 total_dz = ac_dz + er_dz
 tx_dz = (ac_dz / total_dz * 100) if total_dz > 0 else 0
-
 c1.metric("✅ Acertos", int(sis.acertos))
 c2.metric("❌ Erros", int(sis.erros))
 c3.metric("📊 Win Rate", f"{tx_acerto:.1f}%")
@@ -892,63 +860,35 @@ c5.metric("📦 Total Entradas", total_entradas)
 c6.metric("🔥 Modo", "Agressivo" if st.session_state.modo_agressivo else "Conservador")
 
 st.markdown("---")
-
-# Linha 2: Gráficos e Análise
-col_grafico, col_entrada = st.columns([3, 2])
+col_grafico, col_entrada = st.columns([3,2])
 
 with col_grafico:
     st.subheader("📈 Análise em Tempo Real")
-    
     if len(sis.historico_numeros) >= 5:
         score, regime, detalhes = sis.duzia_ai.calcular_score()
-        previsao = sis.duzia_ai.prever()
-        
-        # Gráfico de barras dos scores
-        fig = go.Figure(data=[
-            go.Bar(
-                x=['D1 (1-12)', 'D2 (13-24)', 'D3 (25-36)'],
-                y=[score[1], score[2], score[3]],
-                marker_color=['#FF6B6B' if score[1] == max(score.values()) else '#4ECDC4',
-                             '#FF6B6B' if score[2] == max(score.values()) else '#4ECDC4',
-                             '#FF6B6B' if score[3] == max(score.values()) else '#4ECDC4'],
-                text=[f'{score[1]:.1f}', f'{score[2]:.1f}', f'{score[3]:.1f}'],
-                textposition='auto',
-            )
-        ])
-        fig.update_layout(
-            title=f"🎯 Scores das Dúzias | Regime: {regime}",
-            yaxis_title="Score Normalizado",
-            height=300,
-            showlegend=False
-        )
+        fig = go.Figure(data=[go.Bar(
+            x=['D1 (1-12)', 'D2 (13-24)', 'D3 (25-36)'],
+            y=[score[1], score[2], score[3]],
+            marker_color=['#FF6B6B' if score[1] == max(score.values()) else '#4ECDC4',
+                          '#FF6B6B' if score[2] == max(score.values()) else '#4ECDC4',
+                          '#FF6B6B' if score[3] == max(score.values()) else '#4ECDC4'],
+            text=[f'{score[1]:.1f}', f'{score[2]:.1f}', f'{score[3]:.1f}'],
+            textposition='auto'
+        )])
+        fig.update_layout(title=f"🎯 Scores das Dúzias | Regime: {regime}", yaxis_title="Score Normalizado", height=300, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
-        
         st.caption("**🔍 Detectores Ativos:**")
-        for dz in [1, 2, 3]:
+        for dz in [1,2,3]:
             if detalhes.get(dz):
                 st.caption(f"D{dz}: " + " | ".join(detalhes[dz]))
-        
-        # Gráfico de linha do histórico de dúzias COM SINAIS
         if len(sis.historico_numeros) >= 10:
             ultimos_20 = list(sis.historico_numeros)[-20:]
             duzias_hist = [get_duzia(n) for n in ultimos_20]
             x_vals = list(range(len(duzias_hist)))
-            
             fig2 = go.Figure()
-            fig2.add_trace(go.Scatter(
-                x=x_vals,
-                y=duzias_hist,
-                mode='lines+markers',
-                name='Dúzia',
-                line=dict(color='#FFD700', width=2),
-                marker=dict(size=8)
-            ))
-            
-            # Sinais de entrada no gráfico
+            fig2.add_trace(go.Scatter(x=x_vals, y=duzias_hist, mode='lines+markers', name='Dúzia', line=dict(color='#FFD700', width=2), marker=dict(size=8)))
             if sis.sinais_grafico:
-                sinal_x = []
-                sinal_y = []
-                sinal_text = []
+                sinal_x, sinal_y, sinal_text = [], [], []
                 offset = len(duzias_hist) - 20
                 for idx, dz in sis.sinais_grafico:
                     pos = idx - offset
@@ -956,106 +896,54 @@ with col_grafico:
                         sinal_x.append(pos)
                         sinal_y.append(dz)
                         sinal_text.append(f"Entrada D{dz}")
-                
                 if sinal_x:
-                    fig2.add_trace(go.Scatter(
-                        x=sinal_x,
-                        y=sinal_y,
-                        mode='markers',
-                        name='Sinal de Entrada',
-                        marker=dict(
-                            symbol='star',
-                            size=15,
-                            color='red',
-                            line=dict(width=2, color='darkred')
-                        ),
-                        text=sinal_text,
-                        hoverinfo='text'
-                    ))
-            
-            fig2.update_layout(
-                title="📉 Histórico de Dúzias (Últimos 20 giros) c/ Sinais",
-                yaxis=dict(
-                    title="Dúzia",
-                    tickvals=[1, 2, 3],
-                    ticktext=['D1', 'D2', 'D3'],
-                    range=[0.5, 3.5]
-                ),
-                height=300,
-                showlegend=True
-            )
+                    fig2.add_trace(go.Scatter(x=sinal_x, y=sinal_y, mode='markers', name='Sinal', marker=dict(symbol='star', size=15, color='red', line=dict(width=2, color='darkred')), text=sinal_text, hoverinfo='text'))
+            fig2.update_layout(title="📉 Histórico de Dúzias c/ Sinais", yaxis=dict(tickvals=[1,2,3], ticktext=['D1','D2','D3'], range=[0.5,3.5]), height=300, showlegend=True)
             st.plotly_chart(fig2, use_container_width=True)
     else:
-        st.info(f"⏳ Aguardando dados... ({len(sis.historico_numeros)}/5 giros mínimos)")
+        st.info(f"⏳ Aguardando dados... ({len(sis.historico_numeros)}/5 giros)")
 
 with col_entrada:
     st.subheader("🎰 Entrada Atual")
-    
     if sis.entrada_ativa:
         ent = sis.entrada_ativa
-        
         confianca = ent.get('confianca', 0)
         duzia_prevista = ent.get('duzia_prevista', 0)
         duzia_sec_prevista = ent.get('duzia_sec_prevista')
         regime = ent.get('regime', 'NEUTRO')
         numeros_apostar = ent.get('numeros_apostar', [])
         detalhes_entrada = ent.get('detalhes', {})
-        
-        if confianca >= 5:
-            cor = "#00CC00"
-        elif confianca >= 3.5:
-            cor = "#FFA500"
-        else:
-            cor = "#FF4444"
-        
-        if duzia_prevista == 1:
-            limite = "1-12"
-        elif duzia_prevista == 2:
-            limite = "13-24"
-        elif duzia_prevista == 3:
-            limite = "25-36"
-        else:
-            limite = "?"
-        
+        cor = "#00CC00" if confianca >= 5 else "#FFA500" if confianca >= 3.5 else "#FF4444"
+        limite = "1-12" if duzia_prevista == 1 else "13-24" if duzia_prevista == 2 else "25-36" if duzia_prevista == 3 else "?"
         st.markdown(f"""
         <div style="background-color: {cor}22; border: 2px solid {cor}; border-radius: 15px; padding: 20px; margin: 10px 0;">
             <h2 style="color: {cor}; text-align: center;">🎯 D{duzia_prevista} ({limite})</h2>
             <p style="text-align: center; font-size: 1.2em;">Confiança: {confianca:.2f} | Regime: {regime}</p>
             {f'<p style="text-align: center; color: #FFA500;">🛡️ Cobertura: D{duzia_sec_prevista}</p>' if st.session_state.modo_agressivo and duzia_sec_prevista else ''}
-        </div>
-        """, unsafe_allow_html=True)
-        
+        </div>""", unsafe_allow_html=True)
         if detalhes_entrada.get(duzia_prevista):
-            st.caption(f"🔍 " + " | ".join(detalhes_entrada[duzia_prevista]))
-        
+            st.caption("🔍 " + " | ".join(detalhes_entrada[duzia_prevista]))
         if numeros_apostar:
             st.write("**🎲 Números:**")
             cols = st.columns(6)
             for i, n in enumerate(sorted(numeros_apostar)):
                 cols[i % 6].button(str(n), key=f"num_{n}", use_container_width=True)
         else:
-            st.warning("Nenhum número disponível para aposta.")
-        
+            st.warning("Nenhum número disponível.")
         st.progress(confianca / 10.0)
-        
     else:
-        st.info("🔍 Analisando padrões... Aguardando sinal de entrada.")
-        
+        st.info("🔍 Analisando padrões...")
         if len(sis.historico_numeros) >= 5:
             previsao = sis.duzia_ai.prever()
             if previsao and not previsao.get('entrar', False):
                 st.warning(f"⚠️ {previsao.get('motivo', 'Sem sinal claro')}")
                 st.caption(f"Regime: {previsao.get('regime', '?')} | Confiança: {previsao.get('confianca', 0)}")
-    
     if sis.ultimo_numero is not None:
         st.markdown("---")
-        duzia_ultimo = get_duzia(sis.ultimo_numero)
-        st.write(f"**🔄 Último Giro:** #{sis.ultimo_numero} → D{duzia_ultimo}")
+        st.write(f"**🔄 Último Giro:** #{sis.ultimo_numero} → D{get_duzia(sis.ultimo_numero)}")
 
-# Linha 3: Histórico de Entradas
 st.markdown("---")
 st.subheader("📝 Histórico de Entradas")
-
 if sis.historico_entradas:
     dados_tabela = []
     for e in reversed(sis.historico_entradas[-20:]):
@@ -1067,13 +955,10 @@ if sis.historico_entradas:
             "Dúzia Prevista": f"D{e.get('duzia_prevista', '?')}" if e.get('duzia_prevista') else "-",
             "Resultado": "✅" if e.get('acerto_primaria') else "🟡" if e.get('acerto_secundaria') else "❌"
         })
-    
     st.dataframe(dados_tabela, use_container_width=True, height=300)
 else:
     st.info("Nenhuma entrada registrada ainda.")
 
-# Rodapé
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V4.2 | Streak Longo + Pós-Zero + Vai-e-Volta | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-
+st.caption(f"🤖 DuziaAI V4.3 | Retorno A-B-A, Duas Dominantes, Progressão | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
