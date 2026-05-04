@@ -192,7 +192,7 @@ class RoletaBase:
         return set()
 
 # =============================
-# ESTRATÉGIAS ORIGINAIS
+# ESTRATÉGIAS ORIGINAIS (28)
 # =============================
 class EstrategiaSniperElite:
     def __init__(self, roleta): self.roleta = roleta
@@ -565,7 +565,7 @@ class EstrategiaZeroCiclo:
         return {'base': set(list(b)[:7]), 'forca': 50, 'estrategias': ['Zero Ciclo'], 'gatilho': f'Zero ausente {giros_sem_zero}g'}
 
 # =============================
-# ANALISADOR DE DÚZIAS (FUNCIONAL)
+# ANALISADOR DE DÚZIAS
 # =============================
 class AnalisadorDuzias:
     def __init__(self, window=20):
@@ -623,7 +623,7 @@ class AnalisadorDuzias:
         }
 
 # =============================
-# ML PREDICTOR (SIMPLIFICADO)
+# ML PREDICTOR (CORRIGIDO)
 # =============================
 class MLPredictor:
     def __init__(self):
@@ -636,13 +636,17 @@ class MLPredictor:
             return False
         try:
             from xgboost import XGBClassifier
+            
             X, y = [], []
             for i in range(5, len(historico_duzias)):
                 janela = list(historico_duzias)[i-5:i]
                 if len(janela) < 5: continue
+                
                 features = []
                 freq = Counter(janela)
-                for d in [1, 2, 3]: features.append(freq.get(d, 0) / 5)
+                for d in [1, 2, 3]:
+                    features.append(freq.get(d, 0) / 5)
+                
                 ultima = janela[-1]
                 streak = 0
                 for d in reversed(janela):
@@ -650,20 +654,42 @@ class MLPredictor:
                     else: break
                 features.append(streak)
                 features.append(ultima)
+                
                 target = historico_duzias[i]
                 if target != 0:
                     X.append(features)
                     y.append(target - 1)
-            if len(X) < 5: return False
-            self.model = XGBClassifier(n_estimators=30, max_depth=2, learning_rate=0.1, objective='multi:softprob', num_class=3, use_label_encoder=False, eval_metric='mlogloss', verbosity=0, random_state=42)
+            
+            if len(X) < 5:
+                return False
+            
+            self.model = XGBClassifier(
+                n_estimators=50,
+                max_depth=3,
+                learning_rate=0.1,
+                objective='multi:softprob',
+                num_class=3,
+                use_label_encoder=False,
+                eval_metric='mlogloss',
+                verbosity=0,
+                random_state=42
+            )
             self.model.fit(np.array(X), np.array(y))
             self.training_samples = len(X)
             self.ready = True
+            
             with open(ML_MODEL_PATH, 'wb') as f:
-                pickle.dump({'model': self.model, 'samples': self.training_samples}, f)
+                pickle.dump({
+                    'model': self.model,
+                    'samples': self.training_samples
+                }, f)
+            
             return True
-        except ImportError: return False
-        except Exception: return False
+            
+        except ImportError:
+            return False
+        except Exception:
+            return False
     
     def carregar(self):
         try:
@@ -672,13 +698,17 @@ class MLPredictor:
                     data = pickle.load(f)
                     self.model = data.get('model')
                     self.training_samples = data.get('samples', 0)
-                    self.ready = self.model is not None
-                return True
-        except: pass
+                    self.ready = (self.model is not None) and (self.training_samples > 0)
+                    if not self.ready and self.model is not None:
+                        st.warning("⚠️ Modelo ML carregado mas inválido (0 amostras). Será retreinado.")
+                return self.ready
+        except Exception as e:
+            st.error(f"Erro ao carregar ML: {e}")
         return False
     
     def prever(self, historico_duzias):
-        if not self.ready or len(historico_duzias) < 5: return None
+        if not self.ready or len(historico_duzias) < 5:
+            return None
         try:
             janela = list(historico_duzias)[-5:]
             features = []
@@ -700,7 +730,8 @@ class MLPredictor:
                 'confianca': round(float(probs[ranking[0]] - probs[ranking[1]]), 2),
                 'probabilidades': {1: round(float(probs[0]) * 100, 1), 2: round(float(probs[1]) * 100, 1), 3: round(float(probs[2]) * 100, 1)}
             }
-        except Exception: return None
+        except Exception:
+            return None
 
 # =============================
 # BOT UNIFICADO
@@ -747,17 +778,6 @@ class RoletaBotUnificado:
         if len(self.lucky) > 200: self.lucky = self.lucky[-200:]
     
     def gerar_entrada(self):
-        motores = {
-            'sniper_elite': True, 'repeticao': True, 'gap_curto': True, 'mineracao': True,
-            'duzia_dom': True, 'espelho': True, 'soma_cinco': True, 'ciclo_oito': True,
-            'alternancia_cor': True, 'setor_cilindro': True, 'zero_virada': True, 'primos': True,
-            'vizinhos_fisicos': True, 'faixa_numerica': True, 'numero_do_dia': True,
-            'confirmacao_lucky': True, 'pendulo': True, 'quente_frio': True,
-            'colunas_alternadas': True, 'lucky_setor': True, 'lucky_cascata': True,
-            'espelho_temporal': True, 'micro_ciclo3': True, 'lucky_imediato': True,
-            'lucky_recente_nao_saiu': True, 'espelho_lucky': True, 'orfaos_setor': True, 'zero_ciclo': True
-        }
-        
         resultados = []
         ests = [
             (self.lucky_imediato, 'Lucky Imediato', 4, [list(self.historico), self.lucky]),
@@ -801,13 +821,12 @@ class RoletaBotUnificado:
             for _ in range(peso): base.update(r['base'])
         
         lst = [n for n, _ in Counter(base).most_common(7)]
-        fm = sum(r['forca'] * p for _, r, p in resultados) / sum(p for _, _, p in resultados)
+        fm = sum(r['forca'] * p for _, r, p in resultados) / max(1, sum(p for _, _, p in resultados))
         
         return {
             'numeros_apostar': sorted(lst),
             'forca_real': min(95, max(30, int(fm))),
             'motor': resultados[0][0],
-            'estrategias_ativas': list(set(r.get('estrategias', [])[0] for _, r, _ in resultados))[:4],
             'gatilho': ' | '.join(r.get('gatilho', '') for _, r, _ in resultados[:2])
         }
 
@@ -886,20 +905,35 @@ class SistemaBot:
             enviar_resultado_auto(nr, acertou, nr in lucky)
             self.entrada_ativa = None
         
-        # Treina ML
-        if st.session_state.get('modo_ml', False) and not self.ml.ready:
-            if len(self.historico_numeros) >= st.session_state.get('giros_minimos_ml', 10):
-                self.ml.treinar([get_duzia(n) for n in self.historico_numeros], list(self.historico_numeros))
+        # FORÇA treino ML se necessário
+        if st.session_state.get('modo_ml', False):
+            giros_minimos = st.session_state.get('giros_minimos_ml', 10)
+            total_giros = len(self.historico_numeros)
+            
+            precisa_treinar = (not self.ml.ready) or (self.ml.training_samples == 0)
+            
+            if precisa_treinar and total_giros >= giros_minimos:
+                sucesso = self.ml.treinar(
+                    [get_duzia(n) for n in self.historico_numeros],
+                    list(self.historico_numeros)
+                )
+                if sucesso:
+                    st.toast(f"✅ ML treinado! {self.ml.training_samples} amostras")
+            
+            # Re-treino periódico
+            if self.ml.ready and total_giros % 30 == 0 and total_giros > 0:
+                self.ml.treinar(
+                    [get_duzia(n) for n in self.historico_numeros],
+                    list(self.historico_numeros)
+                )
         
         # GERA PREVISÃO
         duzia_map = {1: list(range(1, 13)), 2: list(range(13, 25)), 3: list(range(25, 37))}
         
-        # Tenta ML
         previsao_ml = None
         if st.session_state.get('modo_ml', False) and self.ml.ready:
             previsao_ml = self.ml.prever([get_duzia(n) for n in self.historico_numeros])
         
-        # Analisador de regras
         analise = self.analisador.analisar()
         
         if previsao_ml:
@@ -918,7 +952,6 @@ class SistemaBot:
             conf = 0
             modo = 'regras'
         
-        # Monta números
         if st.session_state.get('modo_agressivo', False):
             numeros = sorted(set(duzia_map.get(dz1, []) + duzia_map.get(dz2, [])))
         else:
@@ -932,10 +965,8 @@ class SistemaBot:
             'modo': modo
         }
         
-        # Registra sinal no gráfico
         self.sinais_grafico.append((len(self.historico_numeros) - 1, dz1))
         
-        # Envia previsão
         enviar_previsao_auto({
             'numeros_apostar': numeros,
             'forca_real': float(min(95, conf)),
@@ -1044,15 +1075,24 @@ with st.sidebar:
     if st.session_state.modo_ml:
         st.session_state.giros_minimos_ml = st.slider("Giros para treinar ML", 5, 30, st.session_state.giros_minimos_ml, 5)
         sis = st.session_state.sistema
-        if sis.ml.ready:
+        if sis.ml.ready and sis.ml.training_samples > 0:
             st.success(f"✅ ML treinado ({sis.ml.training_samples} amostras)")
         else:
             giros = len(sis.historico_numeros)
-            st.warning(f"⏳ {giros}/{st.session_state.giros_minimos_ml} giros")
+            st.warning(f"⏳ {giros}/{st.session_state.giros_minimos_ml} giros | ML não treinado")
             if giros >= st.session_state.giros_minimos_ml:
                 if st.button("🧠 FORÇAR TREINO ML", use_container_width=True, type="primary"):
-                    sis.ml.treinar([get_duzia(n) for n in sis.historico_numeros], list(sis.historico_numeros))
-                    st.rerun()
+                    with st.spinner("Treinando XGBoost..."):
+                        sucesso = sis.ml.treinar(
+                            [get_duzia(n) for n in sis.historico_numeros],
+                            list(sis.historico_numeros)
+                        )
+                        if sucesso:
+                            st.success(f"✅ ML treinado! {sis.ml.training_samples} amostras")
+                            salvar_sessao()
+                            st.rerun()
+                        else:
+                            st.error("❌ Erro! Execute: pip install xgboost scikit-learn")
     
     st.markdown("---")
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
