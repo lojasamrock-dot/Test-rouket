@@ -148,10 +148,6 @@ def get_duzia(numero):
 # 🧠 MACHINE LEARNING PREDICTOR (XGBoost)
 # =============================
 class MLPredictor:
-    """
-    Modelo de Machine Learning com XGBoost para previsão de dúzias.
-    Aprende com o histórico acumulado e se adapta ao mercado.
-    """
     def __init__(self):
         self.model = None
         self.feature_names = []
@@ -161,10 +157,8 @@ class MLPredictor:
         self.ready = False
     
     def extrair_features(self, historico_duzias, historico_numeros):
-        """Extrai features dos últimos giros para alimentar o modelo"""
         features = {}
         
-        # Frequências das dúzias nos últimos 5, 10, 15, 20 giros
         for w in [5, 10, 15, 20]:
             janela = historico_duzias[-w:] if len(historico_duzias) >= w else historico_duzias
             freq = Counter(janela)
@@ -172,7 +166,6 @@ class MLPredictor:
             for dz in [1, 2, 3]:
                 features[f'freq_dz{dz}_{w}g'] = freq.get(dz, 0) / total
         
-        # Streak atual
         if historico_duzias:
             last = historico_duzias[-1]
             count = 0
@@ -185,7 +178,6 @@ class MLPredictor:
             features['streak_count'] = 0
             features['streak_duzia'] = 0
         
-        # Dúzias nos últimos giros
         for i in range(1, 6):
             idx = -i
             if len(historico_duzias) >= abs(idx):
@@ -193,7 +185,6 @@ class MLPredictor:
             else:
                 features[f'duzia_t{i}'] = 0
         
-        # Ausência
         for dz in [1, 2, 3]:
             ausencia = 0
             for d in reversed(historico_duzias):
@@ -201,7 +192,6 @@ class MLPredictor:
                 ausencia += 1
             features[f'ausencia_dz{dz}'] = ausencia
         
-        # Terminais
         if historico_numeros:
             ultimos = historico_numeros[-10:]
             terms = [n % 10 for n in ultimos if n != 0]
@@ -213,7 +203,6 @@ class MLPredictor:
                     count = sum(1 for n in duzia_map[dz] if n % 10 == top_terminal)
                     features[f'terminal_dz{dz}'] = count
         
-        # Padrões
         u = historico_duzias[-3:] if len(historico_duzias) >= 3 else []
         features['padrao_aba'] = 1 if len(u)==3 and u[0]==u[2] and u[0]!=u[1] else 0
         features['padrao_abb'] = 1 if len(u)==3 and u[0]!=u[1] and u[1]==u[2] else 0
@@ -222,7 +211,6 @@ class MLPredictor:
         return features
     
     def treinar(self, historico_completo_duzias, historico_completo_numeros, giros_minimos=15):
-        """Treina o modelo com todo o histórico disponível"""
         if len(historico_completo_duzias) < giros_minimos:
             return False
         
@@ -238,7 +226,7 @@ class MLPredictor:
                 target = historico_completo_duzias[i]
                 if target != 0:
                     X_data.append(features)
-                    y_data.append(target - 1)  # 0=D1, 1=D2, 2=D3
+                    y_data.append(target - 1)
         
         if len(X_data) < 10:
             return False
@@ -281,7 +269,6 @@ class MLPredictor:
             return False
     
     def prever(self, historico_duzias, historico_numeros):
-        """Faz a previsão da próxima dúzia"""
         if not self.ready or self.model is None:
             return None
         
@@ -299,8 +286,8 @@ class MLPredictor:
             return {
                 'duzia': melhor_dz,
                 'duzia_secundaria': segunda_dz,
-                'confianca': confianca,
-                'probabilidades': {1: probs[0], 2: probs[1], 3: probs[2]},
+                'confianca': float(confianca),
+                'probabilidades': {1: float(probs[0]), 2: float(probs[1]), 3: float(probs[2])},
                 'entrar': confianca >= st.session_state.get('confianca_ml', 0.15)
             }
         except Exception as e:
@@ -335,7 +322,7 @@ class MLPredictor:
         return False
 
 # =============================
-# 🧠 DUZIA AI V4.3 (REGRA FIXA - MANTIDA)
+# 🧠 DUZIA AI V4.3 (REGRA FIXA)
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -642,7 +629,7 @@ class DuziaAI:
         return {"entrar":True,"duzia":d1,"duzia_secundaria":d2,"confianca":round(confianca,2),"score":score,"regime":regime,"detalhes":detalhes}
 
 # =============================
-# SISTEMA PRINCIPAL (COM MODO ML INTEGRADO)
+# SISTEMA PRINCIPAL
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -660,7 +647,6 @@ class SistemaBot:
         self.ml_entradas_count = 0
         self.ml_acertos = 0
         
-        # Tenta carregar modelo ML salvo
         if st.session_state.get('modo_ml', False):
             self.ml_predictor.carregar()
     
@@ -721,12 +707,11 @@ class SistemaBot:
             enviar_resultado_auto(nr, acerto_primaria or acerto_secundaria)
             self.entrada_ativa = None
         
-        # 🆕 TENTA TREINAR/ATUALIZAR ML AUTOMATICAMENTE
+        # Treinamento automático do ML
         if st.session_state.get('modo_ml', False):
             total_giros = len(self.historico_numeros)
             giros_minimos = st.session_state.get('giros_minimos_ml', 15)
             
-            # Primeiro treinamento: assim que atinge o mínimo de giros
             if total_giros >= giros_minimos and not self.ml_predictor.ready:
                 sucesso = self.ml_predictor.treinar(
                     list(self.duzia_ai.historico_completo),
@@ -736,7 +721,6 @@ class SistemaBot:
                 if sucesso:
                     st.toast(f"✅ IA treinada com {self.ml_predictor.training_samples} amostras!")
             
-            # Re-treinamento: a cada 30 giros após o primeiro treino
             elif total_giros >= giros_minimos + 30 and self.ml_predictor.ready and total_giros % 30 == 0:
                 self.ml_predictor.treinar(
                     list(self.duzia_ai.historico_completo),
@@ -744,11 +728,11 @@ class SistemaBot:
                     giros_minimos=giros_minimos
                 )
         
-        # GERA PREVISÃO
+        # Gera previsão
         confianca_minima = st.session_state.get('confianca_minima', 3.2)
         agressividade = st.session_state.get('agressividade', 2)
         
-        # 🆕 MODO MACHINE LEARNING
+        # Modo ML
         if st.session_state.get('modo_ml', False) and self.ml_predictor.ready:
             previsao_ml = self.ml_predictor.prever(
                 list(self.duzia_ai.historico),
@@ -766,7 +750,7 @@ class SistemaBot:
                     'numeros_apostar': numeros,
                     'duzia_prevista': previsao_ml['duzia'],
                     'duzia_sec_prevista': previsao_ml.get('duzia_secundaria'),
-                    'confianca': previsao_ml['confianca'] * 10,
+                    'confianca': float(previsao_ml['confianca'] * 10),
                     'regime': 'ML',
                     'score': {},
                     'detalhes': {previsao_ml['duzia']: [f"ML: {previsao_ml['confianca']:.1%}"]},
@@ -777,13 +761,13 @@ class SistemaBot:
                 
                 enviar_previsao_auto({
                     'numeros_apostar': numeros,
-                    'forca_real': min(95, previsao_ml['confianca']*100),
+                    'forca_real': float(min(95, previsao_ml['confianca']*100)),
                     'motor': f"🤖 ML D{previsao_ml['duzia']}",
                     'gatilho': f"ML Conf: {previsao_ml['confianca']:.1%}"
                 })
                 return
         
-        # MODO REGRAS FIXAS (FALLBACK/PADRÃO)
+        # Modo Regras
         previsao = self.duzia_ai.prever(confianca_minima=confianca_minima, agressividade=agressividade)
         
         if previsao['entrar']:
@@ -797,7 +781,7 @@ class SistemaBot:
                 'numeros_apostar': numeros,
                 'duzia_prevista': previsao['duzia'],
                 'duzia_sec_prevista': previsao.get('duzia_secundaria'),
-                'confianca': previsao.get('confianca', 0),
+                'confianca': float(previsao.get('confianca', 0)),
                 'regime': previsao.get('regime', 'NEUTRO'),
                 'score': previsao.get('score', {}),
                 'detalhes': previsao.get('detalhes', {}),
@@ -808,7 +792,7 @@ class SistemaBot:
             
             enviar_previsao_auto({
                 'numeros_apostar': numeros,
-                'forca_real': min(95, previsao.get('confianca', 0)*8),
+                'forca_real': float(min(95, previsao.get('confianca', 0)*8)),
                 'motor': f"DuziaAI D{previsao['duzia']}",
                 'gatilho': f"Regime: {previsao.get('regime','?')} | Conf: {previsao.get('confianca',0):.1f}"
             })
@@ -952,7 +936,6 @@ with st.sidebar:
             help="Quantos giros o ML precisa para começar a aprender"
         )
         
-        # Status do modelo
         sis = st.session_state.sistema
         if sis.ml_predictor.ready:
             st.success(f"✅ Modelo treinado com {sis.ml_predictor.training_samples} amostras")
@@ -964,7 +947,6 @@ with st.sidebar:
             if giros_atuais >= giros_minimos:
                 st.warning(f"⚠️ {giros_atuais} giros acumulados. O modelo deveria ter treinado!")
                 
-                # Botão de treinamento manual
                 if st.button("🧠 FORÇAR TREINAMENTO DA IA", use_container_width=True, type="primary"):
                     with st.spinner("Treinando XGBoost..."):
                         sucesso = sis.ml_predictor.treinar(
@@ -1102,17 +1084,20 @@ with col_entrada:
     st.subheader("🎰 Entrada Atual")
     if sis.entrada_ativa:
         ent = sis.entrada_ativa
-        confianca = ent.get('confianca',0)
-        dz_prev = ent.get('duzia_prevista',0)
+        confianca = ent.get('confianca', 0) or 0.0
+        dz_prev = ent.get('duzia_prevista', 0)
         dz_sec = ent.get('duzia_sec_prevista')
-        regime = ent.get('regime','NEUTRO')
-        nums = ent.get('numeros_apostar',[])
-        detalhes_ent = ent.get('detalhes',{})
-        modo_entrada = ent.get('modo','regras')
+        regime = ent.get('regime', 'NEUTRO')
+        nums = ent.get('numeros_apostar', [])
+        detalhes_ent = ent.get('detalhes', {})
+        modo_entrada = ent.get('modo', 'regras')
         
         cor = "#8A2BE2" if modo_entrada=='ml' else "#00CC00" if confianca>=5 else "#FFA500" if confianca>=3.5 else "#FF4444"
         emoji = "🤖" if modo_entrada=='ml' else "🎯"
-        limite = "1-12" if dz_prev==1 else "13-24" if dz_prev==2 else "25-36"
+        if dz_prev == 1: limite = "1-12"
+        elif dz_prev == 2: limite = "13-24"
+        elif dz_prev == 3: limite = "25-36"
+        else: limite = "?"
         
         st.markdown(f"""
         <div style="background-color:{cor}22; border:2px solid {cor}; border-radius:15px; padding:20px; margin:10px 0;">
@@ -1126,8 +1111,11 @@ with col_entrada:
             st.write("**🎲 Números:**")
             cols = st.columns(6)
             for i, n in enumerate(sorted(nums)): cols[i%6].button(str(n), key=f"num_{n}", use_container_width=True)
-        else: st.warning("Nenhum número disponível.")
-        st.progress(min(1.0, confianca/10.0))
+        else:
+            st.warning("Nenhum número disponível.")
+        
+        progresso = float(min(1.0, confianca / 10.0)) if confianca else 0.0
+        st.progress(progresso)
     else:
         st.info("🔍 Analisando padrões...")
         if len(sis.historico_numeros)>=5:
