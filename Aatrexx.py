@@ -81,33 +81,69 @@ def limpar_sessao():
         logging.error(f"Erro ao limpar sessão: {e}")
 
 # =============================
-# NOTIFICAÇÕES
+# NOTIFICAÇÕES (SIMPLIFICADAS)
 # =============================
 def enviar_previsao_auto(previsao):
     try:
         numeros = sorted(previsao.get('numeros_apostar', []))
-        forca = previsao.get('forca_real', 0)
-        motor = previsao.get('motor', '')
-        gatilho = previsao.get('gatilho', '')
         
-        emoji = "🔥" if forca >= 65 else "🎯" if forca >= 55 else "⚠️"
-        st.toast(f"{emoji} {motor} - {forca}%")
+        # Separar números por dúzia
+        duzia1_numeros = [n for n in numeros if 1 <= n <= 12]
+        duzia2_numeros = [n for n in numeros if 13 <= n <= 24]
+        duzia3_numeros = [n for n in numeros if 25 <= n <= 36]
         
+        # Determinar qual é a dúzia principal e qual é a secundária
+        if duzia1_numeros and duzia2_numeros:
+            # Cobertura D1 + D2
+            mensagem = "🎯 Entrada: D1 (1-12) | Cobertura: D2 (13-24)"
+            st.toast(mensagem)
+        elif duzia1_numeros and duzia3_numeros:
+            # Cobertura D1 + D3
+            mensagem = "🎯 Entrada: D1 (1-12) | Cobertura: D3 (25-36)"
+            st.toast(mensagem)
+        elif duzia2_numeros and duzia3_numeros:
+            # Cobertura D2 + D3
+            mensagem = "🎯 Entrada: D2 (13-24) | Cobertura: D3 (25-36)"
+            st.toast(mensagem)
+        elif duzia1_numeros:
+            # Apenas D1
+            mensagem = "🎯 Entrada: D1 (1-12)"
+            st.toast(mensagem)
+        elif duzia2_numeros:
+            # Apenas D2
+            mensagem = "🎯 Entrada: D2 (13-24)"
+            st.toast(mensagem)
+        elif duzia3_numeros:
+            # Apenas D3
+            mensagem = "🎯 Entrada: D3 (25-36)"
+            st.toast(mensagem)
+        else:
+            mensagem = f"🎯 Entrada: {numeros}"
+            st.toast(mensagem)
+        
+        # Enviar Telegram (mensagem simplificada)
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
-            enviar_telegram(f"🔔 F{forca}% | {motor}\n{gatilho}\n🔢 " + " ".join(map(str, numeros)))
+            enviar_telegram(f"🔔 {mensagem}\n🔢 " + " ".join(map(str, numeros)))
         
         salvar_sessao()
-    except:
-        pass
+    except Exception as e:
+        logging.error(f"Erro ao enviar previsão: {e}")
 
 def enviar_resultado_auto(numero_real, acerto, lucky=False):
     try:
-        st.toast(f"{'✅' if acerto else '❌'} {numero_real}" + (" 🍀" if lucky else ""))
+        duzia_real = get_duzia(numero_real)
+        mensagem = f"{'✅ ACERTO' if acerto else '❌ ERRO'} - Nº {numero_real} (D{duzia_real})"
+        if lucky:
+            mensagem += " 🍀"
+        
+        st.toast(mensagem)
+        
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
-            enviar_telegram(f"📢 {'✅' if acerto else '❌'} {numero_real}" + (" 🍀" if lucky else ""))
+            enviar_telegram(f"📢 {mensagem}")
+        
         salvar_sessao()
-    except:
-        pass
+    except Exception as e:
+        logging.error(f"Erro ao enviar resultado: {e}")
 
 def enviar_telegram(mensagem):
     try:
@@ -567,7 +603,7 @@ class DuziaAI:
         }
 
 # =============================
-# SISTEMA PRINCIPAL (sem alterações na estrutura, apenas novos detectores integrados)
+# SISTEMA PRINCIPAL
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -661,10 +697,7 @@ class SistemaBot:
             self.duzia_ai.sinais_entrada.append((idx_atual, previsao['duzia']))
             
             enviar_previsao_auto({
-                'numeros_apostar': numeros_apostar,
-                'forca_real': min(95, previsao.get('confianca', 0) * 8),
-                'motor': f"DuziaAI D{previsao['duzia']}",
-                'gatilho': f"Regime: {previsao.get('regime', '?')} | Conf: {previsao.get('confianca', 0):.1f}"
+                'numeros_apostar': numeros_apostar
             })
     
     def zerar(self):
@@ -684,11 +717,8 @@ class SistemaBot:
         salvar_sessao()
 
 # =============================
-# FUNÇÕES AUXILIARES E STREAMLIT (mantidas sem alterações estruturais)
+# FUNÇÕES AUXILIARES
 # =============================
-# ... (todo o restante do código da aplicação Streamlit permanece igual à versão anterior,
-#      apenas com a referência à versão V4.3)
-
 def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
     try:
         with open(caminho, "w") as f:
@@ -731,7 +761,7 @@ def exportar_historico(historico, formato='json'):
     return "\n".join(linhas)
 
 # =============================
-# APLICAÇÃO STREAMLIT (mantida a mesma estrutura visual)
+# APLICAÇÃO STREAMLIT
 # =============================
 st.set_page_config(page_title="🎰 DuziaAI V4.3 - Padrões Ocultos", layout="wide")
 st.title("🎰 DuziaAI V4.3 - Retorno A-B-A & Duas Dominantes")
@@ -792,7 +822,7 @@ if "telegram_token" not in st.session_state:
 if "telegram_chat_id" not in st.session_state:
     st.session_state.telegram_chat_id = ""
 
-# Sidebar (idêntica)
+# Sidebar
 with st.sidebar:
     st.markdown("## ⚙️ Configurações")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -808,7 +838,7 @@ with st.sidebar:
     c1.button("💾 Salvar", on_click=lambda: [salvar_resultado_em_arquivo(st.session_state.historico), salvar_sessao(), st.success("✅")], use_container_width=True)
     c2.button("🗑️ Zerar", on_click=lambda: st.session_state.sistema.zerar() or st.rerun(), use_container_width=True)
 
-# Conteúdo principal (idêntico)
+# Conteúdo principal
 st.subheader("🎲 Inserir Números")
 c1, c2, c3 = st.columns([3,1,1])
 with c1:
