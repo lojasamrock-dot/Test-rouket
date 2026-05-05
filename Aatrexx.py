@@ -424,6 +424,87 @@ class DuziaAI:
         
         return None
     
+    # 🆕🚨 DETECTOR DE QUEBRA DE STREAK (FADIGA)
+    def detectar_quebra_streak(self):
+        """
+        Detecta quando uma sequência longa tem alta probabilidade de quebrar.
+        Quanto maior o streak, maior a chance de ruptura.
+        Analisa para qual dúzia a quebra tende a ir.
+        """
+        if len(self.historico) < 5:
+            return None
+        
+        streak_count, streak_d = self.streak()
+        
+        # Só ativa com streak significativo (3+ repetições)
+        if streak_count < 3 or streak_d == 0:
+            return None
+        
+        # Calcula força de quebra baseada no tamanho do streak
+        # Streak 3 → 30% quebra | Streak 4 → 50% | Streak 5+ → 70%+
+        forca_quebra = min(8, 2 + (streak_count - 3) * 2)
+        
+        # Analisa histórico: para onde foi após streaks anteriores?
+        u = list(self.historico)
+        destinos_quebra = {1: 0, 2: 0, 3: 0}
+        count_streaks = 0
+        
+        i = 0
+        while i < len(u) - 1:
+            if u[i] != 0:
+                # Encontra um streak
+                dz_streak = u[i]
+                streak_len = 1
+                j = i + 1
+                while j < len(u) and u[j] == dz_streak:
+                    streak_len += 1
+                    j += 1
+                
+                # Se o streak terminou com quebra (não é zero)
+                if j < len(u) and u[j] != 0 and u[j] != dz_streak:
+                    if streak_len >= 2:  # Considera streaks de 2+
+                        destinos_quebra[u[j]] += streak_len  # Peso pelo tamanho
+                        count_streaks += 1
+                
+                i = j
+            else:
+                i += 1
+        
+        # Se temos dados históricos de quebras
+        if count_streaks >= 2:
+            # Encontra o destino mais comum após streaks
+            dz_destino = max(destinos_quebra, key=destinos_quebra.get)
+            if destinos_quebra[dz_destino] >= 3:
+                return dz_destino, forca_quebra + 2  # +2 por dados históricos
+        
+        # Se streak atual é da dúzia X, as outras duas são candidatas
+        # Análise: qual das outras está mais "quente"?
+        u_recente = list(self.historico)[-8:]
+        freq = Counter([d for d in u_recente if d != streak_d and d != 0])
+        
+        if freq:
+            dz_quente = freq.most_common(1)[0][0]
+            freq_count = freq[dz_quente]
+            
+            # Se a dúzia alternativa aparece consistentemente
+            if freq_count >= 3:
+                return dz_quente, forca_quebra + 1
+        
+        # Fallback: após streak, tendência é alternar para a menos frequente
+        # (para equilibrar distribuição)
+        freq_total = Counter([d for d in u if d != 0])
+        total_nao_streak = sum(freq_total.values()) - freq_total.get(streak_d, 0)
+        
+        if total_nao_streak > 0:
+            # Pega a dúzia com menor frequência (lei do equilíbrio)
+            candidatas = {d: freq_total.get(d, 0) for d in [1,2,3] if d != streak_d}
+            dz_menos_freq = min(candidatas, key=candidatas.get)
+            
+            if candidatas[dz_menos_freq] < freq_total.get(streak_d, 1) * 0.5:
+                return dz_menos_freq, forca_quebra
+        
+        return None
+    
     # Mantendo detectores originais
     def detectar_retorno_aba(self):
         """Padrão A, B, A → espera A"""
@@ -659,6 +740,20 @@ class DuziaAI:
             if dz != 0:
                 score[dz] += forca
                 detalhes[dz].append(f"Alternância: +{forca}")
+        
+        # 🆕🚨 QUEBRA DE STREAK (FADIGA)
+        quebra = self.detectar_quebra_streak()
+        if quebra:
+            dz, forca = quebra
+            if dz != 0:
+                score[dz] += forca
+                detalhes[dz].append(f"⚡ Quebra Streak: +{forca}")
+                
+                # 💡 Penaliza a dúzia que está em streak longo
+                # (já que estamos prevendo a quebra)
+                if streak_d and streak_d != 0:
+                    score[streak_d] -= forca * 0.5  # Reduz confiança na streak
+                    detalhes[streak_d].append(f"⚠️ Fadiga: -{forca*0.5:.1f}")
         
         # ============ DETECTORES ORIGINAIS ============
         
@@ -988,8 +1083,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V5.0 - Padrões Visuais", layout="wide")
-st.title("🎰 DuziaAI V5.0 - Zig-Zag, Domínios & Escadas")
+st.set_page_config(page_title="🎰 DuziaAI V5.0 - Quebra de Streak", layout="wide")
+st.title("🎰 DuziaAI V5.0 - Zig-Zag, Domínios, Escadas & Quebra de Streak")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1215,5 +1310,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V5.0 | Zig-Zag, Domínios, Escadas & Blocos | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V5.0 | Zig-Zag, Domínios, Escadas, Blocos & Quebra de Streak | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
