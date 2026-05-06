@@ -87,12 +87,10 @@ def enviar_previsao_auto(previsao):
     try:
         numeros = sorted(previsao.get('numeros_apostar', []))
         
-        # Separar números por dúzia
         duzia1_numeros = [n for n in numeros if 1 <= n <= 12]
         duzia2_numeros = [n for n in numeros if 13 <= n <= 24]
         duzia3_numeros = [n for n in numeros if 25 <= n <= 36]
         
-        # Determinar qual é a dúzia principal e qual é a secundária
         if duzia1_numeros and duzia2_numeros:
             mensagem = "🎯 Entrada: D1 (1-12) | Cobertura: D2 (13-24)"
             st.toast(mensagem)
@@ -169,7 +167,7 @@ def get_duzia(numero):
     else: return 3
 
 # =============================
-# 🧠 DUZIA AI V6.0 - ABORDAGEM UNIVERSAL DE ESTADOS
+# 🧠 DUZIA AI V6.0 - ABORDAGEM HÍBRIDA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -257,7 +255,7 @@ class DuziaAI:
                 count += 1
         return count
     
-    # ========== DETECTORES UNIVERSAIS (BASEADOS EM ESTADOS) ==========
+    # ========== DETECTORES UNIVERSAIS (70% PESO) ==========
     
     def detectar_quebra_estados(self):
         """
@@ -265,6 +263,7 @@ class DuziaAI:
         
         Identifica ESTADOS genéricos e prevê quebras,
         independente de quais dúzias estão envolvidas.
+        ESTE É O DETECTOR PRINCIPAL (70% de influência)
         """
         if len(self.historico) < 5:
             return None
@@ -296,10 +295,8 @@ class DuziaAI:
             outras = self._get_outras_duzias(streak_d)
             forca = min(8, 2 + (streak_count - 3) * 2)
             
-            # Analisa qual das outras é mais provável
             freq_outras = {d: freq.get(d, 0) for d in outras}
             
-            # Histórico de quebras
             destinos_hist = {d: 0 for d in outras}
             for i in range(len(u) - 1):
                 if u[i] == streak_d:
@@ -500,7 +497,6 @@ class DuziaAI:
             return None
         u = list(self.historico)[-6:]
         
-        # Encontra o par mais frequente
         pares = {}
         for i in range(1, len(u)):
             if u[i-1] != u[i] and u[i-1] != 0 and u[i] != 0:
@@ -565,6 +561,74 @@ class DuziaAI:
         best = max(score, key=score.get)
         if score[best] >= 3:
             return best, score[best]
+        return None
+    
+    # ========== DETECTORES ESPECÍFICOS (30% PESO) ==========
+    
+    def detectar_zigzag_d1_d2(self):
+        """
+        🔷 ESPECÍFICO: Padrão visual Zig-Zag entre D1 e D2
+        D1 e D2 são adjacentes no gráfico, criando padrão visual único
+        """
+        if len(self.historico) < 6:
+            return None
+        
+        u = list(self.historico)[-6:]
+        alternancias = 0
+        for i in range(len(u)-1):
+            if (u[i] == 1 and u[i+1] == 2) or (u[i] == 2 and u[i+1] == 1):
+                alternancias += 1
+        
+        if alternancias >= 4:
+            ultima = u[-1]
+            proxima = 2 if ultima == 1 else 1
+            return proxima, 7
+        
+        if len(u) >= 4:
+            u4 = u[-4:]
+            alt4 = sum(1 for i in range(len(u4)-1) if (u4[i] == 1 and u4[i+1] == 2) or (u4[i] == 2 and u4[i+1] == 1))
+            if alt4 >= 3:
+                ultima = u4[-1]
+                proxima = 2 if ultima == 1 else 1
+                return proxima, 5
+        
+        return None
+    
+    def detectar_bloco_d3(self):
+        """
+        🔷 ESPECÍFICO: Bloco de D3
+        D3 (25-36) tem comportamento único como quebradora de padrões
+        """
+        if len(self.historico) < 5:
+            return None
+        u = list(self.historico)[-5:]
+        d3_count = u[-4:].count(3)
+        if d3_count >= 2:
+            return 3, 5
+        if u[-1] == 3 and d3_count >= 1:
+            return 3, 3
+        return None
+    
+    def detectar_pos_zero_melhorado(self):
+        """
+        🔷 ESPECÍFICO: Pós-Zero com contexto
+        Zero é evento especial que zera todas as apostas
+        """
+        if len(self.historico) < 4:
+            return None
+        
+        u = list(self.historico)[-4:]
+        
+        for offset in [1, 2]:
+            if len(u) > offset and u[-(offset+1)] == 0:
+                if len(u) > offset + 1:
+                    dz_anterior = u[-(offset+2)]
+                    if dz_anterior != 0:
+                        if u[-1] != 0 and u[-1] != dz_anterior:
+                            return dz_anterior, 6
+                        elif u[-1] == dz_anterior:
+                            return dz_anterior, 4
+        
         return None
     
     def detectar_regime(self):
@@ -632,34 +696,33 @@ class DuziaAI:
                     if p > 40:
                         score[d] += (p - 30) / 8
         
-        # ============ DETECTORES UNIVERSAIS ============
+        # =============================================
+        # DETECTORES UNIVERSAIS (70% de influência)
+        # =============================================
         
-        # 🆕 QUEBRA DE ESTADOS (V6.0 - Principal)
+        # 🆕 QUEBRA DE ESTADOS (Principal - 70%)
         quebra_estados = self.detectar_quebra_estados()
         if quebra_estados:
             dz = quebra_estados['quebra_prevista']
-            forca = quebra_estados['forca']
+            forca = quebra_estados['forca'] * 1.4  # ⬆️ Multiplicador 1.4 (70%)
             estado = quebra_estados['estado_atual']
             envolvidas = quebra_estados['duzias_envolvidas']
             
             if dz == 0:
-                # Zero previsto: penaliza todas as dúzias
                 for d in score:
                     penalidade = forca * 0.3
                     score[d] -= penalidade
                     detalhes[d].append(f"⚠️ Risco Zero ({estado}): -{penalidade:.1f}")
             elif dz != 0:
                 score[dz] += forca
-                detalhes[dz].append(f"⚡ Quebra Estado ({estado}): +{forca}")
-                
-                # Penaliza dúzias do padrão antigo
+                detalhes[dz].append(f"⚡ Quebra Estado ({estado}): +{forca:.1f}")
                 for d in envolvidas:
                     if d != dz and d in score and d != 0:
                         penalidade = forca * 0.4
                         score[d] -= penalidade
                         detalhes[d].append(f"⚠️ Fim Padrão: -{penalidade:.1f}")
         
-        # Repetição Imediata
+        # Repetição Imediata (Genérico)
         rep = self.detectar_repeticao_imediata()
         if rep:
             dz, forca = rep
@@ -667,7 +730,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Repetição: +{forca}")
         
-        # Streak Longo
+        # Streak Longo (Genérico)
         sl = self.detectar_streak_longo()
         if sl:
             dz, forca = sl
@@ -675,7 +738,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Streak Longo: +{forca}")
         
-        # Pós-Zero
+        # Pós-Zero (Genérico)
         pz = self.detectar_pos_zero()
         if pz:
             dz, forca = pz
@@ -683,7 +746,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Pós-Zero: +{forca}")
         
-        # Vai e Volta
+        # Vai e Volta (Genérico)
         vv = self.detectar_vai_e_volta()
         if vv:
             dz, forca = vv
@@ -691,7 +754,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Vai-e-Volta: +{forca}")
         
-        # Retorno A-B-A
+        # Retorno A-B-A (Genérico)
         aba = self.detectar_retorno_aba()
         if aba:
             dz, forca = aba
@@ -699,7 +762,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Retorno ABA: +{forca}")
         
-        # Duas Dominantes
+        # Duas Dominantes (Genérico)
         duas = self.detectar_duas_dominantes()
         if duas:
             dominantes, forca = duas
@@ -712,7 +775,7 @@ class DuziaAI:
                 score[dz] -= 2
                 detalhes[dz].append(f"Desfavorecida: -2")
         
-        # Progressão (degrau)
+        # Progressão (Genérico)
         prog = self.detectar_progressao()
         if prog:
             dz, forca = prog
@@ -720,7 +783,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Progressão: +{forca}")
         
-        # Troca entre Duas Dúzias (genérico)
+        # Troca entre Duas Dúzias (Genérico)
         troca = self.detectar_troca_entre_duas()
         if troca:
             dz, forca = troca
@@ -728,13 +791,48 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Troca Duas: +{forca}")
         
-        # Bloco Dominante (genérico)
+        # Bloco Dominante (Genérico)
         bloco = self.detectar_bloco_dominante()
         if bloco:
             dz, forca = bloco
             if dz != 0:
                 score[dz] += forca
                 detalhes[dz].append(f"Bloco Dominante: +{forca}")
+        
+        # =============================================
+        # DETECTORES ESPECÍFICOS (30% de influência)
+        # =============================================
+        
+        # 🔷 Zig-Zag D1↔D2 (Específico - Padrão Visual Real)
+        zigzag = self.detectar_zigzag_d1_d2()
+        if zigzag:
+            dz, forca = zigzag
+            if dz != 0:
+                peso = forca * 0.6  # ⬇️ Multiplicador 0.6 (30%)
+                score[dz] += peso
+                detalhes[dz].append(f"🔷 Zig-Zag D1↔D2: +{peso:.1f}")
+        
+        # 🔷 Bloco D3 (Específico - Comportamento Único)
+        bloco_d3 = self.detectar_bloco_d3()
+        if bloco_d3:
+            dz, forca = bloco_d3
+            if dz != 0:
+                peso = forca * 0.6  # ⬇️ Multiplicador 0.6 (30%)
+                score[dz] += peso
+                detalhes[dz].append(f"🔷 Bloco D3: +{peso:.1f}")
+        
+        # 🔷 Pós-Zero Melhorado (Específico - Evento Especial)
+        pos_zero_m = self.detectar_pos_zero_melhorado()
+        if pos_zero_m:
+            dz, forca = pos_zero_m
+            if dz != 0:
+                peso = forca * 0.6  # ⬇️ Multiplicador 0.6 (30%)
+                score[dz] += peso
+                detalhes[dz].append(f"🔷 Pós-Zero+: +{peso:.1f}")
+        
+        # =============================================
+        # OUTROS DETECTORES
+        # =============================================
         
         # Ciclos
         ciclo = self.detectar_ciclos()
@@ -989,8 +1087,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.0 - Estados Universais", layout="wide")
-st.title("🎰 DuziaAI V6.0 - Estados Universais (Qualquer Dúzia)")
+st.set_page_config(page_title="🎰 DuziaAI V6.0 - Híbrido", layout="wide")
+st.title("🎰 DuziaAI V6.0 - Híbrido (70% Universal + 30% Específico)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1056,6 +1154,12 @@ with st.sidebar:
     st.session_state.agressividade = st.select_slider("🎚️ Agressividade", options=[1,2,3], value=st.session_state.agressividade)
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
+    st.markdown("---")
+    st.markdown("### 📊 Distribuição de Pesos")
+    st.caption("⚡ Quebra Estados: 70%")
+    st.caption("🔷 Zig-Zag D1↔D2: 30%")
+    st.caption("🔷 Bloco D3: 30%")
+    st.caption("🔷 Pós-Zero+: 30%")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -1216,5 +1320,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.0 | Estados Universais (Streak, Alternância, Caos, Quebra) | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.0 Híbrido | 70% Universal + 30% Específico | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
