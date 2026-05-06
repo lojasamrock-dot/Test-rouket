@@ -167,7 +167,7 @@ def get_duzia(numero):
     else: return 3
 
 # =============================
-# 🧠 DUZIA AI V6.0 - ABORDAGEM HÍBRIDA
+# 🧠 DUZIA AI V6.1 - HÍBRIDO COM INÉRCIA ADAPTATIVA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -175,6 +175,7 @@ class DuziaAI:
         self.historico_completo = []
         self.numeros_completos = []
         self.sinais_entrada = []
+        self.ultimas_previsoes = []  # 🆕 Histórico de previsões para anti-viés
     
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -185,6 +186,12 @@ class DuziaAI:
             self.historico_completo = self.historico_completo[-200:]
         if len(self.numeros_completos) > 200:
             self.numeros_completos = self.numeros_completos[-200:]
+    
+    def registrar_previsao(self, duzia):
+        """🆕 Registra a dúzia prevista para detectar viés"""
+        self.ultimas_previsoes.append(duzia)
+        if len(self.ultimas_previsoes) > 10:
+            self.ultimas_previsoes = self.ultimas_previsoes[-10:]
     
     # ========== FUNÇÕES AUXILIARES GENÉRICAS ==========
     
@@ -259,7 +266,7 @@ class DuziaAI:
     
     def detectar_quebra_estados(self):
         """
-        🆕 DETECTOR UNIVERSAL DE QUEBRA DE PADRÕES (V6.0)
+        🆕 DETECTOR UNIVERSAL DE QUEBRA DE PADRÕES (V6.1)
         
         Identifica ESTADOS genéricos e prevê quebras,
         independente de quais dúzias estão envolvidas.
@@ -631,6 +638,42 @@ class DuziaAI:
         
         return None
     
+    # 🆕 DETECTOR DE MUDANÇA ABRUPTA (ANTI-VIÉS)
+    def detectar_mudanca_abrupta(self):
+        """
+        🆕 Detecta quando o mercado mudou completamente nas últimas jogadas
+        Compara janela antiga vs janela recente
+        """
+        if len(self.historico) < 8:
+            return None
+        
+        u = list(self.historico)
+        
+        # Divide em duas janelas: antiga (8-4) e recente (4-0)
+        janela_antiga = u[-8:-4]
+        janela_recente = u[-4:]
+        
+        freq_antiga = Counter([d for d in janela_antiga if d != 0])
+        freq_recente = Counter([d for d in janela_recente if d != 0])
+        
+        if not freq_antiga or not freq_recente:
+            return None
+        
+        # Encontra a dúzia dominante em cada janela
+        dom_antiga = freq_antiga.most_common(1)[0]
+        dom_recente = freq_recente.most_common(1)[0]
+        
+        # Se a dúzia dominante MUDOU completamente
+        if dom_antiga[0] != dom_recente[0]:
+            # A nova dominante tem pelo menos 2 ocorrências
+            if dom_recente[1] >= 2:
+                # Força baseada na diferença de frequência
+                diff = dom_recente[1] - dom_antiga[1]
+                forca = min(8, 4 + abs(diff))
+                return dom_recente[0], forca, dom_antiga[0]
+        
+        return None
+    
     def detectar_regime(self):
         """Classifica o regime atual do jogo"""
         freq = self.frequencia()
@@ -721,6 +764,18 @@ class DuziaAI:
                         penalidade = forca * 0.4
                         score[d] -= penalidade
                         detalhes[d].append(f"⚠️ Fim Padrão: -{penalidade:.1f}")
+        
+        # 🆕 MUDANÇA ABRUPTA (Anti-Viés)
+        mudanca = self.detectar_mudanca_abrupta()
+        if mudanca:
+            dz_nova, forca, dz_antiga = mudanca
+            if dz_nova != 0:
+                score[dz_nova] += forca * 1.2
+                detalhes[dz_nova].append(f"🔄 Mudança Abrupta: +{forca*1.2:.1f}")
+                # Penaliza a antiga dominante
+                if dz_antiga in score:
+                    score[dz_antiga] -= forca * 1.5
+                    detalhes[dz_antiga].append(f"⚠️ Perdeu Domínio: -{forca*1.5:.1f}")
         
         # Repetição Imediata (Genérico)
         rep = self.detectar_repeticao_imediata()
@@ -829,6 +884,49 @@ class DuziaAI:
                 peso = forca * 0.6  # ⬇️ Multiplicador 0.6 (30%)
                 score[dz] += peso
                 detalhes[dz].append(f"🔷 Pós-Zero+: +{peso:.1f}")
+        
+        # =============================================
+        # 🆕 FATOR DE INÉRCIA ADAPTATIVO (ANTI-VIÉS)
+        # =============================================
+        
+        # Verifica se há detectores de quebra ativos
+        tem_quebra = False
+        for dz in detalhes:
+            for det in detalhes[dz]:
+                if 'Quebra Estado' in det or 'Fim Padrão' in det or 'Mudança Abrupta' in det or 'Perdeu Domínio' in det:
+                    tem_quebra = True
+                    break
+        
+        # Se há sinal de quebra, reduz o viés da frequência histórica
+        if tem_quebra:
+            streak_count, streak_d = self.streak()
+            
+            if streak_d and streak_d != 0:
+                # Reduz o peso da dúzia em streak
+                fator_reducao = 0.3 + (streak_count * 0.1)
+                fator_reducao = min(0.7, fator_reducao)
+                
+                score[streak_d] *= (1 - fator_reducao)
+                detalhes[streak_d].append(f"🔄 Inércia Adaptativa: -{fator_reducao*100:.0f}%")
+        
+        # 🆕 Verifica viés de previsão (mesma dúzia prevista muitas vezes)
+        if len(self.ultimas_previsoes) >= 3:
+            ultimas_5 = self.ultimas_previsoes[-5:]
+            if len(set(ultimas_5)) == 1 and len(ultimas_5) >= 3:
+                dz_viciada = ultimas_5[0]
+                # Penaliza fortemente a dúzia viciada
+                fator_penalizacao = 0.4 + (len(ultimas_5) - 3) * 0.15
+                fator_penalizacao = min(0.85, fator_penalizacao)
+                
+                score[dz_viciada] *= (1 - fator_penalizacao)
+                detalhes[dz_viciada].append(f"⚠️ Anti-Viés Previsão: -{fator_penalizacao*100:.0f}%")
+                
+                # Favorece as outras
+                outras = self._get_outras_duzias(dz_viciada)
+                for d in outras:
+                    bonus = 1 + (fator_penalizacao * 0.5)
+                    score[d] *= bonus
+                    detalhes[d].append(f"🔄 Anti-Viés: +{(bonus-1)*100:.0f}%")
         
         # =============================================
         # OUTROS DETECTORES
@@ -1016,6 +1114,9 @@ class SistemaBot:
                 'detalhes': previsao.get('detalhes', {})
             }
             
+            # 🆕 Registra a previsão para anti-viés
+            self.duzia_ai.registrar_previsao(previsao['duzia'])
+            
             idx_atual = len(self.historico_numeros) - 1
             self.sinais_grafico.append((idx_atual, previsao['duzia']))
             self.duzia_ai.sinais_entrada.append((idx_atual, previsao['duzia']))
@@ -1087,8 +1188,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.0 - Híbrido", layout="wide")
-st.title("🎰 DuziaAI V6.0 - Híbrido (70% Universal + 30% Específico)")
+st.set_page_config(page_title="🎰 DuziaAI V6.1 - Anti-Viés", layout="wide")
+st.title("🎰 DuziaAI V6.1 - Híbrido com Inércia Adaptativa")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1157,9 +1258,12 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📊 Distribuição de Pesos")
     st.caption("⚡ Quebra Estados: 70%")
+    st.caption("🔄 Mudança Abrupta: Anti-Viés")
     st.caption("🔷 Zig-Zag D1↔D2: 30%")
     st.caption("🔷 Bloco D3: 30%")
     st.caption("🔷 Pós-Zero+: 30%")
+    st.caption("🛡️ Inércia Adaptativa: Ativa")
+    st.caption("⚠️ Anti-Viés Previsão: Ativo")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -1320,5 +1424,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.0 Híbrido | 70% Universal + 30% Específico | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.1 | Híbrido + Inércia Adaptativa + Anti-Viés | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
