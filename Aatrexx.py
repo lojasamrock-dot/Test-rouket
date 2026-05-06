@@ -167,7 +167,7 @@ def get_duzia(numero):
     else: return 3
 
 # =============================
-# 🧠 DUZIA AI V6.6 - ESTABILIZADOR ANTI-PING-PONG + ZERO REFORÇADO
+# 🧠 DUZIA AI V6.7 - ESTABILIZADOR CONDICIONAL (BASE V6.4)
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -177,8 +177,7 @@ class DuziaAI:
         self.sinais_entrada = []
         self.ultimas_previsoes = []
         self.ultimos_resultados = []
-        self.contador_ping_pong = 0  # 🆕 Contador de ping-pong
-        self.ultima_previsao_estavel = None  # 🆕 Previsão estável
+        self.contador_ping_pong = 0
     
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -196,10 +195,9 @@ class DuziaAI:
         if len(self.ultimas_previsoes) > 10:
             self.ultimas_previsoes = self.ultimas_previsoes[-10:]
         
-        # 🆕 Detecta ping-pong (alternância de previsões)
+        # Detecta ping-pong (alternância de previsões)
         if len(self.ultimas_previsoes) >= 4:
             ultimas_4 = self.ultimas_previsoes[-4:]
-            # Verifica padrão A, B, A, B
             if ultimas_4[0] == ultimas_4[2] and ultimas_4[1] == ultimas_4[3] and ultimas_4[0] != ultimas_4[1]:
                 self.contador_ping_pong += 1
             else:
@@ -382,7 +380,7 @@ class DuziaAI:
                         resultado['duzias_envolvidas'] = [dz1, dz2, terceira]
                         return resultado
         
-        # ESTADO 3: CAOS → ZERO
+        # ESTADO 3: CAOS → ZERO (reforçado)
         if len(duzias_ativas) == 3:
             alternancias_total = sum(alternancias.values())
             freq_equilibrada = all(
@@ -390,10 +388,9 @@ class DuziaAI:
                 for d in freq if d != 0
             )
             
-            # 🆕 Zero reforçado: ativa mais fácil
-            if alternancias_total >= 3 and freq_equilibrada:  # ⬇️ Reduzido de 5 para 3
+            if alternancias_total >= 3 and freq_equilibrada:
                 resultado['quebra_prevista'] = 0
-                resultado['forca'] = 6  # ⬆️ Aumentado de 5 para 6
+                resultado['forca'] = 6
                 resultado['estado_atual'] = 'CAOS_ZERO'
                 resultado['duzias_envolvidas'] = duzias_ativas
                 return resultado
@@ -435,9 +432,8 @@ class DuziaAI:
                     resultado['duzias_envolvidas'] = [antes[-1] if antes else 0, depois[-1]]
                     return resultado
         
-        # 🆕 ESTADO 6: ZERO RECORRENTE (zero apareceu recentemente)
+        # ESTADO 6: ZERO RECORRENTE
         if u[-6:].count(0) >= 1 and len(u) >= 6:
-            # Se zero apareceu nos últimos 6 giros, chance de outro zero
             alt_recentes = sum(1 for i in range(len(u[-4:])-1) if u[-4:][i] != u[-4:][i+1] and u[-4:][i] != 0 and u[-4:][i+1] != 0)
             if alt_recentes >= 2:
                 resultado['quebra_prevista'] = 0
@@ -770,20 +766,26 @@ class DuziaAI:
                         score[d] += (p - 30) / 8
         
         # =============================================
-        # 🆕 ESTABILIZADOR ANTI-PING-PONG
+        # 🆕 ESTABILIZADOR CONDICIONAL (V6.7)
         # =============================================
         if self.contador_ping_pong >= 2:
-            # Sistema está em ping-pong: força MANTER a previsão atual
-            if len(self.ultimas_previsoes) >= 1:
+            if len(self.ultimos_resultados) >= 2 and len(self.ultimas_previsoes) >= 1:
+                ultimos_2_acerto = [r['acertou'] for r in self.ultimos_resultados[-2:]]
                 previsao_atual = self.ultimas_previsoes[-1]
-                score[previsao_atual] *= 1.5
-                detalhes[previsao_atual].append(f"🔒 Estabilizador Ping-Pong: +50%")
                 
-                # Penaliza troca de previsão
-                outras = self._get_outras_duzias(previsao_atual)
-                for d in outras:
-                    score[d] *= 0.7
-                    detalhes[d].append(f"⚠️ Anti-Ping-Pong: -30%")
+                # SÓ estabiliza se estiver acertando
+                if ultimos_2_acerto.count(True) >= 1:
+                    score[previsao_atual] *= 1.3
+                    detalhes[previsao_atual].append(f"🔒 Estabilizador (Acertando): +30%")
+                else:
+                    # Se está errando, força mudança
+                    score[previsao_atual] *= 0.5
+                    detalhes[previsao_atual].append(f"⚠️ Anti-Estabilizador (Errando): -50%")
+                    
+                    outras = self._get_outras_duzias(previsao_atual)
+                    for d in outras:
+                        score[d] *= 1.5
+                        detalhes[d].append(f"🔄 Força Mudança: +50%")
         
         # =============================================
         # SEQUÊNCIA DE DERROTAS (TRIPLO GATILHO)
@@ -840,9 +842,8 @@ class DuziaAI:
             envolvidas = quebra_estados['duzias_envolvidas']
             
             if dz == 0:
-                # 🆕 Zero reforçado: penalidade maior
                 for d in score:
-                    penalidade = forca * 0.5  # ⬆️ 0.3 → 0.5
+                    penalidade = forca * 0.5
                     score[d] -= penalidade
                     detalhes[d].append(f"⚠️ Risco Zero ({estado}): -{penalidade:.1f}")
             elif dz != 0:
@@ -1291,8 +1292,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.6 - Estabilizador + Zero", layout="wide")
-st.title("🎰 DuziaAI V6.6 - Anti-Ping-Pong + Zero Reforçado")
+st.set_page_config(page_title="🎰 DuziaAI V6.7 - Estabilizador Condicional", layout="wide")
+st.title("🎰 DuziaAI V6.7 - Estabilizador Condicional (Base V6.4)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1359,10 +1360,11 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.6 - Estabilizador + Zero")
-    st.caption("🔒 Estabilizador Anti-Ping-Pong")
-    st.caption("0️⃣ Zero Reforçado (CAOS_ZERO + ZERO_RECORRENTE)")
+    st.markdown("### 📊 V6.7 - Estabilizador Condicional")
+    st.caption("🔒 Estabilizador: SÓ quando acertando")
+    st.caption("⚠️ Anti-Estabilizador: Força mudança quando errando")
     st.caption("🚨 Triplo Gatilho (A/B/C)")
+    st.caption("0️⃣ Zero Reforçado")
     st.caption("⚡ Quebra Estados: 70%")
     st.caption("👻 Terceira Dúzia Intrusa: Ativo")
     st.markdown("---")
@@ -1525,5 +1527,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.6 | Estabilizador Anti-Ping-Pong + Zero Reforçado | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.7 | Estabilizador Condicional + Triplo Gatilho + Zero | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
