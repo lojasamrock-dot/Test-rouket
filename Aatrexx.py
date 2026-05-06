@@ -167,7 +167,7 @@ def get_duzia(numero):
     else: return 3
 
 # =============================
-# 🧠 DUZIA AI V6.4 - HÍBRIDO COM MUDANÇA IMEDIATA
+# 🧠 DUZIA AI V6.3 - HÍBRIDO COM DETECTOR DE TERCEIRA DÚZIA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -277,7 +277,7 @@ class DuziaAI:
     
     def detectar_quebra_estados(self):
         """
-        DETECTOR UNIVERSAL DE QUEBRA DE PADRÕES (V6.4)
+        DETECTOR UNIVERSAL DE QUEBRA DE PADRÕES (V6.3)
         
         Identifica ESTADOS genéricos e prevê quebras,
         independente de quais dúzias estão envolvidas.
@@ -434,6 +434,7 @@ class DuziaAI:
         
         return None
     
+    # 🆕 DETECTOR DE TERCEIRA DÚZIA INTRUSA (FUNCIONA NOS DOIS MODOS)
     def detectar_terceira_duzia_intrusa(self):
         """
         Detecta quando duas dúzias dominam mas a terceira está prestes a aparecer.
@@ -448,6 +449,7 @@ class DuziaAI:
         if len(freq) < 2:
             return None
         
+        # Identifica as duas dúzias dominantes
         ranking = freq.most_common()
         if len(ranking) < 2:
             return None
@@ -455,28 +457,34 @@ class DuziaAI:
         dz1, count1 = ranking[0]
         dz2, count2 = ranking[1]
         
+        # A terceira dúzia (a que está fora)
         terceira = self._get_terceira_duzia(dz1, dz2)
         if terceira is None:
             return None
         
         count_terceira = freq.get(terceira, 0)
+        total = sum(freq.values())
         
         # Condição 1: Duas dúzias ocupam 80%+ do mercado
         if (count1 + count2) >= 7 and count_terceira <= 1:
+            # Força baseada na ausência
             forca = 3 + (8 - count_terceira) * 0.7
             forca = min(8, forca)
             
+            # Verifica se a terceira está COMPLETAMENTE ausente
             if count_terceira == 0:
-                forca += 2
+                forca += 2  # Efeito surpresa maior
             
+            # Verifica se as dominantes estão alternando muito (saturação)
             alt_d12 = self._contar_alternancias_entre(u, dz1, dz2)
             if alt_d12 >= 4:
-                forca += 1.5
+                forca += 1.5  # Padrão cansado
             
             return terceira, forca, dz1, dz2
         
         # Condição 2: Terceira apareceu 1x e está voltando
         if count_terceira == 1 and (count1 + count2) >= 6:
+            # Verifica se a terceira foi recente (últimos 4 giros)
             if terceira in u[-4:]:
                 forca = 4
                 return terceira, forca, dz1, dz2
@@ -812,14 +820,16 @@ class DuziaAI:
                         score[d] -= penalidade
                         detalhes[d].append(f"⚠️ Fim Padrão: -{penalidade:.1f}")
         
-        # TERCEIRA DÚZIA INTRUSA (Funciona nos dois modos)
+        # 🆕 TERCEIRA DÚZIA INTRUSA (Funciona nos dois modos)
         intrusa = self.detectar_terceira_duzia_intrusa()
         if intrusa:
             dz_terceira, forca_intrusa, dz_dom1, dz_dom2 = intrusa
             if dz_terceira != 0:
+                # Adiciona força significativa para a terceira dúzia
                 score[dz_terceira] += forca_intrusa * 1.3
                 detalhes[dz_terceira].append(f"👻 Dúzia Intrusa: +{forca_intrusa*1.3:.1f}")
                 
+                # Penaliza as duas dominantes
                 for d in [dz_dom1, dz_dom2]:
                     if d in score:
                         score[d] -= forca_intrusa * 0.5
@@ -945,39 +955,18 @@ class DuziaAI:
                 detalhes[dz].append(f"🔷 Pós-Zero+: +{peso:.1f}")
         
         # =============================================
-        # 🆕 SEQUÊNCIA DE DERROTAS (MUDANÇA IMEDIATA)
-        # =============================================
-        
-        if len(self.ultimos_resultados) >= 3:
-            ultimos_3_real = [r['duzia'] for r in self.ultimos_resultados[-3:]]
-            ultimos_3_acerto = [r['acertou'] for r in self.ultimos_resultados[-3:]]
-            
-            # Se a mesma dúzia real apareceu 3x e erramos 2+
-            if len(set(ultimos_3_real)) == 1 and ultimos_3_acerto.count(False) >= 2:
-                dz_real = ultimos_3_real[0]
-                if dz_real != 0:
-                    # Força a mudança IMEDIATA para a dúzia que está aparecendo
-                    score[dz_real] += 12
-                    detalhes[dz_real].append(f"🚨 Sequência Derrotas: +12 (Mudança Imediata)")
-                    
-                    # Penaliza TODAS as outras
-                    outras = self._get_outras_duzias(dz_real)
-                    for d in outras:
-                        score[d] *= 0.2
-                        detalhes[d].append(f"⚠️ Bloqueio Total: -80%")
-        
-        # =============================================
-        # FATOR DE INÉRCIA ADAPTATIVO (ANTI-VIÉS V6.4)
+        # FATOR DE INÉRCIA ADAPTATIVO (ANTI-VIÉS V6.3)
         # =============================================
         
         # Verifica se há detectores de quebra ativos
         tem_quebra = False
         for dz in detalhes:
             for det in detalhes[dz]:
-                if 'Quebra Estado' in det or 'Fim Padrão' in det or 'Mudança Abrupta' in det or 'Perdeu Domínio' in det or 'Dúzia Intrusa' in det or 'Sequência Derrotas' in det:
+                if 'Quebra Estado' in det or 'Fim Padrão' in det or 'Mudança Abrupta' in det or 'Perdeu Domínio' in det or 'Dúzia Intrusa' in det:
                     tem_quebra = True
                     break
         
+        # Se há sinal de quebra, reduz o viés da frequência histórica
         if tem_quebra:
             streak_count, streak_d = self.streak()
             
@@ -1272,8 +1261,8 @@ def exportar_historico(historico, formato='json'):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.4 - Mudança Imediata", layout="wide")
-st.title("🎰 DuziaAI V6.4 - Híbrido + Sequência de Derrotas")
+st.set_page_config(page_title="🎰 DuziaAI V6.3 - Detector Terceira Dúzia", layout="wide")
+st.title("🎰 DuziaAI V6.3 - Híbrido + Terceira Dúzia Intrusa")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1340,17 +1329,16 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.4 - Mudança Imediata")
+    st.markdown("### 📊 V6.3 - Detector Terceira Dúzia")
     st.caption("⚡ Quebra Estados: 70%")
-    st.caption("👻 Terceira Dúzia Intrusa: Ativo")
-    st.caption("🚨 Sequência Derrotas: NOVO")
+    st.caption("👻 Terceira Dúzia Intrusa: NOVO")
     st.caption("🔄 Mudança Abrupta: Ativo")
     st.caption("🔷 Zig-Zag D1↔D2: 30%")
     st.caption("🔷 Bloco D3: 30%")
     st.caption("🔷 Pós-Zero+: 30%")
     st.caption("🛡️ Inércia Adaptativa: 75% máx")
     st.caption("⚠️ Anti-Viés Previsão: 90% máx")
-    st.caption("🚨 Bloqueio Total: -80%")
+    st.caption("🚨 Agravamento por Erros: Ativo")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -1511,5 +1499,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.4 | Híbrido + Sequência Derrotas + Mudança Imediata | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.3 | Híbrido + Terceira Dúzia Intrusa | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
