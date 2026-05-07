@@ -219,6 +219,8 @@ class DuziaAI:
         # Histórico de ciclos dominantes
         self.ciclos_dominantes = []
         self.ultimo_gatilho = None
+        # Sinal de mudança pendente (OPÇÃO 3 - Confirmação)
+        self.sinal_mudanca_pendente = None
     
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -356,8 +358,22 @@ class DuziaAI:
                 count += 1
         return count
     
+    def _eh_caos(self, frequencias):
+        """Detecta se as frequências indicam caos (distribuição uniforme)"""
+        if len(frequencias) < 2:
+            return True
+        
+        valores = list(frequencias.values())
+        max_val = max(valores)
+        
+        # Se a diferença entre maior e menor é pequena (≤2), é caos
+        if max_val <= 3 and max_val - min(valores) <= 2:
+            return True
+        
+        return False
+    
     # =============================================
-    # 🎯 GATILHO DE QUEBRA DE CICLO DOMINANTE (CORRIGIDO)
+    # 🎯 GATILHO DE QUEBRA DE CICLO DOMINANTE
     # =============================================
     def detectar_exaustao_ciclo_dominante(self):
         """
@@ -376,6 +392,29 @@ class DuziaAI:
         ranking = freq.most_common()
         dz_dominante = ranking[0][0]
         count_dominante = ranking[0][1]
+        
+        # =============================================
+        # VERIFICA SINAL DE MUDANÇA PENDENTE (OPÇÃO 3)
+        # =============================================
+        if self.sinal_mudanca_pendente:
+            # Verifica se a nova dúzia CONTINUOU aparecendo (confirmação)
+            if u[-1] == self.sinal_mudanca_pendente['dz_quebra'] and u[-1] != 0:
+                # CONFIMA o gatilho!
+                resultado = {
+                    'tipo': 'MUDANCA_VELOCIDADE',
+                    'dz_quebra': self.sinal_mudanca_pendente['dz_quebra'],
+                    'dz_exaurida': self.sinal_mudanca_pendente['dz_exaurida'],
+                    'forca': 9,
+                    'descricao': f"Mudança CONFIRMADA: D{self.sinal_mudanca_pendente['dz_exaurida']} → D{self.sinal_mudanca_pendente['dz_quebra']}"
+                }
+                self.ultimo_gatilho = 'MUDANCA_VELOCIDADE'
+                self.sinal_mudanca_pendente = None
+                logging.info(f"GATILHO CONFIRMADO: {resultado['descricao']}")
+                return resultado
+            else:
+                # Não confirmou - cancela o sinal
+                logging.info(f"Sinal de mudança NÃO confirmado - cancelando")
+                self.sinal_mudanca_pendente = None
         
         # =============================================
         # GATILHO 1: DOMINÂNCIA MUITO LONGA (7+ de 10)
@@ -418,7 +457,7 @@ class DuziaAI:
                         }
         
         # =============================================
-        # GATILHO 2: SEQUÊNCIA DE ERROS (NOVO)
+        # GATILHO 2: SEQUÊNCIA DE ERROS
         # =============================================
         if len(self.ultimos_resultados) >= 2:
             ultimos_2 = self.ultimos_resultados[-2:]
@@ -435,7 +474,7 @@ class DuziaAI:
                     'tipo': 'SEQUENCIA_ERROS',
                     'dz_quebra': dz_escolhida,
                     'dz_exaurida': dz_errada,
-                    'forca': 10,
+                    'forca': 12,
                     'descricao': f'2 erros seguidos - Forçando mudança de D{dz_errada}'
                 }
         
@@ -478,7 +517,7 @@ class DuziaAI:
                     }
         
         # =============================================
-        # GATILHO 5: MUDANÇA DE VELOCIDADE (CORRIGIDO - MAIS SELETIVO)
+        # GATILHO 5: MUDANÇA DE VELOCIDADE (OPÇÃO 3 - CONFIRMADA)
         # =============================================
         if len(u) >= 12:
             primeira_metade = u[:6]
@@ -491,22 +530,26 @@ class DuziaAI:
                 dom_1 = freq_1.most_common(1)[0]
                 dom_2 = freq_2.most_common(1)[0]
                 
-                # CORRIGIDO: Só ativa se:
-                # 1. Dúzia dominante MUDOU completamente
-                # 2. Nova dominante tem PELO MENOS 4 ocorrências (66%+)
-                # 3. Dúzia antiga NÃO aparece ou aparece pouco na segunda metade
+                # CONDIÇÕES PARA SINALIZAR (não ativar ainda):
+                # 1. Dúzia antiga tinha DOMINÂNCIA REAL (5+/6 = 83%+)
+                # 2. Dúzia nova tem FORÇA (4+/6 = 66%+)
+                # 3. Dúzia antiga SUMIU ou quase (≤1 na segunda metade)
+                # 4. Segunda metade NÃO é caos
                 if (dom_1[0] != dom_2[0] and 
+                    dom_1[1] >= 5 and
                     dom_2[1] >= 4 and 
-                    freq_2.get(dom_1[0], 0) <= 1):
+                    freq_2.get(dom_1[0], 0) <= 1 and
+                    not self._eh_caos(freq_2)):
                     
-                    self.ultimo_gatilho = 'MUDANCA_VELOCIDADE'
-                    return {
-                        'tipo': 'MUDANCA_VELOCIDADE',
+                    # NÃO ativa agora - SALVA o sinal para confirmação
+                    self.sinal_mudanca_pendente = {
                         'dz_quebra': dom_2[0],
                         'dz_exaurida': dom_1[0],
-                        'forca': 8,
-                        'descricao': f'Dominância mudou: D{dom_1[0]} → D{dom_2[0]} ({dom_2[1]}/6)'
+                        'descricao': f'Possível mudança: D{dom_1[0]}({dom_1[1]}/6) → D{dom_2[0]}({dom_2[1]}/6)'
                     }
+                    logging.info(f"SINAL PENDENTE: {self.sinal_mudanca_pendente['descricao']}")
+                    # Retorna None - NÃO ativa o gatilho ainda
+                    return None
         
         return None
     
@@ -1294,6 +1337,10 @@ class DuziaAI:
         if self.ultimo_gatilho:
             detectores_ativos.insert(0, f"GATILHO:{self.ultimo_gatilho}")
         
+        # Adiciona indicador de sinal pendente
+        if self.sinal_mudanca_pendente:
+            detectores_ativos.insert(0, "SINAL_PENDENTE")
+        
         streak_count, _ = self.streak()
         tem_streak_longo = streak_count >= 3
         tem_duas_dominantes = self.detectar_duas_dominantes() is not None
@@ -1302,7 +1349,11 @@ class DuziaAI:
         pode_entrar = False
         motivo = ""
         
-        if tem_gatilho_quebra:
+        # Se tem SINAL PENDENTE, NÃO entra ainda (aguarda confirmação)
+        if self.sinal_mudanca_pendente:
+            pode_entrar = False
+            motivo = f"⏳ Aguardando confirmação: {self.sinal_mudanca_pendente['descricao']}"
+        elif tem_gatilho_quebra:
             pode_entrar = True
             confianca = max(2.0, confianca * 0.7)
         elif regime == "DISTRIBUIDO" and not tem_streak_longo and forca_detectores < 5 and not tem_duas_dominantes:
@@ -1350,7 +1401,7 @@ class SistemaBot:
         self.erros = 0
         self.ultimo_numero = None
         self.sinais_grafico = []
-        self.numero_rodada = 0  # CONTADOR DE RODADAS
+        self.numero_rodada = 0
     
     def processar_novo_numero(self, numero_data):
         if isinstance(numero_data, dict):
@@ -1362,7 +1413,6 @@ class SistemaBot:
             logging.error(f"Número inválido: {nr}")
             return
         
-        # INCREMENTA RODADA PRIMEIRO
         self.numero_rodada += 1
         
         self.duzia_ai.adicionar(nr)
@@ -1393,7 +1443,6 @@ class SistemaBot:
             for detector in detectores_ativos:
                 self.duzia_ai.registrar_performance_detector(detector, acerto_primaria or acerto_secundaria)
             
-            # USA self.numero_rodada (CORRIGIDO)
             entrada_info = {
                 'rodada': self.numero_rodada,
                 'hora': datetime.now().strftime('%H:%M:%S'),
@@ -1539,8 +1588,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.5 - Gatilhos de Quebra", layout="wide")
-st.title("🎰 DuziaAI V6.5 - Gatilhos de Quebra de Ciclo Dominante")
+st.set_page_config(page_title="🎰 DuziaAI V6.5 - Gatilhos Confirmados", layout="wide")
+st.title("🎰 DuziaAI V6.5 - Gatilhos de Quebra com Confirmação")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1549,7 +1598,6 @@ dados = carregar_dados_persistidos()
 if dados:
     sis = st.session_state.sistema
     numeros = dados.get('historico_numeros', [])
-    # RECUPERA numero_rodada SALVO
     sis.numero_rodada = dados.get('numero_rodada', len(numeros))
     for n in numeros:
         sis.duzia_ai.adicionar(n)
@@ -1609,13 +1657,14 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.5 - Gatilhos de Quebra")
+    st.markdown("### 📊 V6.5 - Gatilhos Confirmados")
     st.caption("🎯 EXAUSTAO_DOMINANCIA: 7+/10 some")
     st.caption("🎯 INTRUSA_EMERGENTE: 3ª dúzia 2/4")
-    st.caption("🎯 SEQUENCIA_ERROS: 2 erros muda")
+    st.caption("🎯 SEQUENCIA_ERROS: 2 erros muda (Força 12)")
     st.caption("🎯 QUEBRA_ALTERNANCIA: Padrão quebra")
     st.caption("🎯 QUEBRA_POS_ZERO: Zero reset")
-    st.caption("🎯 MUDANCA_VELOCIDADE: 4+/6 nova")
+    st.caption("🎯 MUDANCA_VELOCIDADE: 5+/6→4+/6 CONFIRMADA")
+    st.caption("⏳ SINAL_PENDENTE: Aguarda 1 rodada")
     st.caption("🚨 Sequência Derrotas: Imediata")
     st.caption("🔁 NÃO REPETE após erro")
     st.markdown("---")
@@ -1711,6 +1760,11 @@ with col_grafico:
         for dz in [1,2,3]:
             if detalhes.get(dz):
                 st.caption(f"D{dz}: " + " | ".join(detalhes[dz]))
+        
+        # Indicador de Sinal Pendente
+        if sis.duzia_ai.sinal_mudanca_pendente:
+            st.warning(f"⏳ Sinal Pendente: {sis.duzia_ai.sinal_mudanca_pendente['descricao']}")
+        
         if len(sis.historico_numeros) >= 10:
             ultimos_20 = list(sis.historico_numeros)[-20:]
             duzias_hist = [get_duzia(n) for n in ultimos_20]
@@ -1735,7 +1789,10 @@ with col_grafico:
 
 with col_entrada:
     st.subheader("🎰 Entrada Atual")
-    if sis.entrada_ativa:
+    if sis.duzia_ai.sinal_mudanca_pendente:
+        sinal = sis.duzia_ai.sinal_mudanca_pendente
+        st.warning(f"⏳ AGUARDANDO CONFIRMAÇÃO\n\n{sinal['descricao']}\n\nPróxima rodada confirmará ou cancelará o sinal.")
+    elif sis.entrada_ativa:
         ent = sis.entrada_ativa
         confianca = ent.get('confianca', 0)
         duzia_prevista = ent.get('duzia_prevista', 0)
@@ -1816,5 +1873,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.5 | Gatilhos de Quebra + Não Repete Erro + Rodadas Corrigidas | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.5 | Gatilhos Confirmados + Não Repete Erro | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
