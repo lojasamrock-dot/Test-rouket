@@ -188,7 +188,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V6.7 - ANTI-TEIMOSIA ABSOLUTA + PREVISÃO DE ZERO
+# 🧠 DUZIA AI V6.7 - ANTI-TEIMOSIA 2x ABSOLUTA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -205,7 +205,6 @@ class DuziaAI:
             'terceira_intrusa': 1.5,
             'mudanca_abrupta': 1.3,
             'exaustao_ciclo': 1.8,
-            'previsao_zero': 1.6,
             'zigzag_d1_d2': 0.5,
             'bloco_d3': 0.7,
             'pos_zero_plus': 0.4,
@@ -224,24 +223,12 @@ class DuziaAI:
         self.sinal_mudanca_pendente = None
         # Flag de streak ativo (ANTI-TEIMOSIA)
         self.streak_ativo = None
-        # Histórico de zeros
-        self.historico_zeros = []
     
     def adicionar(self, numero):
         d = get_duzia(numero)
         self.historico.append(d)
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
-        
-        # Registra zeros para análise de padrão
-        if d == 0:
-            self.historico_zeros.append({
-                'posicao': len(self.historico_completo) - 1,
-                'timestamp': datetime.now()
-            })
-        if len(self.historico_zeros) > 20:
-            self.historico_zeros = self.historico_zeros[-20:]
-        
         if len(self.historico_completo) > 200:
             self.historico_completo = self.historico_completo[-200:]
         if len(self.numeros_completos) > 200:
@@ -281,10 +268,11 @@ class DuziaAI:
     
     def balancear_previsoes(self, previsao):
         """
-        REGRA ANTI-TEIMOSIA ABSOLUTA COM SAÍDA INTELIGENTE (V6.7)
-        - Segue streaks de 2x IGNORANDO completamente o score
+        REGRA ANTI-TEIMOSIA V6.7 - STREAK 2x ABSOLUTO
+        - Streak 2x: IGNORA completamente o score e segue o fluxo
+        - Streak 3x: Reforço
         - Sai rápido quando quebrar
-        - Não entra em cenários de CAOS
+        - Detecta CAOS e reduz confiança
         """
         if len(self.historico) < 2:
             return previsao
@@ -293,7 +281,7 @@ class DuziaAI:
         score = previsao.get('score', {})
         
         # =============================================
-        # REGRA 0: DETECTOR DE CAOS - NÃO ENTRA
+        # REGRA 0: DETECTOR DE CAOS
         # =============================================
         if len(u) >= 6:
             ultimas_6 = u[-6:]
@@ -306,15 +294,15 @@ class DuziaAI:
                     logging.info("🌪️ CAOS detectado - Reduzindo confiança")
         
         # =============================================
-        # REGRA 1: SEGUIR STREAK 2x (ANTI-TEIMOSIA ABSOLUTA)
-        # IGNORA COMPLETAMENTE O SCORE
+        # REGRA 1: STREAK 2x ABSOLUTO (PRIORIDADE MÁXIMA)
+        # IGNORA completamente o score - segue o fluxo real
         # =============================================
         if len(u) >= 2:
             ultimas_2 = u[-2:]
             if len(set(ultimas_2)) == 1 and ultimas_2[0] != 0:
                 dz_streak = ultimas_2[0]
                 if previsao['duzia'] != dz_streak:
-                    logging.info(f"🔄 STREAK D{dz_streak} 2x! FORÇANDO seguir (IGNORANDO score)")
+                    logging.info(f"🔄🔥 STREAK D{dz_streak} 2x ABSOLUTO! Ignorando score e seguindo fluxo")
                     previsao['duzia'] = dz_streak
                     self.streak_ativo = dz_streak
                     outras = self._get_outras_duzias(dz_streak)
@@ -323,14 +311,14 @@ class DuziaAI:
                     return previsao
         
         # =============================================
-        # REGRA 2: SEGUIR STREAK 3x (REFORÇO)
+        # REGRA 2: STREAK 3x (REFORÇO)
         # =============================================
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
                 dz_streak = ultimas_3[0]
                 if previsao['duzia'] != dz_streak:
-                    logging.info(f"🔄 STREAK D{dz_streak} 3x! Seguindo o fluxo")
+                    logging.info(f"🔄🔥 STREAK D{dz_streak} 3x! Reforçando fluxo")
                     previsao['duzia'] = dz_streak
                     self.streak_ativo = dz_streak
                     outras = self._get_outras_duzias(dz_streak)
@@ -488,107 +476,12 @@ class DuziaAI:
         return False
     
     # =============================================
-    # 🆕 GATILHO DE PREVISÃO DE ZERO
-    # =============================================
-    def detectar_previsao_zero(self):
-        """
-        GATILHO DE PREVISÃO DE ZERO
-        Detecta padrões que indicam alta probabilidade de sair ZERO
-        """
-        if len(self.historico) < 10:
-            return None
-        
-        u = list(self.historico)[-20:]
-        
-        # =============================================
-        # PADRÃO 1: CAOS seguido de ZERO
-        # =============================================
-        if len(u) >= 8:
-            ultimas_8 = u[-8:-1]  # 7 antes da última
-            freq_8 = Counter([d for d in ultimas_8 if d != 0])
-            
-            # Se 3 dúzias apareceram nas últimas 7 jogadas (CAOS)
-            if len(freq_8) >= 3:
-                valores = list(freq_8.values())
-                if max(valores) <= 3 and max(valores) - min(valores) <= 2:
-                    # CAOS detectado - ZERO tem alta probabilidade
-                    distancia_ultimo_zero = self._distancia_ultimo_zero()
-                    
-                    if distancia_ultimo_zero >= 10:
-                        return {
-                            'tipo': 'PREVISAO_ZERO_CAOS',
-                            'dz_quebra': 0,
-                            'dz_exaurida': max(freq_8, key=freq_8.get),
-                            'forca': 7,
-                            'descricao': f'CAOS + {distancia_ultimo_zero} rodadas sem zero - Alta chance de ZERO'
-                        }
-        
-        # =============================================
-        # PADRÃO 2: Distância longa do último ZERO
-        # =============================================
-        distancia = self._distancia_ultimo_zero()
-        
-        if distancia >= 15:
-            return {
-                'tipo': 'PREVISAO_ZERO_DISTANCIA',
-                'dz_quebra': 0,
-                'dz_exaurida': u[-1] if u[-1] != 0 else 1,
-                'forca': 6,
-                'descricao': f'{distancia} rodadas sem zero - Probabilidade aumentada'
-            }
-        
-        # =============================================
-        # PADRÃO 3: Streak longo de uma dúzia (exaustão → zero)
-        # =============================================
-        streak_count, streak_d = self.streak()
-        
-        if streak_count >= 5 and streak_d != 0 and distancia >= 8:
-            return {
-                'tipo': 'PREVISAO_ZERO_STREAK',
-                'dz_quebra': 0,
-                'dz_exaurida': streak_d,
-                'forca': 7,
-                'descricao': f'Streak D{streak_d} {streak_count}x exausto + {distancia} sem zero'
-            }
-        
-        # =============================================
-        # PADRÃO 4: Média de distância entre zeros
-        # =============================================
-        if len(self.historico_zeros) >= 3:
-            distancias = []
-            for i in range(1, len(self.historico_zeros)):
-                dist = self.historico_zeros[i]['posicao'] - self.historico_zeros[i-1]['posicao']
-                distancias.append(dist)
-            
-            if distancias:
-                media_distancia = sum(distancias) / len(distancias)
-                
-                # Se já passou da média + 30%, ZERO está atrasado
-                if distancia >= media_distancia * 1.3 and distancia >= 10:
-                    return {
-                        'tipo': 'PREVISAO_ZERO_ATRASADO',
-                        'dz_quebra': 0,
-                        'dz_exaurida': u[-1] if u[-1] != 0 else 1,
-                        'forca': 8,
-                        'descricao': f'Zero atrasado: {distancia} rodadas (média: {media_distancia:.0f})'
-                    }
-        
-        return None
-    
-    def _distancia_ultimo_zero(self):
-        """Calcula quantas rodadas desde o último zero"""
-        u = list(self.historico_completo)
-        for i in range(len(u) - 1, -1, -1):
-            if u[i] == 0:
-                return len(u) - 1 - i
-        return len(u)  # Nunca saiu zero
-    
-    # =============================================
     # 🎯 GATILHO DE QUEBRA DE CICLO DOMINANTE
     # =============================================
     def detectar_exaustao_ciclo_dominante(self):
         """
-        GATILHO DE QUEBRA DE CICLO DOMINANTE + PREVISÃO DE ZERO
+        GATILHO DE QUEBRA DE CICLO DOMINANTE
+        Detecta quando um ciclo dominante está preste a quebrar
         """
         if len(self.historico) < 10:
             return None
@@ -602,14 +495,6 @@ class DuziaAI:
         ranking = freq.most_common()
         dz_dominante = ranking[0][0]
         count_dominante = ranking[0][1]
-        
-        # =============================================
-        # 🆕 VERIFICA PREVISÃO DE ZERO PRIMEIRO
-        # =============================================
-        previsao_zero = self.detectar_previsao_zero()
-        if previsao_zero:
-            self.ultimo_gatilho = previsao_zero['tipo']
-            return previsao_zero
         
         # =============================================
         # VERIFICA SINAL DE MUDANÇA PENDENTE (OPÇÃO 3)
@@ -761,6 +646,9 @@ class DuziaAI:
     # ========== DETECTORES UNIVERSAIS (70% PESO) ==========
     
     def detectar_quebra_estados(self):
+        """
+        DETECTOR UNIVERSAL DE QUEBRA DE PADRÕES (V6.4)
+        """
         if len(self.historico) < 5:
             return None
         
@@ -784,6 +672,7 @@ class DuziaAI:
                 par = tuple(sorted([a, b]))
                 alternancias[par] = alternancias.get(par, 0) + 1
         
+        # ESTADO 1: STREAK DOMINANTE
         if streak_count >= 3 and streak_d != 0:
             outras = self._get_outras_duzias(streak_d)
             forca = min(8, 2 + (streak_count - 3) * 2)
@@ -818,6 +707,7 @@ class DuziaAI:
                     resultado['duzias_envolvidas'] = [streak_d, dz_quebra]
                     return resultado
         
+        # ESTADO 2: ALTERNÂNCIA ENTRE DUAS DÚZIAS
         if len(alternancias) >= 1 and len(duzias_ativas) >= 2:
             par_principal = max(alternancias, key=alternancias.get)
             count_alt = alternancias[par_principal]
@@ -857,6 +747,7 @@ class DuziaAI:
                         resultado['duzias_envolvidas'] = [dz1, dz2, terceira]
                         return resultado
         
+        # ESTADO 3: CAOS (todas dúzias ativas)
         if len(duzias_ativas) == 3:
             alternancias_total = sum(alternancias.values())
             freq_equilibrada = all(
@@ -883,6 +774,7 @@ class DuziaAI:
                     resultado['duzias_envolvidas'] = duzias_ativas
                     return resultado
         
+        # ESTADO 4: PADRÃO DE SEQUÊNCIA (A,B,A)
         if len(u) >= 4:
             if u[-3] == u[-1] and u[-3] != u[-2] and u[-3] != 0 and u[-2] != 0:
                 if len(u) >= 6 and u[-5] == u[-3] == u[-1] and u[-4] == u[-2]:
@@ -893,6 +785,7 @@ class DuziaAI:
                     resultado['duzias_envolvidas'] = [u[-1], u[-2], terceira]
                     return resultado
         
+        # ESTADO 5: PÓS-ZERO
         if 0 in u[-4:]:
             idx_zero = len(u[-4:]) - 1 - u[-4:][::-1].index(0)
             antes = u[-4:][:idx_zero]
@@ -1193,28 +1086,34 @@ class DuziaAI:
         prob = self.matriz_transicao()
         regime = self.detectar_regime()
         
+        # Frequência ponderada
         for d in score:
             score[d] += freq[d] * 0.8
         
+        # Frequência normal
         total_normal = sum(freq_normal.values())
         if total_normal > 0:
             for d in score:
                 score[d] += (freq_normal[d] / total_normal) * 10
         
+        # Streak atual
         if streak_d and streak_d != 0:
             multiplicador = 3.0 if regime == "DOMINANTE" else 2.0 if regime == "TENDENCIA" else 1.5
             score[streak_d] += streak_count * multiplicador
         
+        # Rebote (última transição)
         if trans and regime not in ["DOMINANTE", "TENDENCIA"]:
             ant, _ = trans
             if ant != 0:
                 score[ant] += 2.5
         
+        # Quebra de sequência longa (vizinho)
         if streak_count >= 3 and streak_d and streak_d != 0:
             outras = self._get_outras_duzias(streak_d)
             for d in outras:
                 score[d] += 5
         
+        # Matriz de Transição
         if self.historico:
             ultima = self.historico[-1]
             if ultima != 0 and ultima in prob:
@@ -1223,6 +1122,9 @@ class DuziaAI:
                     if p > 40:
                         score[d] += (p - 30) / 8
         
+        # =============================================
+        # SEQUÊNCIA DE DERROTAS (MUDANÇA IMEDIATA)
+        # =============================================
         if len(self.ultimos_resultados) >= 3:
             ultimos_3_real = [r['duzia'] for r in self.ultimos_resultados[-3:]]
             ultimos_3_acerto = [r['acertou'] for r in self.ultimos_resultados[-3:]]
@@ -1238,27 +1140,21 @@ class DuziaAI:
                         score[d] *= 0.2
                         detalhes[d].append(f"⚠️ Bloqueio Total: -80%")
         
-        # GATILHOS
+        # =============================================
+        # 🎯 GATILHO DE QUEBRA DE CICLO DOMINANTE
+        # =============================================
         exaustao = self.detectar_exaustao_ciclo_dominante()
         if exaustao:
             dz_quebra = exaustao['dz_quebra']
             dz_exaurida = exaustao['dz_exaurida']
             forca_base = exaustao['forca']
+            forca = self.get_peso_adaptativo('exaustao_ciclo', forca_base * 1.5)
             
-            # Se for previsão de ZERO, trata diferente
-            if dz_quebra == 0:
-                forca = self.get_peso_adaptativo('previsao_zero', forca_base * 1.5)
-                # Penaliza todas as dúzias (zero quebra tudo)
-                for d in score:
-                    score[d] *= 0.5
-                    detalhes[d].append(f"🎯 GATILHO ZERO: {exaustao['descricao']} (Dúzias -50%)")
-            else:
-                forca = self.get_peso_adaptativo('exaustao_ciclo', forca_base * 1.5)
-                score[dz_quebra] += forca
-                detalhes[dz_quebra].append(f"🎯 GATILHO: {exaustao['descricao']} (+{forca:.1f})")
-                
-                score[dz_exaurida] *= 0.3
-                detalhes[dz_exaurida].append(f"⚠️ CICLO EXAURIDO: -70% (D{dz_exaurida} perdeu força)")
+            score[dz_quebra] += forca
+            detalhes[dz_quebra].append(f"🎯 GATILHO: {exaustao['descricao']} (+{forca:.1f})")
+            
+            score[dz_exaurida] *= 0.3
+            detalhes[dz_exaurida].append(f"⚠️ CICLO EXAURIDO: -70% (D{dz_exaurida} perdeu força)")
             
             self.ciclos_dominantes.append({
                 'dz_dominante': dz_exaurida,
@@ -1269,7 +1165,10 @@ class DuziaAI:
             if len(self.ciclos_dominantes) > 10:
                 self.ciclos_dominantes = self.ciclos_dominantes[-10:]
         
+        # =============================================
         # DETECTORES UNIVERSAIS
+        # =============================================
+        
         quebra_estados = self.detectar_quebra_estados()
         if quebra_estados:
             dz = quebra_estados['quebra_prevista']
@@ -1395,7 +1294,10 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"Bloco Dominante: +{forca:.1f}")
         
+        # =============================================
         # DETECTORES ESPECÍFICOS
+        # =============================================
+        
         zigzag = self.detectar_zigzag_d1_d2()
         if zigzag:
             dz, forca_base = zigzag
@@ -1420,7 +1322,10 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"🔷 Pós-Zero+: +{forca:.1f}")
         
-        # INÉRCIA ADAPTATIVA
+        # =============================================
+        # FATOR DE INÉRCIA ADAPTATIVO
+        # =============================================
+        
         tem_quebra = False
         for dz in detalhes:
             for det in detalhes[dz]:
@@ -1438,6 +1343,7 @@ class DuziaAI:
                 score[streak_d] *= (1 - fator_reducao)
                 detalhes[streak_d].append(f"🔄 Inércia Adaptativa: -{fator_reducao*100:.0f}%")
         
+        # Anti-Viés de Previsão Acelerado
         if len(self.ultimas_previsoes) >= 3:
             ultimas_5 = self.ultimas_previsoes[-5:]
             
@@ -1460,6 +1366,10 @@ class DuziaAI:
                     score[d] *= bonus
                     detalhes[d].append(f"🔄 Anti-Viés: +{(bonus-1)*100:.0f}%")
         
+        # =============================================
+        # OUTROS DETECTORES
+        # =============================================
+        
         ciclo = self.detectar_ciclos()
         if ciclo and ciclo != 0 and max(score.values()) > 3:
             score[ciclo] += 5
@@ -1479,6 +1389,7 @@ class DuziaAI:
                 score[dz] += q * 0.3
                 detalhes[dz].append(f"Terminais: +{q*0.3:.1f}")
         
+        # Normalização
         total = sum(score.values())
         if total > 0:
             for d in score:
@@ -1521,6 +1432,7 @@ class DuziaAI:
         if self.streak_ativo:
             detectores_ativos.insert(0, f"STREAK:D{self.streak_ativo}")
         
+        # Detecta CAOS
         if self._detectar_caos_mercado():
             detectores_ativos.insert(0, "🌪️ CAOS")
         
@@ -1533,6 +1445,7 @@ class DuziaAI:
         pode_entrar = False
         motivo = ""
         
+        # Se está em CAOS, reduz confiança mas pode entrar se tiver streak
         if tem_caos and not tem_streak_longo and not tem_gatilho_quebra:
             confianca = confianca * 0.6
         
@@ -1774,8 +1687,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.7 - Anti-Teimosia + Previsão Zero", layout="wide")
-st.title("🎰 DuziaAI V6.7 - Anti-Teimosia Absoluta + Gatilho Previsão de Zero")
+st.set_page_config(page_title="🎰 DuziaAI V6.7 - Anti-Teimosia Absoluta", layout="wide")
+st.title("🎰 DuziaAI V6.7 - Anti-Teimosia 2x ABSOLUTA")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1843,17 +1756,16 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.7 - Previsão de Zero")
-    st.caption("🔄 STREAK 2x: ABSOLUTO (ignora score)")
-    st.caption("🔄 STREAK 3x: Reforço")
-    st.caption("🚪 SAÍDA: Streak quebrou / 2 erros")
+    st.markdown("### 📊 V6.7 - Anti-Teimosia Absoluta")
+    st.caption("🔄🔥 STREAK 2x: IGNORA score, segue fluxo")
+    st.caption("🔄🔥 STREAK 3x: Reforço máximo")
+    st.caption("🚪 SAÍDA: Streak quebrou")
+    st.caption("🚪 SAÍDA: 2 erros seguidos")
     st.caption("🌪️ CAOS: Reduz confiança")
-    st.caption("🎯 PREVISAO_ZERO: CAOS + distância")
-    st.caption("🎯 PREVISAO_ZERO: Distância longa")
-    st.caption("🎯 PREVISAO_ZERO: Streak exausto")
-    st.caption("🎯 PREVISAO_ZERO: Atrasado (média)")
+    st.caption("🎯 EXAUSTAO_DOMINANCIA")
     st.caption("🎯 SEQUENCIA_ERROS (Força 15)")
     st.caption("🎯 MUDANCA_VELOCIDADE (Confirmada)")
+    st.caption("🔁 NÃO REPETE após erro")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -1911,14 +1823,13 @@ st.markdown("---")
 sis = st.session_state.sistema
 
 # Métricas
-col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
+col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 total_entradas = int(sis.acertos + sis.erros)
 tx_acerto = (sis.acertos / total_entradas * 100) if total_entradas > 0 else 0
 ac_dz = st.session_state.get('acertos_duzia', 0)
 er_dz = st.session_state.get('erros_duzia', 0)
 total_dz = ac_dz + er_dz
 tx_dz = (ac_dz / total_dz * 100) if total_dz > 0 else 0
-distancia_zero = sis.duzia_ai._distancia_ultimo_zero()
 col1.metric("✅ Acertos", int(sis.acertos))
 col2.metric("❌ Erros", int(sis.erros))
 col3.metric("📊 Win Rate", f"{tx_acerto:.1f}%")
@@ -1926,7 +1837,6 @@ col4.metric("🎯 Tx Primária", f"{tx_dz:.1f}%")
 col5.metric("📦 Entradas", total_entradas)
 col6.metric("🔢 Rodada", sis.numero_rodada)
 col7.metric("🔄 Streak", f"D{sis.duzia_ai.streak_ativo}" if sis.duzia_ai.streak_ativo else "-")
-col8.metric("0️⃣ Dist Zero", distancia_zero)
 
 st.markdown("---")
 col_grafico, col_entrada = st.columns([3,2])
@@ -1944,7 +1854,7 @@ with col_grafico:
             text=[f'{score[1]:.1f}', f'{score[2]:.1f}', f'{score[3]:.1f}'],
             textposition='auto'
         )])
-        fig.update_layout(title=f"🎯 Scores das Dúzias | Regime: {regime} | Distância Zero: {distancia_zero}", yaxis_title="Score Normalizado", height=300, showlegend=False)
+        fig.update_layout(title=f"🎯 Scores das Dúzias | Regime: {regime}", yaxis_title="Score Normalizado", height=300, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
         st.caption("**🔍 Detectores Ativos:**")
         for dz in [1,2,3]:
@@ -1959,9 +1869,6 @@ with col_grafico:
         
         if sis.duzia_ai._detectar_caos_mercado():
             st.warning("🌪️ ALERTA: Mercado em CAOS! Distribuição uniforme detectada.")
-        
-        if distancia_zero >= 15:
-            st.warning(f"0️⃣ ALERTA: {distancia_zero} rodadas sem ZERO! Probabilidade aumentada.")
         
         if len(sis.historico_numeros) >= 10:
             ultimos_20 = list(sis.historico_numeros)[-20:]
@@ -1980,7 +1887,7 @@ with col_grafico:
                         sinal_text.append(f"Entrada D{dz}")
                 if sinal_x:
                     fig2.add_trace(plt.Scatter(x=sinal_x, y=sinal_y, mode='markers', name='Sinal', marker=dict(symbol='star', size=15, color='red', line=dict(width=2, color='darkred')), text=sinal_text, hoverinfo='text'))
-            fig2.update_layout(title="📉 Histórico de Dúzias c/ Sinais", yaxis=dict(tickvals=[0,1,2,3], ticktext=['0','D1','D2','D3'], range=[-0.5,3.5]), height=300, showlegend=True)
+            fig2.update_layout(title="📉 Histórico de Dúzias c/ Sinais", yaxis=dict(tickvals=[1,2,3], ticktext=['D1','D2','D3'], range=[0.5,3.5]), height=300, showlegend=True)
             st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info(f"⏳ Aguardando dados... ({len(sis.historico_numeros)}/5 giros)")
@@ -2072,5 +1979,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.7 | Anti-Teimosia Absoluta + Previsão de Zero | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.7 | Anti-Teimosia 2x ABSOLUTA + Gatilhos | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
