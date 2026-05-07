@@ -188,7 +188,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V6.5 - ANTI-TEIMOSIA COM SAÍDA INTELIGENTE
+# 🧠 DUZIA AI V6.6 - ANTI-TEIMOSIA 2x + CAOS DETECTOR
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -268,24 +268,42 @@ class DuziaAI:
     
     def balancear_previsoes(self, previsao):
         """
-        REGRA ANTI-TEIMOSIA COM SAÍDA INTELIGENTE
-        Segue o fluxo dominante MAS sai rápido quando quebrar
+        REGRA ANTI-TEIMOSIA COM SAÍDA INTELIGENTE (V6.6)
+        - Segue streaks de 2x ou 3x
+        - Sai rápido quando quebrar
+        - Não entra em cenários de CAOS
         """
         if len(self.historico) < 2:
             return previsao
         
         u = list(self.historico)
+        score = previsao.get('score', {})
         
         # =============================================
-        # REGRA 1: SEGUIR STREAK ATIVO (ANTI-TEIMOSIA)
+        # REGRA 0: DETECTOR DE CAOS - NÃO ENTRA
         # =============================================
-        # Se mesma dúzia saiu 3x seguidas, SIGA ELA
-        if len(u) >= 3:
-            ultimas_3 = u[-3:]
-            if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
-                dz_streak = ultimas_3[0]
+        if len(u) >= 6:
+            ultimas_6 = u[-6:]
+            freq_6 = Counter([d for d in ultimas_6 if d != 0])
+            
+            # Se 3 dúzias apareceram nas últimas 6 e nenhuma domina
+            if len(freq_6) >= 3:
+                valores = list(freq_6.values())
+                if max(valores) <= 3 and max(valores) - min(valores) <= 2:
+                    # CAOS DETECTADO - reduz confiança drasticamente
+                    previsao['confianca'] = previsao.get('confianca', 3) * 0.5
+                    logging.info("🌪️ CAOS detectado - Reduzindo confiança")
+                    # Não força previsão, deixa o sistema decidir com cautela
+        
+        # =============================================
+        # REGRA 1: SEGUIR STREAK 2x (ANTI-TEIMOSIA MELHORADA)
+        # =============================================
+        if len(u) >= 2:
+            ultimas_2 = u[-2:]
+            if len(set(ultimas_2)) == 1 and ultimas_2[0] != 0:
+                dz_streak = ultimas_2[0]
                 if previsao['duzia'] != dz_streak:
-                    logging.info(f"🔄 STREAK D{dz_streak} 3x! Seguindo o fluxo")
+                    logging.info(f"🔄 STREAK D{dz_streak} 2x! Forçando seguir")
                     previsao['duzia'] = dz_streak
                     self.streak_ativo = dz_streak
                     # Cobertura: a outra dúzia mais frequente
@@ -294,25 +312,28 @@ class DuziaAI:
                     previsao['duzia_secundaria'] = max(freq_outras, key=freq_outras.get)
                     return previsao
         
-        # Se mesma dúzia saiu 2x e erramos, SIGA ELA
-        if len(u) >= 2 and len(self.ultimos_resultados) >= 1:
-            ultimas_2 = u[-2:]
-            if len(set(ultimas_2)) == 1 and ultimas_2[0] != 0:
-                if not self.ultimos_resultados[-1]['acertou']:
-                    dz_streak = ultimas_2[0]
-                    if previsao['duzia'] != dz_streak:
-                        logging.info(f"🔄 STREAK D{dz_streak} 2x com erro! Corrigindo")
-                        previsao['duzia'] = dz_streak
-                        self.streak_ativo = dz_streak
-                        return previsao
+        # =============================================
+        # REGRA 2: SEGUIR STREAK 3x (REFORÇO)
+        # =============================================
+        if len(u) >= 3:
+            ultimas_3 = u[-3:]
+            if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
+                dz_streak = ultimas_3[0]
+                if previsao['duzia'] != dz_streak:
+                    logging.info(f"🔄 STREAK D{dz_streak} 3x! Seguindo o fluxo")
+                    previsao['duzia'] = dz_streak
+                    self.streak_ativo = dz_streak
+                    outras = self._get_outras_duzias(dz_streak)
+                    freq_outras = {d: u.count(d) for d in outras}
+                    previsao['duzia_secundaria'] = max(freq_outras, key=freq_outras.get)
+                    return previsao
         
         # =============================================
-        # REGRA 2: SAÍDA DO STREAK (ANTI-VÍCIO)
+        # REGRA 3: SAÍDA DO STREAK (ANTI-VÍCIO)
         # =============================================
         if len(self.ultimas_previsoes) >= 2:
             ultimas_2_prev = self.ultimas_previsoes[-2:]
             
-            # Detecta se estávamos seguindo um streak (mesma previsão 2x+)
             if len(set(ultimas_2_prev)) == 1:
                 dz_que_estavamos_seguindo = ultimas_2_prev[0]
                 
@@ -336,7 +357,7 @@ class DuziaAI:
                         return previsao
         
         # =============================================
-        # REGRA 3: NÃO REPETIR APÓS ERRO
+        # REGRA 4: NÃO REPETIR APÓS ERRO
         # =============================================
         if self.ultimos_resultados and not self.ultimos_resultados[-1]['acertou']:
             duzia_errada = self.ultimos_resultados[-1]['duzia']
@@ -346,10 +367,9 @@ class DuziaAI:
                 return previsao
         
         # =============================================
-        # REGRA 4: BALANCEAMENTO
+        # REGRA 5: BALANCEAMENTO
         # =============================================
         if len(self.ultimas_previsoes) >= 5:
-            score = previsao['score']
             freq = Counter(self.ultimas_previsoes[-5:])
             
             if abs(score.get(1, 0) - score.get(2, 0)) < 5:
@@ -442,6 +462,22 @@ class DuziaAI:
         
         return False
     
+    def _detectar_caos_mercado(self):
+        """Detecta se o mercado está em CAOS (sem dominante claro)"""
+        if len(self.historico) < 6:
+            return False
+        
+        u = list(self.historico)[-6:]
+        freq = Counter([d for d in u if d != 0])
+        
+        # Se 3 dúzias apareceram e nenhuma domina
+        if len(freq) >= 3:
+            valores = list(freq.values())
+            if max(valores) <= 3 and max(valores) - min(valores) <= 2:
+                return True
+        
+        return False
+    
     # =============================================
     # 🎯 GATILHO DE QUEBRA DE CICLO DOMINANTE
     # =============================================
@@ -522,7 +558,7 @@ class DuziaAI:
                         }
         
         # =============================================
-        # GATILHO 2: SEQUÊNCIA DE ERROS
+        # GATILHO 2: SEQUÊNCIA DE ERROS (FORÇA 15)
         # =============================================
         if len(self.ultimos_resultados) >= 2:
             ultimos_2 = self.ultimos_resultados[-2:]
@@ -538,7 +574,7 @@ class DuziaAI:
                     'tipo': 'SEQUENCIA_ERROS',
                     'dz_quebra': dz_escolhida,
                     'dz_exaurida': dz_errada,
-                    'forca': 12,
+                    'forca': 15,  # AUMENTADO DE 12 PARA 15
                     'descricao': f'2 erros seguidos - Forçando mudança de D{dz_errada}'
                 }
         
@@ -1399,13 +1435,22 @@ class DuziaAI:
         if self.streak_ativo:
             detectores_ativos.insert(0, f"STREAK:D{self.streak_ativo}")
         
+        # Detecta CAOS
+        if self._detectar_caos_mercado():
+            detectores_ativos.insert(0, "🌪️ CAOS")
+        
         streak_count, _ = self.streak()
         tem_streak_longo = streak_count >= 3
         tem_duas_dominantes = self.detectar_duas_dominantes() is not None
         tem_gatilho_quebra = self.ultimo_gatilho is not None
+        tem_caos = self._detectar_caos_mercado()
         
         pode_entrar = False
         motivo = ""
+        
+        # Se está em CAOS, reduz confiança mas pode entrar se tiver streak
+        if tem_caos and not tem_streak_longo and not tem_gatilho_quebra:
+            confianca = confianca * 0.6
         
         if self.sinal_mudanca_pendente:
             pode_entrar = False
@@ -1645,8 +1690,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.5 - Anti-Teimosia", layout="wide")
-st.title("🎰 DuziaAI V6.5 - Anti-Teimosia com Saída Inteligente")
+st.set_page_config(page_title="🎰 DuziaAI V6.6 - Anti-Teimosia 2x", layout="wide")
+st.title("🎰 DuziaAI V6.6 - Anti-Teimosia 2x + Detector de Caos")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1714,14 +1759,14 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.5 - Anti-Teimosia")
-    st.caption("🔄 STREAK 3x: Segue o fluxo")
-    st.caption("🔄 STREAK 2x+Erro: Corrige")
+    st.markdown("### 📊 V6.6 - Anti-Teimosia 2x")
+    st.caption("🔄 STREAK 2x: Segue imediatamente")
+    st.caption("🔄 STREAK 3x: Reforço")
     st.caption("🚪 SAÍDA: Streak quebrou")
     st.caption("🚪 SAÍDA: 2 erros seguidos")
+    st.caption("🌪️ CAOS: Reduz confiança")
     st.caption("🎯 EXAUSTAO_DOMINANCIA")
-    st.caption("🎯 INTRUSA_EMERGENTE")
-    st.caption("🎯 SEQUENCIA_ERROS (Força 12)")
+    st.caption("🎯 SEQUENCIA_ERROS (Força 15)")
     st.caption("🎯 MUDANCA_VELOCIDADE (Confirmada)")
     st.caption("🔁 NÃO REPETE após erro")
     st.markdown("---")
@@ -1824,6 +1869,9 @@ with col_grafico:
         
         if sis.duzia_ai.streak_ativo:
             st.info(f"🔄 Streak Ativo: D{sis.duzia_ai.streak_ativo}")
+        
+        if sis.duzia_ai._detectar_caos_mercado():
+            st.warning("🌪️ ALERTA: Mercado em CAOS! Distribuição uniforme detectada.")
         
         if len(sis.historico_numeros) >= 10:
             ultimos_20 = list(sis.historico_numeros)[-20:]
@@ -1933,5 +1981,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.5 | Anti-Teimosia + Saída Inteligente + Gatilhos | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.6 | Anti-Teimosia 2x + Detector Caos + SEQUENCIA_ERROS 15 | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
