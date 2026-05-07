@@ -293,7 +293,6 @@ class DuziaAI:
                     # CAOS DETECTADO - reduz confiança drasticamente
                     previsao['confianca'] = previsao.get('confianca', 3) * 0.5
                     logging.info("🌪️ CAOS detectado - Reduzindo confiança")
-                    # Não força previsão, deixa o sistema decidir com cautela
         
         # =============================================
         # REGRA 1: SEGUIR STREAK 2x (ANTI-TEIMOSIA MELHORADA)
@@ -574,7 +573,7 @@ class DuziaAI:
                     'tipo': 'SEQUENCIA_ERROS',
                     'dz_quebra': dz_escolhida,
                     'dz_exaurida': dz_errada,
-                    'forca': 15,  # AUMENTADO DE 12 PARA 15
+                    'forca': 15,
                     'descricao': f'2 erros seguidos - Forçando mudança de D{dz_errada}'
                 }
         
@@ -1753,7 +1752,7 @@ if "telegram_chat_id" not in st.session_state:
 # Sidebar
 with st.sidebar:
     st.markdown("## ⚙️ Configurações")
-    st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 5, 15, st.session_state.janela_duzia_ai, 5)
+    st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
     st.session_state.confianca_minima = st.slider("🎯 Confiança Mínima", 2.0, 5.0, st.session_state.confianca_minima, 0.2)
     st.session_state.agressividade = st.select_slider("🎚️ Agressividade", options=[1,2,3], value=st.session_state.agressividade)
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
@@ -1942,7 +1941,9 @@ with col_entrada:
                 cols[i % 6].button(str(n), key=f"num_{n}", use_container_width=True)
         else:
             st.warning("Nenhum número disponível.")
-        st.progress(confianca / 10.0)
+        # CORRIGIDO: Garante valor entre 0.0 e 1.0
+        valor_progresso = min(1.0, max(0.0, confianca / 10.0))
+        st.progress(valor_progresso)
     else:
         st.info("🔍 Analisando padrões...")
         if len(sis.historico_numeros) >= 5:
