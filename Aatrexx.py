@@ -188,7 +188,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V6.5 MELHORADA - CORRIGIDA
+# 🧠 DUZIA AI V6.5 MELHORADA - STREAK 2x ANTES DO SCORE
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -269,13 +269,10 @@ class DuziaAI:
             if len(self.historico_confianca) > 30:
                 self.historico_confianca = self.historico_confianca[-30:]
         
-        # Se temos histórico suficiente, ajusta confiança
         if len(self.historico_confianca) >= 5:
-            # Encontra a taxa de acerto para confianças similares
             confiancas_altas = [h for h in self.historico_confianca if h['confianca'] >= 4.0]
             if confiancas_altas:
                 taxa_acerto_alta = sum(1 for h in confiancas_altas if h['acertou']) / len(confiancas_altas)
-                # Se taxa de acerto em alta confiança é < 50%, reduz confiança
                 if taxa_acerto_alta < 0.5 and confianca >= 4.0:
                     confianca = confianca * 0.7
                     logging.info(f"📉 Confiança calibrada: {confianca:.2f} (taxa real alta conf: {taxa_acerto_alta:.0%})")
@@ -284,27 +281,13 @@ class DuziaAI:
     
     def balancear_previsoes(self, previsao):
         """
-        ANTI-TEIMOSIA 2x ABSOLUTA (V6.5 MELHORADA CORRIGIDA)
+        ANTI-TEIMOSIA com SAÍDA INTELIGENTE
         """
         if len(self.historico) < 2:
             return previsao
         
         u = list(self.historico)
         score = previsao.get('score', {})
-        
-        # STREAK 2x ABSOLUTO - IGNORA o score
-        if len(u) >= 2:
-            ultimas_2 = u[-2:]
-            if len(set(ultimas_2)) == 1 and ultimas_2[0] != 0:
-                dz_streak = ultimas_2[0]
-                if previsao['duzia'] != dz_streak:
-                    logging.info(f"🔄 STREAK D{dz_streak} 2x ABSOLUTO! Seguindo fluxo")
-                    previsao['duzia'] = dz_streak
-                    self.streak_ativo = dz_streak
-                    outras = self._get_outras_duzias(dz_streak)
-                    freq_outras = {d: u.count(d) for d in outras}
-                    previsao['duzia_secundaria'] = max(freq_outras, key=freq_outras.get)
-                    return previsao
         
         # STREAK 3x REFORÇO
         if len(u) >= 3:
@@ -332,7 +315,6 @@ class DuziaAI:
                     previsao['duzia'] = u[-1]
                     return previsao
                 
-                # SAÍDA com 1 erro + confiança baixa
                 if len(self.ultimos_resultados) >= 1:
                     if not self.ultimos_resultados[-1]['acertou'] and previsao.get('confianca', 3) < 2.5:
                         logging.info(f"🚪 SAÍDA: Erro com baixa confiança seguindo D{dz_seguindo}!")
@@ -449,7 +431,7 @@ class DuziaAI:
         return False
     
     # =============================================
-    # 🎯 GATILHOS V6.5 CORRIGIDOS
+    # 🎯 GATILHOS
     # =============================================
     def detectar_exaustao_ciclo_dominante(self):
         if len(self.historico) < 10:
@@ -517,16 +499,14 @@ class DuziaAI:
                             'descricao': f'3ª Dúzia D{terceira} emergindo (2/4) - Quebra de D{dz_dominante}'
                         }
         
-        # GATILHO 2: SEQUÊNCIA DE ERROS (CORRIGIDO - DISPARA SEMPRE)
+        # GATILHO 2: SEQUÊNCIA DE ERROS (DISPARA SEMPRE)
         if len(self.ultimos_resultados) >= 2:
             ultimos_2 = self.ultimos_resultados[-2:]
             if not ultimos_2[0]['acertou'] and not ultimos_2[1]['acertou']:
                 
-                # Verifica tendência nas últimas 5
                 ultimas_5 = u[-5:]
                 freq_5 = Counter([d for d in ultimas_5 if d != 0])
                 
-                # COM tendência: força MÁXIMA
                 if freq_5:
                     dz_tendencia = freq_5.most_common(1)[0]
                     if dz_tendencia[1] >= 3:
@@ -539,7 +519,6 @@ class DuziaAI:
                             'descricao': f'2 erros + Tendência D{dz_tendencia[0]} ({dz_tendencia[1]}/5)'
                         }
                 
-                # SEM tendência: ainda dispara, força menor
                 dz_errada = self.ultimos_resultados[-1]['duzia'] if self.ultimos_resultados[-1]['duzia'] != 0 else dz_dominante
                 outras = self._get_outras_duzias(dz_errada)
                 freq_outras = {d: freq.get(d, 0) for d in outras}
@@ -550,7 +529,7 @@ class DuziaAI:
                     'tipo': 'SEQUENCIA_ERROS',
                     'dz_quebra': dz_escolhida,
                     'dz_exaurida': dz_errada,
-                    'forca': 8,  # Força reduzida, mas ainda ajuda
+                    'forca': 8,
                     'descricao': f'2 erros seguidos - Mudando de D{dz_errada}'
                 }
         
@@ -1269,11 +1248,27 @@ class DuziaAI:
         d1, s1 = ranking[0]
         d2, s2 = ranking[1]
         
+        # =============================================
+        # 🔥 CORREÇÃO: STREAK 2x ANTES DO SCORE
+        # =============================================
+        if len(self.historico) >= 2:
+            u = list(self.historico)
+            ultimas_2 = u[-2:]
+            if len(set(ultimas_2)) == 1 and ultimas_2[0] != 0:
+                dz_streak = ultimas_2[0]
+                if d1 != dz_streak:
+                    logging.info(f"🔥 STREAK D{dz_streak} 2x DETECTADO ANTES do score! Corrigindo d1...")
+                    d1 = dz_streak
+                    self.streak_ativo = dz_streak
+                    # Ajusta d2 para a outra mais frequente
+                    outras = self._get_outras_duzias(dz_streak)
+                    freq_outras = {d: u.count(d) for d in outras}
+                    d2 = max(freq_outras, key=freq_outras.get)
+        
         ratio = s1 / max(1, s2)
         vol = np.std(list(score.values()))
         confianca = (ratio * 2.2) + (1.5 / (1 + vol))
         
-        # Calibra confiança baseado no histórico
         confianca = self.calibrar_confianca(confianca)
         
         confianca_ajustada = confianca_minima - (0.4 * (2 - agressividade))
@@ -1396,7 +1391,6 @@ class SistemaBot:
             
             self.duzia_ai.registrar_resultado(duzia_real, acerto_primaria or acerto_secundaria)
             
-            # Registrar confiança vs acerto para calibração
             if self.entrada_ativa.get('confianca'):
                 self.duzia_ai.calibrar_confianca(
                     self.entrada_ativa['confianca'], 
@@ -1552,8 +1546,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.5 MELHORADA CORRIGIDA", layout="wide")
-st.title("🎰 DuziaAI V6.5 MELHORADA - SEQUENCIA_ERROS + Calibração")
+st.set_page_config(page_title="🎰 DuziaAI V6.5 - Streak 2x Antes do Score", layout="wide")
+st.title("🎰 DuziaAI V6.5 - Streak 2x ANTES do Score")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1621,11 +1615,12 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.5 MELHORADA CORRIGIDA")
-    st.caption("🔄 STREAK 2x ABSOLUTO")
-    st.caption("🎯 SEQUENCIA_ERROS: Dispara SEMPRE após 2 erros")
+    st.markdown("### 📊 V6.5 - Streak 2x ANTES do Score")
+    st.caption("🔥 STREAK 2x: Detectado ANTES do score")
+    st.caption("🔄 STREAK 3x: Reforço")
+    st.caption("🚪 SAÍDA: Streak quebrou")
+    st.caption("🎯 SEQUENCIA_ERROS: Dispara SEMPRE")
     st.caption("📉 Calibração de Confiança")
-    st.caption("🚪 SAÍDA: Streak quebrou ou baixa confiança")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -1835,5 +1830,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.5 MELHORADA CORRIGIDA | SEQUENCIA_ERROS Sempre + Calibração | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.5 | Streak 2x ANTES do Score | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
