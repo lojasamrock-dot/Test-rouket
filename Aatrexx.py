@@ -697,7 +697,8 @@ class DuziaAI:
             for d in outras:
                 score = 0
             if freq_outras[d] >= 2: score += 3
-                elif freq_outras[d] >= 1: score += 1                if destinos_hist[d] >= 2: score += 4
+                elif freq_outras[d] >= 1: score += 1                
+             if destinos_hist[d] >= 2: score += 4
                 elif destinos_hist[d] >= 1: score += 2
             if freq_outras[d] == 0 and len(u) >= 10: score += 2
                 scores_quebra[d] = score
