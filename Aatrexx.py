@@ -188,7 +188,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V6.5 MELHORADA
+# 🧠 DUZIA AI V6.5 MELHORADA - CORRIGIDA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -220,6 +220,8 @@ class DuziaAI:
         self.ultimo_gatilho = None
         self.sinal_mudanca_pendente = None
         self.streak_ativo = None
+        # Histórico de confiança vs acerto para calibração
+        self.historico_confianca = []
     
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -258,9 +260,31 @@ class DuziaAI:
         fator = 0.5 + taxa_acerto
         return peso_base * fator
     
+    def calibrar_confianca(self, confianca, acertou=None):
+        """
+        Calibra a confiança baseado no histórico recente de acertos
+        """
+        if acertou is not None:
+            self.historico_confianca.append({'confianca': confianca, 'acertou': acertou})
+            if len(self.historico_confianca) > 30:
+                self.historico_confianca = self.historico_confianca[-30:]
+        
+        # Se temos histórico suficiente, ajusta confiança
+        if len(self.historico_confianca) >= 5:
+            # Encontra a taxa de acerto para confianças similares
+            confiancas_altas = [h for h in self.historico_confianca if h['confianca'] >= 4.0]
+            if confiancas_altas:
+                taxa_acerto_alta = sum(1 for h in confiancas_altas if h['acertou']) / len(confiancas_altas)
+                # Se taxa de acerto em alta confiança é < 50%, reduz confiança
+                if taxa_acerto_alta < 0.5 and confianca >= 4.0:
+                    confianca = confianca * 0.7
+                    logging.info(f"📉 Confiança calibrada: {confianca:.2f} (taxa real alta conf: {taxa_acerto_alta:.0%})")
+        
+        return confianca
+    
     def balancear_previsoes(self, previsao):
         """
-        ANTI-TEIMOSIA 2x ABSOLUTA (V6.5 MELHORADA)
+        ANTI-TEIMOSIA 2x ABSOLUTA (V6.5 MELHORADA CORRIGIDA)
         """
         if len(self.historico) < 2:
             return previsao
@@ -307,6 +331,17 @@ class DuziaAI:
                     self.streak_ativo = None
                     previsao['duzia'] = u[-1]
                     return previsao
+                
+                # SAÍDA com 1 erro + confiança baixa
+                if len(self.ultimos_resultados) >= 1:
+                    if not self.ultimos_resultados[-1]['acertou'] and previsao.get('confianca', 3) < 2.5:
+                        logging.info(f"🚪 SAÍDA: Erro com baixa confiança seguindo D{dz_seguindo}!")
+                        self.streak_ativo = None
+                        freq_recente = Counter(u[-5:])
+                        outras = self._get_outras_duzias(dz_seguindo)
+                        freq_outras = {d: freq_recente.get(d, 0) for d in outras}
+                        previsao['duzia'] = max(freq_outras, key=freq_outras.get)
+                        return previsao
                 
                 if len(self.ultimos_resultados) >= 2:
                     ultimos_2_res = self.ultimos_resultados[-2:]
@@ -414,7 +449,7 @@ class DuziaAI:
         return False
     
     # =============================================
-    # 🎯 GATILHOS V6.5 ORIGINAIS + MELHORIAS
+    # 🎯 GATILHOS V6.5 CORRIGIDOS
     # =============================================
     def detectar_exaustao_ciclo_dominante(self):
         if len(self.historico) < 10:
@@ -428,7 +463,6 @@ class DuziaAI:
         
         ranking = freq.most_common()
         dz_dominante = ranking[0][0]
-        count_dominante = ranking[0][1]
         
         # VERIFICA SINAL DE MUDANÇA PENDENTE
         if self.sinal_mudanca_pendente:
@@ -483,14 +517,16 @@ class DuziaAI:
                             'descricao': f'3ª Dúzia D{terceira} emergindo (2/4) - Quebra de D{dz_dominante}'
                         }
         
-        # GATILHO 2: SEQUÊNCIA DE ERROS (MELHORADO - com tendência)
+        # GATILHO 2: SEQUÊNCIA DE ERROS (CORRIGIDO - DISPARA SEMPRE)
         if len(self.ultimos_resultados) >= 2:
             ultimos_2 = self.ultimos_resultados[-2:]
             if not ultimos_2[0]['acertou'] and not ultimos_2[1]['acertou']:
+                
                 # Verifica tendência nas últimas 5
                 ultimas_5 = u[-5:]
                 freq_5 = Counter([d for d in ultimas_5 if d != 0])
                 
+                # COM tendência: força MÁXIMA
                 if freq_5:
                     dz_tendencia = freq_5.most_common(1)[0]
                     if dz_tendencia[1] >= 3:
@@ -503,8 +539,8 @@ class DuziaAI:
                             'descricao': f'2 erros + Tendência D{dz_tendencia[0]} ({dz_tendencia[1]}/5)'
                         }
                 
-                # Sem tendência, ainda dispara mas com força menor
-                dz_errada = ultimos_2[-1]['duzia'] if ultimos_2[-1]['duzia'] != 0 else dz_dominante
+                # SEM tendência: ainda dispara, força menor
+                dz_errada = self.ultimos_resultados[-1]['duzia'] if self.ultimos_resultados[-1]['duzia'] != 0 else dz_dominante
                 outras = self._get_outras_duzias(dz_errada)
                 freq_outras = {d: freq.get(d, 0) for d in outras}
                 dz_escolhida = max(freq_outras, key=freq_outras.get)
@@ -514,12 +550,12 @@ class DuziaAI:
                     'tipo': 'SEQUENCIA_ERROS',
                     'dz_quebra': dz_escolhida,
                     'dz_exaurida': dz_errada,
-                    'forca': 10,
-                    'descricao': f'2 erros seguidos - Forçando mudança de D{dz_errada}'
+                    'forca': 8,  # Força reduzida, mas ainda ajuda
+                    'descricao': f'2 erros seguidos - Mudando de D{dz_errada}'
                 }
         
         # GATILHO 3: PADRÃO DE ALTERNÂNCIA ESGOTANDO
-        if len(freq) == 2 and count_dominante >= 6:
+        if len(freq) == 2 and freq.most_common(1)[0][1] >= 6:
             dz1, dz2 = ranking[0][0], ranking[1][0]
             terceira = self._get_terceira_duzia(dz1, dz2)
             
@@ -580,7 +616,7 @@ class DuziaAI:
         
         return None
     
-    # ========== DETECTORES UNIVERSAIS (70% PESO) ==========
+    # ========== DETECTORES UNIVERSAIS ==========
     
     def detectar_quebra_estados(self):
         if len(self.historico) < 5:
@@ -1237,6 +1273,9 @@ class DuziaAI:
         vol = np.std(list(score.values()))
         confianca = (ratio * 2.2) + (1.5 / (1 + vol))
         
+        # Calibra confiança baseado no histórico
+        confianca = self.calibrar_confianca(confianca)
+        
         confianca_ajustada = confianca_minima - (0.4 * (2 - agressividade))
         
         forca_detectores = 0
@@ -1356,6 +1395,13 @@ class SistemaBot:
                 st.session_state.erros_duzia = st.session_state.get('erros_duzia', 0) + 1
             
             self.duzia_ai.registrar_resultado(duzia_real, acerto_primaria or acerto_secundaria)
+            
+            # Registrar confiança vs acerto para calibração
+            if self.entrada_ativa.get('confianca'):
+                self.duzia_ai.calibrar_confianca(
+                    self.entrada_ativa['confianca'], 
+                    acerto_primaria or acerto_secundaria
+                )
             
             detectores_ativos = self.entrada_ativa.get('detectores_ativos', [])
             for detector in detectores_ativos:
@@ -1506,8 +1552,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.5 MELHORADA", layout="wide")
-st.title("🎰 DuziaAI V6.5 MELHORADA - Anti-Teimosia + SEQUENCIA_ERROS")
+st.set_page_config(page_title="🎰 DuziaAI V6.5 MELHORADA CORRIGIDA", layout="wide")
+st.title("🎰 DuziaAI V6.5 MELHORADA - SEQUENCIA_ERROS + Calibração")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1575,14 +1621,11 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.5 MELHORADA")
-    st.caption("🔄 STREAK 2x ABSOLUTO: Segue fluxo")
-    st.caption("🔄 STREAK 3x: Reforço")
-    st.caption("🚪 SAÍDA: Streak quebrou")
-    st.caption("🎯 SEQUENCIA_ERROS: 2 erros + Tendência")
-    st.caption("🎯 EXAUSTAO_DOMINANCIA: 7+/10")
-    st.caption("🎯 QUEBRA_POS_ZERO")
-    st.caption("🎯 MUDANCA_VELOCIDADE: Confirmada")
+    st.markdown("### 📊 V6.5 MELHORADA CORRIGIDA")
+    st.caption("🔄 STREAK 2x ABSOLUTO")
+    st.caption("🎯 SEQUENCIA_ERROS: Dispara SEMPRE após 2 erros")
+    st.caption("📉 Calibração de Confiança")
+    st.caption("🚪 SAÍDA: Streak quebrou ou baixa confiança")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -1792,5 +1835,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.5 MELHORADA | Anti-Teimosia 2x + SEQUENCIA_ERROS com Tendência | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.5 MELHORADA CORRIGIDA | SEQUENCIA_ERROS Sempre + Calibração | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 salvar_sessao()
