@@ -7,7 +7,7 @@ import random
 from collections import Counter, deque, defaultdict
 from streamlit_autorefresh import st_autorefresh
 import pickle
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import numpy as np
 import plotly.graph_objects as plt
 
@@ -22,6 +22,25 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+# =============================
+# FUSO HORÁRIO BRASÍLIA (BRT = UTC-3)
+# =============================
+BRT = timezone(timedelta(hours=-3))
+
+def hora_brasilia():
+    """Retorna datetime.now() no fuso horário de Brasília"""
+    return datetime.now(BRT)
+
+def formatar_hora_brasilia(dt=None):
+    """Formata datetime para string HH:MM:SS no horário de Brasília"""
+    if dt is None:
+        dt = hora_brasilia()
+    return dt.strftime('%H:%M:%S')
+
+def timestamp_brasilia():
+    """Retorna timestamp ISO no horário de Brasília"""
+    return hora_brasilia().isoformat()
 
 # =============================
 # CONFIGURAÇÕES DE PERSISTÊNCIA
@@ -188,7 +207,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V6.5 MELHORADA - STREAK 2x ANTES DO SCORE
+# 🧠 DUZIA AI V6.5 FINAL - 3 CORREÇÕES + BRT
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -242,7 +261,7 @@ class DuziaAI:
         self.ultimos_resultados.append({
             'duzia': duzia_real,
             'acertou': acertou,
-            'timestamp': datetime.now()
+            'timestamp': hora_brasilia()
         })
         if len(self.ultimos_resultados) > 20:
             self.ultimos_resultados = self.ultimos_resultados[-20:]
@@ -263,11 +282,22 @@ class DuziaAI:
     def calibrar_confianca(self, confianca, acertou=None):
         """
         Calibra a confiança baseado no histórico recente de acertos
+        CORREÇÃO 2: Calibração mais agressiva
         """
         if acertou is not None:
             self.historico_confianca.append({'confianca': confianca, 'acertou': acertou})
             if len(self.historico_confianca) > 30:
                 self.historico_confianca = self.historico_confianca[-30:]
+        
+        if len(self.historico_confianca) >= 3:
+            ultimas_3 = self.historico_confianca[-3:]
+            confiancas_altas = [h for h in ultimas_3 if h['confianca'] >= 3.5]
+            if len(confiancas_altas) >= 2:
+                erros_altas = sum(1 for h in confiancas_altas if not h['acertou'])
+                if erros_altas >= 2:
+                    confianca = confianca * 0.5
+                    logging.info(f"📉📉 Confiança DRASTICAMENTE reduzida: {confianca:.2f} (2+ erros alta conf)")
+                    return confianca
         
         if len(self.historico_confianca) >= 5:
             confiancas_altas = [h for h in self.historico_confianca if h['confianca'] >= 4.0]
@@ -281,13 +311,29 @@ class DuziaAI:
     
     def balancear_previsoes(self, previsao):
         """
-        ANTI-TEIMOSIA com SAÍDA INTELIGENTE
+        ANTI-TEIMOSIA com SAÍDA + PING-PONG + SEGUIR APÓS ERRO
         """
         if len(self.historico) < 2:
             return previsao
         
         u = list(self.historico)
         score = previsao.get('score', {})
+        
+        # =============================================
+        # CORREÇÃO 1: DETECTOR DE PING-PONG
+        # Se últimas 4 alternam entre DUAS dúzias (A,B,A,B)
+        # =============================================
+        if len(u) >= 4:
+            ultimas_4 = u[-4:]
+            duzias_unicas = set([d for d in ultimas_4 if d != 0])
+            if len(duzias_unicas) == 2:
+                dz_list = list(duzias_unicas)
+                if ultimas_4[0] == ultimas_4[2] and ultimas_4[1] == ultimas_4[3] and ultimas_4[0] != 0 and ultimas_4[1] != 0:
+                    proxima = ultimas_4[1]
+                    logging.info(f"🔄 PING-PONG detectado: D{dz_list[0]}↔D{dz_list[1]}! Seguindo D{proxima}")
+                    previsao['duzia'] = proxima
+                    self.streak_ativo = None
+                    return previsao
         
         # STREAK 3x REFORÇO
         if len(u) >= 3:
@@ -335,6 +381,22 @@ class DuziaAI:
                         freq_outras = {d: freq_recente.get(d, 0) for d in outras}
                         previsao['duzia'] = max(freq_outras, key=freq_outras.get)
                         return previsao
+        
+        # =============================================
+        # CORREÇÃO 3: APÓS ERRO, SEGUIR DÚZIA QUE REPETIU
+        # =============================================
+        if self.ultimos_resultados and not self.ultimos_resultados[-1]['acertou']:
+            duzia_que_saiu = self.ultimos_resultados[-1]['duzia']
+            duzia_errada_prevista = previsao['duzia']
+            
+            # Se errou e a dúzia que saiu é DIFERENTE da que previmos
+            if duzia_que_saiu != 0 and duzia_errada_prevista != duzia_que_saiu:
+                # Se essa dúzia já saiu 2x seguidas, segue ela
+                if len(u) >= 2 and u[-1] == duzia_que_saiu and u[-2] == duzia_que_saiu:
+                    logging.info(f"🔄 Erro + D{duzia_que_saiu} repetiu 2x! Seguindo...")
+                    previsao['duzia'] = duzia_que_saiu
+                    self.streak_ativo = duzia_que_saiu
+                    return previsao
         
         # NÃO REPETIR APÓS ERRO
         if self.ultimos_resultados and not self.ultimos_resultados[-1]['acertou']:
@@ -1248,9 +1310,7 @@ class DuziaAI:
         d1, s1 = ranking[0]
         d2, s2 = ranking[1]
         
-        # =============================================
-        # 🔥 CORREÇÃO: STREAK 2x ANTES DO SCORE
-        # =============================================
+        # 🔥 STREAK 2x ANTES DO SCORE
         if len(self.historico) >= 2:
             u = list(self.historico)
             ultimas_2 = u[-2:]
@@ -1260,7 +1320,6 @@ class DuziaAI:
                     logging.info(f"🔥 STREAK D{dz_streak} 2x DETECTADO ANTES do score! Corrigindo d1...")
                     d1 = dz_streak
                     self.streak_ativo = dz_streak
-                    # Ajusta d2 para a outra mais frequente
                     outras = self._get_outras_duzias(dz_streak)
                     freq_outras = {d: u.count(d) for d in outras}
                     d2 = max(freq_outras, key=freq_outras.get)
@@ -1403,7 +1462,7 @@ class SistemaBot:
             
             entrada_info = {
                 'rodada': self.numero_rodada,
-                'hora': datetime.now().strftime('%H:%M:%S'),
+                'hora': formatar_hora_brasilia(),  # BRT
                 'numero': nr,
                 'duzia_real': duzia_real if nr != 0 else 0,
                 'duzia_prevista': duzia_prevista,
@@ -1546,8 +1605,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.5 - Streak 2x Antes do Score", layout="wide")
-st.title("🎰 DuziaAI V6.5 - Streak 2x ANTES do Score")
+st.set_page_config(page_title="🎰 DuziaAI V6.5 FINAL - BRT", layout="wide")
+st.title("🎰 DuziaAI V6.5 FINAL - 3 Correções + Horário Brasília")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1615,12 +1674,13 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.5 - Streak 2x ANTES do Score")
-    st.caption("🔥 STREAK 2x: Detectado ANTES do score")
-    st.caption("🔄 STREAK 3x: Reforço")
-    st.caption("🚪 SAÍDA: Streak quebrou")
+    st.markdown("### 📊 V6.5 FINAL - 3 Correções")
+    st.caption("🔄 PING-PONG: Detecta A,B,A,B")
+    st.caption("📉📉 Calibração DRASTICA: 2 erros alta conf")
+    st.caption("🔄 Segue após erro + repetição")
+    st.caption("🔥 STREAK 2x ANTES do score")
     st.caption("🎯 SEQUENCIA_ERROS: Dispara SEMPRE")
-    st.caption("📉 Calibração de Confiança")
+    st.caption("🕐 Horário BRASÍLIA (BRT)")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -1650,7 +1710,7 @@ with c2:
     if st.button("🎯 Enviar", use_container_width=True, type="primary"):
         if validar_numero(entrada):
             nr = int(entrada)
-            item = {"number": nr, "timestamp": datetime.now().isoformat(), "luckyNumbers": [], "luckyMultipliers": {}}
+            item = {"number": nr, "timestamp": timestamp_brasilia(), "luckyNumbers": [], "luckyMultipliers": {}}
             st.session_state.historico.append(item)
             st.session_state.sistema.processar_novo_numero(item)
             salvar_resultado_em_arquivo(st.session_state.historico)
@@ -1813,7 +1873,7 @@ if sis.historico_entradas:
         
         dados_tabela.append({
             "Rodada": e.get('rodada', '-'),
-            "Hora": e.get('hora', '-'),
+            "Hora (BRT)": e.get('hora', '-'),
             "Número": e.get('numero', '-'),
             "Dúzia Real": duzia_real_str,
             "Dúzia Prevista": f"D{e.get('duzia_prevista', '?')}" if e.get('duzia_prevista') else "-",
@@ -1830,5 +1890,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.5 | Streak 2x ANTES do Score | {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+st.caption(f"🤖 DuziaAI V6.5 FINAL | 3 Correções + Horário Brasília | {formatar_hora_brasilia()}")
 salvar_sessao()
