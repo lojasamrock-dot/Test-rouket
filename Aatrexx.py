@@ -112,6 +112,29 @@ def limpar_sessao():
     except Exception as e:
         logging.error(f"Erro ao limpar sessão: {e}")
 
+def nova_sessao():
+    """Limpa TODOS os dados e inicia uma sessão zerada"""
+    try:
+        # Limpa arquivos
+        for path in [SESSION_DATA_PATH, HISTORICO_PATH, PERFORMANCE_PATH, ENTRADAS_PATH]:
+            if os.path.exists(path):
+                os.remove(path)
+        # Reseta o sistema
+        if 'sistema' in st.session_state:
+            st.session_state.sistema.zerar()
+        # Limpa histórico
+        st.session_state.historico = []
+        # Reseta métricas
+        st.session_state.acertos_duzia = 0
+        st.session_state.erros_duzia = 0
+        st.session_state.acertos_duzia_sec = 0
+        st.session_state.erros_duzia_sec = 0
+        logging.info("🆕 NOVA SESSÃO INICIADA - Todos os dados foram limpos")
+        return True
+    except Exception as e:
+        logging.error(f"Erro ao criar nova sessão: {e}")
+        return False
+
 # =============================
 # NOTIFICAÇÕES (SIMPLIFICADAS)
 # =============================
@@ -207,7 +230,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V6.5 FINAL CORRIGIDA
+# 🧠 DUZIA AI V6.5 FINAL
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -1030,9 +1053,7 @@ class DuziaAI:
                     if p > 40:
                         score[d] += (p - 30) / 8
         
-        # =============================================
         # 🔥 STREAK 2x FORÇA O SCORE
-        # =============================================
         if len(self.historico) >= 2:
             u = list(self.historico)
             ultimas_2 = u[-2:]
@@ -1577,8 +1598,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.5 FINAL", layout="wide")
-st.title("🎰 DuziaAI V6.5 FINAL - Streak 2x FORÇA Score (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V6.5 FINAL - BRT", layout="wide")
+st.title("🎰 DuziaAI V6.5 FINAL - Horário Brasília")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1640,6 +1661,14 @@ if "telegram_chat_id" not in st.session_state:
 # Sidebar
 with st.sidebar:
     st.markdown("## ⚙️ Configurações")
+    
+    # 🔥 BOTÃO NOVA SESSÃO (OPÇÃO 2)
+    if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
+        if nova_sessao():
+            st.success("✅ Nova sessão iniciada! Todos os dados foram limpos.")
+            st.rerun()
+    
+    st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
     st.session_state.confianca_minima = st.slider("🎯 Confiança Mínima", 2.0, 5.0, st.session_state.confianca_minima, 0.2)
     st.session_state.agressividade = st.select_slider("🎚️ Agressividade", options=[1,2,3], value=st.session_state.agressividade)
@@ -1862,5 +1891,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.5 FINAL | Streak 2x FORÇA Score + BRT | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V6.5 FINAL | 🆕 Nova Sessão + BRT | {formatar_hora_brasilia()}")
 salvar_sessao()
