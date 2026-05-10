@@ -226,7 +226,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V6.5 FINAL - CONFIANÇA CORRIGIDA
+# 🧠 DUZIA AI V6.7 - DÚZIAS DO MOMENTO
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -1062,6 +1062,38 @@ class DuziaAI:
                     score[d] *= 0.5
                     detalhes[d].append(f"⚠️ Anti-Streak: -50%")
         
+        # =============================================
+        # 🆕 REGRA: DÚZIAS DO MOMENTO (DINÂMICA)
+        # =============================================
+        if len(self.historico) >= 6:
+            u = list(self.historico)
+            ultimas_6 = u[-6:]
+            freq_6 = Counter([d for d in ultimas_6 if d != 0])
+            ranking_6 = freq_6.most_common()
+            
+            if len(ranking_6) >= 2:
+                dz1 = ranking_6[0][0]  # Mais frequente
+                dz2 = ranking_6[1][0]  # Segunda mais frequente
+                top2_sum = ranking_6[0][1] + ranking_6[1][1]
+                
+                # Se as duas dominam 5+/6 jogadas (83%+)
+                if top2_sum >= 5:
+                    terceira = self._get_terceira_duzia(dz1, dz2)
+                    
+                    # Se a terceira está FORA nas últimas 4 jogadas
+                    if terceira not in ultimas_6[-4:]:
+                        # PENALIZA FORTEMENTE a terceira
+                        score[terceira] *= 0.2
+                        detalhes[terceira].append(f"🚫 FORA DO MOMENTO D{dz1}/D{dz2}: -80%")
+                        
+                        # REFORÇA as duas do momento
+                        if u[-1] == dz1:
+                            score[dz1] += 15
+                            detalhes[dz1].append(f"🎯 MOMENTO D{dz1}/D{dz2}: +15 (última)")
+                        elif u[-1] == dz2:
+                            score[dz2] += 15
+                            detalhes[dz2].append(f"🎯 MOMENTO D{dz1}/D{dz2}: +15 (última)")
+        
         # SEQUÊNCIA DE DERROTAS
         if len(self.ultimos_resultados) >= 3:
             ultimos_3_real = [r['duzia'] for r in self.ultimos_resultados[-3:]]
@@ -1313,12 +1345,12 @@ class DuziaAI:
                     freq_outras = {d: u.count(d) for d in outras}
                     d2 = max(freq_outras, key=freq_outras.get)
         
-        # 🔧 CORREÇÃO: LIMITAR RATIO E CONFIANÇA
-        ratio = min(5.0, s1 / max(1, s2))  # Cap no ratio
+        # LIMITAR RATIO E CONFIANÇA
+        ratio = min(5.0, s1 / max(1, s2))
         vol = np.std(list(score.values()))
         confianca = (ratio * 2.2) + (1.5 / (1 + vol))
-        confianca = min(10.0, confianca)  # Cap na confiança máxima
-        confianca = max(1.0, confianca)   # Piso na confiança mínima
+        confianca = min(10.0, confianca)
+        confianca = max(1.0, confianca)
         
         confianca = self.calibrar_confianca(confianca)
         
@@ -1597,8 +1629,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.5 FINAL - BRT", layout="wide")
-st.title("🎰 DuziaAI V6.5 FINAL - Confiança Corrigida (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V6.7 - Dúzias do Momento", layout="wide")
+st.title("🎰 DuziaAI V6.7 - Dúzias do Momento (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1661,7 +1693,6 @@ if "telegram_chat_id" not in st.session_state:
 with st.sidebar:
     st.markdown("## ⚙️ Configurações")
     
-    # 🔥 BOTÃO NOVA SESSÃO
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao():
             st.success("✅ Nova sessão iniciada! Todos os dados foram limpos.")
@@ -1674,12 +1705,13 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.5 FINAL")
-    st.caption("🔥 STREAK 2x: +25 score, -50% outros")
+    st.markdown("### 📊 V6.7 - Dúzias do Momento")
+    st.caption("🎯 DÚZIAS DO MOMENTO: Identifica top 2")
+    st.caption("🚫 FORA DO MOMENTO: -80% na 3ª dúzia")
+    st.caption("🎯 +15 na última que saiu")
+    st.caption("🔥 STREAK 2x: +25 score")
     st.caption("🔄 PING-PONG: Detecta A,B,A,B")
     st.caption("📉 Confiança CAP: 1.0 ~ 10.0")
-    st.caption("📉 Ratio CAP: 5.0 máximo")
-    st.caption("🎯 SEQUENCIA_ERROS: Dispara SEMPRE")
     st.caption("🕐 Horário BRASÍLIA (BRT)")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
@@ -1890,5 +1922,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.5 FINAL | Confiança CAP 1-10 + BRT | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V6.7 | Dúzias do Momento + BRT | {formatar_hora_brasilia()}")
 salvar_sessao()
