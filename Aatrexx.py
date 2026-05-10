@@ -115,16 +115,12 @@ def limpar_sessao():
 def nova_sessao():
     """Limpa TODOS os dados e inicia uma sessão zerada"""
     try:
-        # Limpa arquivos
         for path in [SESSION_DATA_PATH, HISTORICO_PATH, PERFORMANCE_PATH, ENTRADAS_PATH]:
             if os.path.exists(path):
                 os.remove(path)
-        # Reseta o sistema
         if 'sistema' in st.session_state:
             st.session_state.sistema.zerar()
-        # Limpa histórico
         st.session_state.historico = []
-        # Reseta métricas
         st.session_state.acertos_duzia = 0
         st.session_state.erros_duzia = 0
         st.session_state.acertos_duzia_sec = 0
@@ -136,7 +132,7 @@ def nova_sessao():
         return False
 
 # =============================
-# NOTIFICAÇÕES (SIMPLIFICADAS)
+# NOTIFICAÇÕES
 # =============================
 def enviar_previsao_auto(previsao):
     try:
@@ -230,7 +226,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V6.5 FINAL
+# 🧠 DUZIA AI V6.5 FINAL - CONFIANÇA CORRIGIDA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -1317,9 +1313,12 @@ class DuziaAI:
                     freq_outras = {d: u.count(d) for d in outras}
                     d2 = max(freq_outras, key=freq_outras.get)
         
-        ratio = s1 / max(1, s2)
+        # 🔧 CORREÇÃO: LIMITAR RATIO E CONFIANÇA
+        ratio = min(5.0, s1 / max(1, s2))  # Cap no ratio
         vol = np.std(list(score.values()))
         confianca = (ratio * 2.2) + (1.5 / (1 + vol))
+        confianca = min(10.0, confianca)  # Cap na confiança máxima
+        confianca = max(1.0, confianca)   # Piso na confiança mínima
         
         confianca = self.calibrar_confianca(confianca)
         
@@ -1599,7 +1598,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # APLICAÇÃO STREAMLIT
 # =============================
 st.set_page_config(page_title="🎰 DuziaAI V6.5 FINAL - BRT", layout="wide")
-st.title("🎰 DuziaAI V6.5 FINAL - Horário Brasília")
+st.title("🎰 DuziaAI V6.5 FINAL - Confiança Corrigida (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1662,7 +1661,7 @@ if "telegram_chat_id" not in st.session_state:
 with st.sidebar:
     st.markdown("## ⚙️ Configurações")
     
-    # 🔥 BOTÃO NOVA SESSÃO (OPÇÃO 2)
+    # 🔥 BOTÃO NOVA SESSÃO
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao():
             st.success("✅ Nova sessão iniciada! Todos os dados foram limpos.")
@@ -1678,8 +1677,8 @@ with st.sidebar:
     st.markdown("### 📊 V6.5 FINAL")
     st.caption("🔥 STREAK 2x: +25 score, -50% outros")
     st.caption("🔄 PING-PONG: Detecta A,B,A,B")
-    st.caption("📉📉 Calibração DRASTICA")
-    st.caption("🔄 Segue após erro + repetição")
+    st.caption("📉 Confiança CAP: 1.0 ~ 10.0")
+    st.caption("📉 Ratio CAP: 5.0 máximo")
     st.caption("🎯 SEQUENCIA_ERROS: Dispara SEMPRE")
     st.caption("🕐 Horário BRASÍLIA (BRT)")
     st.markdown("---")
@@ -1891,5 +1890,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.5 FINAL | 🆕 Nova Sessão + BRT | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V6.5 FINAL | Confiança CAP 1-10 + BRT | {formatar_hora_brasilia()}")
 salvar_sessao()
