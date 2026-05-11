@@ -236,7 +236,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V6.8 - COBERTURA CORRIGIDA
+# 🧠 DUZIA AI V6.9 - STREAK 2x FORÇA FINAL
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -275,7 +275,6 @@ class DuziaAI:
         if previsao.get('duzia_secundaria') is None or previsao['duzia_secundaria'] == previsao['duzia']:
             outras = self._get_outras_duzias(previsao['duzia'])
             previsao['duzia_secundaria'] = outras[0] if outras else previsao['duzia']
-            logging.info(f"🔧 Cobertura corrigida: D{previsao['duzia_secundaria']} (diferente de D{previsao['duzia']})")
         return previsao
     
     def adicionar(self, numero):
@@ -328,7 +327,6 @@ class DuziaAI:
                 erros_altas = sum(1 for h in confiancas_altas if not h['acertou'])
                 if erros_altas >= 2:
                     confianca = confianca * 0.5
-                    logging.info(f"📉📉 Confiança DRASTICAMENTE reduzida: {confianca:.2f}")
                     return confianca
         
         if len(self.historico_confianca) >= 5:
@@ -337,7 +335,6 @@ class DuziaAI:
                 taxa_acerto_alta = sum(1 for h in confiancas_altas if h['acertou']) / len(confiancas_altas)
                 if taxa_acerto_alta < 0.5 and confianca >= 4.0:
                     confianca = confianca * 0.7
-                    logging.info(f"📉 Confiança calibrada: {confianca:.2f}")
         
         return confianca
     
@@ -351,7 +348,6 @@ class DuziaAI:
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
-                logging.info("⚠️ ALERTA ZERO: Streak 3x detectado!")
                 self.alerta_zero_ativo = True
                 return True
         
@@ -359,17 +355,14 @@ class DuziaAI:
             ultimas_4 = u[-4:]
             duzias_unicas = set([d for d in ultimas_4 if d != 0])
             if len(duzias_unicas) >= 3:
-                logging.info("⚠️ ALERTA ZERO: CAOS detectado!")
                 self.alerta_zero_ativo = True
                 return True
         
         if len(u) >= 1 and u[-1] == 0:
-            logging.info("⚠️ ALERTA ZERO: Zero anterior!")
             self.alerta_zero_ativo = True
             return True
         
         if hasattr(self, 'ultima_confianca') and self.ultima_confianca > 8.0:
-            logging.info("⚠️ ALERTA ZERO: Confiança muito alta!")
             self.alerta_zero_ativo = True
             return True
         
@@ -378,7 +371,6 @@ class DuziaAI:
             duzias_unicas = set([d for d in ultimas_4 if d != 0])
             if len(duzias_unicas) == 2:
                 if ultimas_4[0] == ultimas_4[2] and ultimas_4[1] == ultimas_4[3] and ultimas_4[0] != ultimas_4[1]:
-                    logging.info("⚠️ ALERTA ZERO: Alternância rápida!")
                     self.alerta_zero_ativo = True
                     return True
         
@@ -402,23 +394,8 @@ class DuziaAI:
             if len(duzias_unicas) == 2:
                 if ultimas_4[0] == ultimas_4[2] and ultimas_4[1] == ultimas_4[3] and ultimas_4[0] != 0 and ultimas_4[1] != 0:
                     proxima = ultimas_4[1]
-                    logging.info(f"🔄 PING-PONG detectado! Seguindo D{proxima}")
                     previsao['duzia'] = proxima
                     self.streak_ativo = None
-                    return self._garantir_cobertura_diferente(previsao)
-        
-        # STREAK 3x
-        if len(u) >= 3:
-            ultimas_3 = u[-3:]
-            if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
-                dz_streak = ultimas_3[0]
-                if previsao['duzia'] != dz_streak:
-                    logging.info(f"🔄 STREAK D{dz_streak} 3x! Reforçando")
-                    previsao['duzia'] = dz_streak
-                    self.streak_ativo = dz_streak
-                    outras = self._get_outras_duzias(dz_streak)
-                    freq_outras = {d: u.count(d) for d in outras}
-                    previsao['duzia_secundaria'] = max(freq_outras, key=freq_outras.get)
                     return self._garantir_cobertura_diferente(previsao)
         
         # SAÍDA DO STREAK
@@ -428,14 +405,12 @@ class DuziaAI:
                 dz_seguindo = ultimas_2_prev[0]
                 
                 if u[-1] != dz_seguindo and u[-1] != 0:
-                    logging.info(f"🚪 SAÍDA: Streak D{dz_seguindo} QUEBROU!")
                     self.streak_ativo = None
                     previsao['duzia'] = u[-1]
                     return self._garantir_cobertura_diferente(previsao)
                 
                 if len(self.ultimos_resultados) >= 1:
                     if not self.ultimos_resultados[-1]['acertou'] and previsao.get('confianca', 3) < 2.5:
-                        logging.info(f"🚪 SAÍDA: Erro com baixa confiança!")
                         self.streak_ativo = None
                         freq_recente = Counter(u[-5:])
                         outras = self._get_outras_duzias(dz_seguindo)
@@ -446,7 +421,6 @@ class DuziaAI:
                 if len(self.ultimos_resultados) >= 2:
                     ultimos_2_res = self.ultimos_resultados[-2:]
                     if not ultimos_2_res[0]['acertou'] and not ultimos_2_res[1]['acertou']:
-                        logging.info(f"🚪 SAÍDA: 2 erros seguidos!")
                         self.streak_ativo = None
                         freq_recente = Counter(u[-5:])
                         outras = self._get_outras_duzias(dz_seguindo)
@@ -454,24 +428,11 @@ class DuziaAI:
                         previsao['duzia'] = max(freq_outras, key=freq_outras.get)
                         return self._garantir_cobertura_diferente(previsao)
         
-        # SEGUIR APÓS ERRO + REPETIÇÃO
-        if self.ultimos_resultados and not self.ultimos_resultados[-1]['acertou']:
-            duzia_que_saiu = self.ultimos_resultados[-1]['duzia']
-            duzia_errada_prevista = previsao['duzia']
-            
-            if duzia_que_saiu != 0 and duzia_errada_prevista != duzia_que_saiu:
-                if len(u) >= 2 and u[-1] == duzia_que_saiu and u[-2] == duzia_que_saiu:
-                    logging.info(f"🔄 Erro + D{duzia_que_saiu} repetiu 2x! Seguindo...")
-                    previsao['duzia'] = duzia_que_saiu
-                    self.streak_ativo = duzia_que_saiu
-                    return self._garantir_cobertura_diferente(previsao)
-        
         # NÃO REPETIR APÓS ERRO
         if self.ultimos_resultados and not self.ultimos_resultados[-1]['acertou']:
             duzia_errada = self.ultimos_resultados[-1]['duzia']
             if previsao['duzia'] == duzia_errada and previsao.get('duzia_secundaria') and previsao['duzia_secundaria'] != previsao['duzia']:
                 previsao['duzia'] = previsao['duzia_secundaria']
-                logging.info(f"Evitando repetir D{duzia_errada} após erro")
                 return self._garantir_cobertura_diferente(previsao)
         
         # BALANCEAMENTO
@@ -481,7 +442,6 @@ class DuziaAI:
                 if freq[1] >= 4 and score.get(2, 0) > 30:
                     previsao['duzia'] = 2
                     previsao['duzia_secundaria'] = 1
-                    logging.info("D1/D2 equilibradas - Alternando para D2")
                     return self._garantir_cobertura_diferente(previsao)
         
         return self._garantir_cobertura_diferente(previsao)
@@ -588,7 +548,6 @@ class DuziaAI:
                 }
                 self.ultimo_gatilho = 'MUDANCA_VELOCIDADE'
                 self.sinal_mudanca_pendente = None
-                logging.info(f"GATILHO CONFIRMADO: {resultado['descricao']}")
                 return resultado
             else:
                 self.sinal_mudanca_pendente = None
@@ -708,7 +667,6 @@ class DuziaAI:
                         'dz_exaurida': dom_1[0],
                         'descricao': f'Possível mudança: D{dom_1[0]}({dom_1[1]}/6) → D{dom_2[0]}({dom_2[1]}/6)'
                     }
-                    logging.info(f"SINAL PENDENTE: {self.sinal_mudanca_pendente['descricao']}")
                     return None
         
         return None
@@ -1403,25 +1361,6 @@ class DuziaAI:
         # DETECTAR ALERTA ZERO
         self.detectar_alerta_zero()
         
-        # STREAK 2x ANTES DO SCORE
-        if len(self.historico) >= 2:
-            u = list(self.historico)
-            ultimas_2 = u[-2:]
-            if len(set(ultimas_2)) == 1 and ultimas_2[0] != 0:
-                dz_streak = ultimas_2[0]
-                if d1 != dz_streak:
-                    logging.info(f"🔥 STREAK D{dz_streak} 2x! Forçando d1")
-                    d1 = dz_streak
-                    self.streak_ativo = dz_streak
-                    outras = self._get_outras_duzias(dz_streak)
-                    freq_outras = {d: u.count(d) for d in outras}
-                    d2 = max(freq_outras, key=freq_outras.get)
-        
-        # Garantir novamente que d2 != d1
-        if d2 == d1:
-            outras = self._get_outras_duzias(d1)
-            d2 = outras[0] if outras else d1
-        
         # LIMITAR RATIO E CONFIANÇA
         ratio = min(5.0, s1 / max(1, s2))
         vol = np.std(list(score.values()))
@@ -1466,8 +1405,7 @@ class DuziaAI:
         tem_duas_dominantes = self.detectar_duas_dominantes() is not None
         tem_gatilho_quebra = self.ultimo_gatilho is not None
         
-        pode_entrar = False
-        motivo = ""
+        pode_entrar = False        motivo = ""
         
         if self.sinal_mudanca_pendente:
             pode_entrar = False
@@ -1502,6 +1440,24 @@ class DuziaAI:
         
         if pode_entrar:
             previsao = self.balancear_previsoes(previsao)
+        
+        # =============================================
+        # 🔥🔥 FORÇA FINAL: STREAK 2x IGNORA TUDO
+        # Esta é a ÚLTIMA verificação antes de retornar
+        # NADA pode sobrepor esta regra
+        # =============================================
+        if len(self.historico) >= 2:
+            u = list(self.historico)
+            ultimas_2 = u[-2:]
+            if len(set(ultimas_2)) == 1 and ultimas_2[0] != 0:
+                dz_streak = ultimas_2[0]
+                if previsao['duzia'] != dz_streak:
+                    logging.info(f"🔥🔥 FORÇA FINAL: Streak D{dz_streak} 2x! Sobrescrevendo TUDO!")
+                    previsao['duzia'] = dz_streak
+                    self.streak_ativo = dz_streak
+                    outras = self._get_outras_duzias(dz_streak)
+                    freq_outras = {d: u.count(d) for d in outras}
+                    previsao['duzia_secundaria'] = max(freq_outras, key=freq_outras.get)
         
         # Garantia FINAL: cobertura NUNCA igual à principal
         previsao = self._garantir_cobertura_diferente(previsao)
@@ -1615,7 +1571,6 @@ class SistemaBot:
             numeros_secundarios = duzia_map.get(previsao.get('duzia_secundaria', previsao['duzia']), [])
             
             if st.session_state.get('modo_agressivo', False) and previsao.get('duzia_secundaria'):
-                # Garantir que secundária é diferente da principal
                 if previsao['duzia_secundaria'] != previsao['duzia']:
                     numeros_apostar = list(set(numeros_principais + numeros_secundarios))
                 else:
@@ -1739,8 +1694,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V6.8 - Cobertura Corrigida", layout="wide")
-st.title("🎰 DuziaAI V6.8 - Cobertura NUNCA igual Principal (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V6.9 - Força Final", layout="wide")
+st.title("🎰 DuziaAI V6.9 - STREAK 2x FORÇA FINAL (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1805,7 +1760,7 @@ with st.sidebar:
     
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao():
-            st.success("✅ Nova sessão iniciada! Todos os dados foram limpos.")
+            st.success("✅ Nova sessão iniciada!")
             st.rerun()
     
     st.markdown("---")
@@ -1815,12 +1770,12 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V6.8 - Cobertura Corrigida")
+    st.markdown("### 📊 V6.9 - FORÇA FINAL")
+    st.caption("🔥🔥 STREAK 2x: ÚLTIMA verificação")
     st.caption("🔧 Cobertura NUNCA = Principal")
     st.caption("✅ ZERO acertado = ✅")
     st.caption("⚠️ ALERTA ZERO: 5 padrões")
     st.caption("🎯 DÚZIAS DO MOMENTO")
-    st.caption("🔥 STREAK 2x: +25 score")
     st.caption("🕐 Horário BRASÍLIA (BRT)")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
@@ -2067,5 +2022,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V6.8 | Cobertura Corrigida + BRT | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V6.9 | FORÇA FINAL Streak 2x + BRT | {formatar_hora_brasilia()}")
 salvar_sessao()
