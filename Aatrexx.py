@@ -345,6 +345,14 @@ class DuziaAI:
         
         u = list(self.historico)[-5:]
         
+        # --- NOVA LÓGICA: VIZINHOS FÍSICOS DO ZERO NO CILINDRO ---
+        if hasattr(self, 'numeros_completos') and len(self.numeros_completos) >= 3:
+            nums_recentes = self.numeros_completos[-3:]
+            # 26, 32, 15, 3, 35 são os vizinhos da zona quente do Zero no cilindro Europeu
+            if any(n in [26, 32, 15, 3, 35] for n in nums_recentes):
+                self.alerta_zero_ativo = True
+                return True
+        
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
@@ -937,10 +945,16 @@ class DuziaAI:
         return None
     
     def terminais(self):
-        if len(self.numeros_completos) < 10:
+        # Lógica de terminais baseada na janela dinâmica da análise (não mais 10 fixos)
+        janela = self.historico.maxlen if self.historico.maxlen else 30
+        if len(self.numeros_completos) < min(10, janela):
             return None
-        nums = self.numeros_completos[-10:]
+        
+        nums = self.numeros_completos[-janela:]
         terms = [n % 10 for n in nums if n != 0]
+        if not terms:
+            return None
+            
         top = [t[0] for t in Counter(terms).most_common(2)]
         score = {1: 0, 2: 0, 3: 0}
         for n in range(1, 37):
@@ -1318,6 +1332,37 @@ class DuziaAI:
                     score[d] *= bonus
                     detalhes[d].append(f"🔄 Anti-Viés: +{(bonus-1)*100:.0f}%")
         
+        # CILINDRO FÍSICO E SETORES
+        if len(self.numeros_completos) >= 10:
+            janela = self.historico.maxlen if self.historico.maxlen else 30
+            nums_janela = self.numeros_completos[-janela:]
+            
+            voisins = [22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25]
+            tiers = [27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33]
+            orphelins = [1, 20, 14, 31, 9, 17, 34]
+            
+            v_count = sum(1 for n in nums_janela if n in voisins)
+            t_count = sum(1 for n in nums_janela if n in tiers)
+            o_count = sum(1 for n in nums_janela if n in orphelins)
+            
+            total_janela = len(nums_janela)
+            
+            if v_count > total_janela * 0.45:
+                # Voisins favorece muito D2 e D3
+                score[2] += 4
+                score[3] += 4
+                detalhes[2].append("Cilindro (Voisins Quente): +4")
+                detalhes[3].append("Cilindro (Voisins Quente): +4")
+            elif t_count > total_janela * 0.40:
+                # Tiers é bem distribuído, mas tem peso no terço médio e final
+                score[2] += 2
+                score[3] += 3
+                detalhes[3].append("Cilindro (Tiers Quente): +3")
+            elif o_count > total_janela * 0.35:
+                # Orphelins tem mais representação na D2
+                score[2] += 5
+                detalhes[2].append("Cilindro (Orphelins Quente): +5")
+        
         ciclo = self.detectar_ciclos()
         if ciclo and ciclo != 0 and max(score.values()) > 3:
             score[ciclo] += 5
@@ -1405,8 +1450,8 @@ class DuziaAI:
         tem_duas_dominantes = self.detectar_duas_dominantes() is not None
         tem_gatilho_quebra = self.ultimo_gatilho is not None
         
-        pode_entrar = False
-        pmotivo = ""
+        pode_entrar = False        
+        motivo = ""
         
         if self.sinal_mudanca_pendente:
             pode_entrar = False
