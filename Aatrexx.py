@@ -236,7 +236,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V7.0 - ANTI-ERROS + CILINDRO + TODAS AS CORREÇÕES
+# 🧠 DUZIA AI V7.2 - V7.0 COMPLETA + 3 NOVAS ESTRATÉGIAS
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -269,7 +269,6 @@ class DuziaAI:
         self.streak_ativo = None
         self.historico_confianca = []
         self.alerta_zero_ativo = False
-        # 🆕 Histórico de erros para calibração imediata
         self.erros_consecutivos_mesma_duzia = 0
         self.ultima_duzia_errada = None
     
@@ -304,7 +303,6 @@ class DuziaAI:
         if len(self.ultimos_resultados) > 20:
             self.ultimos_resultados = self.ultimos_resultados[-20:]
         
-        # 🆕 RASTREAR ERROS CONSECUTIVOS NA MESMA DÚZIA
         if not acertou and duzia_real != 0:
             if duzia_real == self.ultima_duzia_errada:
                 self.erros_consecutivos_mesma_duzia += 1
@@ -334,7 +332,6 @@ class DuziaAI:
             if len(self.historico_confianca) > 30:
                 self.historico_confianca = self.historico_confianca[-30:]
         
-        # 🆕 CALIBRAÇÃO IMEDIATA: Erro com confiança > 5.0 reduz 60%
         if acertou is not None and not acertou and confianca > 5.0:
             confianca = confianca * 0.4
             logging.info(f"📉📉📉 CALIBRAÇÃO IMEDIATA: Confiança {confianca:.2f} (erro alta conf)")
@@ -365,7 +362,6 @@ class DuziaAI:
         
         u = list(self.historico)[-5:]
         
-        # --- VIZINHOS FÍSICOS DO ZERO NO CILINDRO ---
         if hasattr(self, 'numeros_completos') and len(self.numeros_completos) >= 3:
             nums_recentes = self.numeros_completos[-3:]
             if any(n in [26, 32, 15, 3, 35] for n in nums_recentes):
@@ -404,16 +400,11 @@ class DuziaAI:
         self.alerta_zero_ativo = False
         return False
     
-    # =============================================
-    # 🆕 DETECTOR DE TROCA SÚBITA
-    # =============================================
     def detectar_troca_subita(self):
         """Detecta quando o mercado muda de direção abruptamente"""
         if len(self.historico) < 4:
             return None
         u = list(self.historico)[-4:]
-        
-        # Se últimas 2 são diferentes das 2 anteriores
         if u[-2] != u[-1] and u[-3] != u[-1] and u[-4] != u[-1]:
             if u[-1] != 0:
                 return u[-1], 6
@@ -429,7 +420,7 @@ class DuziaAI:
         if self.alerta_zero_ativo:
             previsao['incluir_zero'] = True
         
-        # 🆕 ANTI-REPETIÇÃO: Se 2 erros seguidos na mesma dúzia, BLOQUEIA
+        # ANTI-REPETIÇÃO: Se 2 erros seguidos na mesma dúzia, BLOQUEIA
         if self.erros_consecutivos_mesma_duzia >= 2 and self.ultima_duzia_errada:
             dz_bloqueada = self.ultima_duzia_errada
             if previsao['duzia'] == dz_bloqueada:
@@ -439,11 +430,23 @@ class DuziaAI:
                 logging.info(f"🚫 ANTI-REPETIÇÃO: Bloqueando D{dz_bloqueada} após 2 erros")
                 return self._garantir_cobertura_diferente(previsao)
         
-        # 🆕 MICRO-TENDÊNCIA: Seguir a última que saiu se houver indefinição
+        # 🆕 ANTI-INSISTÊNCIA: Se previu a MESMA dúzia 2x e errou as 2
+        if len(self.ultimas_previsoes) >= 2 and len(self.ultimos_resultados) >= 2:
+            if self.ultimas_previsoes[-1] == self.ultimas_previsoes[-2]:
+                if not self.ultimos_resultados[-1]['acertou'] and not self.ultimos_resultados[-2]['acertou']:
+                    dz_insistida = self.ultimas_previsoes[-1]
+                    outras = self._get_outras_duzias(dz_insistida)
+                    freq_recente = Counter(u[-5:])
+                    freq_outras = {d: freq_recente.get(d, 0) for d in outras}
+                    previsao['duzia'] = max(freq_outras, key=freq_outras.get)
+                    logging.info(f"🚫 ANTI-INSISTÊNCIA: Bloqueando D{dz_insistida} após 2 erros")
+                    return self._garantir_cobertura_diferente(previsao)
+        
+        # MICRO-TENDÊNCIA (score mínimo 15)
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             if len(set(ultimas_3)) == 2 and ultimas_3[-1] != 0:
-                if previsao['duzia'] != ultimas_3[-1] and score.get(ultimas_3[-1], 0) > 20:
+                if previsao['duzia'] != ultimas_3[-1] and score.get(ultimas_3[-1], 0) > 15:
                     previsao['duzia'] = ultimas_3[-1]
                     logging.info(f"🎯 MICRO-TENDÊNCIA: Seguindo D{ultimas_3[-1]}")
                     return self._garantir_cobertura_diferente(previsao)
@@ -583,7 +586,7 @@ class DuziaAI:
         return False
     
     # =============================================
-    # 🎯 GATILHOS
+    # 🎯 GATILHOS (COMPLETO V7.0)
     # =============================================
     def detectar_exaustao_ciclo_dominante(self):
         if len(self.historico) < 10:
@@ -732,7 +735,7 @@ class DuziaAI:
         
         return None
     
-    # ========== DETECTORES UNIVERSAIS ==========
+    # ========== DETECTORES UNIVERSAIS (COMPLETO V7.0) ==========
     
     def detectar_quebra_estados(self):
         if len(self.historico) < 5:
@@ -1095,7 +1098,7 @@ class DuziaAI:
         else:
             return "TRANSICAO"
     
-    # ========== CÁLCULO DE SCORE PRINCIPAL ==========
+    # ========== CÁLCULO DE SCORE PRINCIPAL (COMPLETO V7.0 + 3 NOVAS) ==========
     
     def calcular_score(self):
         score = {1: 0, 2: 0, 3: 0}
@@ -1151,6 +1154,31 @@ class DuziaAI:
                     score[d] *= 0.5
                     detalhes[d].append(f"⚠️ Anti-Streak: -50%")
         
+        # 🆕 DETECTOR 2/3: Dúzia aparece 2x nas últimas 3
+        if len(self.historico) >= 3:
+            u = list(self.historico)
+            ultimas_3 = u[-3:]
+            freq_3 = Counter([d for d in ultimas_3 if d != 0])
+            for dz, count in freq_3.items():
+                if count >= 2:
+                    score[dz] += 10
+                    detalhes[dz].append(f"🎯 DETECTOR 2/3: D{dz} 2x em 3 (+10)")
+        
+        # 🆕 ALERTA TERCEIRA: Após alternância entre 2, terceira ganha peso
+        if len(self.historico) >= 6:
+            u = list(self.historico)
+            ultimas_6 = u[-6:]
+            duzias_6 = set([d for d in ultimas_6 if d != 0])
+            if len(duzias_6) == 2:
+                alt_count = sum(1 for i in range(len(ultimas_6)-1) 
+                              if ultimas_6[i] != ultimas_6[i+1] and ultimas_6[i] != 0 and ultimas_6[i+1] != 0)
+                if alt_count >= 4:
+                    dz_list = list(duzias_6)
+                    terceira = self._get_terceira_duzia(dz_list[0], dz_list[1])
+                    if terceira:
+                        score[terceira] += 8
+                        detalhes[terceira].append(f"⚠️ ALERTA TERCEIRA: +8 (pós-alternância)")
+        
         # DÚZIAS DO MOMENTO
         if len(self.historico) >= 6:
             u = list(self.historico)
@@ -1203,14 +1231,25 @@ class DuziaAI:
             score[dz_exaurida] *= 0.3
             detalhes[dz_exaurida].append(f"⚠️ CICLO EXAURIDO: -70% (D{dz_exaurida})")
         
-        # 🆕 DETECTOR DE TROCA SÚBITA
+        # 🆕 TROCA SÚBITA
         troca_subita = self.detectar_troca_subita()
         if troca_subita:
             dz, forca = troca_subita
             score[dz] += forca * 1.5
             detalhes[dz].append(f"⚡ TROCA SÚBITA: +{forca*1.5:.1f}")
         
-        # DETECTORES UNIVERSAIS
+        # 🆕 ANTI-INSISTÊNCIA no score
+        if len(self.ultimas_previsoes) >= 2 and len(self.ultimos_resultados) >= 2:
+            if self.ultimas_previsoes[-1] == self.ultimas_previsoes[-2]:
+                if not self.ultimos_resultados[-1]['acertou'] and not self.ultimos_resultados[-2]['acertou']:
+                    dz_insistida = self.ultimas_previsoes[-1]
+                    score[dz_insistida] *= 0.2
+                    detalhes[dz_insistida].append(f"🚫 ANTI-INSISTÊNCIA: -80%")
+                    for d in self._get_outras_duzias(dz_insistida):
+                        score[d] *= 1.5
+                        detalhes[d].append(f"🔄 ANTI-INSISTÊNCIA: +50%")
+        
+        # DETECTORES UNIVERSAIS (COMPLETO V7.0)
         quebra_estados = self.detectar_quebra_estados()
         if quebra_estados:
             dz = quebra_estados['quebra_prevista']
@@ -1449,7 +1488,6 @@ class DuziaAI:
         d1, s1 = ranking[0]
         d2, s2 = ranking[1]
         
-        # Garantir que d2 seja diferente de d1
         if d2 == d1:
             outras = self._get_outras_duzias(d1)
             if len(ranking) > 2:
@@ -1457,10 +1495,8 @@ class DuziaAI:
             else:
                 d2 = outras[0] if outras else d1
         
-        # DETECTAR ALERTA ZERO
         self.detectar_alerta_zero()
         
-        # LIMITAR RATIO E CONFIANÇA
         ratio = min(5.0, s1 / max(1, s2))
         vol = np.std(list(score.values()))
         confianca = (ratio * 2.2) + (1.5 / (1 + vol))
@@ -1541,9 +1577,7 @@ class DuziaAI:
         if pode_entrar:
             previsao = self.balancear_previsoes(previsao)
         
-        # =============================================
         # 🔥🔥 FORÇA FINAL: STREAK 2x IGNORA TUDO
-        # =============================================
         if len(self.historico) >= 2:
             u = list(self.historico)
             ultimas_2 = u[-2:]
@@ -1557,7 +1591,6 @@ class DuziaAI:
                     freq_outras = {d: u.count(d) for d in outras}
                     previsao['duzia_secundaria'] = max(freq_outras, key=freq_outras.get)
         
-        # Garantia FINAL: cobertura NUNCA igual à principal
         previsao = self._garantir_cobertura_diferente(previsao)
         
         self.ultimo_gatilho = None
@@ -1792,8 +1825,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V7.0 - Anti-Erros + Cilindro", layout="wide")
-st.title("🎰 DuziaAI V7.0 - Anti-Erros + Cilindro + BRT")
+st.set_page_config(page_title="🎰 DuziaAI V7.2 - V7.0 + 3 Estratégias", layout="wide")
+st.title("🎰 DuziaAI V7.2 - V7.0 COMPLETA + DETECTOR 2/3 + ANTI-INSISTÊNCIA + ALERTA TERCEIRA (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1868,11 +1901,14 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 📊 V7.0 - Anti-Erros + Cilindro")
-    st.caption("🚫 ANTI-REPETIÇÃO: Bloqueia após 2 erros")
+    st.markdown("### 📊 V7.2 - V7.0 + 3 Novas")
+    st.caption("✅ TODOS detectores V7.0 RESTAURADOS")
+    st.caption("🎯 DETECTOR 2/3: Dúzia 2x em 3 (+10)")
+    st.caption("🚫 ANTI-INSISTÊNCIA: Bloqueia após 2 erros")
+    st.caption("⚠️ ALERTA TERCEIRA: Pós-alternância (+8)")
     st.caption("📉📉📉 CALIBRAÇÃO IMEDIATA: -60%")
-    st.caption("🎯 MICRO-TENDÊNCIA: Segue última")
-    st.caption("⚡ TROCA SÚBITA: Detecta mudanças")
+    st.caption("🎯 MICRO-TENDÊNCIA: Score mínimo 15")
+    st.caption("⚡ TROCA SÚBITA")
     st.caption("🔥🔥 FORÇA FINAL Streak 2x")
     st.caption("🎡 CILINDRO FÍSICO: Voisins/Tiers/Orphelins")
     st.caption("🔧 Cobertura NUNCA = Principal")
@@ -2124,5 +2160,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V7.0 | Anti-Erros + Cilindro + FORÇA FINAL + BRT | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V7.2 | V7.0 COMPLETA + 3 Novas Estratégias + BRT | {formatar_hora_brasilia()}")
 salvar_sessao()
