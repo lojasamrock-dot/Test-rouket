@@ -1405,7 +1405,8 @@ class DuziaAI:
         tem_duas_dominantes = self.detectar_duas_dominantes() is not None
         tem_gatilho_quebra = self.ultimo_gatilho is not None
         
-        pode_entrar = False        motivo = ""
+        pode_entrar = False
+        pmotivo = ""
         
         if self.sinal_mudanca_pendente:
             pode_entrar = False
