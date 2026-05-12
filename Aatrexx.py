@@ -237,12 +237,13 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 META-MODELO V8.5 - COMITÊ DE ESPECIALISTAS
+# 🧠 META-MODELO V8.5.1 - COMITÊ DE ESPECIALISTAS (CALIBRADO)
 # =============================
 class MetaModelo:
     """
     Comitê de 3 especialistas que votam se a entrada deve ser tomada.
     Cada especialista olha para aspectos diferentes do mercado.
+    V8.5.1: Thresholds reduzidos para não ficar restritivo demais.
     """
     def __init__(self):
         self.historico_votacoes = []
@@ -257,6 +258,7 @@ class MetaModelo:
         """
         Especialista em tendências: aprova se há direção clara.
         Olha: streak, frequência recente, Markov
+        V8.5.1: Threshold reduzido de 3 para 2.
         """
         score = 0
         streak_count, streak_d = duzia_ai.streak()
@@ -265,15 +267,15 @@ class MetaModelo:
         if streak_count >= 2 and streak_d == previsao['duzia']:
             score += 2
         
-        # Frequência > 40% nos últimos 10
+        # Frequência > 35% nos últimos 10 (reduzido de 40%)
         u = list(duzia_ai.historico)[-10:]
         freq = Counter([d for d in u if d != 0])
         total = sum(freq.values())
         if total > 0:
             pct = freq.get(previsao['duzia'], 0) / total
-            if pct > 0.4:
+            if pct > 0.35:
                 score += 2
-            elif pct > 0.3:
+            elif pct > 0.25:
                 score += 1
         
         # Markov confirma
@@ -281,17 +283,18 @@ class MetaModelo:
         if markov and markov[0] == previsao['duzia']:
             score += 1
         
-        # Força do score
+        # Força do score (reduzido de 40 para 35)
         s1 = previsao['score'].get(previsao['duzia'], 0)
-        if s1 > 40:
+        if s1 > 35:
             score += 1
         
-        return score >= 3, score
+        return score >= 2, score  # Reduzido de 3 para 2
     
     def especialista_quebra(self, duzia_ai, previsao):
         """
         Especialista em quebras: aprova se há sinal de mudança.
         Olha: exaustão, falsa tendência, ciclo, 3ª intrusa
+        V8.5.1: Threshold reduzido de 3 para 2.
         """
         score = 0
         
@@ -303,44 +306,46 @@ class MetaModelo:
         tem_falsa_tendencia = duzia_ai._detectar_falsa_tendencia(streak_d, streak_count) if streak_d else False
         
         if tem_exaustao:
-            score += 3
+            score += 2
         if tem_intrusa:
             score += 2
         if tem_ciclo:
             score += 2
         if tem_falsa_tendencia:
-            score += 2
+            score += 1
         
         # Verifica se a previsão segue a direção da quebra
         if previsao.get('gatilho_ativo'):
             score += 2
         
-        return score >= 3, score
+        # Se tem qualquer sinal, já considera
+        return score >= 2, score  # Reduzido de 3 para 2
     
     def especialista_qualidade(self, duzia_ai, previsao):
         """
         Especialista em qualidade: aprova se condições gerais são boas.
         Olha: ruído, confiança, qualidade composta, erros recentes
+        V8.5.1: Threshold reduzido de 3 para 2.
         """
         score = 0
         qualidade = duzia_ai._calcular_qualidade_entrada(previsao)
         mercado_ruidoso = duzia_ai._mercado_ruidoso()
         
-        # Qualidade mínima
-        if qualidade >= 50:
+        # Qualidade mínima (reduzido)
+        if qualidade >= 40:
             score += 2
-        elif qualidade >= 35:
+        elif qualidade >= 30:
             score += 1
         
         # Sem ruído
         if not mercado_ruidoso:
             score += 1
         
-        # Confiança razoável
+        # Confiança razoável (reduzido)
         confianca = previsao.get('confianca', 0)
-        if confianca >= 3.0:
+        if confianca >= 2.5:
             score += 2
-        elif confianca >= 2.0:
+        elif confianca >= 1.5:
             score += 1
         
         # Poucos erros recentes
@@ -353,7 +358,7 @@ class MetaModelo:
         if regime in ['DOMINANTE', 'TENDENCIA']:
             score += 1
         
-        return score >= 3, score
+        return score >= 2, score  # Reduzido de 3 para 2
     
     def votar(self, duzia_ai, previsao):
         """
@@ -376,11 +381,18 @@ class MetaModelo:
         
         aprovacoes = sum(1 for _, v in votos if v)
         
+        # Construir string de votos
+        votos_str = []
+        for nome, voto in votos:
+            icon = "✅" if voto else "❌"
+            votos_str.append(f"{icon} {nome} ({scores.get(nome, 0)}pts)")
+        
         decisao = {
             'votos': votos,
             'scores': scores,
             'aprovacoes': aprovacoes,
             'aprovado': aprovacoes >= 2,
+            'votos_str': votos_str,
             'timestamp': hora_brasilia()
         }
         
@@ -390,7 +402,7 @@ class MetaModelo:
         if len(self.historico_votacoes) > 50:
             self.historico_votacoes = self.historico_votacoes[-50:]
         
-        return aprovacoes >= 2, votos, scores
+        return aprovacoes >= 2, votos, scores, votos_str
     
     def registrar_resultado(self, acertou):
         """Atualiza performance dos especialistas que votaram"""
@@ -411,7 +423,7 @@ class MetaModelo:
         return (perf['acertos'] / total) * 100
 
 # =============================
-# 🧠 DUZIA AI V8.5 - COM META-MODELO
+# 🧠 DUZIA AI V8.5.1 - COM META-MODELO CALIBRADO
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -465,7 +477,7 @@ class DuziaAI:
         self.entradas_consecutivas = 0
         self.max_entradas_consecutivas = 8
         
-        # 🆕 V8.5 - Meta-modelo
+        # V8.5 - Meta-modelo
         self.meta_modelo = MetaModelo()
         
     def _garantir_cobertura_diferente(self, previsao):
@@ -481,15 +493,12 @@ class DuziaAI:
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
         
-        # V8.0 - Atualizar matriz de transição Markov
         if len(self.historico_completo) >= 4:
             padrao = tuple(self.historico_completo[-4:-1])
             self.transicoes[padrao][d] += 1
         
-        # V8.0 - Atualizar streaks históricos
         self._atualizar_streaks()
         
-        # Limitar tamanho
         if len(self.historico_completo) > 200:
             self.historico_completo = self.historico_completo[-200:]
         if len(self.numeros_completos) > 200:
@@ -610,7 +619,7 @@ class DuziaAI:
         return None
     
     def _calcular_qualidade_entrada(self, previsao):
-        """V8.2 - Avalia se a entrada tem qualidade (mínimo 40)"""
+        """V8.2 - Avalia se a entrada tem qualidade"""
         qualidade = 0
         
         sinais = []
@@ -663,7 +672,6 @@ class DuziaAI:
         # V8.5 - Registrar resultado no meta-modelo
         self.meta_modelo.registrar_resultado(acertou)
         
-        # V8.1 - Controle de erros por dúzia
         if not acertou and duzia_real != 0:
             self.erros_por_duzia[duzia_real] += 1
             if duzia_real == self.ultima_duzia_errada:
@@ -822,7 +830,7 @@ class DuziaAI:
                 outras = self._get_outras_duzias(dz)
                 freq_outras = {d: u.count(d) for d in outras}
                 previsao['duzia'] = max(freq_outras, key=freq_outras.get)
-                logging.info(f"🚫 V8.1: Dúzia D{dz} bloqueada por {erros} erros")
+                logging.info(f"🚫 Dúzia D{dz} bloqueada por {erros} erros")
                 return self._garantir_cobertura_diferente(previsao)
         
         if self.erros_consecutivos_mesma_duzia >= 2 and self.ultima_duzia_errada:
@@ -1496,7 +1504,7 @@ class DuziaAI:
         else:
             return "TRANSICAO"
     
-    # ========== CÁLCULO DE SCORE PRINCIPAL (V8.5) ==========
+    # ========== CÁLCULO DE SCORE PRINCIPAL (V8.5.1) ==========
     
     def calcular_score(self):
         score = {1: 0, 2: 0, 3: 0}
@@ -1522,7 +1530,7 @@ class DuziaAI:
             for d in score:
                 score[d] *= 0.5
                 detalhes[d].append("🌪️ MERCADO RUÍDOSO: Score reduzido 50%")
-            logging.info("🌪️ V8.0: Mercado ruidoso detectado - Reduzindo confiança geral")
+            logging.info("🌪️ Mercado ruidoso detectado - Reduzindo confiança geral")
         
         markov_pred = self._prever_markov()
         if markov_pred:
@@ -2010,7 +2018,7 @@ class DuziaAI:
         tem_duas_dominantes = self.detectar_duas_dominantes() is not None
         tem_gatilho_quebra = self.ultimo_gatilho is not None
         
-        # V8.2 - Consenso flexível
+        # Consenso flexível
         tem_consenso = False
         sinais_direcao = []
         for dz in detalhes:
@@ -2034,7 +2042,7 @@ class DuziaAI:
         pode_entrar = False
         motivo = ""
         
-        # Gate padrão (V8.2)
+        # Gate padrão
         if self.sinal_mudanca_pendente:
             pode_entrar = False
             motivo = f"⏳ Aguardando confirmação: {self.sinal_mudanca_pendente['descricao']}"
@@ -2076,29 +2084,22 @@ class DuziaAI:
             "incluir_zero": self.alerta_zero_ativo
         }
         
-        # 🆕 V8.5 - META-MODELO: Comitê de especialistas vota
+        # 🆕 V8.5.1 - META-MODELO CALIBRADO (CORRIGIDO)
         meta_modelo_ativo = st.session_state.get('meta_modelo_ativo', True)
         if pode_entrar and meta_modelo_ativo:
-            aprovado, votos, scores = self.meta_modelo.votar(self, previsao)
+            aprovado, votos, scores, votos_str = self.meta_modelo.votar(self, previsao)
             
             if not aprovado:
                 pode_entrar = False
                 previsao['entrar'] = False
-                
-                # Montar motivo detalhado
-                votos_str = []
-                for nome, voto in votos:
-                    icon = "✅" if voto else "❌"
-                    votos_str.append(f"{icon} {nome} ({scores.get(nome, 0)}pts)")
-                
                 previsao['motivo'] = f"🧠 Meta-Modelo REPROVOU: {' | '.join(votos_str)}"
                 previsao['meta_modelo'] = {'aprovado': False, 'votos': votos, 'scores': scores}
-                logging.info(f"🧠 Meta-Modelo REPROVOU: {votos_str}")
+                logging.info(f"🧠 Meta-Modelo REPROVOU: {' | '.join(votos_str)}")
             else:
                 previsao['meta_modelo'] = {'aprovado': True, 'votos': votos, 'scores': scores}
-                logging.info(f"🧠 Meta-Modelo APROVOU: {votos_str}")
+                logging.info(f"🧠 Meta-Modelo APROVOU: {' | '.join(votos_str)}")
         
-        # Qualidade mínima (V8.2)
+        # Qualidade mínima
         if pode_entrar and not tem_gatilho_quebra and not score_muito_forte:
             qualidade = self._calcular_qualidade_entrada(previsao)
             if qualidade < 40 and not tem_consenso:
@@ -2107,7 +2108,7 @@ class DuziaAI:
                 previsao['motivo'] = f"📊 Qualidade muito baixa ({qualidade:.0f}/100)"
                 logging.info(f"🚫 Entrada bloqueada por qualidade: {qualidade:.0f}/100")
         
-        # Limite de entradas consecutivas (V8.2)
+        # Limite de entradas consecutivas
         if pode_entrar and self.entradas_consecutivas >= self.max_entradas_consecutivas:
             pode_entrar = False
             previsao['entrar'] = False
@@ -2376,8 +2377,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V8.5 - Meta-Modelo", layout="wide")
-st.title("🎰 DuziaAI V8.5 - META-MODELO COMITÊ DE ESPECIALISTAS (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V8.5.1 - Meta-Modelo Calibrado", layout="wide")
+st.title("🎰 DuziaAI V8.5.1 - META-MODELO CALIBRADO (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -2453,16 +2454,17 @@ with st.sidebar:
     st.session_state.agressividade = st.select_slider("🎚️ Agressividade", options=[1,2,3], value=st.session_state.agressividade)
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
-    st.session_state.meta_modelo_ativo = st.checkbox("🧠 Meta-Modelo (Comitê)", value=st.session_state.get('meta_modelo_ativo', True))
+    st.session_state.meta_modelo_ativo = st.checkbox("🧠 Meta-Modelo (Comitê)", value=st.session_state.get('meta_modelo_ativo', True), 
+                                                     help="Desative se quiser mais entradas (menos filtro)")
     st.markdown("---")
-    st.markdown("### 🧠 V8.5 - META-MODELO")
+    st.markdown("### 🧠 V8.5.1 - META-MODELO CALIBRADO")
     st.caption("👨‍⚖️ Comitê: 3 especialistas votam")
     st.caption("📈 Tendência: streak, freq, Markov")
     st.caption("💥 Quebra: exaustão, intrusa, ciclo")
     st.caption("✅ Qualidade: ruído, confiança, erros")
+    st.caption("🎯 Threshold reduzido: 2pts cada")
     st.caption("🗳️ Precisa 2 de 3 para aprovar")
-    st.caption("📊 Performance individual trackeada")
-    st.caption("✅ Base V8.2 + V8.0 mantida")
+    st.caption("🔧 Pode desativar no checkbox acima")
     st.caption("🕐 Horário BRASÍLIA (BRT)")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
@@ -2529,6 +2531,7 @@ er_dz = st.session_state.get('erros_duzia', 0)
 total_dz = ac_dz + er_dz
 tx_dz = (ac_dz / total_dz * 100) if total_dz > 0 else 0
 mercado_ruidoso = sis.duzia_ai._mercado_ruidoso()
+meta_ativo = st.session_state.get('meta_modelo_ativo', True)
 col1.metric("✅ Acertos", int(sis.acertos))
 col2.metric("❌ Erros", int(sis.erros))
 col3.metric("📊 Win Rate", f"{tx_acerto:.1f}%")
@@ -2539,7 +2542,8 @@ alerta_status = "🟢" if sis.duzia_ai.alerta_zero_ativo else "⚪"
 col7.metric("⚠️ Zero", alerta_status)
 ruido_status = "🌪️" if mercado_ruidoso else "✅"
 col8.metric("🌪️ Ruído", ruido_status)
-col9.metric("🔥 Cons.", sis.duzia_ai.entradas_consecutivas)
+meta_status = "🧠" if meta_ativo else "💤"
+col9.metric("Meta", meta_status)
 
 st.markdown("---")
 col_grafico, col_entrada = st.columns([3,2])
@@ -2547,7 +2551,7 @@ col_grafico, col_entrada = st.columns([3,2])
 with col_grafico:
     st.subheader("📈 Análise em Tempo Real")
     if mercado_ruidoso:
-        st.warning("🌪️ MERCADO RUÍDOSO DETECTADO! Sistema operando com filtros restritivos.")
+        st.warning("🌪️ MERCADO RUÍDOSO DETECTADO!")
     
     if len(sis.historico_numeros) >= 5:
         score, regime, detalhes = sis.duzia_ai.calcular_score()
@@ -2560,51 +2564,15 @@ with col_grafico:
             text=[f'{score[1]:.1f}', f'{score[2]:.1f}', f'{score[3]:.1f}'],
             textposition='auto'
         )])
-        fig.update_layout(title=f"🎯 Scores das Dúzias | Regime: {regime} {'🌪️' if mercado_ruidoso else ''}", yaxis_title="Score Normalizado", height=300, showlegend=False)
+        fig.update_layout(title=f"🎯 Scores | Regime: {regime}", yaxis_title="Score", height=300, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
-        st.caption("**🔍 Detectores Ativos:**")
-        for dz in [1,2,3]:
-            if detalhes.get(dz):
-                st.caption(f"D{dz}: " + " | ".join(detalhes[dz]))
         
-        if sis.duzia_ai.sinal_mudanca_pendente:
-            st.warning(f"⏳ Sinal Pendente: {sis.duzia_ai.sinal_mudanca_pendente['descricao']}")
-        if sis.duzia_ai.streak_ativo:
-            st.info(f"🔄 Streak Ativo: D{sis.duzia_ai.streak_ativo}")
-        if sis.duzia_ai.alerta_zero_ativo:
-            st.warning("⚠️ ALERTA ZERO ATIVO! Sistema incluiu ZERO nas apostas!")
-        
-        # 🆕 V8.5 - Mostrar performance do Meta-Modelo
-        with st.expander("🧠 Meta-Modelo - Comitê de Especialistas", expanded=False):
-            col_t, col_qb, col_ql = st.columns(3)
-            tx_t = sis.duzia_ai.meta_modelo.get_taxa_acerto('Tendência')
-            tx_qb = sis.duzia_ai.meta_modelo.get_taxa_acerto('Quebra')
-            tx_ql = sis.duzia_ai.meta_modelo.get_taxa_acerto('Qualidade')
-            col_t.metric("📈 Tendência", f"{tx_t:.0f}%")
-            col_qb.metric("💥 Quebra", f"{tx_qb:.0f}%")
-            col_ql.metric("✅ Qualidade", f"{tx_ql:.0f}%")
-            
-            if sis.duzia_ai.meta_modelo.ultima_decisao:
-                st.caption("**Última votação:**")
+        if sis.duzia_ai.meta_modelo.ultima_decisao:
+            with st.expander("🧠 Última Votação Meta-Modelo", expanded=False):
                 for nome, voto in sis.duzia_ai.meta_modelo.ultima_decisao['votos']:
                     icon = "✅" if voto else "❌"
-                    score = sis.duzia_ai.meta_modelo.ultima_decisao['scores'].get(nome, 0)
-                    st.caption(f"{icon} {nome}: {score}pts")
-        
-        with st.expander("📊 Estatísticas V8.5", expanded=False):
-            col_s1, col_s2, col_s3 = st.columns(3)
-            col_s1.metric("Média Streak D1", f"{sis.duzia_ai.media_streaks[1]:.1f}")
-            col_s2.metric("Média Streak D2", f"{sis.duzia_ai.media_streaks[2]:.1f}")
-            col_s3.metric("Média Streak D3", f"{sis.duzia_ai.media_streaks[3]:.1f}")
-            
-            col_e1, col_e2, col_e3 = st.columns(3)
-            col_e1.metric("Erros D1", sis.duzia_ai.erros_por_duzia[1])
-            col_e2.metric("Erros D2", sis.duzia_ai.erros_por_duzia[2])
-            col_e3.metric("Erros D3", sis.duzia_ai.erros_por_duzia[3])
-            
-            markov = sis.duzia_ai._prever_markov()
-            if markov:
-                st.info(f"🔮 Markov: Sequência atual → D{markov[0]} (freq: {markov[1]})")
+                    score_v = sis.duzia_ai.meta_modelo.ultima_decisao['scores'].get(nome, 0)
+                    st.caption(f"{icon} {nome}: {score_v}pts")
         
         if len(sis.historico_numeros) >= 10:
             ultimos_20 = list(sis.historico_numeros)[-20:]
@@ -2613,90 +2581,51 @@ with col_grafico:
             fig2 = plt.Figure()
             fig2.add_trace(plt.Scatter(x=x_vals, y=duzias_hist, mode='lines+markers', name='Dúzia', line=dict(color='#FFD700', width=2), marker=dict(size=8)))
             if sis.sinais_grafico:
-                sinal_x, sinal_y, sinal_text = [], [], []
+                sinal_x, sinal_y = [], []
                 offset = len(duzias_hist) - 20
                 for idx, dz in sis.sinais_grafico:
                     pos = idx - offset
                     if 0 <= pos < 20:
                         sinal_x.append(pos)
                         sinal_y.append(dz)
-                        sinal_text.append(f"Entrada D{dz}")
                 if sinal_x:
-                    fig2.add_trace(plt.Scatter(x=sinal_x, y=sinal_y, mode='markers', name='Sinal', marker=dict(symbol='star', size=15, color='red', line=dict(width=2, color='darkred')), text=sinal_text, hoverinfo='text'))
-            fig2.update_layout(title="📉 Histórico de Dúzias c/ Sinais", yaxis=dict(tickvals=[1,2,3], ticktext=['D1','D2','D3'], range=[0.5,3.5]), height=300, showlegend=True)
+                    fig2.add_trace(plt.Scatter(x=sinal_x, y=sinal_y, mode='markers', name='Sinal', marker=dict(symbol='star', size=15, color='red')))
+            fig2.update_layout(title="📉 Histórico de Dúzias", yaxis=dict(tickvals=[1,2,3], ticktext=['D1','D2','D3'], range=[0.5,3.5]), height=300)
             st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info(f"⏳ Aguardando dados... ({len(sis.historico_numeros)}/5 giros)")
 
 with col_entrada:
     st.subheader("🎰 Entrada Atual")
-    if sis.duzia_ai.sinal_mudanca_pendente:
-        sinal = sis.duzia_ai.sinal_mudanca_pendente
-        st.warning(f"⏳ AGUARDANDO CONFIRMAÇÃO\n\n{sinal['descricao']}\n\nPróxima rodada confirmará ou cancelará.")
-    elif sis.entrada_ativa:
+    if sis.entrada_ativa:
         ent = sis.entrada_ativa
         confianca = ent.get('confianca', 0)
         duzia_prevista = ent.get('duzia_prevista', 0)
         duzia_sec_prevista = ent.get('duzia_sec_prevista')
         regime = ent.get('regime', 'NEUTRO')
         numeros_apostar = ent.get('numeros_apostar', [])
-        detalhes_entrada = ent.get('detalhes', {})
-        detectores = ent.get('detectores_ativos', [])
         gatilho = ent.get('gatilho_ativo', None)
         incluir_zero = ent.get('incluir_zero', False)
         meta_modelo = ent.get('meta_modelo', None)
         
-        if incluir_zero:
-            cor = "#FFD700"
-        elif gatilho:
-            cor = "#FF6347"
-        elif confianca >= 5:
-            cor = "#00CC00"
-        elif confianca >= 3.5:
-            cor = "#FFA500"
-        else:
-            cor = "#FF4444"
-        
         limite = "1-12" if duzia_prevista == 1 else "13-24" if duzia_prevista == 2 else "25-36" if duzia_prevista == 3 else "?"
         
-        if incluir_zero:
-            st.markdown(f"""
-            <div style="background-color: #FFD70022; border: 2px solid #FFD700; border-radius: 15px; padding: 20px; margin: 10px 0;">
-                <h2 style="color: #FFD700; text-align: center;">⚠️ ALERTA ZERO!</h2>
-                <h3 style="text-align: center;">D{duzia_prevista} ({limite}) + 🟢 ZERO</h3>
-                <p style="text-align: center; font-size: 1.2em;">Confiança: {confianca:.2f} | Regime: {regime}</p>
-                <p style="text-align: center; color: #FFD700;">🟢 ZERO incluído nas apostas!</p>
-                {f'<p style="text-align: center; color: #FFA500;">🛡️ Cobertura: D{duzia_sec_prevista}</p>' if st.session_state.modo_agressivo and duzia_sec_prevista and duzia_sec_prevista != duzia_prevista else ''}
-            </div>""", unsafe_allow_html=True)
-        elif gatilho:
-            st.markdown(f"""
-            <div style="background-color: #FF634722; border: 2px solid #FF6347; border-radius: 15px; padding: 20px; margin: 10px 0;">
-                <h2 style="color: #FF6347; text-align: center;">🎯 GATILHO ATIVO!</h2>
-                <h3 style="text-align: center;">D{duzia_prevista} ({limite})</h3>
-                <p style="text-align: center; font-size: 1.2em;">Confiança: {confianca:.2f} | Regime: {regime}</p>
-                <p style="text-align: center; color: #FF6347;">⚠️ Gatilho: {gatilho}</p>
-                {f'<p style="text-align: center; color: #FFA500;">🛡️ Cobertura: D{duzia_sec_prevista}</p>' if st.session_state.modo_agressivo and duzia_sec_prevista and duzia_sec_prevista != duzia_prevista else ''}
-            </div>""", unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div style="background-color: {cor}22; border: 2px solid {cor}; border-radius: 15px; padding: 20px; margin: 10px 0;">
-                <h2 style="color: {cor}; text-align: center;">🎯 D{duzia_prevista} ({limite})</h2>
-                <p style="text-align: center; font-size: 1.2em;">Confiança: {confianca:.2f} | Regime: {regime}</p>
-                {f'<p style="text-align: center; color: #FFA500;">🛡️ Cobertura: D{duzia_sec_prevista}</p>' if st.session_state.modo_agressivo and duzia_sec_prevista and duzia_sec_prevista != duzia_prevista else ''}
-            </div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background-color: #1a1a2e; border: 2px solid #FFD700; border-radius: 15px; padding: 20px; margin: 10px 0;">
+            <h2 style="color: #FFD700; text-align: center;">🎯 D{duzia_prevista} ({limite})</h2>
+            <p style="text-align: center; font-size: 1.2em;">Confiança: {confianca:.2f} | Regime: {regime}</p>
+            {f'<p style="text-align: center; color: #FFA500;">🛡️ Cobertura: D{duzia_sec_prevista}</p>' if st.session_state.modo_agressivo and duzia_sec_prevista and duzia_sec_prevista != duzia_prevista else ''}
+            {f'<p style="text-align: center; color: #FF6347;">⚠️ Gatilho: {gatilho}</p>' if gatilho else ''}
+            {f'<p style="text-align: center; color: #FFD700;">🟢 ZERO incluído!</p>' if incluir_zero else ''}
+        </div>""", unsafe_allow_html=True)
         
-        # 🆕 Mostrar votação do meta-modelo
         if meta_modelo:
             st.caption("**🧠 Meta-Modelo:**")
             for nome, voto in meta_modelo.get('votos', []):
                 icon = "✅" if voto else "❌"
-                score = meta_modelo.get('scores', {}).get(nome, 0)
-                st.caption(f"{icon} {nome}: {score}pts")
+                score_v = meta_modelo.get('scores', {}).get(nome, 0)
+                st.caption(f"{icon} {nome}: {score_v}pts")
         
-        if detalhes_entrada.get(duzia_prevista):
-            st.caption("🔍 " + " | ".join(detalhes_entrada[duzia_prevista]))
-        if detectores:
-            st.caption(f"🎯 Detectores: {', '.join(detectores)}")
         if numeros_apostar:
             st.write("**🎲 Números:**")
             cols = st.columns(7)
@@ -2705,26 +2634,14 @@ with col_entrada:
                     cols[i % 7].button("🟢 0", key=f"num_zero", use_container_width=True)
                 else:
                     cols[i % 7].button(str(n), key=f"num_{n}", use_container_width=True)
-        else:
-            st.warning("Nenhum número disponível.")
-        valor_progresso = min(1.0, max(0.0, confianca / 10.0))
-        st.progress(valor_progresso)
+        
+        st.progress(min(1.0, max(0.0, confianca / 10.0)))
     else:
         st.info("🔍 Analisando padrões...")
         if len(sis.historico_numeros) >= 5:
             previsao = sis.duzia_ai.prever()
             if previsao and not previsao.get('entrar', False):
-                motivo = previsao.get('motivo', 'Sem sinal claro')
-                st.warning(f"⚠️ {motivo}")
-                st.caption(f"Regime: {previsao.get('regime', '?')} | Confiança: {previsao.get('confianca', 0)}")
-                
-                # Mostrar resultado do meta-modelo se disponível
-                if 'meta_modelo' in previsao:
-                    st.caption("**🧠 Meta-Modelo:**")
-                    for nome, voto in previsao['meta_modelo'].get('votos', []):
-                        icon = "✅" if voto else "❌"
-                        score = previsao['meta_modelo'].get('scores', {}).get(nome, 0)
-                        st.caption(f"{icon} {nome}: {score}pts")
+                st.warning(f"⚠️ {previsao.get('motivo', 'Sem sinal claro')}")
     if sis.ultimo_numero is not None:
         st.markdown("---")
         if sis.ultimo_numero == 0:
@@ -2757,23 +2674,23 @@ if sis.historico_entradas:
         
         dados_tabela.append({
             "Rodada": e.get('rodada', '-'),
-            "Hora (BRT)": e.get('hora', '-'),
-            "Número": e.get('numero', '-'),
-            "Dúzia Real": duzia_real_str,
-            "Dúzia Prevista": f"D{e.get('duzia_prevista', '?')}" if e.get('duzia_prevista') else "-",
-            "Confiança": f"{e.get('confianca', 0):.2f}",
-            "Gatilho": gatilho_str,
+            "Hora": e.get('hora', '-'),
+            "Nº": e.get('numero', '-'),
+            "Real": duzia_real_str,
+            "Prev": f"D{e.get('duzia_prevista', '?')}" if e.get('duzia_prevista') else "-",
+            "Conf": f"{e.get('confianca', 0):.1f}",
+            "Gat": gatilho_str,
             "Meta": meta_str,
-            "Resultado": resultado_str
+            "Res": resultado_str
         })
     st.dataframe(dados_tabela, use_container_width=True, height=300)
     
-    if st.button("📥 Exportar Histórico CSV", use_container_width=True):
+    if st.button("📥 Exportar CSV", use_container_width=True):
         if exportar_historico_csv(sis.historico_entradas):
-            st.success("✅ Histórico exportado como 'export_roleta.csv'")
+            st.success("✅ CSV exportado!")
 else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V8.5 | META-MODELO COMITÊ DE ESPECIALISTAS | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V8.5.1 | Meta-Modelo Calibrado | {formatar_hora_brasilia()}")
 salvar_sessao()
