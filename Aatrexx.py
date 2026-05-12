@@ -236,7 +236,7 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 DUZIA AI V8.1 - CORRIGIDO COM FILTROS AGRESSIVOS
+# 🧠 DUZIA AI V8.2 - CALIBRADO (NEM RESTRITIVO, NEM REATIVO)
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -282,13 +282,13 @@ class DuziaAI:
         # V8.0 - Controle de volatilidade
         self.volatilidade_historica = []
         
-        # 🆕 V8.1 - Controle de erros por dúzia
+        # V8.1 - Controle de erros por dúzia
         self.erros_por_duzia = {1: 0, 2: 0, 3: 0}
         self.max_erros_por_duzia = 3
         
-        # 🆕 V8.1 - Contador de entradas consecutivas
+        # V8.1 - Contador de entradas consecutivas
         self.entradas_consecutivas = 0
-        self.max_entradas_consecutivas = 5
+        self.max_entradas_consecutivas = 8  # 🆕 V8.2: 8 em vez de 5
         
     def _garantir_cobertura_diferente(self, previsao):
         """Garante que a dúzia secundária seja SEMPRE diferente da principal"""
@@ -345,7 +345,7 @@ class DuziaAI:
                     self.media_streaks[dz] = sum(self.streaks_historicos[dz]) / len(self.streaks_historicos[dz])
     
     def _consenso_detectores(self, sinais):
-        """V8.0 - Calcula consenso entre detectores"""
+        """V8.2 - Consenso mais flexível (2+ detectores)"""
         if not sinais:
             return None, 0
         
@@ -364,12 +364,13 @@ class DuziaAI:
         contagem = Counter(direcoes)
         duzia, votos = contagem.most_common(1)[0]
         
+        # V8.2 - Mais flexível
         if votos >= 4:
             return duzia, 2.5
-        elif votos == 3:
-            return duzia, 1.5
-        elif votos == 2:
-            return duzia, 0.8
+        elif votos >= 3:
+            return duzia, 2.0
+        elif votos >= 2:
+            return duzia, 1.2  # Já dá bônus com 2 detectores
         
         return None, 0
     
@@ -432,7 +433,7 @@ class DuziaAI:
         return None
     
     def _calcular_qualidade_entrada(self, previsao):
-        """🆕 V8.1 - Avalia se a entrada tem qualidade suficiente"""
+        """V8.2 - Avalia se a entrada tem qualidade (mínimo 40)"""
         qualidade = 0
         
         # 1. Consenso de detectores (vale 40%)
@@ -442,7 +443,7 @@ class DuziaAI:
                 if '+' in det:
                     try:
                         forca = float(det.split('+')[1].strip().split()[0])
-                        if forca > 3:
+                        if forca > 2:
                             sinais.append(dz)
                     except:
                         pass
@@ -451,7 +452,7 @@ class DuziaAI:
         if contagem:
             dz_consenso, votos = contagem.most_common(1)[0]
             if dz_consenso == previsao['duzia']:
-                qualidade += min(40, votos * 13)
+                qualidade += min(40, votos * 15)  # 2 votos = 30, 3 votos = 40
         
         # 2. Força do score (vale 30%)
         score_duzia = previsao['score'].get(previsao['duzia'], 0)
@@ -486,7 +487,7 @@ class DuziaAI:
         if len(self.ultimos_resultados) > 20:
             self.ultimos_resultados = self.ultimos_resultados[-20:]
         
-        # 🆕 V8.1 - Controle de erros por dúzia
+        # V8.1 - Controle de erros por dúzia
         if not acertou and duzia_real != 0:
             self.erros_por_duzia[duzia_real] += 1
             if duzia_real == self.ultima_duzia_errada:
@@ -502,7 +503,7 @@ class DuziaAI:
                 self.erros_por_duzia = {1: 0, 2: 0, 3: 0}
                 self.entradas_consecutivas = 0
         
-        # 🆕 V8.1 - Controle de entradas consecutivas
+        # V8.1 - Controle de entradas consecutivas
         if acertou:
             self.entradas_consecutivas += 1
     
@@ -535,7 +536,7 @@ class DuziaAI:
             if len(self.historico_confianca) > 30:
                 self.historico_confianca = self.historico_confianca[-30:]
         
-        # 🆕 V8.1 - Confiança NUNCA passa de 5.0 sem lastro
+        # V8.1 - Confiança NUNCA passa de 5.0 sem lastro (CORRIGIDO)
         if confianca > 5.0:
             if len(self.historico_confianca) >= 5:
                 ultimos_5 = self.historico_confianca[-5:]
@@ -543,8 +544,11 @@ class DuziaAI:
                 if acertos_recentes < 3:
                     confianca = min(5.0, confianca)
                     logging.info(f"📉 Confiança limitada a 5.0 (apenas {acertos_recentes}/5 acertos recentes)")
+            else:
+                # Sem histórico suficiente, limita a 5.0
+                confianca = min(5.0, confianca)
         
-        # 🆕 V8.1 - Penalidade progressiva por erros consecutivos
+        # V8.1 - Penalidade progressiva por erros consecutivos
         if len(self.historico_confianca) >= 3:
             ultimos_3 = self.historico_confianca[-3:]
             erros_seguidos = sum(1 for h in ultimos_3 if not h.get('acertou', True))
@@ -644,7 +648,7 @@ class DuziaAI:
         if self.alerta_zero_ativo:
             previsao['incluir_zero'] = True
         
-        # 🆕 V8.1 - Bloqueio de dúzia com excesso de erros
+        # V8.1 - Bloqueio de dúzia com excesso de erros
         for dz, erros in self.erros_por_duzia.items():
             if erros >= self.max_erros_por_duzia and previsao['duzia'] == dz:
                 outras = self._get_outras_duzias(dz)
@@ -1331,7 +1335,7 @@ class DuziaAI:
         else:
             return "TRANSICAO"
     
-    # ========== CÁLCULO DE SCORE PRINCIPAL (V8.1 - COM CORREÇÕES) ==========
+    # ========== CÁLCULO DE SCORE PRINCIPAL (V8.2 - CALIBRADO) ==========
     
     def calcular_score(self):
         score = {1: 0, 2: 0, 3: 0}
@@ -1662,7 +1666,7 @@ class DuziaAI:
                 score[dz] += forca
                 detalhes[dz].append(f"🔷 Pós-Zero+: +{forca:.1f}")
         
-        # V8.0 - SCORE DE CONSENSO
+        # V8.2 - SCORE DE CONSENSO (FLEXÍVEL)
         todos_sinais = []
         if quebra_estados:
             todos_sinais.append(quebra_estados)
@@ -1676,11 +1680,21 @@ class DuziaAI:
             todos_sinais.append({'dz_quebra': exaustao['dz_quebra']})
         if troca_subita:
             todos_sinais.append((troca_subita[0],))
+        if rep:
+            todos_sinais.append((rep[0],))
+        if vv:
+            todos_sinais.append((vv[0],))
+        if aba:
+            todos_sinais.append((aba[0],))
+        if prog:
+            todos_sinais.append((prog[0],))
+        if troca:
+            todos_sinais.append((troca[0],))
         
         dz_consenso, bonus_consenso = self._consenso_detectores(todos_sinais)
         if dz_consenso:
             score[dz_consenso] += bonus_consenso * 3
-            detalhes[dz_consenso].append(f"🤝 CONSENSO DETECTORES: +{bonus_consenso*3:.1f}")
+            detalhes[dz_consenso].append(f"🤝 CONSENSO DETECTORES ({len(todos_sinais)} sinais): +{bonus_consenso*3:.1f}")
         
         # V8.0 - SCORE NEGATIVO REFORÇADO
         if mercado_ruidoso:
@@ -1820,6 +1834,7 @@ class DuziaAI:
             confianca = confianca * 0.5
             logging.info("🌪️ Confiança reduzida 50% por mercado ruidoso")
         
+        # 🆕 CORREÇÃO: Aplicar calibração ANTES de usar confianca
         confianca = self.calibrar_confianca(confianca)
         
         confianca_ajustada = confianca_minima - (0.4 * (2 - agressividade))
@@ -1854,15 +1869,16 @@ class DuziaAI:
         tem_duas_dominantes = self.detectar_duas_dominantes() is not None
         tem_gatilho_quebra = self.ultimo_gatilho is not None
         
-        # 🆕 V8.1 - Verificar consenso mínimo para entrar
+        # 🆕 V8.2 - Consenso flexível (2+ detectores)
         tem_consenso = False
+        votos_consenso = 0
         sinais_direcao = []
         for dz in detalhes:
             for det in detalhes[dz]:
                 if '+' in det:
                     try:
                         forca = float(det.split('+')[1].strip().split()[0])
-                        if forca > 3:
+                        if forca > 2:  # Reduzido de 3 para 2
                             sinais_direcao.append(dz)
                     except:
                         pass
@@ -1870,33 +1886,40 @@ class DuziaAI:
         contagem = Counter(sinais_direcao)
         if contagem:
             dz_consenso, votos = contagem.most_common(1)[0]
-            if votos >= 3 and dz_consenso == d1:
+            votos_consenso = votos
+            if votos >= 2 and dz_consenso == d1:  # 2+ detectores
                 tem_consenso = True
+        
+        # 🆕 V8.2 - Score muito forte (45%+ com boa diferença)
+        score_muito_forte = s1 > 45 and s1 > s2 * 1.5
         
         pode_entrar = False
         motivo = ""
         
-        # 🆕 V8.1 - Gate principal: Só entra com consenso OU gatilho
-        if not tem_consenso and not tem_gatilho_quebra:
-            pode_entrar = False
-            motivo = "🚫 Sem consenso mínimo (3+ detectores) ou gatilho ativo"
-        # 🆕 V8.1 - Mercado ruidoso exige confiança ainda maior
-        elif mercado_ruidoso and confianca < 5.0:
-            pode_entrar = False
-            motivo = "🌪️ Mercado ruidoso - Exige confiança > 5.0"
-        elif self.sinal_mudanca_pendente:
+        # 🆕 V8.2 - Gate calibrado (nem restritivo, nem reativo)
+        if self.sinal_mudanca_pendente:
             pode_entrar = False
             motivo = f"⏳ Aguardando confirmação: {self.sinal_mudanca_pendente['descricao']}"
         elif tem_gatilho_quebra:
             pode_entrar = True
             confianca = max(2.0, confianca * 0.7)
+        elif mercado_ruidoso and not tem_consenso and not score_muito_forte:
+            pode_entrar = False
+            motivo = "🌪️ Mercado ruidoso sem consenso ou score forte"
+        elif mercado_ruidoso and confianca < 3.5:  # Reduzido de 5.0
+            pode_entrar = False
+            motivo = f"🌪️ Mercado ruidoso - Confiança {confianca:.2f} < 3.5"
+        elif score_muito_forte and not mercado_ruidoso:
+            pode_entrar = True
+        elif tem_consenso:
+            pode_entrar = True
         elif regime == "DISTRIBUIDO" and not tem_streak_longo and forca_detectores < 5 and not tem_duas_dominantes:
             motivo = "Mercado distribuído sem padrão claro"
         elif regime == "DISTRIBUIDO" and (tem_streak_longo or tem_duas_dominantes) and confianca < 2.0:
             motivo = f"Distribuído com padrão fraco (confiança {confianca:.2f})"
-        elif confianca < confianca_ajustada and not tem_streak_longo and forca_detectores < 5:
+        elif confianca < confianca_ajustada and not tem_streak_longo and forca_detectores < 3:  # Reduzido de 5
             motivo = f"Confiança baixa ({confianca:.2f} < {confianca_ajustada})"
-        elif regime == "TRANSICAO" and confianca < 2.8 and not tem_streak_longo and not tem_duas_dominantes:
+        elif regime == "TRANSICAO" and confianca < 2.0 and not tem_streak_longo and not tem_duas_dominantes:  # Reduzido de 2.8
             motivo = f"Transição sem padrão (confiança {confianca:.2f})"
         else:
             pode_entrar = True
@@ -1915,16 +1938,16 @@ class DuziaAI:
             "incluir_zero": self.alerta_zero_ativo
         }
         
-        # 🆕 V8.1 - Verificar qualidade da entrada
-        if pode_entrar:
+        # 🆕 V8.2 - Qualidade mínima 40 (mais flexível)
+        if pode_entrar and not tem_gatilho_quebra and not score_muito_forte:
             qualidade = self._calcular_qualidade_entrada(previsao)
-            if qualidade < 60:
+            if qualidade < 40 and not tem_consenso:  # Só bloqueia se qualidade MUITO baixa E sem consenso
                 pode_entrar = False
                 previsao['entrar'] = False
-                previsao['motivo'] = f"📊 Qualidade insuficiente ({qualidade:.0f}/100) - Mínimo: 60"
+                previsao['motivo'] = f"📊 Qualidade muito baixa ({qualidade:.0f}/100)"
                 logging.info(f"🚫 Entrada bloqueada por qualidade: {qualidade:.0f}/100")
         
-        # 🆕 V8.1 - Limitar entradas consecutivas
+        # 🆕 V8.2 - Limite de 8 entradas consecutivas
         if pode_entrar and self.entradas_consecutivas >= self.max_entradas_consecutivas:
             pode_entrar = False
             previsao['entrar'] = False
@@ -2182,8 +2205,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V8.1 - Filtros Agressivos", layout="wide")
-st.title("🎰 DuziaAI V8.1 - PROBABILÍSTICO + FILTROS AGRESSIVOS (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V8.2 - Calibrado", layout="wide")
+st.title("🎰 DuziaAI V8.2 - PROBABILÍSTICO CALIBRADO (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -2258,15 +2281,14 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.markdown("### 🚀 V8.1 - FILTROS AGRESSIVOS")
-    st.caption("🚫 GATE: Só entra com consenso OU gatilho")
-    st.caption("📊 QUALIDADE MÍNIMA: 60/100")
-    st.caption("🔢 LIMITE: Máx 5 entradas consecutivas")
-    st.caption("🚫 BLOQUEIO: 3 erros na mesma dúzia")
-    st.caption("📉 CONFIANÇA: Máx 5.0 sem lastro")
-    st.caption("🤝 CONSENSO: 3+ detectores")
-    st.caption("🌪️ RUÍDO: Exige confiança > 5.0")
-    st.caption("✅ Base V8.0 + V7.2 mantida")
+    st.markdown("### 🎯 V8.2 - CALIBRADO")
+    st.caption("🤝 Consenso: 2+ detectores")
+    st.caption("💪 Score forte: 45%+ permite entrada")
+    st.caption("📊 Qualidade mínima: 40/100")
+    st.caption("🔢 Máx consecutivas: 8")
+    st.caption("🌪️ Ruído exige confiança > 3.5")
+    st.caption("📉 Confiança máx: 5.0 sem lastro")
+    st.caption("✅ Base V8.0 + V8.1 mantida")
     st.caption("🕐 Horário BRASÍLIA (BRT)")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
@@ -2378,8 +2400,7 @@ with col_grafico:
         if sis.duzia_ai.alerta_zero_ativo:
             st.warning("⚠️ ALERTA ZERO ATIVO! Sistema incluiu ZERO nas apostas!")
         
-        # Mostrar estatísticas V8.1
-        with st.expander("📊 Estatísticas V8.1", expanded=False):
+        with st.expander("📊 Estatísticas V8.2", expanded=False):
             col_s1, col_s2, col_s3 = st.columns(3)
             col_s1.metric("Média Streak D1", f"{sis.duzia_ai.media_streaks[1]:.1f}")
             col_s2.metric("Média Streak D2", f"{sis.duzia_ai.media_streaks[2]:.1f}")
@@ -2536,5 +2557,5 @@ else:
     st.info("Nenhuma entrada registrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V8.1 | FILTROS AGRESSIVOS + PROBABILÍSTICO | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V8.2 | PROBABILÍSTICO CALIBRADO | {formatar_hora_brasilia()}")
 salvar_sessao()
