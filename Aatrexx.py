@@ -762,7 +762,8 @@ class DuziaAI:
         if taxa_acerto > 0.75:
             fator = 1.8
         elif taxa_acerto > 0.65:
-            fator = 1.3        elif taxa_acerto < 0.45:
+            fator = 1.3        
+        elif taxa_acerto < 0.45:
             fator = 0.5
         else:
             fator = 0.5 + taxa_acerto
