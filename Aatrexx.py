@@ -209,12 +209,12 @@ def validar_numero(valor):
         return False
 
 # =============================
-# 🧠 META-MODELO V9.1 - COMITÊ + FILTROS ELITE (CALIBRADO)
+# 🧠 META-MODELO V9.1.1 - COMITÊ + FILTROS ELITE (CORRIGIDO)
 # =============================
 class MetaModelo:
     """
     Comitê de 3 especialistas + Filtros de Elite (bônus, não veto).
-    V9.1: Elite dá bônus de +1 aprovação, mas não bloqueia sozinho.
+    V9.1.1: Corrigido para evitar KeyError com detectores que retornam dict.
     """
     def __init__(self):
         self.historico_votacoes = []
@@ -227,20 +227,17 @@ class MetaModelo:
         self.ultima_decisao = None
     
     def analisar_filtros_elite(self, duzia_ai):
-        """
-        V9.1 - Filtros Elite calibrados (mais flexíveis).
-        Retorna (bool, str, dict, int): aprovado, motivo, detalhes, bonus
-        """
+        """V9.1 - Filtros Elite calibrados (mais flexíveis)"""
         detalhes = {}
         bonus = 0
         
-        # 1. FILTRO PÓS-ZERO (Lockout de 2 rodadas - reduzido)
-        if len(duzia_ai.numeros_completos) >= 2:  # Era 3
-            ultimos_2 = duzia_ai.numeros_completos[-2:]  # Era 3
+        # 1. FILTRO PÓS-ZERO (Lockout de 2 rodadas)
+        if len(duzia_ai.numeros_completos) >= 2:
+            ultimos_2 = duzia_ai.numeros_completos[-2:]
             if 0 in ultimos_2:
                 return False, "🚫 Pós-Zero: Aguardando estabilização (2 rodadas)", detalhes, 0
         
-        # 2. IVD (threshold 0.7 - menos sensível)
+        # 2. IVD (threshold 0.7)
         if len(duzia_ai.historico_duzias) >= 10:
             ultimas_10 = list(duzia_ai.historico_duzias)[-10:]
             ultimas_10_filtrado = [d for d in ultimas_10 if d != 0]
@@ -248,17 +245,17 @@ class MetaModelo:
                 trocas = sum(1 for i in range(1, len(ultimas_10_filtrado)) if ultimas_10_filtrado[i] != ultimas_10_filtrado[i-1])
                 ivd = trocas / max(1, len(ultimas_10_filtrado) - 1)
                 detalhes['ivd'] = round(ivd, 2)
-                if ivd > 0.7:  # Era 0.6
+                if ivd > 0.7:
                     return False, f"🌪️ Volatilidade Alta (IVD: {ivd:.2f})", detalhes, 0
-                elif ivd < 0.4:  # Baixa volatilidade = bônus
+                elif ivd < 0.4:
                     bonus += 1
         
-        # 3. TERMINAIS (2+ aparições - mais fácil)
+        # 3. TERMINAIS (2+ aparições)
         if len(duzia_ai.numeros_completos) >= 15:
             terminais = [n % 10 for n in duzia_ai.numeros_completos[-15:] if n != 0]
             if terminais:
                 contagem = Counter(terminais)
-                quentes = [t for t, f in contagem.items() if f >= 2]  # Era 3
+                quentes = [t for t, f in contagem.items() if f >= 2]
                 detalhes['quentes'] = quentes
                 detalhes['contagem'] = dict(contagem.most_common(5))
                 
@@ -267,8 +264,7 @@ class MetaModelo:
                     ultimo_terminal = ultimo_numero % 10
                     detalhes['ultimo_terminal'] = ultimo_terminal
                     if quentes and ultimo_terminal in quentes:
-                        bonus += 1  # Terminal quente = bônus
-                    # Não bloqueia mais, só perde o bônus
+                        bonus += 1
         
         return True, "💎 Filtros Elite OK", detalhes, bonus
     
@@ -282,16 +278,13 @@ class MetaModelo:
         total = sum(freq.values())
         if total > 0:
             pct = freq.get(previsao['duzia'], 0) / total
-            if pct > 0.35:
-                score += 2
-            elif pct > 0.25:
-                score += 1
+            if pct > 0.35: score += 2
+            elif pct > 0.25: score += 1
         markov = duzia_ai._prever_markov()
         if markov and markov[0] == previsao['duzia']:
             score += 1
         s1 = previsao['score'].get(previsao['duzia'], 0)
-        if s1 > 35:
-            score += 1
+        if s1 > 35: score += 1
         return score >= 2, score
     
     def especialista_quebra(self, duzia_ai, previsao):
@@ -340,7 +333,7 @@ class MetaModelo:
         votos.append(('Qualidade', aprovado_ql))
         scores['Qualidade'] = score_ql
         
-        # 🆕 V9.1 - Elite como bônus, não veto
+        # Elite como bônus
         elite_ok, elite_motivo, elite_detalhes, elite_bonus = self.analisar_filtros_elite(duzia_ai)
         if elite_ok:
             votos.append(('💎 Elite', True))
@@ -349,15 +342,13 @@ class MetaModelo:
             votos.append(('💎 Elite', False))
             scores['Elite'] = 0
         
-        aprovacoes_base = sum(1 for _, v in votos[:3] if v)  # 3 especialistas base
+        aprovacoes_base = sum(1 for _, v in votos[:3] if v)
         elite_aprova = votos[3][1] if len(votos) > 3 else False
         
-        # 🆕 V9.1 - Elite dá +1 aprovação virtual, mas não bloqueia
         aprovacoes_total = aprovacoes_base
         if elite_aprova:
-            aprovacoes_total += 1  # Bônus de elite
+            aprovacoes_total += 1
         
-        # Precisa de 2+ aprovações (incluindo bônus elite)
         aprovado = aprovacoes_total >= 2
         
         votos_str = []
@@ -403,7 +394,7 @@ class MetaModelo:
         return (perf['acertos'] / total) * 100
 
 # =============================
-# 🧠 DUZIA AI V9.1 - CALIBRADO
+# 🧠 DUZIA AI V9.1.1 - CORRIGIDO (KeyError nos detectores)
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -639,8 +630,9 @@ class DuziaAI:
             self.alerta_zero_ativo = False
             return False
         u = list(self.historico)[-5:]
-        if any(n in [26,32,15,3,35] for n in self.numeros_completos[-3:]):
-            self.alerta_zero_ativo = True; return True
+        if len(self.numeros_completos) >= 3:
+            if any(n in [26,32,15,3,35] for n in self.numeros_completos[-3:]):
+                self.alerta_zero_ativo = True; return True
         if len(u) >= 3 and len(set(u[-3:])) == 1 and u[-1] != 0:
             self.alerta_zero_ativo = True; return True
         if len(u) >= 4 and len(set(d for d in u[-4:] if d != 0)) >= 3:
@@ -649,7 +641,7 @@ class DuziaAI:
             self.alerta_zero_ativo = True; return True
         self.alerta_zero_ativo = False; return False
     
-    # ========== GATILHOS E DETECTORES (MANTIDOS DA V8.5.2) ==========
+    # ========== GATILHOS E DETECTORES ==========
     def detectar_exaustao_ciclo_dominante(self):
         if len(self.historico) < 10: return None
         u = list(self.historico)[-15:]
@@ -865,7 +857,7 @@ class DuziaAI:
                 return self._garantir_cobertura_diferente(previsao)
         return self._garantir_cobertura_diferente(previsao)
     
-    # ========== CÁLCULO DE SCORE (SIMPLIFICADO V9.1) ==========
+    # ========== CÁLCULO DE SCORE (V9.1.1 - CORRIGIDO) ==========
     def calcular_score(self):
         score = {1: 0, 2: 0, 3: 0}
         detalhes = {1: [], 2: [], 3: []}
@@ -883,19 +875,19 @@ class DuziaAI:
             for d in score: score[d] *= 0.5
         
         markov_pred = self._prever_markov()
-        if markov_pred and markov_pred[0] != 0:
+        if markov_pred and markov_pred[0] != 0 and markov_pred[0] in score:
             score[markov_pred[0]] += 8
         
-        if streak_d and streak_d != 0:
+        if streak_d and streak_d != 0 and streak_d in score:
             multiplicador = 3.0 if regime == "DOMINANTE" else 2.0 if regime == "TENDENCIA" else 1.5
             score[streak_d] += streak_count * multiplicador
         
         if len(self.historico) >= 2:
             u = list(self.historico)
-            if u[-1] == u[-2] and u[-1] != 0:
+            if u[-1] == u[-2] and u[-1] != 0 and u[-1] in score:
                 score[u[-1]] += 20
         
-        # Detectores principais
+        # 🆕 CORRIGIDO: Detectores com proteção de tipo
         for detector_func, nome in [
             (self.detectar_quebra_estados, 'quebra_estados'),
             (self.detectar_streak_longo, 'streak_longo'),
@@ -906,13 +898,34 @@ class DuziaAI:
         ]:
             result = detector_func()
             if result:
-                dz, forca = result[0], result[1] if len(result) > 1 else 3
-                if dz != 0 and dz in score:
+                # 🆕 Proteção: verifica tipo do resultado
+                if isinstance(result, dict):
+                    dz = result.get('quebra_prevista', 0)
+                    forca = result.get('forca', 3)
+                elif isinstance(result, tuple):
+                    dz = result[0] if len(result) > 0 else 0
+                    forca = result[1] if len(result) > 1 else 3
+                else:
+                    dz = result
+                    forca = 3
+                
+                # Só aplica se dz for válido (1, 2 ou 3)
+                if dz in [1, 2, 3] and dz in score:
                     score[dz] += self.get_peso_adaptativo(nome, forca)
         
+        # Exaustão
         exaustao = self.detectar_exaustao_ciclo_dominante()
-        if exaustao and exaustao['dz_quebra'] != 0 and exaustao['dz_quebra'] in score:
-            score[exaustao['dz_quebra']] += self.get_peso_adaptativo('exaustao_ciclo', exaustao['forca']*1.5)
+        if exaustao and isinstance(exaustao, dict):
+            dz_quebra = exaustao.get('dz_quebra', 0)
+            if dz_quebra in [1, 2, 3] and dz_quebra in score:
+                score[dz_quebra] += self.get_peso_adaptativo('exaustao_ciclo', exaustao.get('forca', 9) * 1.5)
+        
+        # Mudança abrupta
+        mudanca = self.detectar_mudanca_abrupta()
+        if mudanca and isinstance(mudanca, tuple) and len(mudanca) >= 1:
+            dz = mudanca[0]
+            if dz in [1, 2, 3] and dz in score:
+                score[dz] += self.get_peso_adaptativo('mudanca_abrupta', mudanca[1] if len(mudanca) > 1 else 4)
         
         total = sum(score.values())
         if total > 0:
@@ -969,7 +982,7 @@ class DuziaAI:
             "incluir_zero": self.alerta_zero_ativo
         }
         
-        # 🆕 V9.1 - Meta-Modelo com elite como bônus
+        # Meta-Modelo
         meta_modelo_ativo = st.session_state.get('meta_modelo_ativo', True)
         if pode_entrar and meta_modelo_ativo:
             aprovado, votos, scores, votos_str, elite_ok, elite_motivo = self.meta_modelo.votar(self, previsao)
@@ -983,7 +996,7 @@ class DuziaAI:
                 previsao['meta_modelo'] = {'aprovado': False, 'votos': votos, 'scores': scores, 'elite_ok': elite_ok}
             else:
                 previsao['meta_modelo'] = {'aprovado': True, 'votos': votos, 'scores': scores, 'elite_ok': elite_ok}
-                previsao['elite'] = elite_ok  # Marca como sinal elite
+                previsao['elite'] = elite_ok
         
         if pode_entrar and self.entradas_consecutivas >= self.max_entradas_consecutivas:
             pode_entrar = False
@@ -1183,8 +1196,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V9.1 - Calibrado", layout="wide")
-st.title("🎰 DuziaAI V9.1 - FILTROS ELITE CALIBRADOS (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V9.1.1 - Corrigido", layout="wide")
+st.title("🎰 DuziaAI V9.1.1 - KEYERROR CORRIGIDO (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1248,13 +1261,12 @@ with st.sidebar:
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
     st.session_state.meta_modelo_ativo = st.checkbox("🧠 Meta-Modelo + 💎 Elite", value=st.session_state.get('meta_modelo_ativo', True))
     st.markdown("---")
-    st.markdown("### 💎 V9.1 - CALIBRADO")
-    st.caption("🎯 Confiança: 2.5 (flexível)")
-    st.caption("💎 Elite: BÔNUS, não veto")
-    st.caption("🌪️ IVD: > 0.7 bloqueia")
-    st.caption("❄️ Terminais: 2+ = quente")
-    st.caption("🚫 Pós-Zero: 2 rodadas")
-    st.caption("⏸️ Pausa 5min após 3 erros")
+    st.markdown("### 🛡️ V9.1.1 - CORRIGIDO")
+    st.caption("🔧 KeyError nos detectores resolvido")
+    st.caption("🛡️ Verificação isinstance() em resultados")
+    st.caption("✅ dz in [1,2,3] antes de acessar score")
+    st.caption("💎 Elite: BÔNUS (+1 aprovação)")
+    st.caption("🎯 Confiança: 2.5")
     st.caption("🕐 Horário BRASÍLIA (BRT)")
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
@@ -1330,7 +1342,6 @@ if pausado:
 
 st.markdown("---")
 
-# Gráfico e Entrada
 col_grafico, col_entrada = st.columns([3,2])
 with col_grafico:
     st.subheader("📈 Análise em Tempo Real")
@@ -1416,5 +1427,5 @@ else:
     st.info("Nenhuma entrada ainda.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V9.1 | Filtros Elite Calibrados | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V9.1.1 | KeyError Corrigido | {formatar_hora_brasilia()}")
 salvar_sessao()
