@@ -156,7 +156,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.7 - SEM COOLDOWN + REGRA Z6
+# 🧠 DUZIA AI V10.8 - REGRA 3.5 (CONF ALTA SEM GATILHO = SEGUE REAL)
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -198,7 +198,6 @@ class DuziaAI:
             if len(self.duzias_que_sairam) > 10:
                 self.duzias_que_sairam = self.duzias_que_sairam[-10:]
         
-        # Verificar se zero foi previsto
         if numero == 0 and self.alerta_zero_ativo:
             self.zeros_previstos += 1
         
@@ -270,16 +269,8 @@ class DuziaAI:
             previsao['duzia_secundaria'] = outras[0] if outras else previsao['duzia']
         return previsao
     
-    # 🆕 V10.7 - ALERTA ZERO SEM COOLDOWN + REGRA Z6
+    # ALERTA ZERO - 5 REGRAS
     def detectar_alerta_zero(self):
-        """
-        Alerta Zero - 5 regras, SEM cooldown.
-        Z1: Zero recente (zero duplo)
-        Z2: Streak de 3+ na mesma dúzia
-        Z4: Alternância de 4+ trocas em 5 rodadas
-        Z5: 3 dúzias diferentes nas últimas 3 rodadas
-        Z6: Streak de 2 + QUEBRA_POS_ZERO ativo
-        """
         if len(self.historico) < 2:
             self.alerta_zero_ativo = False
             return False
@@ -287,52 +278,38 @@ class DuziaAI:
         u = list(self.historico)[-10:]
         nums = self.numeros_completos[-5:] if len(self.numeros_completos) >= 5 else self.numeros_completos
         
-        # Z1: Zero nos últimos 2 giros (zero duplo)
+        # Z1: Zero duplo
         if len(nums) >= 2 and nums[-1] == 0:
-            self.alerta_zero_ativo = True
-            self.alertas_zero_disparados += 1
-            return True
-        
+            self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         if len(nums) >= 3 and 0 in nums[-3:-1]:
-            self.alerta_zero_ativo = True
-            self.alertas_zero_disparados += 1
-            return True
+            self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
-        # Z2: Streak de 3+ na mesma dúzia
+        # Z2: Streak 3+
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
-                self.alerta_zero_ativo = True
-                self.alertas_zero_disparados += 1
-                return True
+                self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
-        # Z4: Alternância de 4+ trocas em 5 rodadas
+        # Z4: Alternância 4+ em 5
         if len(u) >= 5:
             ultimas_5 = u[-5:]
             trocas = sum(1 for i in range(1, len(ultimas_5)) 
                         if ultimas_5[i] != ultimas_5[i-1] and ultimas_5[i] != 0 and ultimas_5[i-1] != 0)
             if trocas >= 4:
-                self.alerta_zero_ativo = True
-                self.alertas_zero_disparados += 1
-                return True
+                self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
-        # Z5: 3 dúzias diferentes nas últimas 3 rodadas
+        # Z5: 3 dúzias diferentes em 3
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             duzias_presentes = set(d for d in ultimas_3 if d != 0)
             if len(duzias_presentes) == 3:
-                self.alerta_zero_ativo = True
-                self.alertas_zero_disparados += 1
-                return True
+                self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
-        # 🆕 Z6: Streak de 2 + gatilho QUEBRA_POS_ZERO ativo
+        # Z6: Streak 2 + zero recente
         if len(u) >= 2:
             if u[-1] == u[-2] and u[-1] != 0:
-                # Verifica se existe zero recente (últimas 6 rodadas)
                 if 0 in u[-6:]:
-                    self.alerta_zero_ativo = True
-                    self.alertas_zero_disparados += 1
-                    return True
+                    self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
         self.alerta_zero_ativo = False
         return False
@@ -444,7 +421,6 @@ class DuziaAI:
             outras = self._get_outras_duzias(d1)
             d2 = ranking[2][0] if len(ranking) > 2 else outras[0]
         
-        # Alerta Zero sem cooldown
         self.detectar_alerta_zero()
         
         confianca = min(3.5, max(1.0, s1 / max(1, s2) * 1.5))
@@ -482,6 +458,16 @@ class DuziaAI:
         
         if self.alerta_zero_ativo: 
             previsao['incluir_zero'] = True
+        
+        # 🆕 V10.8 - REGRA 3.5: Confiança alta sem gatilho = segue última real
+        conf = previsao.get('confianca', 0)
+        gat = previsao.get('gatilho_ativo')
+        if conf >= 3.4 and not gat and not self.modo_anti_erro:
+            if self.duzias_que_sairam:
+                ultima_real = self.duzias_que_sairam[-1]
+                if ultima_real != 0 and ultima_real != previsao['duzia']:
+                    logging.info(f"🔄 REGRA 3.5: Conf={conf} sem gatilho - Seguindo última real D{ultima_real} (era D{previsao['duzia']})")
+                    previsao['duzia'] = ultima_real
         
         for dz, erros in self.erros_por_duzia.items():
             if erros >= 3 and previsao['duzia'] == dz:
@@ -657,8 +643,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.7 - Sem Cooldown", layout="wide")
-st.title("🎰 DuziaAI V10.7 - SEM COOLDOWN + Z6 (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.8 - Regra 3.5", layout="wide")
+st.title("🎰 DuziaAI V10.8 - REGRA 3.5 (CONF ALTA = SEGUE REAL)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -698,21 +684,19 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.7 - SEM COOLDOWN")
+    st.markdown("## ⚙️ V10.8 - REGRA 3.5")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
-    st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 15, st.session_state.janela_duzia_ai, 5)
+    st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("🟢 ALERTA ZERO - 5 REGRAS:")
-    st.caption("  Z1: Zero duplo")
-    st.caption("  Z2: Streak 3+ mesma dúzia")
-    st.caption("  Z4: Alternância 4+ em 5")
-    st.caption("  Z5: 3 dúzias dif. em 3")
-    st.caption("  Z6: Streak 2 + zero recente")
-    st.caption("❌ SEM COOLDOWN - sempre ativo")
+    st.caption("🔄 REGRA 3.5: Conf ≥ 3.4 sem gatilho")
+    st.caption("   → Segue última dúzia real")
+    st.caption("🟢 ALERTA ZERO: 5 regras (Z1-Z6)")
+    st.caption("🔄 ANTI-ERRO: Pivota após erro")
+    st.caption("⏸️ PAUSA: Após 3 erros consecutivos")
     st.markdown("---")
     with st.expander("🔔 Telegram"):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -905,5 +889,5 @@ if sis.historico_entradas:
 else: 
     st.info("Nenhuma entrada ainda.")
 
-st.caption(f"🤖 DuziaAI V10.7 | Sem Cooldown + Z6 | Alertas: {sis.duzia_ai.alertas_zero_disparados} | Zeros previstos: {sis.duzia_ai.zeros_previstos} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.8 | Regra 3.5 | Alertas Z: {sis.duzia_ai.alertas_zero_disparados} | Zeros: {sis.duzia_ai.zeros_previstos} | {formatar_hora_brasilia()}")
 salvar_sessao()
