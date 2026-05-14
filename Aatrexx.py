@@ -101,13 +101,17 @@ def enviar_previsao_auto(previsao):
         d1n = [n for n in numeros if 1 <= n <= 12]
         d2n = [n for n in numeros if 13 <= n <= 24]
         d3n = [n for n in numeros if 25 <= n <= 36]
-        if d1n and d2n: msg = "🎯 D1 (1-12) | Cob: D2 (13-24)"
-        elif d1n and d3n: msg = "🎯 D1 (1-12) | Cob: D3 (25-36)"
-        elif d2n and d3n: msg = "🎯 D2 (13-24) | Cob: D3 (25-36)"
-        elif d1n: msg = "🎯 D1 (1-12)"
-        elif d2n: msg = "🎯 D2 (13-24)"
-        elif d3n: msg = "🎯 D3 (25-36)"
-        else: msg = f"🎯 {numeros}"
+        
+        prefixo = "⚠️🎯 " if incluir_zero else "🎯 "
+        
+        if d1n and d2n: msg = f"{prefixo}D1 (1-12) | Cob: D2 (13-24)"
+        elif d1n and d3n: msg = f"{prefixo}D1 (1-12) | Cob: D3 (25-36)"
+        elif d2n and d3n: msg = f"{prefixo}D2 (13-24) | Cob: D3 (25-36)"
+        elif d1n: msg = f"{prefixo}D1 (1-12)"
+        elif d2n: msg = f"{prefixo}D2 (13-24)"
+        elif d3n: msg = f"{prefixo}D3 (25-36)"
+        else: msg = f"{prefixo}{numeros}"
+        
         if incluir_zero: msg += " + 🟢 ZERO"
         st.toast(msg)
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
@@ -117,7 +121,7 @@ def enviar_previsao_auto(previsao):
 
 def enviar_resultado_auto(numero_real, acerto):
     try:
-        if numero_real == 0: msg = "✅ ZERO!" if acerto else "🟢 ZERO!"
+        if numero_real == 0: msg = "✅ ZERO! (ACERTO!)" if acerto else "🟢 ZERO! (Não apostado)"
         else: msg = f"{'✅ ACERTO' if acerto else '❌ ERRO'} - Nº {numero_real} (D{get_duzia(numero_real)})"
         st.toast(msg)
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
@@ -152,7 +156,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10 - LIMPO, RÁPIDO E EFICAZ
+# 🧠 DUZIA AI V10.1 - COM DETECÇÃO DE ZERO E QUEBRA PÓS-ZERO
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -176,11 +180,25 @@ class DuziaAI:
         self.alerta_zero_ativo = False
         self.pausa_ate = None
         
+        # 🆕 V10.1 - Controle de ZERO
+        self.zero_na_janela = False
+        self.rodadas_pos_zero = 0
+        
     def adicionar(self, numero):
         d = get_duzia(numero)
         self.historico.append(d)
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
+        
+        # 🆕 V10.1 - Atualizar controle de zero
+        if numero == 0:
+            self.zero_na_janela = True
+            self.rodadas_pos_zero = 0
+        elif self.zero_na_janela:
+            self.rodadas_pos_zero += 1
+            if self.rodadas_pos_zero >= 3:
+                self.zero_na_janela = False
+        
         if len(self.historico_completo) >= 4:
             padrao = tuple(self.historico_completo[-4:-1])
             self.transicoes[padrao][d] += 1
@@ -195,7 +213,6 @@ class DuziaAI:
         self.ultimos_resultados.append({'duzia': duzia_real, 'acertou': acertou})
         if len(self.ultimos_resultados) > 20: self.ultimos_resultados = self.ultimos_resultados[-20:]
         
-        # Pausa após 3 erros
         if not acertou:
             erros_seguidos = sum(1 for r in reversed(self.ultimos_resultados) if not r.get('acertou', True))
             if erros_seguidos >= 3:
@@ -239,21 +256,52 @@ class DuziaAI:
             previsao['duzia_secundaria'] = outras[0] if outras else previsao['duzia']
         return previsao
     
+    # 🆕 V10.1 - DETECÇÃO DE ZERO MELHORADA
     def detectar_alerta_zero(self):
-        if len(self.historico) < 3: self.alerta_zero_ativo = False; return False
-        u = list(self.historico)[-3:]
-        if 0 in u:
-            self.alerta_zero_ativo = True; return True
-        self.alerta_zero_ativo = False; return False
+        """Detecta padrões que indicam probabilidade de ZERO"""
+        if len(self.historico) < 3: 
+            self.alerta_zero_ativo = False
+            return False
+        
+        u = list(self.historico)[-5:]
+        nums_recentes = self.numeros_completos[-5:] if len(self.numeros_completos) >= 5 else self.numeros_completos
+        
+        # 1. Vizinhos do zero no cilindro (26, 32, 15, 3, 35, 19, 4, 21, 2, 25)
+        vizinhos_zero = [26, 32, 15, 3, 35, 19, 4, 21, 2, 25]
+        if any(n in vizinhos_zero for n in nums_recentes[-3:]):
+            self.alerta_zero_ativo = True
+            return True
+        
+        # 2. Três dúzias diferentes nas últimas 4 rodadas
+        if len(u) >= 4:
+            duzias_unicas = set(d for d in u[-4:] if d != 0)
+            if len(duzias_unicas) >= 3:
+                self.alerta_zero_ativo = True
+                return True
+        
+        # 3. Streak de 3+ na mesma dúzia
+        if len(u) >= 3:
+            ultimas_3 = u[-3:]
+            if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
+                self.alerta_zero_ativo = True
+                return True
+        
+        # 4. ZERO recente na janela
+        if self.zero_na_janela and self.rodadas_pos_zero <= 2:
+            self.alerta_zero_ativo = True
+            return True
+        
+        self.alerta_zero_ativo = False
+        return False
     
     # ========== GATILHOS ESSENCIAIS ==========
     def detectar_gatilhos(self):
-        """Apenas os gatilhos que realmente funcionaram"""
+        """Gatilhos que realmente funcionaram + QUEBRA_POS_ZERO melhorado"""
         u = list(self.historico)
         freq = Counter([d for d in u if d != 0])
         
-        # QUEBRA_POS_ZERO (melhor gatilho - 70-100% acerto)
-        if 0 in u[-5:]:
+        # 🆕 QUEBRA_POS_ZERO (melhor gatilho - 70-100% acerto)
+        if 0 in u[-6:]:
             pos_zero = len(u) - 1 - u[::-1].index(0)
             depois_zero = u[pos_zero+1:]
             if len(depois_zero) >= 1 and depois_zero[-1] != 0:
@@ -285,6 +333,19 @@ class DuziaAI:
                     if dz_escolhida != 0:
                         self.ultimo_gatilho = 'SEQUENCIA_ERROS'
                         return {'tipo': 'SEQUENCIA_ERROS', 'duzia': dz_escolhida, 'forca': 6}
+        
+        # 🆕 MUDANCA_VELOCIDADE (quebra de padrão)
+        if len(u) >= 8:
+            primeira_metade = u[-8:-4]
+            segunda_metade = u[-4:]
+            freq_1 = Counter([d for d in primeira_metade if d != 0])
+            freq_2 = Counter([d for d in segunda_metade if d != 0])
+            if freq_1 and freq_2:
+                dom_1 = freq_1.most_common(1)[0]
+                dom_2 = freq_2.most_common(1)[0]
+                if dom_1[0] != dom_2[0] and dom_2[1] >= 3 and dom_2[0] != 0:
+                    self.ultimo_gatilho = 'MUDANCA_VELOCIDADE'
+                    return {'tipo': 'MUDANCA_VELOCIDADE', 'duzia': dom_2[0], 'forca': 6}
         
         return None
     
@@ -323,6 +384,13 @@ class DuziaAI:
             if self.ultima_duzia_errada in score:
                 score[self.ultima_duzia_errada] *= 0.1
         
+        # 🆕 V10.1 - Pós-zero: favorecer dúzia após zero
+        if 0 in u[-4:]:
+            pos_zero = len(u) - 1 - u[::-1].index(0)
+            depois_zero = u[pos_zero+1:]
+            if depois_zero and depois_zero[-1] != 0:
+                score[depois_zero[-1]] += 15
+        
         # Normalizar
         total_score = sum(score.values())
         if total_score > 0:
@@ -344,7 +412,9 @@ class DuziaAI:
             outras = self._get_outras_duzias(d1)
             d2 = ranking[2][0] if len(ranking) > 2 else outras[0]
         
+        # 🆕 Detectar alerta zero
         self.detectar_alerta_zero()
+        
         confianca = min(3.5, max(1.0, s1 / max(1, s2) * 1.5))
         
         # Decisão simples: entra se score > 35 ou tem gatilho
@@ -361,7 +431,6 @@ class DuziaAI:
             "incluir_zero": self.alerta_zero_ativo
         }
         
-        # Balanaceamento
         if pode_entrar:
             previsao = self._balancear(previsao)
         
@@ -370,7 +439,10 @@ class DuziaAI:
     
     def _balancear(self, previsao):
         u = list(self.historico)
-        if self.alerta_zero_ativo: previsao['incluir_zero'] = True
+        
+        # 🆕 Incluir zero se alerta ativo
+        if self.alerta_zero_ativo: 
+            previsao['incluir_zero'] = True
         
         # Bloqueio por erro na mesma dúzia
         for dz, erros in self.erros_por_duzia.items():
@@ -485,7 +557,10 @@ class SistemaBot:
             self.duzia_ai.registrar_previsao(previsao['duzia'])
             idx_atual = len(self.historico_numeros) - 1
             self.sinais_grafico.append((idx_atual, previsao['duzia']))
-            enviar_previsao_auto({'numeros_apostar': numeros_apostar, 'incluir_zero': previsao.get('incluir_zero', False)})
+            enviar_previsao_auto({
+                'numeros_apostar': numeros_apostar, 
+                'incluir_zero': previsao.get('incluir_zero', False)
+            })
     
     def zerar(self):
         self.acertos = 0; self.erros = 0
@@ -525,21 +600,26 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     try:
         with open(caminho, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Rodada','Hora','Nº','Real','Prev','Conf','Gat','Res'])
+            writer.writerow(['Rodada','Hora','Nº','Real','Prev','Cob','Conf','Gat','Zero','Res'])
             for e in historico_entradas:
                 res = '✅' if e.get('acerto_primaria') else '🟡' if e.get('acerto_secundaria') else '❌'
                 real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
-                writer.writerow([e.get('rodada'), e.get('hora'), e.get('numero'), real,
-                               f"D{e.get('duzia_prevista','?')}", f"{e.get('confianca',0):.1f}",
-                               e.get('gatilho','-') if e.get('gatilho') else '-', res])
+                prev = f"D{e.get('duzia_prevista','?')}"
+                cob = f"D{e.get('duzia_sec_prevista','?')}" if e.get('duzia_sec_prevista') and e.get('duzia_sec_prevista') != e.get('duzia_prevista') else "-"
+                zero = '🟢' if e.get('incluir_zero') else '-'
+                writer.writerow([
+                    e.get('rodada'), e.get('hora'), e.get('numero'), real,
+                    prev, cob, f"{e.get('confianca',0):.1f}",
+                    e.get('gatilho','-') if e.get('gatilho') else '-', zero, res
+                ])
         return True
     except Exception as e: logging.error(f"Erro CSV: {e}"); return False
 
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10 - Limpo & Rápido", layout="wide")
-st.title("🎰 DuziaAI V10 - LIMPO, RÁPIDO E EFICAZ (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.1 - Zero Detect", layout="wide")
+st.title("🎰 DuziaAI V10.1 - DETECÇÃO DE ZERO + QUEBRA (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -579,7 +659,7 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10 - LIMPO & RÁPIDO")
+    st.markdown("## ⚙️ V10.1 - ZERO DETECT")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -587,24 +667,25 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("✅ Streak 2x - Força total")
-    st.caption("✅ Gatilhos essenciais")
-    st.caption("✅ Markov simplificado")
-    st.caption("✅ Cobertura inteligente")
-    st.caption("✅ Anti-repetição")
-    st.caption("❌ Sem Meta-Modelo")
-    st.caption("❌ Sem filtros Elite")
-    st.caption("❌ Sem 15 detectores")
-    st.caption("🚀 RÁPIDO e DIRETO")
+    st.caption("🟢 Detecção de ZERO")
+    st.caption("💥 QUEBRA_POS_ZERO")
+    st.caption("🔥 EXAUSTAO_DOMINANCIA")
+    st.caption("⚡ MUDANCA_VELOCIDADE")
+    st.caption("🔄 SEQUENCIA_ERROS")
+    st.caption("✅ Streak 2x")
+    st.caption("✅ Markov")
+    st.caption("✅ Cobertura")
     st.markdown("---")
     with st.expander("🔔 Telegram"):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
         st.session_state.telegram_chat_id = st.text_input("Chat ID", value=st.session_state.telegram_chat_id)
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("💾 Salvar", use_container_width=True): salvar_resultado_em_arquivo(st.session_state.historico); salvar_sessao(); st.success("✅")
+        if st.button("💾 Salvar", use_container_width=True): 
+            salvar_resultado_em_arquivo(st.session_state.historico); salvar_sessao(); st.success("✅")
     with c2:
-        if st.button("🗑️ Zerar", use_container_width=True): st.session_state.sistema.zerar(); st.rerun()
+        if st.button("🗑️ Zerar", use_container_width=True): 
+            st.session_state.sistema.zerar(); st.rerun()
     with c3:
         if st.button("📥 CSV", use_container_width=True):
             if exportar_historico_csv(st.session_state.sistema.historico_entradas): st.success("✅")
@@ -639,7 +720,7 @@ st.markdown("---")
 sis = st.session_state.sistema
 
 # Métricas
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 total = int(sis.acertos + sis.erros)
 tx = (sis.acertos/total*100) if total > 0 else 0
 ac = st.session_state.get('acertos_duzia', 0)
@@ -651,7 +732,8 @@ c2.metric("❌", int(sis.erros))
 c3.metric("📊", f"{tx:.0f}%")
 c4.metric("🎯", f"{tx_dz:.0f}%")
 c5.metric("📦", total)
-c6.metric("⏸️", "⏸️" if pausado else "▶️")
+c6.metric("⚠️", "🟢" if sis.duzia_ai.alerta_zero_ativo else "⚪")
+c7.metric("⏸️", "⏸️" if pausado else "▶️")
 
 if pausado: st.warning(f"⏸️ Pausa até {formatar_hora_brasilia(sis.duzia_ai.pausa_ate)}")
 
@@ -663,58 +745,96 @@ with cg:
     if len(sis.historico_numeros) >= 3:
         score, gatilho = sis.duzia_ai.calcular_score()
         fig = plt.Figure(data=[plt.Bar(
-            x=['D1','D2','D3'], y=[score[1],score[2],score[3]],
+            x=['D1 (1-12)', 'D2 (13-24)', 'D3 (25-36)'], 
+            y=[score[1], score[2], score[3]],
             marker_color=['#FF6B6B' if score[1]==max(score.values()) else '#4ECDC4',
                           '#FF6B6B' if score[2]==max(score.values()) else '#4ECDC4',
                           '#FF6B6B' if score[3]==max(score.values()) else '#4ECDC4'],
-            text=[f'{score[1]:.0f}',f'{score[2]:.0f}',f'{score[3]:.0f}'], textposition='auto'
+            text=[f'{score[1]:.0f}', f'{score[2]:.0f}', f'{score[3]:.0f}'], 
+            textposition='auto'
         )])
-        fig.update_layout(title=f"🎯 {'⚠️ GATILHO: '+gatilho['tipo'] if gatilho else 'Sem gatilho'}", height=250, showlegend=False)
+        titulo = f"🎯 {'⚠️ GATILHO: '+gatilho['tipo'] if gatilho else 'Sem gatilho'}"
+        if sis.duzia_ai.alerta_zero_ativo:
+            titulo += " | 🟢 ALERTA ZERO!"
+        fig.update_layout(title=titulo, height=250, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
         
         if len(sis.historico_numeros) >= 8:
             ult = list(sis.historico_numeros)[-20:]
             dz_hist = [get_duzia(n) for n in ult]
             fig2 = plt.Figure()
-            fig2.add_trace(plt.Scatter(x=list(range(len(dz_hist))), y=dz_hist, mode='lines+markers', line=dict(color='#FFD700',width=2)))
+            fig2.add_trace(plt.Scatter(
+                x=list(range(len(dz_hist))), y=dz_hist, 
+                mode='lines+markers', line=dict(color='#FFD700', width=2),
+                marker=dict(size=10)
+            ))
             if sis.sinais_grafico:
                 sx, sy = [], []
                 off = len(dz_hist) - 20
                 for idx, dz in sis.sinais_grafico:
                     pos = idx - off
                     if 0 <= pos < 20: sx.append(pos); sy.append(dz)
-                if sx: fig2.add_trace(plt.Scatter(x=sx, y=sy, mode='markers', name='Sinal', marker=dict(symbol='star',size=12,color='red')))
-            fig2.update_layout(title="📉 Histórico", yaxis=dict(tickvals=[1,2,3],ticktext=['D1','D2','D3'],range=[0.5,3.5]), height=250)
+                if sx: 
+                    fig2.add_trace(plt.Scatter(
+                        x=sx, y=sy, mode='markers', name='Sinal', 
+                        marker=dict(symbol='star', size=15, color='red')
+                    ))
+            fig2.update_layout(
+                title="📉 Histórico", 
+                yaxis=dict(tickvals=[0,1,2,3], ticktext=['0','D1','D2','D3'], range=[-0.5, 3.5]), 
+                height=250
+            )
             st.plotly_chart(fig2, use_container_width=True)
 
 with ce:
-    st.subheader("🎰 Entrada")
+    st.subheader("🎰 Entrada Atual")
+    if sis.duzia_ai.alerta_zero_ativo:
+        st.warning("⚠️ ALERTA ZERO ATIVO! 🟢")
+    
     if sis.entrada_ativa:
         e = sis.entrada_ativa
         conf = e.get('confianca', 0)
-        dz = e.get('duzia_prevista', 0)
-        lim = "1-12" if dz==1 else "13-24" if dz==2 else "25-36"
+        dz_princ = e.get('duzia_prevista', 0)
+        dz_sec = e.get('duzia_sec_prevista')
+        lim_princ = "1-12" if dz_princ==1 else "13-24" if dz_princ==2 else "25-36"
+        lim_sec = "1-12" if dz_sec==1 else "13-24" if dz_sec==2 else "25-36" if dz_sec else ""
         gat = e.get('gatilho_ativo')
         zero = e.get('incluir_zero', False)
+        nums = e.get('numeros_apostar', [])
+        
+        # 🆕 Mostrar cobertura
+        tem_cobertura = dz_sec and dz_sec != dz_princ
         
         cor = "#FF6347" if gat else "#FFD700"
+        if zero: cor = "#FFD700"
+        
         st.markdown(f"""
-        <div style="background-color:{cor}15; border:2px solid {cor}; border-radius:15px; padding:15px;">
-            <h2 style="color:{cor}; text-align:center;">{'⚠️ ' if gat else ''}D{dz} ({lim})</h2>
-            <p style="text-align:center;">Conf: {conf:.2f} {'| 🎯 '+gat if gat else ''}</p>
-            {f'<p style="text-align:center;color:#FFD700;">🟢 ZERO incluído!</p>' if zero else ''}
+        <div style="background-color:{cor}15; border:2px solid {cor}; border-radius:15px; padding:15px; margin-bottom:10px;">
+            <h2 style="color:{cor}; text-align:center;">{'⚠️ ' if gat else ''}🎯 D{dz_princ} ({lim_princ})</h2>
+            <p style="text-align:center; font-size:1.1em;">Confiança: {conf:.2f} {'| 🎯 '+gat if gat else ''}</p>
+            {f'<p style="text-align:center; color:#FFA500; font-size:1em;">🛡️ Cobertura: D{dz_sec} ({lim_sec})</p>' if tem_cobertura else '<p style="text-align:center; color:#888;">🔒 Sem cobertura</p>'}
+            {f'<p style="text-align:center; color:#FFD700; font-size:1.1em;">🟢 ZERO incluído nas apostas!</p>' if zero else ''}
         </div>""", unsafe_allow_html=True)
         
-        nums = e.get('numeros_apostar', [])
         if nums:
+            st.write("**🎲 Números para apostar:**")
             cols = st.columns(7)
             for i, n in enumerate(sorted(nums)):
-                cols[i%7].button("🟢0" if n==0 else str(n), key=f"n{n}", use_container_width=True)
+                label = "🟢0" if n==0 else str(n)
+                cols[i%7].button(label, key=f"n{n}", use_container_width=True)
         st.progress(min(1.0, max(0.0, conf/5.0)))
     else:
-        st.info("🔍 Aguardando sinal...")
+        st.info("🔍 Aguardando sinal claro...")
+        previsao = sis.duzia_ai.prever()
+        if previsao and not previsao.get('entrar', False):
+            st.caption(f"Motivo: {previsao.get('motivo', '')}")
+    
     if sis.ultimo_numero is not None:
-        st.write(f"**🔄 Último:** {'🟢 ZERO' if sis.ultimo_numero==0 else f'#{sis.ultimo_numero} → D{get_duzia(sis.ultimo_numero)}'}")
+        st.markdown("---")
+        if sis.ultimo_numero == 0:
+            st.write(f"**🔄 Último Giro:** 🟢 ZERO")
+        else:
+            st.write(f"**🔄 Último Giro:** #{sis.ultimo_numero} → D{get_duzia(sis.ultimo_numero)}")
 
 st.markdown("---")
 st.subheader("📝 Histórico")
@@ -723,15 +843,21 @@ if sis.historico_entradas:
     for e in reversed(sis.historico_entradas[-15:]):
         real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
         res = '✅' if e.get('acerto_primaria') else '🟡' if e.get('acerto_secundaria') else '❌'
+        prev = f"D{e.get('duzia_prevista','?')}"
+        cob = f"D{e.get('duzia_sec_prevista','?')}" if e.get('duzia_sec_prevista') and e.get('duzia_sec_prevista') != e.get('duzia_prevista') else "-"
+        zero = '🟢' if e.get('incluir_zero') else '-'
         dados.append({
             "Rod": e.get('rodada'), "Hora": e.get('hora'), "Nº": e.get('numero'),
-            "Real": real, "Prev": f"D{e.get('duzia_prevista','?')}",
-            "Conf": f"{e.get('confianca',0):.1f}", "Gat": e.get('gatilho','-') if e.get('gatilho') else '-', "Res": res
+            "Real": real, "Prev": prev, "Cob": cob,
+            "Conf": f"{e.get('confianca',0):.1f}", 
+            "Gat": e.get('gatilho','-') if e.get('gatilho') else '-', 
+            "Z": zero, "Res": res
         })
     st.dataframe(dados, use_container_width=True, height=250)
-    if st.button("📥 CSV", use_container_width=True):
+    if st.button("📥 Exportar CSV", use_container_width=True):
         if exportar_historico_csv(sis.historico_entradas): st.success("✅")
-else: st.info("Nenhuma entrada ainda.")
+else: 
+    st.info("Nenhuma entrada ainda.")
 
-st.caption(f"🤖 DuziaAI V10 | Limpo & Rápido | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.1 | Zero Detect + Quebra | {formatar_hora_brasilia()}")
 salvar_sessao()
