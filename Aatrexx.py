@@ -298,7 +298,7 @@ class DuziaAI:
             self.alerta_zero_ativo = False
             return False
         
-        if len(self.historico) < 2:
+        if len(self.historico) < 10:
             self.alerta_zero_ativo = False
             return False
         
@@ -512,7 +512,7 @@ class DuziaAI:
 # =============================
 class SistemaBot:
     def __init__(self):
-        janela = st.session_state.get('janela_duzia_ai', 30)
+        janela = st.session_state.get('janela_duzia_ai', 10)
         self.duzia_ai = DuziaAI(window=janela)
         self.historico_numeros = deque(maxlen=200)
         self.entrada_ativa = None
