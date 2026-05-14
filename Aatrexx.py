@@ -156,7 +156,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.8 - ATUALIZADA COM ESTRATÉGIAS DE ANÁLISE DE DADOS
+# 🧠 DUZIA AI V10.9 - COM REGRA Z7 (STREAK 2 SIMPLES)
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -184,10 +184,10 @@ class DuziaAI:
         self.duzias_que_sairam = []
 
         # [NOVO] - Variáveis para novas estratégias
-        self.consecutivos_amarelos = 0 # Para Inversão de Cobertura
-        self.ultimo_resultado_status = None # Para Kill Switch de Teimosia
-        self.ultima_confianca = 0 # Para Kill Switch de Teimosia
-        self.ultima_previsao_duzia = None # Para Kill Switch de Teimosia
+        self.consecutivos_amarelos = 0
+        self.ultimo_resultado_status = None
+        self.ultima_confianca = 0
+        self.ultima_previsao_duzia = None
         
         # Estatísticas do Alerta Zero
         self.alertas_zero_disparados = 0
@@ -221,11 +221,11 @@ class DuziaAI:
     
     def registrar_resultado(self, duzia_real, acertou, status_acerto=None):
         self.ultimos_resultados.append({'duzia': duzia_real, 'acertou': acertou})
-        self.ultimo_resultado_status = status_acerto # '✅', '🟡' ou '❌'
+        self.ultimo_resultado_status = status_acerto
         
         if len(self.ultimos_resultados) > 20: self.ultimos_resultados = self.ultimos_resultados[-20:]
         
-        # [ESTRATÉGIA 4] - Gestão de Amarelos (Inversão de Cobertura)
+        # [ESTRATÉGIA 4] - Gestão de Amarelos
         if status_acerto == '🟡':
             self.consecutivos_amarelos += 1
         else:
@@ -285,7 +285,7 @@ class DuziaAI:
             previsao['duzia_secundaria'] = outras[0] if outras else previsao['duzia']
         return previsao
     
-    # ALERTA ZERO - 5 REGRAS
+    # 🆕 V10.9 - ALERTA ZERO COM 6 REGRAS (Z1-Z7)
     def detectar_alerta_zero(self):
         if len(self.historico) < 2:
             self.alerta_zero_ativo = False
@@ -327,6 +327,11 @@ class DuziaAI:
                 if 0 in u[-6:]:
                     self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
+        # 🆕 Z7: Streak de 2 simples (sem precisar de zero recente)
+        if len(u) >= 2:
+            if u[-1] == u[-2] and u[-1] != 0:
+                self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
+        
         self.alerta_zero_ativo = False
         return False
     
@@ -335,13 +340,12 @@ class DuziaAI:
         u = list(self.historico)
         freq = Counter([d for d in u if d != 0])
         
-        # [ESTRATÉGIA 2] - RITMO_BINARIO (Alternância D1-D2-D1-D2)
+        # RITMO_BINARIO
         if len(u) >= 4:
             ult_4 = [u[-1], u[-2], u[-3], u[-4]]
             if 0 not in ult_4:
                 if ult_4[0] == ult_4[2] and ult_4[1] == ult_4[3] and ult_4[0] != ult_4[1]:
                     self.ultimo_gatilho = 'RITMO_BINARIO'
-                    # Se o padrão é A-B-A-B, o próximo deve ser A (u[-2])
                     return {'tipo': 'RITMO_BINARIO', 'duzia': ult_4[1], 'forca': 9}
 
         # QUEBRA_POS_ZERO
@@ -450,7 +454,7 @@ class DuziaAI:
         
         confianca = min(3.5, max(1.0, s1 / max(1, s2) * 1.5))
 
-        # [ESTRATÉGIA 3] - Z-ZONE RELAX (Sombra do Zero)
+        # Z-ZONE RELAX
         u_list = list(self.historico)
         if 0 in u_list[-3:]:
             confianca *= 0.5
@@ -458,11 +462,11 @@ class DuziaAI:
         
         pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
         
-        # [ESTRATÉGIA 1] - Kill Switch de Teimosia (Inércia da Regra 3.5)
+        # Kill Switch de Teimosia
         if self.ultimo_resultado_status == '❌' and self.ultima_confianca >= 3.4:
             if d1 == self.ultima_previsao_duzia:
                 logging.info(f"🚫 KILL SWITCH: Bloqueando repetição de D{d1} após erro em alta confiança.")
-                d1 = d2 # Pivota para a secundária
+                d1 = d2
                 s1 = s2
         
         if self.modo_anti_erro:
@@ -497,7 +501,7 @@ class DuziaAI:
         if self.alerta_zero_ativo: 
             previsao['incluir_zero'] = True
 
-        # [ESTRATÉGIA 4] - Inversão de Prioridade (Gestão de Amarelos)
+        # Inversão de Prioridade (Gestão de Amarelos)
         if self.consecutivos_amarelos >= 2:
             d_prim = previsao['duzia']
             d_sec = previsao['duzia_secundaria']
@@ -505,7 +509,7 @@ class DuziaAI:
             previsao['duzia_secundaria'] = d_prim
             logging.info(f"🔃 INVERSÃO: 2x Amarelos detectados. Invertendo D{d_sec} para Principal.")
         
-        # 🆕 V10.8 - REGRA 3.5: Confiança alta sem gatilho = segue última real
+        # REGRA 3.5: Confiança alta sem gatilho = segue última real
         conf = previsao.get('confianca', 0)
         gat = previsao.get('gatilho_ativo')
         if conf >= 3.4 and not gat and not self.modo_anti_erro:
@@ -573,7 +577,6 @@ class SistemaBot:
             
             acertou = acerto_primaria or acerto_secundaria
             
-            # Status para a nova lógica de registro
             status_visual = '❌'
             if acerto_primaria:
                 self.acertos += 1
@@ -587,7 +590,6 @@ class SistemaBot:
                 self.erros += 1
                 st.session_state.erros_duzia = st.session_state.get('erros_duzia', 0) + 1
             
-            # Registrar resultado no AI com o status detalhado
             self.duzia_ai.registrar_resultado(duzia_real, acertou, status_acerto=status_visual)
             
             self.historico_entradas.append({
@@ -629,7 +631,6 @@ class SistemaBot:
                 'incluir_zero': previsao.get('incluir_zero', False)
             }
             
-            # Passar confiança para o registro
             self.duzia_ai.registrar_previsao(previsao['duzia'], previsao['confianca'])
             idx_atual = len(self.historico_numeros) - 1
             self.sinais_grafico.append((idx_atual, previsao['duzia']))
@@ -695,8 +696,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.8 - Pro Edition", layout="wide")
-st.title("🎰 DuziaAI V10.8 - PRO EDITION")
+st.set_page_config(page_title="🎰 DuziaAI V10.9 - Z7 Streak 2", layout="wide")
+st.title("🎰 DuziaAI V10.9 - PRO EDITION + Z7")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -736,7 +737,7 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.8 PRO UPDATED")
+    st.markdown("## ⚙️ V10.9 - Z7 STREAK 2")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -744,11 +745,13 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("🛡️ ESTRATÉGIAS INTEGRADAS:")
-    st.caption("1. Kill Switch: Evita 'teimosia' em tendências quebradas.")
-    st.caption("2. Ritmo Binário: Detecta espelhamentos D1-D2.")
-    st.caption("3. Z-Zone Relax: Reduz risco após o Zero.")
-    st.caption("4. Inversão Cobertura: Reage a sucessivos acertos parciais.")
+    st.caption("🟢 ALERTA ZERO - 6 REGRAS:")
+    st.caption("  Z1: Zero duplo")
+    st.caption("  Z2: Streak 3+ mesma dúzia")
+    st.caption("  Z4: Alternância 4+ em 5")
+    st.caption("  Z5: 3 dúzias dif. em 3")
+    st.caption("  Z6: Streak 2 + zero recente")
+    st.caption("  🆕 Z7: Streak de 2 simples")
     st.markdown("---")
     with st.expander("🔔 Telegram"):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -916,5 +919,5 @@ if sis.historico_entradas:
 else: 
     st.info("Nenhuma entrada registrada.")
 
-st.caption(f"🤖 DuziaAI V10.8 PRO | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9 PRO + Z7 | Alertas Z: {sis.duzia_ai.alertas_zero_disparados} | Zeros: {sis.duzia_ai.zeros_previstos} | {formatar_hora_brasilia()}")
 salvar_sessao()
