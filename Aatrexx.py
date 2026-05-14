@@ -210,7 +210,7 @@ class DuziaAI:
                 self.cooldown_alerta_zero += 1
                 if self.cooldown_alerta_zero >= 2:
                     self.alerta_zero_ativo = False
-                    self.cooldown_alerta_zero = 1
+                    #self.cooldown_alerta_zero = 1
         
         if len(self.historico_completo) >= 4:
             padrao = tuple(self.historico_completo[-4:-1])
