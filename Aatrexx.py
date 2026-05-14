@@ -156,7 +156,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.3 - REGRA 1 (CONF 3.5 + ZERO SEM EXAUSTAO)
+# 🧠 DUZIA AI V10.2 - ANTI-SEQUÊNCIA DE ERROS AGRESSIVA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -171,7 +171,7 @@ class DuziaAI:
         
         # Controle de erros
         self.erros_por_duzia = {1: 0, 2: 0, 3: 0}
-        self.erros_consecutivos = 0
+        self.erros_consecutivos = 0  # 🆕 Contador global de erros seguidos
         self.ultima_duzia_errada = None
         self.entradas_consecutivas = 0
         self.ultimo_gatilho = None
@@ -183,12 +183,9 @@ class DuziaAI:
         self.zero_na_janela = False
         self.rodadas_pos_zero = 0
         
-        # Anti-erro
+        # 🆕 V10.2 - Modo anti-erro
         self.modo_anti_erro = False
-        self.duzias_que_sairam = []
-        
-        # 🆕 V10.3 - Contador de entradas bloqueadas pela Regra 1
-        self.entradas_bloqueadas_regra1 = 0
+        self.duzias_que_sairam = []  # Histórico das dúzias reais
         
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -196,6 +193,7 @@ class DuziaAI:
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
         
+        # 🆕 Rastrear dúzias que saíram
         if d != 0:
             self.duzias_que_sairam.append(d)
             if len(self.duzias_que_sairam) > 10:
@@ -223,15 +221,21 @@ class DuziaAI:
         self.ultimos_resultados.append({'duzia': duzia_real, 'acertou': acertou})
         if len(self.ultimos_resultados) > 20: self.ultimos_resultados = self.ultimos_resultados[-20:]
         
+        # 🆕 V10.2 - Controle agressivo de erros consecutivos
         if not acertou:
             self.erros_consecutivos += 1
             if duzia_real != 0:
                 self.erros_por_duzia[duzia_real] += 1
+            
+            # Ativar modo anti-erro após 1 erro
             self.modo_anti_erro = True
+            
+            # Pausa após 3 erros
             if self.erros_consecutivos >= 3:
                 self.pausa_ate = hora_brasilia() + timedelta(minutes=5)
                 self.modo_anti_erro = False
         else:
+            # Reset ao acertar
             self.erros_consecutivos = 0
             self.modo_anti_erro = False
             self.erros_por_duzia = {1: 0, 2: 0, 3: 0}
@@ -263,12 +267,18 @@ class DuziaAI:
         return [d for d in [1, 2, 3] if d != duzia]
     
     def _get_duzia_ausente(self):
+        """Retorna a dúzia que menos apareceu nas últimas rodadas"""
         freq = self.frequencia()
+        # Prioriza a que NÃO saiu recentemente
         u = list(self.historico)[-6:]
         freq_recente = Counter([d for d in u if d != 0])
+        
+        # Dúzia que está mais ausente
         for dz in [1, 2, 3]:
             if freq_recente.get(dz, 0) <= 1:
                 return dz
+        
+        # Se todas apareceram, pega a menos frequente
         return min(freq, key=freq.get)
     
     def _garantir_cobertura_diferente(self, previsao):
@@ -348,74 +358,68 @@ class DuziaAI:
     def calcular_score(self):
         score = {1: 0, 2: 0, 3: 0}
         
+        # Frequência ponderada
         freq = self.frequencia()
         total = sum(freq.values())
         if total > 0:
             for d in score: score[d] = (freq.get(d, 0) / total) * 40
         
+        # Streak
         streak_count, streak_d = self.streak()
         if streak_d and streak_d != 0:
             score[streak_d] += streak_count * 8
         
+        # Markov
         markov = self._prever_markov()
         if markov and markov[0] != 0:
             score[markov[0]] += 10
         
+        # Gatilhos
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0:
             score[gatilho['duzia']] += gatilho['forca'] * 2
         
+        # Streak 2x FORÇA TOTAL
         u = list(self.historico)
         if len(u) >= 2 and u[-1] == u[-2] and u[-1] != 0:
             score[u[-1]] += 30
         
+        # 🆕 V10.2 - MODO ANTI-ERRO: Força a dúzia que está saindo
         if self.modo_anti_erro and self.erros_consecutivos >= 1:
+            # Após 1 erro: aposta na última dúzia que saiu
             if self.duzias_que_sairam:
                 dz_real = self.duzias_que_sairam[-1]
                 if dz_real != 0:
                     score[dz_real] += 25
+                    # Penaliza a dúzia que errou
                     if self.ultimas_previsoes:
                         dz_errada = self.ultimas_previsoes[-1]
                         if dz_errada in score:
                             score[dz_errada] *= 0.3
         
+        # 🆕 V10.2 - 2 erros seguidos: aposta na dúzia AUSENTE
         if self.erros_consecutivos >= 2:
             dz_ausente = self._get_duzia_ausente()
             if dz_ausente != 0:
                 score[dz_ausente] += 35
+                # Penaliza fortemente as outras
                 for d in score:
                     if d != dz_ausente:
                         score[d] *= 0.2
         
+        # Pós-zero: favorecer dúzia após zero
         if 0 in u[-4:]:
             pos_zero = len(u) - 1 - u[::-1].index(0)
             depois_zero = u[pos_zero+1:]
             if depois_zero and depois_zero[-1] != 0:
                 score[depois_zero[-1]] += 15
         
+        # Normalizar
         total_score = sum(score.values())
         if total_score > 0:
             for d in score: score[d] = (score[d] / total_score) * 100
         
         return score, gatilho
-    
-    # 🆕 V10.3 - REGRA 1: Filtrar entrada duvidosa
-    def _filtrar_entrada_duvidosa(self, previsao):
-        """
-        REGRA 1: Bloquear quando Confiança 3.5 + Alerta Zero + Gatilho NÃO é EXAUSTAO
-        Baseado em análise de 60 entradas: evita 4 erros, perde apenas 1 cobertura
-        """
-        conf = previsao.get('confianca', 0)
-        gat = previsao.get('gatilho_ativo')
-        zero = previsao.get('incluir_zero', False)
-        
-        # Confiança entre 3.4 e 3.5 + Alerta Zero + Gatilho não é EXAUSTAO
-        if conf >= 3.4 and conf <= 3.5 and zero and gat != 'EXAUSTAO_DOMINANCIA':
-            self.entradas_bloqueadas_regra1 += 1
-            logging.info(f"🚫 REGRA 1: Entrada bloqueada (Conf={conf}, Zero={zero}, Gat={gat})")
-            return False, f"🚫 Filtro: Conf {conf} + Zero sem EXAUSTAO"
-        
-        return True, ""
     
     def prever(self):
         if self.pausa_ate and hora_brasilia() < self.pausa_ate:
@@ -433,8 +437,10 @@ class DuziaAI:
         self.detectar_alerta_zero()
         confianca = min(3.5, max(1.0, s1 / max(1, s2) * 1.5))
         
+        # 🆕 V10.2 - Em modo anti-erro, SEMPRE entra
         pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
         
+        # Montar motivo
         if self.modo_anti_erro:
             if self.erros_consecutivos == 1:
                 motivo = f"🔄 ANTI-ERRO: Seguindo última real (D{self.duzias_que_sairam[-1] if self.duzias_que_sairam else '?'})"
@@ -455,14 +461,6 @@ class DuziaAI:
             "modo_anti_erro": self.modo_anti_erro
         }
         
-        # 🆕 V10.3 - Aplicar Regra 1 (só se não estiver em modo anti-erro)
-        if pode_entrar and not self.modo_anti_erro:
-            passa_filtro, msg_filtro = self._filtrar_entrada_duvidosa(previsao)
-            if not passa_filtro:
-                pode_entrar = False
-                previsao['entrar'] = False
-                previsao['motivo'] = msg_filtro
-        
         if pode_entrar:
             previsao = self._balancear(previsao)
         
@@ -475,6 +473,7 @@ class DuziaAI:
         if self.alerta_zero_ativo: 
             previsao['incluir_zero'] = True
         
+        # Bloqueio por erro na mesma dúzia
         for dz, erros in self.erros_por_duzia.items():
             if erros >= 3 and previsao['duzia'] == dz:
                 outras = self._get_outras_duzias(dz)
@@ -482,6 +481,7 @@ class DuziaAI:
                 previsao['duzia'] = max(freq_outras, key=freq_outras.get)
                 return self._garantir_cobertura_diferente(previsao)
         
+        # 🆕 V10.2 - Em modo anti-erro, NÃO repete a dúzia errada
         if self.modo_anti_erro and self.ultimas_previsoes:
             dz_errada = self.ultimas_previsoes[-1]
             if previsao['duzia'] == dz_errada:
@@ -489,6 +489,7 @@ class DuziaAI:
                 freq_outras = {d: u.count(d) for d in outras}
                 previsao['duzia'] = max(freq_outras, key=freq_outras.get)
         
+        # Streak 2x FORÇA
         if len(u) >= 2 and u[-1] == u[-2] and u[-1] != 0:
             if previsao['duzia'] != u[-1]:
                 previsao['duzia'] = u[-1]
@@ -630,7 +631,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     try:
         with open(caminho, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Rodada','Hora','Nº','Real','Prev','Cob','Conf','Gat','Z','🔄','Res'])
+            writer.writerow(['Rodada','Hora','Nº','Real','Prev','Cob','Conf','Gat','Z','Anti-Erro','Res'])
             for e in historico_entradas:
                 res = '✅' if e.get('acerto_primaria') else '🟡' if e.get('acerto_secundaria') else '❌'
                 real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
@@ -649,8 +650,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.3 - Filtro Elite", layout="wide")
-st.title("🎰 DuziaAI V10.3 - FILTRO REGRA 1 (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.2 - Anti-Erro", layout="wide")
+st.title("🎰 DuziaAI V10.2 - ANTI-SEQUÊNCIA DE ERROS (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -690,7 +691,7 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.3 - REGRA 1")
+    st.markdown("## ⚙️ V10.2 - ANTI-ERRO")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -698,8 +699,9 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("🚫 REGRA 1: Bloqueia Conf 3.5 + Zero sem EXAUSTAO")
-    st.caption("🔄 ANTI-ERRO: Pivota após erro")
+    st.caption("🔄 ANTI-ERRO x1: Segue última real")
+    st.caption("🔄 ANTI-ERRO x2: Aposta na ausente")
+    st.caption("⏸️ ANTI-ERRO x3: Pausa 5min")
     st.caption("🟢 Detecção de ZERO")
     st.caption("💥 QUEBRA_POS_ZERO")
     st.caption("🔥 EXAUSTAO_DOMINANCIA")
@@ -767,6 +769,7 @@ c8.metric("⏸️", "⏸️" if pausado else "▶️")
 
 if sis.duzia_ai.modo_anti_erro:
     st.warning(f"🔄 MODO ANTI-ERRO ATIVO! Erros consecutivos: {sis.duzia_ai.erros_consecutivos}")
+
 if pausado: 
     st.error(f"⏸️ Pausa até {formatar_hora_brasilia(sis.duzia_ai.pausa_ate)}")
 
@@ -823,6 +826,7 @@ with ce:
     st.subheader("🎰 Entrada Atual")
     if sis.duzia_ai.alerta_zero_ativo:
         st.warning("⚠️ ALERTA ZERO ATIVO! 🟢")
+    
     if sis.duzia_ai.modo_anti_erro:
         st.error(f"🔄 MODO ANTI-ERRO: Erros consecutivos = {sis.duzia_ai.erros_consecutivos}")
     
@@ -896,5 +900,5 @@ if sis.historico_entradas:
 else: 
     st.info("Nenhuma entrada ainda.")
 
-st.caption(f"🤖 DuziaAI V10.3 | Regra 1: Conf 3.5 + Zero sem EXAUSTAO | Bloqueadas: {sis.duzia_ai.entradas_bloqueadas_regra1} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.2 | Anti-Erro Agressivo | {formatar_hora_brasilia()}")
 salvar_sessao()
