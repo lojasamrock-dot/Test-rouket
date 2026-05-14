@@ -156,7 +156,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.4 - ALERTA ZERO CIRÚRGICO
+# 🧠 DUZIA AI V10.5 - ZERO CIRÚRGICO + COOLDOWN
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -187,6 +187,9 @@ class DuziaAI:
         self.alertas_zero_disparados = 0
         self.zeros_previstos = 0
         
+        # 🆕 V10.5 - Cooldown para alerta zero
+        self.cooldown_alerta_zero = 0  # contador de giros sem zero após alerta
+        
     def adicionar(self, numero):
         d = get_duzia(numero)
         self.historico.append(d)
@@ -197,6 +200,21 @@ class DuziaAI:
             self.duzias_que_sairam.append(d)
             if len(self.duzias_que_sairam) > 10:
                 self.duzias_que_sairam = self.duzias_que_sairam[-10:]
+        
+        # 🆕 V10.5 - Gerenciar cooldown do alerta zero
+        if self.alerta_zero_ativo:
+            if numero == 0:
+                # Zero saiu: reset cooldown e confirma previsão
+                self.cooldown_alerta_zero = 0
+                self.zeros_previstos += 1
+            else:
+                # Não saiu zero: incrementa cooldown
+                self.cooldown_alerta_zero += 1
+                if self.cooldown_alerta_zero >= 2:
+                    # Após 2 giros sem zero, desativa alerta e impede novos por um tempo
+                    self.alerta_zero_ativo = False
+                    # Mantém cooldown para evitar reativação imediata (só reseta com zero real)
+                    self.cooldown_alerta_zero = 2  # trava até zero ocorrer
         
         if len(self.historico_completo) >= 4:
             padrao = tuple(self.historico_completo[-4:-1])
@@ -211,10 +229,6 @@ class DuziaAI:
     def registrar_resultado(self, duzia_real, acertou):
         self.ultimos_resultados.append({'duzia': duzia_real, 'acertou': acertou})
         if len(self.ultimos_resultados) > 20: self.ultimos_resultados = self.ultimos_resultados[-20:]
-        
-        # 🆕 Verificar se zero foi previsto
-        if duzia_real == 0 and self.alerta_zero_ativo:
-            self.zeros_previstos += 1
         
         if not acertou:
             self.erros_consecutivos += 1
@@ -270,13 +284,20 @@ class DuziaAI:
             previsao['duzia_secundaria'] = outras[0] if outras else previsao['duzia']
         return previsao
     
-    # 🆕 V10.4 - ALERTA ZERO CIRÚRGICO (apenas 3 regras de alta precisão)
+    # 🆕 V10.5 - ALERTA ZERO CIRÚRGICO + COOLDOWN + Z3 AJUSTADO
     def detectar_alerta_zero(self):
         """
-        NOVO Alerta Zero - apenas padrões que REALMENTE precedem zeros.
-        Baseado em análise de 6 zeros reais em 90 entradas.
-        Precisão: ~30% (vs 8% do alerta antigo)
+        Alerta Zero otimizado:
+        - Z1: Zero recente (zero duplo) - altíssima precisão
+        - Z2: Streak de 3+ mesma dúzia - alta precisão
+        - Z3: 3+ vizinhos do zero nos últimos 3 giros (ajustado de 2 para 3)
+        - Cooldown: após alerta sem zero por 2 giros, suprime novos alertas até zero real
         """
+        # Se cooldown ativo (bloqueado após falso positivo), não dispara
+        if self.cooldown_alerta_zero >= 2:
+            self.alerta_zero_ativo = False
+            return False
+        
         if len(self.historico) < 2:
             self.alerta_zero_ativo = False
             return False
@@ -284,34 +305,39 @@ class DuziaAI:
         u = list(self.historico)[-5:]
         nums = self.numeros_completos[-5:] if len(self.numeros_completos) >= 5 else self.numeros_completos
         
-        # REGRA Z1: Zero recente (zero duplo) - PRECISÃO ALTÍSSIMA
+        # Z1: Zero nos últimos 2 giros (zero duplo)
         if len(nums) >= 2 and nums[-1] == 0:
             self.alerta_zero_ativo = True
             self.alertas_zero_disparados += 1
+            self.cooldown_alerta_zero = 0  # reset cooldown porque zero real
             return True
         
         if len(nums) >= 3 and 0 in nums[-3:-1]:
             self.alerta_zero_ativo = True
             self.alertas_zero_disparados += 1
+            self.cooldown_alerta_zero = 0
             return True
         
-        # REGRA Z2: Streak de 3+ na mesma dúzia - PRECISÃO ALTA
+        # Z2: Streak de 3+ na mesma dúzia
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
                 self.alerta_zero_ativo = True
                 self.alertas_zero_disparados += 1
+                self.cooldown_alerta_zero = 0
                 return True
         
-        # REGRA Z3: 2+ vizinhos do zero nos últimos 3 giros
+        # Z3: 3+ vizinhos do zero nos últimos 3 giros (era 2, agora 3)
         vizinhos_zero = [26, 32, 15, 3, 35, 19, 4, 21, 2, 25]
         if len(nums) >= 3:
             vizinhos_recentes = [n for n in nums[-3:] if n in vizinhos_zero]
-            if len(vizinhos_recentes) >= 2:
+            if len(vizinhos_recentes) >= 3:
                 self.alerta_zero_ativo = True
                 self.alertas_zero_disparados += 1
+                self.cooldown_alerta_zero = 0
                 return True
         
+        # Nenhum padrão detectado
         self.alerta_zero_ativo = False
         return False
     
@@ -422,7 +448,7 @@ class DuziaAI:
             outras = self._get_outras_duzias(d1)
             d2 = ranking[2][0] if len(ranking) > 2 else outras[0]
         
-        # 🆕 V10.4 - Alerta Zero Cirúrgico
+        # Alerta Zero Cirúrgico + Cooldown
         self.detectar_alerta_zero()
         
         confianca = min(3.5, max(1.0, s1 / max(1, s2) * 1.5))
@@ -458,7 +484,6 @@ class DuziaAI:
     def _balancear(self, previsao):
         u = list(self.historico)
         
-        # 🆕 V10.4 - Incluir zero apenas se alerta cirúrgico ativo
         if self.alerta_zero_ativo: 
             previsao['incluir_zero'] = True
         
@@ -636,8 +661,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.4 - Zero Cirúrgico", layout="wide")
-st.title("🎰 DuziaAI V10.4 - ALERTA ZERO CIRÚRGICO (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.5 - Zero + Cooldown", layout="wide")
+st.title("🎰 DuziaAI V10.5 - ZERO CIRÚRGICO + COOLDOWN (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -677,7 +702,7 @@ if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.4 - ZERO CIRÚRGICO")
+    st.markdown("## ⚙️ V10.5 - ZERO + COOLDOWN")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -688,11 +713,9 @@ with st.sidebar:
     st.caption("🟢 ALERTA ZERO CIRÚRGICO:")
     st.caption("  Z1: Zero recente (duplo)")
     st.caption("  Z2: Streak 3+ mesma dúzia")
-    st.caption("  Z3: 2+ vizinhos do zero")
-    st.caption("❌ REMOVIDO: 3 dúzias diferentes")
-    st.caption("❌ REMOVIDO: Streak 2x")
-    st.caption("📊 Precisão: ~30% (vs 8%)")
-    st.caption("💰 Economia: ~R$ 1.160/sessão")
+    st.caption("  Z3: 3+ vizinhos do zero (ajustado)")
+    st.caption("⏱️ COOLDOWN: 2 giros sem zero = bloqueio")
+    st.caption("📊 Precisão estimada: ~40%")
     st.markdown("---")
     with st.expander("🔔 Telegram"):
         st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
@@ -885,5 +908,5 @@ if sis.historico_entradas:
 else: 
     st.info("Nenhuma entrada ainda.")
 
-st.caption(f"🤖 DuziaAI V10.4 | Zero Cirúrgico | Alertas: {sis.duzia_ai.alertas_zero_disparados} | Zeros previstos: {sis.duzia_ai.zeros_previstos} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.5 | Zero Cirúrgico + Cooldown | Alertas: {sis.duzia_ai.alertas_zero_disparados} | Zeros previstos: {sis.duzia_ai.zeros_previstos} | {formatar_hora_brasilia()}")
 salvar_sessao()
