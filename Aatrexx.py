@@ -112,18 +112,40 @@ def enviar_previsao_auto(previsao):
         
         prefixo = "⚠️🎯 " if incluir_zero else "🎯 "
         
-        if d1n and d2n: msg = f"{prefixo}D1 (1-12) | Cob: D2 (13-24)"
-        elif d1n and d3n: msg = f"{prefixo}D1 (1-12) | Cob: D3 (25-36)"
-        elif d2n and d3n: msg = f"{prefixo}D2 (13-24) | Cob: D3 (25-36)"
-        elif d1n: msg = f"{prefixo}D1 (1-12)"
-        elif d2n: msg = f"{prefixo}D2 (13-24)"
-        elif d3n: msg = f"{prefixo}D3 (25-36)"
-        else: msg = f"{prefixo}{numeros}"
+        if d1n and d2n: msg = f"{prefixo}Entrada: D1 (1-12) | Cob: D2 (13-24)"
+        elif d1n and d3n: msg = f"{prefixo}Entrada: D1 (1-12) | Cob: D3 (25-36)"
+        elif d2n and d3n: msg = f"{prefixo}Entrada: D2 (13-24) | Cob: D3 (25-36)"
+        elif d1n: msg = f"{prefixo}Entrada: D1 (1-12)"
+        elif d2n: msg = f"{prefixo}Entrada: D2 (13-24)"
+        elif d3n: msg = f"{prefixo}Entrada: D3 (25-36)"
+        else: msg = f"{prefixo}Entrada: {numeros}"
         
         if incluir_zero: msg += " + 🟢 ZERO"
+        
+        # Enviar números para o Telegram
+        nums_str = " ".join(map(str, numeros))
+        
         st.toast(msg)
+        
+        # 🆕 Telegram Principal (mensagem completa)
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
-            enviar_telegram(f"🔔 {msg}\n🔢 " + " ".join(map(str, numeros)))
+            enviar_telegram(
+                f"🔔 {msg}\n🔢 {nums_str}",
+                st.session_state.telegram_token,
+                st.session_state.telegram_chat_id
+            )
+        
+        # 🆕 Telegram Alternativo (apenas os 12 números)
+        if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
+            msg_alt = f"🎯 Entrada: {nums_str}"
+            if incluir_zero:
+                msg_alt += " + 🟢 ZERO"
+            enviar_telegram(
+                msg_alt,
+                st.session_state.telegram_token_alt,
+                st.session_state.telegram_chat_id_alt
+            )
+        
         salvar_sessao()
     except Exception as e: logging.error(f"Erro: {e}")
 
@@ -142,24 +164,52 @@ def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero,
                 else:
                     partes.append(f"🎯 Nº EXATO {numero_real}!")
             elif acerto_duzia:
-                partes.append(f"✅ D{duzia_real}")
+                partes.append(f"✅ Green - D{duzia_real}")
             else:
                 partes.append(f"❌ Nº {numero_real} (D{duzia_real})")
         
         msg = " | ".join(partes)
         st.toast(msg)
+        
+        # 🆕 Telegram Principal (mensagem completa)
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
-            enviar_telegram(f"📢 {msg}")
+            enviar_telegram(
+                f"📢 Resultado: {msg}",
+                st.session_state.telegram_token,
+                st.session_state.telegram_chat_id
+            )
+        
+        # 🆕 Telegram Alternativo (apenas Green/Red)
+        if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
+            if acerto_duzia or acerto_zero:
+                if acerto_numero and eh_raio:
+                    msg_alt = f"⚡ GREEN RAIO {multiplicador}X! Nº {numero_real}"
+                elif acerto_numero:
+                    msg_alt = f"🎯 GREEN! Nº {numero_real}"
+                elif acerto_zero:
+                    msg_alt = "🟢 GREEN ZERO!"
+                else:
+                    msg_alt = f"✅ GREEN - D{get_duzia(numero_real)}"
+            else:
+                msg_alt = f"❌ RED - Nº {numero_real}"
+            
+            enviar_telegram(
+                msg_alt,
+                st.session_state.telegram_token_alt,
+                st.session_state.telegram_chat_id_alt
+            )
+        
         salvar_sessao()
     except Exception as e: logging.error(f"Erro: {e}")
 
-def enviar_telegram(mensagem):
+def enviar_telegram(mensagem, token, chat_id):
     try:
-        token = st.session_state.get('telegram_token', '')
-        chat_id = st.session_state.get('telegram_chat_id', '')
         if not token or not chat_id: return
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                     json={"chat_id": chat_id, "text": mensagem, "parse_mode": "HTML"}, timeout=10)
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": mensagem, "parse_mode": "HTML"},
+            timeout=10
+        )
     except Exception as e: logging.error(f"Erro Telegram: {e}")
 
 # =============================
@@ -180,7 +230,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.9 - COM Z7
+# 🧠 DUZIA AI V10.9
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -492,7 +542,6 @@ class DuziaAI:
         
         if self.ultimo_resultado_duzia == False and self.ultima_confianca >= 3.4:
             if d1 == self.ultima_previsao_duzia:
-                logging.info(f"🚫 KILL SWITCH: Bloqueando repetição de D{d1}")
                 d1 = d2
                 s1 = s2
         
@@ -533,7 +582,6 @@ class DuziaAI:
             d_sec = previsao['duzia_secundaria']
             previsao['duzia'] = d_sec
             previsao['duzia_secundaria'] = d_prim
-            logging.info(f"🔃 INVERSÃO: 2x Amarelos detectados.")
         
         conf = previsao.get('confianca', 0)
         gat = previsao.get('gatilho_ativo')
@@ -541,7 +589,6 @@ class DuziaAI:
             if self.duzias_que_sairam:
                 ultima_real = self.duzias_que_sairam[-1]
                 if ultima_real != 0 and ultima_real != previsao['duzia']:
-                    logging.info(f"🔄 REGRA 3.5: Seguindo última real D{ultima_real}")
                     previsao['duzia'] = ultima_real
         
         for dz, erros in self.erros_por_duzia.items():
@@ -565,7 +612,7 @@ class DuziaAI:
         return self._garantir_cobertura_diferente(previsao)
 
 # =============================
-# SISTEMA PRINCIPAL (CONFERÊNCIA DUPLA + RAIO)
+# SISTEMA PRINCIPAL
 # =============================
 class SistemaBot:
     def __init__(self):
@@ -575,7 +622,6 @@ class SistemaBot:
         self.entrada_ativa = None
         self.historico_entradas = []
         
-        # Conferência separada
         self.acertos_duzia = 0
         self.erros_duzia = 0
         self.acertos_numero = 0
@@ -583,7 +629,6 @@ class SistemaBot:
         self.acertos_zero = 0
         self.erros_zero = 0
         
-        # 🆕 Estatísticas de raios
         self.raios_acertados = 0
         self.raios_perdidos = 0
         
@@ -592,7 +637,6 @@ class SistemaBot:
         self.numero_rodada = 0
     
     def processar_novo_numero(self, numero_data):
-        # 🆕 Extrair informações de raio (lucky numbers)
         if isinstance(numero_data, dict):
             nr = numero_data.get('number')
             lucky_numbers = numero_data.get('luckyNumbers', [])
@@ -604,7 +648,6 @@ class SistemaBot:
         
         if not validar_numero(nr): return
         
-        # Verificar se o número é um raio
         eh_raio = nr in lucky_numbers
         multiplicador = lucky_multipliers.get(nr, 0) if eh_raio else 0
         
@@ -620,20 +663,14 @@ class SistemaBot:
             numeros_apostados = self.entrada_ativa.get('numeros_apostar', [])
             incluir_zero = self.entrada_ativa.get('incluir_zero', False)
             
-            # CONFERÊNCIA 1: DÚZIAS
             acerto_primaria = (duzia_real == duzia_prevista) if duzia_prevista and nr != 0 else False
             acerto_secundaria = (duzia_real == duzia_sec_prevista) if duzia_sec_prevista and nr != 0 else False
-            
-            # CONFERÊNCIA 2: NÚMEROS
             acerto_numero_exato = nr in numeros_apostados if nr != 0 else False
-            
-            # CONFERÊNCIA 3: ZERO
             acerto_zero = (nr == 0 and incluir_zero)
             
             if acerto_zero:
                 acerto_primaria = True
             
-            # Contabilização separada
             if acerto_numero_exato:
                 self.acertos_numero += 1
                 if eh_raio:
@@ -658,7 +695,6 @@ class SistemaBot:
             acertou_duzia = acerto_primaria or acerto_secundaria
             self.duzia_ai.registrar_resultado(duzia_real, acertou_duzia, acerto_numero_exato, acerto_zero)
             
-            # Determinar status visual
             if acerto_zero:
                 status_visual = '🟢'
             elif acerto_numero_exato and eh_raio:
@@ -794,8 +830,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9 - Raios", layout="wide")
-st.title("🎰 DuziaAI V10.9 - CONFERÊNCIA DUPLA + RAIOS")
+st.set_page_config(page_title="🎰 DuziaAI V10.9 - Telegram Duplo", layout="wide")
+st.title("🎰 DuziaAI V10.9 - TELEGRAM PRINCIPAL + ALTERNATIVO")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -832,10 +868,12 @@ if "historico" not in st.session_state:
 
 if "telegram_token" not in st.session_state: st.session_state.telegram_token = ""
 if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id = ""
+if "telegram_token_alt" not in st.session_state: st.session_state.telegram_token_alt = ""
+if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_chat_id_alt = ""
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9 + RAIOS")
+    st.markdown("## ⚙️ V10.9 - TELEGRAM DUPLO")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -843,16 +881,20 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("⚡ RAIOS: Números com multiplicador")
-    st.caption("🎯 Nº Exato: acertou o número")
-    st.caption("✅ Dúzia: acertou a dúzia principal")
-    st.caption("🟡 Cob: acertou a cobertura")
-    st.caption("🟢 Zero: acertou o zero")
-    st.caption("❌ Erro: não acertou nada")
+    
+    # 🆕 Telegram Principal
+    with st.expander("🔔 Telegram PRINCIPAL", expanded=False):
+        st.caption("Mensagens completas (detalhadas)")
+        st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
+        st.session_state.telegram_chat_id = st.text_input("Chat ID Principal", value=st.session_state.telegram_chat_id)
+    
+    # 🆕 Telegram Alternativo
+    with st.expander("📢 Telegram ALTERNATIVO", expanded=False):
+        st.caption("Apenas números da entrada + GREEN/RED")
+        st.session_state.telegram_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password")
+        st.session_state.telegram_chat_id_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt)
+    
     st.markdown("---")
-    with st.expander("🔔 Telegram"):
-        st.session_state.telegram_token = st.text_input("Token", value=st.session_state.telegram_token, type="password")
-        st.session_state.telegram_chat_id = st.text_input("Chat ID", value=st.session_state.telegram_chat_id)
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("💾 Salvar", use_container_width=True): 
@@ -893,7 +935,7 @@ if st.session_state.modo_automatico:
 st.markdown("---")
 sis = st.session_state.sistema
 
-# Métricas com raios
+# Métricas
 st.subheader("📊 CONFERÊNCIA DUPLA + RAIOS")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 total_duzias = int(sis.acertos_duzia + sis.erros_duzia)
@@ -996,7 +1038,6 @@ with ce:
 st.markdown("---")
 st.subheader("📝 Histórico")
 
-# 🆕 Histórico com indicador de raio (usando st.metric ou st.caption, sem HTML)
 if sis.historico_entradas:
     dados = []
     for e in reversed(sis.historico_entradas[-15:]):
@@ -1009,7 +1050,6 @@ if sis.historico_entradas:
         num = '🎯' if e.get('acerto_numero') else '-'
         zer = '🟢' if e.get('acerto_zero') else '-'
         
-        # 🆕 Mostrar número sorteado com indicador de raio
         numero_sorteado = e.get('numero', 0)
         if e.get('eh_raio'):
             num_display = f"⚡{numero_sorteado} ({e.get('multiplicador',0)}x)"
@@ -1039,7 +1079,6 @@ if sis.historico_entradas:
                     "Rod": st.column_config.NumberColumn("Rod", width="small"),
                 })
     
-    # 🆕 Mostrar contagem de raios abaixo do histórico
     total_raios_sessao = sum(1 for e in sis.historico_entradas if e.get('eh_raio'))
     if total_raios_sessao > 0:
         st.info(f"⚡ **Raios nesta sessão:** {total_raios_sessao} | Acertados: {sis.raios_acertados} | Perdidos: {sis.raios_perdidos}")
@@ -1049,5 +1088,20 @@ if sis.historico_entradas:
 else: 
     st.info("Nenhuma entrada.")
 
-st.caption(f"🤖 DuziaAI V10.9 | Conferência Dupla + Raios | {formatar_hora_brasilia()}")
+# 🆕 Status dos Telegrams
+st.markdown("---")
+st.caption("📡 **Status Telegram:**")
+col_t1, col_t2 = st.columns(2)
+with col_t1:
+    if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+        st.success("🔔 Principal: CONFIGURADO")
+    else:
+        st.warning("🔔 Principal: NÃO CONFIGURADO")
+with col_t2:
+    if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt:
+        st.success("📢 Alternativo: CONFIGURADO")
+    else:
+        st.warning("📢 Alternativo: NÃO CONFIGURADO")
+
+st.caption(f"🤖 DuziaAI V10.9 | Telegram Duplo | {formatar_hora_brasilia()}")
 salvar_sessao()
