@@ -104,13 +104,7 @@ def nova_sessao():
 # =============================
 
 def _selecionar_melhores_numeros(duzia, numeros_completos, quantidade=6):
-    """
-    Seleciona os melhores números de uma dúzia baseado no histórico recente.
-    Usa uma combinação de:
-    1. Frequência nos últimos giros
-    2. Terminais quentes
-    3. Vizinhança no cilindro (se houver poucos dados)
-    """
+    """Seleciona os 6 melhores números de uma dúzia baseado no histórico recente."""
     if duzia == 1:
         numeros_da_duzia = list(range(1, 13))
     elif duzia == 2:
@@ -118,34 +112,23 @@ def _selecionar_melhores_numeros(duzia, numeros_completos, quantidade=6):
     else:
         numeros_da_duzia = list(range(25, 37))
     
-    # Pegar últimos 20 números
     recentes = numeros_completos[-20:] if len(numeros_completos) >= 20 else numeros_completos
-    
-    # Frequência de cada número da dúzia nos recentes
     freq = Counter([n for n in recentes if n in numeros_da_duzia])
-    
-    # Terminais quentes (últimos 15)
     termos = [n % 10 for n in recentes[-15:] if n != 0]
     terminais_quentes = [t for t, f in Counter(termos).most_common(3) if f >= 2]
     
-    # Pontuação para cada número
     pontuacao = {}
     for num in numeros_da_duzia:
-        score = freq.get(num, 0) * 3  # Frequência vale 3x
+        score = freq.get(num, 0) * 3
         if num % 10 in terminais_quentes:
-            score += 2  # Terminal quente vale 2
-        # Bônus para números que saíram recentemente
+            score += 2
         if num in recentes[-5:]:
             score += 1
         pontuacao[num] = score
     
-    # Ordenar por pontuação e pegar os melhores
     melhores = sorted(pontuacao.items(), key=lambda x: x[1], reverse=True)
-    
-    # Pegar os 6 melhores (ou todos se menos de 6 tiverem pontuação > 0)
     selecionados = [n for n, s in melhores[:quantidade] if s > 0]
     
-    # Se não tiver 6 com pontuação, completa com os que faltam (em ordem numérica)
     if len(selecionados) < quantidade:
         for num in numeros_da_duzia:
             if num not in selecionados:
@@ -179,10 +162,8 @@ def enviar_previsao_auto(previsao):
         
         if incluir_zero: msg += " + 🟢 ZERO"
         
-        # Números completos para seleção dos melhores
         numeros_completos = previsao.get('numeros_completos', [])
         
-        # 🆕 Selecionar 6 melhores números de cada dúzia
         melhores_principal = _selecionar_melhores_numeros(duzia_principal, numeros_completos, 6)
         
         if duzia_secundaria and duzia_secundaria != duzia_principal:
@@ -193,7 +174,7 @@ def enviar_previsao_auto(previsao):
         
         st.toast(msg)
         
-        # 🆕 Telegram Principal (mensagem completa)
+        # Telegram Principal
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
             enviar_telegram(
                 f"🔔 {msg}\n🔢 {melhores_str}",
@@ -201,7 +182,7 @@ def enviar_previsao_auto(previsao):
                 st.session_state.telegram_chat_id
             )
         
-        # 🆕 Telegram Alternativo (apenas os 6+6 melhores números)
+        # Telegram Alternativo (apenas os 6+6 melhores números)
         if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
             msg_alt = f"🎯 Entrada: {melhores_str}"
             if incluir_zero:
@@ -296,7 +277,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.9
+# 🧠 DUZIA AI V10.9.2 - COM RITMO_PING_PONG
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -426,6 +407,7 @@ class DuziaAI:
             previsao['duzia_secundaria'] = outras[0] if outras else previsao['duzia']
         return previsao
     
+    # ALERTA ZERO - 7 REGRAS
     def detectar_alerta_zero(self):
         if len(self.historico) < 2:
             self.alerta_zero_ativo = False
@@ -475,7 +457,41 @@ class DuziaAI:
         self.alerta_zero_ativo = False
         return False
     
+    # 🆕 V10.9.2 - RITMO_PING_PONG
+    def detectar_ritmo_ping_pong(self):
+        """Detecta padrão de alternância entre duas dúzias (vai-e-vem)"""
+        u = list(self.historico)[-6:]
+        if len(u) < 4:
+            return None
+        
+        # Conta alternâncias entre pares de dúzias
+        pares = {}
+        for i in range(1, len(u)):
+            if u[i] != u[i-1] and u[i] != 0 and u[i-1] != 0:
+                par = tuple(sorted([u[i], u[i-1]]))
+                pares[par] = pares.get(par, 0) + 1
+        
+        if pares:
+            par_principal = max(pares, key=pares.get)
+            count = pares[par_principal]
+            # Se 4+ alternâncias entre o mesmo par nos últimos 6 giros
+            if count >= 4:
+                dz1, dz2 = par_principal
+                # A próxima deve ser a que NÃO saiu por último
+                ultima = u[-1]
+                proxima = dz2 if ultima == dz1 else dz1
+                if proxima != 0:
+                    return {'tipo': 'RITMO_PING_PONG', 'duzia': proxima, 'forca': 9}
+        return None
+    
+    # ========== GATILHOS ==========
     def detectar_gatilhos(self):
+        # 🆕 RITMO_PING_PONG (prioridade máxima)
+        ping_pong = self.detectar_ritmo_ping_pong()
+        if ping_pong:
+            self.ultimo_gatilho = 'RITMO_PING_PONG'
+            return ping_pong
+        
         u = list(self.historico)
         freq = Counter([d for d in u if d != 0])
         
@@ -599,10 +615,16 @@ class DuziaAI:
         
         pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
         
+        # Kill Switch de Teimosia
         if self.ultimo_resultado_duzia == False and self.ultima_confianca >= 3.4:
             if d1 == self.ultima_previsao_duzia:
                 d1 = d2
                 s1 = s2
+        
+        # 🆕 V10.9.2 - FILTRO: EXAUSTAO + Alerta Zero (sem anti-erro) = NÃO ENTRA
+        if gatilho and gatilho['tipo'] == 'EXAUSTAO_DOMINANCIA' and self.alerta_zero_ativo and not self.modo_anti_erro:
+            pode_entrar = False
+            motivo = "🚫 EXAUSTAO + Zero: Padrão de alto risco"
         
         if self.modo_anti_erro:
             if self.erros_consecutivos == 1:
@@ -614,7 +636,7 @@ class DuziaAI:
         
         previsao = {
             "entrar": pode_entrar,
-            "motivo": motivo,
+            "motivo": motivo if pode_entrar else motivo,
             "score": score,
             "confianca": round(confianca, 2),
             "duzia": d1,
@@ -893,8 +915,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9 - Melhores Números", layout="wide")
-st.title("🎰 DuziaAI V10.9 - 6 MELHORES NÚMEROS + TELEGRAM DUPLO")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.2 - Ping Pong", layout="wide")
+st.title("🎰 DuziaAI V10.9.2 - RITMO PING PONG (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -936,7 +958,7 @@ if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_cha
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9 - 6 MELHORES NÚMEROS")
+    st.markdown("## ⚙️ V10.9.2 - PING PONG")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -944,20 +966,17 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    
-    # Telegram Principal
+    st.caption("🆕 RITMO_PING_PONG: Detecta vai-e-vem")
+    st.caption("🚫 EXAUSTAO + Zero = Bloqueio")
+    st.caption("🟢 7 regras de Alerta Zero")
+    st.caption("🔄 Anti-Erro + Regra 3.5")
+    st.markdown("---")
     with st.expander("🔔 Telegram PRINCIPAL", expanded=False):
-        st.caption("6 melhores números (completo)")
         st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
         st.session_state.telegram_chat_id = st.text_input("Chat ID Principal", value=st.session_state.telegram_chat_id)
-    
-    # Telegram Alternativo
     with st.expander("📢 Telegram ALTERNATIVO", expanded=False):
-        st.caption("6 melhores números + GREEN/RED")
         st.session_state.telegram_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password")
         st.session_state.telegram_chat_id_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt)
-    
-    st.markdown("---")
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("💾 Salvar", use_container_width=True): 
@@ -1075,7 +1094,6 @@ with ce:
         gat = e.get('gatilho_ativo')
         nums = e.get('numeros_apostar', [])
         
-        # Mostrar 6 melhores números de cada dúzia
         duzia_principal = dz_princ
         duzia_secundaria = dz_sec if dz_sec and dz_sec != dz_princ else None
         
@@ -1083,9 +1101,8 @@ with ce:
         
         if duzia_secundaria:
             melhores_secundaria = _selecionar_melhores_numeros(duzia_secundaria, list(sis.historico_numeros), 6)
-            melhores_display = sorted(set(melhores_principal + melhores_secundaria))
         else:
-            melhores_display = melhores_principal
+            melhores_secundaria = None
         
         cor = "#FF6347" if e.get('modo_anti_erro') else "#FFD700"
         
@@ -1097,7 +1114,7 @@ with ce:
         </div>""", unsafe_allow_html=True)
         
         st.write(f"**🎲 6 melhores D{duzia_principal}:** {', '.join(map(str, melhores_principal))}")
-        if duzia_secundaria:
+        if melhores_secundaria:
             st.write(f"**🛡️ 6 melhores D{duzia_secundaria}:** {', '.join(map(str, melhores_secundaria))}")
         
         if nums:
@@ -1182,5 +1199,5 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9 | 6 Melhores Números | Telegram Duplo | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.2 | RITMO PING PONG | {formatar_hora_brasilia()}")
 salvar_sessao()
