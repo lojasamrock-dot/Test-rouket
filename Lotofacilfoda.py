@@ -2166,14 +2166,18 @@ def main():
                         if arquivo:
                             st.success(f"✅ {len(jogos)} jogos salvos! ID: {jogo_id}")
                 with col2:
-                    df_export = pd.DataFrame({
-                        "Jogo": range(1, len(jogos)+1),
-                        "Dezenas": [", ".join(f"{n:02d}" for n in j) for j in jogos],
-                        "Score": [s["score"] for s in scores_info],
-                        "Score_Ajustado": [round(s["score_ajustado"], 2) for s in scores_info],
-                        "Pares": [s["stats"]["pares"] for s in scores_info],
-                        "Soma": [s["stats"]["soma"] for s in scores_info]
-                    })
+                    scores_export = st.session_state.scores if st.session_state.scores else [0]*len(jogos)
+df_export = pd.DataFrame({
+    "Jogo": range(1, len(jogos)+1),
+    "Dezenas": [", ".join(f"{n:02d}" for n in j) for j in jogos],
+    "Score": [round(s, 2) for s in scores_export],
+    "Pares": [contar_pares(j) for j in jogos],
+    "Soma": [sum(j) for j in jogos],
+    "Repetidas": [len(set(j) & set(st.session_state.gerador_principal.ultimo)) for j in jogos]
+})
+                        
+
+                        
                     st.download_button(label="📥 Exportar CSV", data=df_export.to_csv(index=False), file_name=f"elite_master_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv", use_container_width=True)
 
 if __name__ == "__main__":
