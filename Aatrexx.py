@@ -277,7 +277,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.9.3 - COM PING_PONG_RAPIDO
+# 🧠 DUZIA AI V10.9.4 - PING_PONG_RAPIDO COM MESMA PRIORIDADE
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -457,27 +457,22 @@ class DuziaAI:
         self.alerta_zero_ativo = False
         return False
     
-    # 🆕 V10.9.3 - PING_PONG_RAPIDO (detecta ping-pong recente em 3-4 rodadas)
+    # PING_PONG_RAPIDO (mesma prioridade - apenas adiciona ao score)
     def detectar_ping_pong_rapido(self):
-        """Detecta ping-pong recente (últimas 3-4 rodadas) entre duas dúzias"""
         u = list(self.historico)[-4:]
         if len(u) < 3:
             return None
         
-        # Verifica o padrão A → B → A → B (4 rodadas)
+        # Padrão A → B → A → B (4 rodadas)
         if len(u) >= 4:
             if u[-4] != 0 and u[-3] != 0 and u[-2] != 0 and u[-1] != 0:
                 if u[-4] == u[-2] and u[-3] == u[-1] and u[-4] != u[-3]:
-                    # Padrão confirmado: A → B → A → B
-                    # Próxima deve ser A (u[-2])
                     return {'tipo': 'PING_PONG_RAPIDO', 'duzia': u[-2], 'forca': 8}
         
-        # Verifica o padrão A → B → A (3 rodadas)
+        # Padrão A → B → A (3 rodadas)
         if len(u) >= 3:
             if u[-3] != 0 and u[-2] != 0 and u[-1] != 0:
                 if u[-3] == u[-1] and u[-3] != u[-2]:
-                    # Padrão: A → B → A
-                    # Próxima deve ser B (u[-2])
                     return {'tipo': 'PING_PONG_RAPIDO', 'duzia': u[-2], 'forca': 6}
         
         return None
@@ -505,38 +500,38 @@ class DuziaAI:
                     return {'tipo': 'RITMO_PING_PONG', 'duzia': proxima, 'forca': 9}
         return None
     
-    # ========== GATILHOS ==========
+    # ========== GATILHOS (todos com mesma prioridade - sem ordem) ==========
     def detectar_gatilhos(self):
+        """Coleta TODOS os gatilhos e retorna o mais forte (maior forca)"""
+        todos_gatilhos = []
         u = list(self.historico)
         freq = Counter([d for d in u if d != 0])
         
-        # 🆕 PING_PONG_RAPIDO (detecta ping-pong em 3-4 rodadas)
+        # PING_PONG_RAPIDO
         pp_rapido = self.detectar_ping_pong_rapido()
         if pp_rapido:
-            self.ultimo_gatilho = 'PING_PONG_RAPIDO'
-            return pp_rapido
+            pp_rapido['forca'] = 6  # Força padrão, igual aos outros
+            todos_gatilhos.append(pp_rapido)
         
-        # RITMO_PING_PONG (6 giros)
+        # RITMO_PING_PONG
         ping_pong = self.detectar_ritmo_ping_pong()
         if ping_pong:
-            self.ultimo_gatilho = 'RITMO_PING_PONG'
-            return ping_pong
+            ping_pong['forca'] = 7
+            todos_gatilhos.append(ping_pong)
         
         # RITMO_BINARIO
         if len(u) >= 4:
             ult_4 = [u[-1], u[-2], u[-3], u[-4]]
             if 0 not in ult_4:
                 if ult_4[0] == ult_4[2] and ult_4[1] == ult_4[3] and ult_4[0] != ult_4[1]:
-                    self.ultimo_gatilho = 'RITMO_BINARIO'
-                    return {'tipo': 'RITMO_BINARIO', 'duzia': ult_4[1], 'forca': 9}
+                    todos_gatilhos.append({'tipo': 'RITMO_BINARIO', 'duzia': ult_4[1], 'forca': 7})
 
         # QUEBRA_POS_ZERO
         if 0 in u[-6:]:
             pos_zero = len(u) - 1 - u[::-1].index(0)
             depois_zero = u[pos_zero+1:]
             if len(depois_zero) >= 1 and depois_zero[-1] != 0:
-                self.ultimo_gatilho = 'QUEBRA_POS_ZERO'
-                return {'tipo': 'QUEBRA_POS_ZERO', 'duzia': depois_zero[-1], 'forca': 8}
+                todos_gatilhos.append({'tipo': 'QUEBRA_POS_ZERO', 'duzia': depois_zero[-1], 'forca': 8})
         
         # EXAUSTAO_DOMINANCIA
         if len(u) >= 10:
@@ -549,8 +544,7 @@ class DuziaAI:
                     freq_outras = {d: freq.get(d, 0) for d in outras}
                     dz_emergente = max(freq_outras, key=freq_outras.get)
                     if dz_emergente != 0:
-                        self.ultimo_gatilho = 'EXAUSTAO_DOMINANCIA'
-                        return {'tipo': 'EXAUSTAO_DOMINANCIA', 'duzia': dz_emergente, 'forca': 7}
+                        todos_gatilhos.append({'tipo': 'EXAUSTAO_DOMINANCIA', 'duzia': dz_emergente, 'forca': 7})
         
         # MUDANCA_VELOCIDADE
         if len(u) >= 8:
@@ -560,8 +554,13 @@ class DuziaAI:
                 dom_1 = freq_1.most_common(1)[0]
                 dom_2 = freq_2.most_common(1)[0]
                 if dom_1[0] != dom_2[0] and dom_2[1] >= 3 and dom_2[0] != 0:
-                    self.ultimo_gatilho = 'MUDANCA_VELOCIDADE'
-                    return {'tipo': 'MUDANCA_VELOCIDADE', 'duzia': dom_2[0], 'forca': 6}
+                    todos_gatilhos.append({'tipo': 'MUDANCA_VELOCIDADE', 'duzia': dom_2[0], 'forca': 6})
+        
+        # Retorna o gatilho mais forte (maior forca)
+        if todos_gatilhos:
+            melhor = max(todos_gatilhos, key=lambda g: g['forca'])
+            self.ultimo_gatilho = melhor['tipo']
+            return melhor
         
         return None
     
@@ -581,6 +580,21 @@ class DuziaAI:
         if markov and markov[0] != 0:
             score[markov[0]] += 10
         
+        # 🆕 V10.9.4 - TODOS os gatilhos são considerados no score
+        todos_gatilhos = []
+        
+        pp_rapido = self.detectar_ping_pong_rapido()
+        if pp_rapido: todos_gatilhos.append(pp_rapido)
+        
+        ping_pong = self.detectar_ritmo_ping_pong()
+        if ping_pong: todos_gatilhos.append(ping_pong)
+        
+        # Adiciona todos os gatilhos ao score com peso igual
+        for g in todos_gatilhos:
+            if g and g['duzia'] != 0:
+                score[g['duzia']] += 6  # Peso igual para todos (6)
+        
+        # Gatilho principal (o mais forte) ainda ganha bônus
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0:
             score[gatilho['duzia']] += gatilho['forca'] * 2
@@ -942,8 +956,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.3 - Ping Pong Rápido", layout="wide")
-st.title("🎰 DuziaAI V10.9.3 - PING PONG RÁPIDO (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.4 - Prioridade Igual", layout="wide")
+st.title("🎰 DuziaAI V10.9.4 - TODOS GATILHOS MESMA PRIORIDADE")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -985,7 +999,7 @@ if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_cha
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.3 - PING PONG RÁPIDO")
+    st.markdown("## ⚙️ V10.9.4 - MESMA PRIORIDADE")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -993,13 +1007,15 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("🆕 PING_PONG_RAPIDO: 3-4 rodadas")
-    st.caption("🏓 RITMO_PING_PONG: 6 rodadas")
+    st.caption("⚖️ TODOS GATILHOS MESMA PRIORIDADE")
+    st.caption("🏓 PING_PONG_RAPIDO (3-4 rodadas)")
+    st.caption("🏓 RITMO_PING_PONG (6 rodadas)")
     st.caption("🎯 RITMO_BINARIO")
     st.caption("💥 QUEBRA_POS_ZERO")
     st.caption("🔥 EXAUSTAO_DOMINANCIA")
     st.caption("⚡ MUDANCA_VELOCIDADE")
     st.caption("🟢 7 regras de Alerta Zero")
+    st.caption("✅ Vence o gatilho de MAIOR FORÇA")
     st.markdown("---")
     with st.expander("🔔 Telegram PRINCIPAL", expanded=False):
         st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
@@ -1229,5 +1245,5 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.3 | PING PONG RÁPIDO | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.4 | Todos Gatilhos Mesma Prioridade | {formatar_hora_brasilia()}")
 salvar_sessao()
