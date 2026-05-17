@@ -2176,7 +2176,7 @@ def main():
     "Repetidas": [len(set(j) & set(st.session_state.gerador_principal.ultimo)) for j in jogos]
 })
                         
-st.download_button(label="📥 Exportar CSV", data=df_export.to_csv(index=False), file_name=f"elite_master_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv", use_container_width=True)
+                    st.download_button(label="📥 Exportar CSV", data=df_export.to_csv(index=False), file_name=f"elite_master_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv", use_container_width=True)
 
 if __name__ == "__main__":
     main()
