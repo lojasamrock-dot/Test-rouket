@@ -182,7 +182,7 @@ def enviar_previsao_auto(previsao):
                 st.session_state.telegram_chat_id
             )
         
-        # Telegram Alternativo (apenas os 6+6 melhores números)
+        # Telegram Alternativo
         if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
             msg_alt = f"🎯 Entrada: {melhores_str}"
             if incluir_zero:
@@ -226,7 +226,7 @@ def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero,
                 st.session_state.telegram_chat_id
             )
         
-        # Telegram Alternativo (apenas Green/Red)
+        # Telegram Alternativo
         if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
             if acerto_duzia or acerto_zero:
                 if acerto_numero and eh_raio:
@@ -277,7 +277,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.9.2 - COM RITMO_PING_PONG
+# 🧠 DUZIA AI V10.9.3 - COM EMBALO DA ROLETA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -310,6 +310,11 @@ class DuziaAI:
         self.alertas_zero_disparados = 0
         self.zeros_previstos = 0
         
+        # 🆕 V10.9.3 - Controle de Embalo
+        self.em_embalo = False
+        self.duzia_embalo = None
+        self.contagem_embalo = 0
+        
     def adicionar(self, numero):
         d = get_duzia(numero)
         self.historico.append(d)
@@ -320,6 +325,24 @@ class DuziaAI:
             self.duzias_que_sairam.append(d)
             if len(self.duzias_que_sairam) > 10:
                 self.duzias_que_sairam = self.duzias_que_sairam[-10:]
+            
+            # 🆕 Atualizar controle de embalo
+            u = list(self.historico)
+            if len(u) >= 2 and u[-1] == u[-2] and u[-1] != 0:
+                if not self.em_embalo:
+                    self.em_embalo = True
+                    self.duzia_embalo = u[-1]
+                    self.contagem_embalo = 2
+                elif u[-1] == self.duzia_embalo:
+                    self.contagem_embalo += 1
+                else:
+                    self.em_embalo = True
+                    self.duzia_embalo = u[-1]
+                    self.contagem_embalo = 2
+            else:
+                self.em_embalo = False
+                self.duzia_embalo = None
+                self.contagem_embalo = 0
         
         if numero == 0 and self.alerta_zero_ativo:
             self.zeros_previstos += 1
@@ -407,7 +430,16 @@ class DuziaAI:
             previsao['duzia_secundaria'] = outras[0] if outras else previsao['duzia']
         return previsao
     
-    # ALERTA ZERO - 7 REGRAS
+    # 🆕 V10.9.3 - EMBALO DA ROLETA
+    def detectar_embalo(self):
+        """Se a roleta está em sequência (2+ vezes mesma dúzia), retorna a dúzia quente"""
+        u = list(self.historico)
+        if len(u) >= 2:
+            if u[-1] == u[-2] and u[-1] != 0:
+                return u[-1]
+        return None
+    
+    # ALERTA ZERO
     def detectar_alerta_zero(self):
         if len(self.historico) < 2:
             self.alerta_zero_ativo = False
@@ -457,14 +489,12 @@ class DuziaAI:
         self.alerta_zero_ativo = False
         return False
     
-    # 🆕 V10.9.2 - RITMO_PING_PONG
+    # RITMO_PING_PONG
     def detectar_ritmo_ping_pong(self):
-        """Detecta padrão de alternância entre duas dúzias (vai-e-vem)"""
         u = list(self.historico)[-6:]
         if len(u) < 4:
             return None
         
-        # Conta alternâncias entre pares de dúzias
         pares = {}
         for i in range(1, len(u)):
             if u[i] != u[i-1] and u[i] != 0 and u[i-1] != 0:
@@ -474,10 +504,8 @@ class DuziaAI:
         if pares:
             par_principal = max(pares, key=pares.get)
             count = pares[par_principal]
-            # Se 4+ alternâncias entre o mesmo par nos últimos 6 giros
             if count >= 4:
                 dz1, dz2 = par_principal
-                # A próxima deve ser a que NÃO saiu por último
                 ultima = u[-1]
                 proxima = dz2 if ultima == dz1 else dz1
                 if proxima != 0:
@@ -486,7 +514,13 @@ class DuziaAI:
     
     # ========== GATILHOS ==========
     def detectar_gatilhos(self):
-        # 🆕 RITMO_PING_PONG (prioridade máxima)
+        # 🆕 EMBALO DA ROLETA (prioridade máxima)
+        embalo = self.detectar_embalo()
+        if embalo:
+            self.ultimo_gatilho = 'EMBALO'
+            return {'tipo': 'EMBALO', 'duzia': embalo, 'forca': 10}
+        
+        # RITMO_PING_PONG
         ping_pong = self.detectar_ritmo_ping_pong()
         if ping_pong:
             self.ultimo_gatilho = 'RITMO_PING_PONG'
@@ -540,6 +574,14 @@ class DuziaAI:
     
     def calcular_score(self):
         score = {1: 0, 2: 0, 3: 0}
+        
+        # 🆕 EMBALO DA ROLETA - Prioridade máxima
+        embalo = self.detectar_embalo()
+        if embalo:
+            score[embalo] += 50
+            for d in score:
+                if d != embalo:
+                    score[d] *= 0.3
         
         freq = self.frequencia()
         total = sum(freq.values())
@@ -613,15 +655,16 @@ class DuziaAI:
         if 0 in u_list[-3:]:
             confianca *= 0.5
         
-        pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
+        # 🆕 Embalo força entrada
+        pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro or self.em_embalo
         
-        # Kill Switch de Teimosia
+        # Kill Switch
         if self.ultimo_resultado_duzia == False and self.ultima_confianca >= 3.4:
             if d1 == self.ultima_previsao_duzia:
                 d1 = d2
                 s1 = s2
         
-        # 🆕 V10.9.2 - FILTRO: EXAUSTAO + Alerta Zero (sem anti-erro) = NÃO ENTRA
+        # EXAUSTAO + Zero = bloqueio
         if gatilho and gatilho['tipo'] == 'EXAUSTAO_DOMINANCIA' and self.alerta_zero_ativo and not self.modo_anti_erro:
             pode_entrar = False
             motivo = "🚫 EXAUSTAO + Zero: Padrão de alto risco"
@@ -631,6 +674,8 @@ class DuziaAI:
                 motivo = f"🔄 ANTI-ERRO: Seguindo última real"
             else:
                 motivo = f"🔄 ANTI-ERRO x{self.erros_consecutivos}: Apostando na ausente"
+        elif self.em_embalo:
+            motivo = f"🔥 EMBALO: D{self.duzia_embalo} saiu {self.contagem_embalo}x seguidas!"
         else:
             motivo = "" if pode_entrar else f"Score baixo ({s1:.1f})"
         
@@ -644,6 +689,7 @@ class DuziaAI:
             "gatilho_ativo": gatilho['tipo'] if gatilho else None,
             "incluir_zero": self.alerta_zero_ativo,
             "modo_anti_erro": self.modo_anti_erro,
+            "em_embalo": self.em_embalo,
             "numeros_completos": list(self.numeros_completos)
         }
         
@@ -659,6 +705,11 @@ class DuziaAI:
         if self.alerta_zero_ativo: 
             previsao['incluir_zero'] = True
 
+        # 🆕 Embalo: força a dúzia do embalo
+        if self.em_embalo and self.duzia_embalo:
+            if previsao['duzia'] != self.duzia_embalo:
+                previsao['duzia'] = self.duzia_embalo
+
         if self.consecutivos_amarelos >= 2:
             d_prim = previsao['duzia']
             d_sec = previsao['duzia_secundaria']
@@ -667,7 +718,7 @@ class DuziaAI:
         
         conf = previsao.get('confianca', 0)
         gat = previsao.get('gatilho_ativo')
-        if conf >= 3.4 and not gat and not self.modo_anti_erro:
+        if conf >= 3.4 and not gat and not self.modo_anti_erro and not self.em_embalo:
             if self.duzias_que_sairam:
                 ultima_real = self.duzias_que_sairam[-1]
                 if ultima_real != 0 and ultima_real != previsao['duzia']:
@@ -803,6 +854,7 @@ class SistemaBot:
                 'confianca': self.entrada_ativa.get('confianca', 0),
                 'gatilho': self.entrada_ativa.get('gatilho_ativo', None),
                 'modo_anti_erro': self.entrada_ativa.get('modo_anti_erro', False),
+                'em_embalo': self.entrada_ativa.get('em_embalo', False),
                 'incluir_zero': incluir_zero
             })
             if len(self.historico_entradas) > 50: self.historico_entradas = self.historico_entradas[-50:]
@@ -831,6 +883,7 @@ class SistemaBot:
                 'confianca': previsao.get('confianca', 0),
                 'gatilho_ativo': previsao.get('gatilho_ativo'),
                 'modo_anti_erro': previsao.get('modo_anti_erro', False),
+                'em_embalo': previsao.get('em_embalo', False),
                 'incluir_zero': previsao.get('incluir_zero', False)
             }
             
@@ -892,13 +945,14 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     try:
         with open(caminho, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Cob','Conf','Gat','Z','🔄','Duz','Num','Zer','St'])
+            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Cob','Conf','Gat','Z','🔄','Emb','Duz','Num','Zer','St'])
             for e in historico_entradas:
                 real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
                 prev = f"D{e.get('duzia_prevista','?')}"
                 cob = f"D{e.get('duzia_sec_prevista','?')}" if e.get('duzia_sec_prevista') and e.get('duzia_sec_prevista') != e.get('duzia_prevista') else "-"
                 zero = '🟢' if e.get('incluir_zero') else '-'
                 anti = '🔄' if e.get('modo_anti_erro') else '-'
+                emb = '🔥' if e.get('em_embalo') else '-'
                 duz = '✅' if e.get('acerto_duzia') else '❌'
                 num = '✅' if e.get('acerto_numero') else '-'
                 zer = '✅' if e.get('acerto_zero') else '-'
@@ -906,7 +960,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
                 writer.writerow([
                     e.get('rodada'), e.get('hora'), e.get('numero'), raio, real,
                     prev, cob, f"{e.get('confianca',0):.1f}",
-                    e.get('gatilho','-') if e.get('gatilho') else '-', zero, anti,
+                    e.get('gatilho','-') if e.get('gatilho') else '-', zero, anti, emb,
                     duz, num, zer, e.get('status','?')
                 ])
         return True
@@ -915,8 +969,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.2 - Ping Pong", layout="wide")
-st.title("🎰 DuziaAI V10.9.2 - RITMO PING PONG (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.3 - Embalo", layout="wide")
+st.title("🎰 DuziaAI V10.9.3 - EMBALO DA ROLETA (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -958,7 +1012,7 @@ if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_cha
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.2 - PING PONG")
+    st.markdown("## ⚙️ V10.9.3 - EMBALO")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -966,10 +1020,10 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("🆕 RITMO_PING_PONG: Detecta vai-e-vem")
-    st.caption("🚫 EXAUSTAO + Zero = Bloqueio")
+    st.caption("🔥 EMBALO: Segue streak da roleta")
+    st.caption("🏓 RITMO_PING_PONG: Vai-e-vem")
     st.caption("🟢 7 regras de Alerta Zero")
-    st.caption("🔄 Anti-Erro + Regra 3.5")
+    st.caption("🚫 EXAUSTAO + Zero = Bloqueio")
     st.markdown("---")
     with st.expander("🔔 Telegram PRINCIPAL", expanded=False):
         st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
@@ -1033,6 +1087,10 @@ c4.metric("🟢 Zeros", f"{sis.acertos_zero}/{sis.acertos_zero + sis.erros_zero}
 c5.metric("⚡ Raios", f"{sis.raios_acertados}/{total_raios}" if total_raios > 0 else "0/0")
 c6.metric("📦 Total", total_duzias)
 
+# 🆕 Status do Embalo
+if sis.duzia_ai.em_embalo:
+    st.success(f"🔥 EMBALO ATIVO! D{sis.duzia_ai.duzia_embalo} saiu {sis.duzia_ai.contagem_embalo}x seguidas!")
+
 st.markdown("---")
 cg, ce = st.columns([3,2])
 
@@ -1050,6 +1108,7 @@ with cg:
             textposition='auto'
         )])
         titulo = f"🎯 {'⚠️ GATILHO: '+gatilho['tipo'] if gatilho else 'Sem gatilho'}"
+        if sis.duzia_ai.em_embalo: titulo += f" | 🔥 EMBALO D{sis.duzia_ai.duzia_embalo} x{sis.duzia_ai.contagem_embalo}"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ALERTA ZERO!"
         fig.update_layout(title=titulo, height=250, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
@@ -1083,6 +1142,8 @@ with cg:
 
 with ce:
     st.subheader("🎰 Entrada Atual")
+    if sis.duzia_ai.em_embalo:
+        st.success(f"🔥 EMBALO: D{sis.duzia_ai.duzia_embalo} x{sis.duzia_ai.contagem_embalo}")
     if sis.duzia_ai.alerta_zero_ativo:
         st.warning("⚠️ ALERTA ZERO! 🟢")
     
@@ -1105,10 +1166,11 @@ with ce:
             melhores_secundaria = None
         
         cor = "#FF6347" if e.get('modo_anti_erro') else "#FFD700"
+        if e.get('em_embalo'): cor = "#FF4500"
         
         st.markdown(f"""
         <div style="background-color:{cor}15; border:2px solid {cor}; border-radius:15px; padding:15px;">
-            <h2 style="color:{cor}; text-align:center;">🎯 D{dz_princ}</h2>
+            <h2 style="color:{cor}; text-align:center;">{'🔥 ' if e.get('em_embalo') else ''}🎯 D{dz_princ}</h2>
             <p style="text-align:center; font-size:1.1em;">Confiança: {conf:.2f} {'| 🎯 '+gat if gat else ''}</p>
             {f'<p style="text-align:center; color:#FFA500;">🛡️ Cobertura: D{dz_sec}</p>' if duzia_secundaria else ''}
         </div>""", unsafe_allow_html=True)
@@ -1142,6 +1204,7 @@ if sis.historico_entradas:
         cob = f"D{e.get('duzia_sec_prevista','?')}" if e.get('duzia_sec_prevista') and e.get('duzia_sec_prevista') != e.get('duzia_prevista') else "-"
         zero = '🟢' if e.get('incluir_zero') else '-'
         anti = '🔄' if e.get('modo_anti_erro') else '-'
+        emb = '🔥' if e.get('em_embalo') else '-'
         duz = '✅' if e.get('acerto_duzia') else '❌'
         num = '🎯' if e.get('acerto_numero') else '-'
         zer = '🟢' if e.get('acerto_zero') else '-'
@@ -1165,6 +1228,7 @@ if sis.historico_entradas:
             "Gat": e.get('gatilho','-') if e.get('gatilho') else '-',
             "Z": zero,
             "🔄": anti,
+            "🔥": emb,
             "Duz": duz,
             "Nº": num,
             "Zer": zer,
@@ -1199,5 +1263,5 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.2 | RITMO PING PONG | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.3 | EMBALO DA ROLETA | {formatar_hora_brasilia()}")
 salvar_sessao()
