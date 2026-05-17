@@ -2167,7 +2167,7 @@ def main():
                             st.success(f"✅ {len(jogos)} jogos salvos! ID: {jogo_id}")
                 with col2:
                     scores_export = st.session_state.scores if st.session_state.scores else [0]*len(jogos)
-df_export = pd.DataFrame({
+                    df_export = pd.DataFrame({
     "Jogo": range(1, len(jogos)+1),
     "Dezenas": [", ".join(f"{n:02d}" for n in j) for j in jogos],
     "Score": [round(s, 2) for s in scores_export],
