@@ -69,6 +69,7 @@ def salvar_sessao():
             'janela_duzia_ai': st.session_state.get('janela_duzia_ai', 30),
             'modo_agressivo': st.session_state.get('modo_agressivo', False),
             'modo_automatico': st.session_state.get('modo_automatico', True),
+            'api_selecionada': st.session_state.get('api_selecionada', 'XXXtreme Lightning'),
         }
         with open(SESSION_DATA_PATH, 'wb') as f: pickle.dump(session_data, f)
         return True
@@ -182,7 +183,7 @@ def enviar_previsao_auto(previsao):
                 st.session_state.telegram_chat_id
             )
         
-        # Telegram Alternativo (apenas os 6+6 melhores números)
+        # Telegram Alternativo
         if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
             msg_alt = f"🎯 Entrada: {melhores_str}"
             if incluir_zero:
@@ -196,20 +197,17 @@ def enviar_previsao_auto(previsao):
         salvar_sessao()
     except Exception as e: logging.error(f"Erro: {e}")
 
-def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero, eh_raio=False, multiplicador=0):
+def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero, pagamento_numero=72, pagamento_zero=72):
     try:
         partes = []
         if acerto_zero:
-            partes.append("✅ ZERO!")
+            partes.append(f"✅ ZERO! (+R${pagamento_zero:.0f})")
         elif numero_real == 0:
             partes.append("🟢 ZERO (não apostado)")
         else:
             duzia_real = get_duzia(numero_real)
             if acerto_numero:
-                if eh_raio:
-                    partes.append(f"⚡ RAIO {multiplicador}X! Nº {numero_real}")
-                else:
-                    partes.append(f"🎯 Nº EXATO {numero_real}!")
+                partes.append(f"🎯 Nº EXATO {numero_real}! (+R${pagamento_numero:.0f})")
             elif acerto_duzia:
                 partes.append(f"✅ Green - D{duzia_real}")
             else:
@@ -226,12 +224,10 @@ def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero,
                 st.session_state.telegram_chat_id
             )
         
-        # Telegram Alternativo (apenas Green/Red)
+        # Telegram Alternativo
         if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
             if acerto_duzia or acerto_zero:
-                if acerto_numero and eh_raio:
-                    msg_alt = f"⚡ GREEN RAIO {multiplicador}X! Nº {numero_real}"
-                elif acerto_numero:
+                if acerto_numero:
                     msg_alt = f"🎯 GREEN! Nº {numero_real}"
                 elif acerto_zero:
                     msg_alt = "🟢 GREEN ZERO!"
@@ -260,9 +256,36 @@ def enviar_telegram(mensagem, token, chat_id):
     except Exception as e: logging.error(f"Erro Telegram: {e}")
 
 # =============================
-# API
+# API - MÚLTIPLAS ROULETES
 # =============================
-API_URL = "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremelightningroulette/latest"
+
+# URLs das APIs disponíveis
+API_URLS = {
+    'XXXtreme Lightning': "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremelightningroulette/latest",
+    'Immersive Roulette': "https://api.casinoscores.com/svc-evolution-game-events/api/immersiveroulette/latest",
+}
+
+def get_api_url():
+    """Retorna a URL da API selecionada"""
+    api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+    return API_URLS.get(api_selecionada, API_URLS['XXXtreme Lightning'])
+
+def get_pagamento_numero():
+    """Retorna o pagamento para número exato baseado na roleta selecionada"""
+    api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+    if api_selecionada == 'XXXtreme Lightning':
+        return 72  # 36x com R$ 2
+    else:
+        return 70  # 35x com R$ 2
+
+def get_pagamento_zero():
+    """Retorna o pagamento para zero baseado na roleta selecionada"""
+    api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+    if api_selecionada == 'XXXtreme Lightning':
+        return 72  # 36x com R$ 2
+    else:
+        return 70  # 35x com R$ 2
+
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 def get_duzia(numero):
@@ -277,7 +300,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.9.2 - COM RITMO_PING_PONG
+# 🧠 DUZIA AI V10.9.5
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -457,14 +480,12 @@ class DuziaAI:
         self.alerta_zero_ativo = False
         return False
     
-    # 🆕 V10.9.2 - RITMO_PING_PONG
+    # RITMO_PING_PONG (6 giros)
     def detectar_ritmo_ping_pong(self):
-        """Detecta padrão de alternância entre duas dúzias (vai-e-vem)"""
         u = list(self.historico)[-6:]
         if len(u) < 4:
             return None
         
-        # Conta alternâncias entre pares de dúzias
         pares = {}
         for i in range(1, len(u)):
             if u[i] != u[i-1] and u[i] != 0 and u[i-1] != 0:
@@ -474,10 +495,8 @@ class DuziaAI:
         if pares:
             par_principal = max(pares, key=pares.get)
             count = pares[par_principal]
-            # Se 4+ alternâncias entre o mesmo par nos últimos 6 giros
             if count >= 4:
                 dz1, dz2 = par_principal
-                # A próxima deve ser a que NÃO saiu por último
                 ultima = u[-1]
                 proxima = dz2 if ultima == dz1 else dz1
                 if proxima != 0:
@@ -486,14 +505,14 @@ class DuziaAI:
     
     # ========== GATILHOS ==========
     def detectar_gatilhos(self):
-        # 🆕 RITMO_PING_PONG (prioridade máxima)
+        u = list(self.historico)
+        freq = Counter([d for d in u if d != 0])
+        
+        # RITMO_PING_PONG (6 giros)
         ping_pong = self.detectar_ritmo_ping_pong()
         if ping_pong:
             self.ultimo_gatilho = 'RITMO_PING_PONG'
             return ping_pong
-        
-        u = list(self.historico)
-        freq = Counter([d for d in u if d != 0])
         
         # RITMO_BINARIO
         if len(u) >= 4:
@@ -621,7 +640,7 @@ class DuziaAI:
                 d1 = d2
                 s1 = s2
         
-        # 🆕 V10.9.2 - FILTRO: EXAUSTAO + Alerta Zero (sem anti-erro) = NÃO ENTRA
+        # Filtro: EXAUSTAO + Alerta Zero (sem anti-erro) = NÃO ENTRA
         if gatilho and gatilho['tipo'] == 'EXAUSTAO_DOMINANCIA' and self.alerta_zero_ativo and not self.modo_anti_erro:
             pode_entrar = False
             motivo = "🚫 EXAUSTAO + Zero: Padrão de alto risco"
@@ -719,16 +738,32 @@ class SistemaBot:
         self.numero_rodada = 0
     
     def processar_novo_numero(self, numero_data):
+        # 🆕 Suporte a múltiplos formatos de API
         if isinstance(numero_data, dict):
-            nr = numero_data.get('number')
-            lucky_numbers = numero_data.get('luckyNumbers', [])
-            lucky_multipliers = numero_data.get('luckyMultipliers', {})
+            # Tenta extrair número de diferentes formatos
+            nr = None
+            lucky_numbers = []
+            lucky_multipliers = {}
+            
+            # Formato XXXtreme Lightning
+            if 'number' in numero_data:
+                nr = numero_data.get('number')
+                lucky_numbers = numero_data.get('luckyNumbers', [])
+                lucky_multipliers = numero_data.get('luckyMultipliers', {})
+            # Formato Immersive Roulette
+            elif 'data' in numero_data:
+                result = numero_data.get('data', {}).get('result', {})
+                outcome = result.get('outcome', {})
+                nr = outcome.get('number')
+                # Immersive não tem raios
+                lucky_numbers = []
+                lucky_multipliers = {}
         else:
             nr = numero_data
             lucky_numbers = []
             lucky_multipliers = {}
         
-        if not validar_numero(nr): return
+        if nr is None or not validar_numero(nr): return
         
         eh_raio = nr in lucky_numbers
         multiplicador = lucky_multipliers.get(nr, 0) if eh_raio else 0
@@ -737,6 +772,10 @@ class SistemaBot:
         self.duzia_ai.adicionar(nr)
         self.historico_numeros.append(nr)
         self.ultimo_numero = nr
+        
+        # 🆕 Pagamentos baseados na roleta selecionada
+        pag_numero = get_pagamento_numero()
+        pag_zero = get_pagamento_zero()
         
         if self.entrada_ativa:
             duzia_real = get_duzia(nr)
@@ -806,7 +845,7 @@ class SistemaBot:
                 'incluir_zero': incluir_zero
             })
             if len(self.historico_entradas) > 50: self.historico_entradas = self.historico_entradas[-50:]
-            enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, eh_raio, multiplicador)
+            enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, pag_numero, pag_zero)
             self.entrada_ativa = None
         
         previsao = self.duzia_ai.prever()
@@ -867,22 +906,31 @@ def salvar_resultado_em_arquivo(historico, caminho=HISTORICO_PATH):
 
 def fetch_latest_result():
     try:
-        r = requests.get(API_URL, headers=HEADERS, timeout=5)
+        url = get_api_url()
+        r = requests.get(url, headers=HEADERS, timeout=5)
         r.raise_for_status()
         d = r.json()
-        gd = d.get("data", {})
-        rs = gd.get("result", {})
-        nm = rs.get("outcome", {}).get("number")
-        ts = gd.get("startedAt")
-        ln, lm = [], {}
-        for item in rs.get('luckyNumbersList', []):
-            n = item.get('number')
-            if n is not None:
-                ln.append(n)
-                m = item.get('roundedMultiplier')
-                if m is not None:
-                    lm[n] = m
-        return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
+        
+        api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+        
+        if api_selecionada == 'XXXtreme Lightning':
+            # Formato XXXtreme Lightning
+            gd = d.get("data", {})
+            rs = gd.get("result", {})
+            nm = rs.get("outcome", {}).get("number")
+            ts = gd.get("startedAt")
+            ln, lm = [], {}
+            for item in rs.get('luckyNumbersList', []):
+                n = item.get('number')
+                if n is not None:
+                    ln.append(n)
+                    m = item.get('roundedMultiplier')
+                    if m is not None:
+                        lm[n] = m
+            return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
+        else:
+            # Formato Immersive Roulette (já é o JSON completo)
+            return d
     except Exception as e:
         logging.warning(f"Erro API: {e}")
         return None
@@ -915,8 +963,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.2 - Ping Pong", layout="wide")
-st.title("🎰 DuziaAI V10.9.2 - RITMO PING PONG (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.5 - 2 APIs", layout="wide")
+st.title("🎰 DuziaAI V10.9.5 - 2 ROULETES (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -935,12 +983,13 @@ if dados:
     sis.erros_zero = dados.get('erros_zero', 0)
     sis.entrada_ativa = dados.get('entrada_ativa', None)
     st.session_state.modo_agressivo = dados.get('modo_agressivo', False)
+    st.session_state.api_selecionada = dados.get('api_selecionada', 'XXXtreme Lightning')
     if os.path.exists(ENTRADAS_PATH):
         try:
             with open(ENTRADAS_PATH, 'r') as f: sis.historico_entradas = json.load(f)
         except: pass
 
-defaults = {'modo_automatico': True, 'modo_agressivo': False, 'janela_duzia_ai': 30}
+defaults = {'modo_automatico': True, 'modo_agressivo': False, 'janela_duzia_ai': 30, 'api_selecionada': 'XXXtreme Lightning'}
 for k, v in defaults.items():
     if k not in st.session_state: st.session_state[k] = v
 
@@ -958,18 +1007,40 @@ if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_cha
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.2 - PING PONG")
+    st.markdown("## ⚙️ V10.9.5 - 2 ROULETES")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
+    st.markdown("---")
+    
+    # 🆕 Seletor de API
+    st.markdown("### 🎰 Selecione a Roleta")
+    api_opcoes = list(API_URLS.keys())
+    api_atual = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+    api_index = api_opcoes.index(api_atual) if api_atual in api_opcoes else 0
+    st.session_state.api_selecionada = st.radio(
+        "Roleta:",
+        api_opcoes,
+        index=api_index,
+        help="XXXtreme Lightning = Raios 50x-2000x | Immersive = Sem raios"
+    )
+    
+    # Mostrar informações da API selecionada
+    if st.session_state.api_selecionada == 'XXXtreme Lightning':
+        st.success("⚡ Raios: 50x-2000x | Nº: 36x | Zero: 36x")
+    else:
+        st.info("🎯 Sem raios | Nº: 35x | Zero: 35x")
+    
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("🆕 RITMO_PING_PONG: Detecta vai-e-vem")
-    st.caption("🚫 EXAUSTAO + Zero = Bloqueio")
+    st.caption("🏓 RITMO_PING_PONG (6 rodadas)")
+    st.caption("🎯 RITMO_BINARIO")
+    st.caption("💥 QUEBRA_POS_ZERO")
+    st.caption("🔥 EXAUSTAO_DOMINANCIA")
+    st.caption("⚡ MUDANCA_VELOCIDADE")
     st.caption("🟢 7 regras de Alerta Zero")
-    st.caption("🔄 Anti-Erro + Regra 3.5")
     st.markdown("---")
     with st.expander("🔔 Telegram PRINCIPAL", expanded=False):
         st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
@@ -1009,7 +1080,7 @@ if st.session_state.modo_automatico:
     st_autorefresh(interval=3000, key="auto")
     r = fetch_latest_result()
     if r and r.get("number") is not None:
-        if not st.session_state.historico or r["timestamp"] != st.session_state.historico[-1].get("timestamp"):
+        if not st.session_state.historico or r.get("timestamp") != st.session_state.historico[-1].get("timestamp"):
             st.session_state.historico.append(r)
             st.session_state.sistema.processar_novo_numero(r)
             salvar_resultado_em_arquivo(st.session_state.historico); salvar_sessao(); st.rerun()
@@ -1018,7 +1089,7 @@ st.markdown("---")
 sis = st.session_state.sistema
 
 # Métricas
-st.subheader("📊 CONFERÊNCIA DUPLA + RAIOS")
+st.subheader(f"📊 CONFERÊNCIA - {st.session_state.get('api_selecionada', 'XXXtreme Lightning')}")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 total_duzias = int(sis.acertos_duzia + sis.erros_duzia)
 tx_duzias = (sis.acertos_duzia / total_duzias * 100) if total_duzias > 0 else 0
@@ -1199,5 +1270,5 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.2 | RITMO PING PONG | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.5 | {st.session_state.get('api_selecionada', 'XXXtreme Lightning')} | {formatar_hora_brasilia()}")
 salvar_sessao()
