@@ -282,7 +282,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.9.6 - COM FADIGA DE DÚZIA
+# 🧠 DUZIA AI V10.9.7 - COM GATILHO EMBALO
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -315,7 +315,7 @@ class DuziaAI:
         self.alertas_zero_disparados = 0
         self.zeros_previstos = 0
         
-        # 🆕 V10.9.6 - Controle de fadiga de dúzia
+        # Controle de fadiga de dúzia
         self.acertos_consecutivos_mesma_duzia = 0
         self.ultima_duzia_acertada = None
         
@@ -357,7 +357,7 @@ class DuziaAI:
         
         if len(self.ultimos_resultados) > 20: self.ultimos_resultados = self.ultimos_resultados[-20:]
         
-        # 🆕 V10.9.6 - Controle de fadiga
+        # Controle de fadiga
         if acertou_duzia and duzia_real != 0:
             if duzia_real == self.ultima_duzia_acertada:
                 self.acertos_consecutivos_mesma_duzia += 1
@@ -477,6 +477,20 @@ class DuziaAI:
         self.alerta_zero_ativo = False
         return False
     
+    # 🆕 V10.9.7 - EMBALO (3+ repetições da mesma dúzia nos últimos 4 giros)
+    def detectar_embalo(self):
+        u = list(self.historico)[-4:]
+        if len(u) < 3:
+            return None
+        
+        freq = Counter([d for d in u if d != 0])
+        if freq:
+            dom = freq.most_common(1)[0]
+            if dom[1] >= 3 and dom[0] != 0:
+                return {'tipo': 'EMBALO', 'duzia': dom[0], 'forca': 9}
+        
+        return None
+    
     # RITMO_PING_PONG (6 giros)
     def detectar_ritmo_ping_pong(self):
         u = list(self.historico)[-6:]
@@ -504,6 +518,12 @@ class DuziaAI:
     def detectar_gatilhos(self):
         u = list(self.historico)
         freq = Counter([d for d in u if d != 0])
+        
+        # 🆕 EMBALO (prioridade máxima - sequências longas)
+        embalo = self.detectar_embalo()
+        if embalo:
+            self.ultimo_gatilho = 'EMBALO'
+            return embalo
         
         # RITMO_PING_PONG (6 giros)
         ping_pong = self.detectar_ritmo_ping_pong()
@@ -574,8 +594,8 @@ class DuziaAI:
         if gatilho and gatilho['duzia'] != 0:
             score[gatilho['duzia']] += gatilho['forca'] * 2
         
-        # 🆕 V10.9.6 - Reforço RITMO_PING_PONG
-        if gatilho and gatilho['tipo'] == 'RITMO_PING_PONG':
+        # Reforço RITMO_PING_PONG e EMBALO
+        if gatilho and gatilho['tipo'] in ('RITMO_PING_PONG', 'EMBALO'):
             score[gatilho['duzia']] += 5
         
         u = list(self.historico)
@@ -629,7 +649,7 @@ class DuziaAI:
         
         confianca = min(3.5, max(1.0, s1 / max(1, s2) * 1.5))
 
-        # 🆕 V10.9.6 - Ajuste confiança com alerta zero
+        # Ajuste confiança com alerta zero
         if self.alerta_zero_ativo and confianca >= 3.4:
             confianca = min(3.3, confianca)
         
@@ -683,7 +703,7 @@ class DuziaAI:
         if self.alerta_zero_ativo: 
             previsao['incluir_zero'] = True
 
-        # 🆕 V10.9.6 - REGRA FADIGA DE DÚZIA
+        # REGRA FADIGA DE DÚZIA
         if self.acertos_consecutivos_mesma_duzia >= 4 and self.ultima_duzia_acertada is not None:
             duzia_fadigada = self.ultima_duzia_acertada
             if previsao['duzia'] == duzia_fadigada:
@@ -944,8 +964,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.6 - Fadiga de Dúzia", layout="wide")
-st.title("🎰 DuziaAI V10.9.6 - FADIGA DE DÚZIA (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.7 - EMBALO", layout="wide")
+st.title("🎰 DuziaAI V10.9.7 - GATILHO EMBALO (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -988,7 +1008,7 @@ if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_cha
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.6 - FADIGA DE DÚZIA")
+    st.markdown("## ⚙️ V10.9.7 - EMBALO")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -997,12 +1017,7 @@ with st.sidebar:
     api_opcoes = list(API_URLS.keys())
     api_atual = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
     api_index = api_opcoes.index(api_atual) if api_atual in api_opcoes else 0
-    st.session_state.api_selecionada = st.radio(
-        "Roleta:",
-        api_opcoes,
-        index=api_index,
-        help="XXXtreme Lightning = Raios 50x-2000x | Immersive = Sem raios"
-    )
+    st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
     
     if st.session_state.api_selecionada == 'XXXtreme Lightning':
         st.success("⚡ Raios: 50x-2000x | Nº: 36x | Zero: 36x")
@@ -1014,6 +1029,7 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
+    st.caption("🔥 EMBALO: 3+ mesma dúzia em 4 giros")
     st.caption("🔄 FADIGA DE DÚZIA: 4+ acertos = muda")
     st.caption("🏓 RITMO_PING_PONG (+5 reforço)")
     st.caption("🎯 RITMO_BINARIO")
@@ -1021,7 +1037,6 @@ with st.sidebar:
     st.caption("🔥 EXAUSTAO_DOMINANCIA")
     st.caption("⚡ MUDANCA_VELOCIDADE")
     st.caption("🟢 7 regras de Alerta Zero")
-    st.caption("📉 Confiança ajustada com Alerta Zero")
     st.markdown("---")
     with st.expander("🔔 Telegram PRINCIPAL", expanded=False):
         st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
@@ -1102,7 +1117,6 @@ with cg:
         )])
         titulo = f"🎯 {'⚠️ GATILHO: '+gatilho['tipo'] if gatilho else 'Sem gatilho'}"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ALERTA ZERO!"
-        if sis.duzia_ai.acertos_consecutivos_mesma_duzia >= 4: titulo += f" | ⚠️ FADIGA D{sis.duzia_ai.ultima_duzia_acertada}"
         fig.update_layout(title=titulo, height=250, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
         
@@ -1137,8 +1151,6 @@ with ce:
     st.subheader("🎰 Entrada Atual")
     if sis.duzia_ai.alerta_zero_ativo:
         st.warning("⚠️ ALERTA ZERO! 🟢")
-    if sis.duzia_ai.acertos_consecutivos_mesma_duzia >= 4:
-        st.warning(f"⚠️ FADIGA D{sis.duzia_ai.ultima_duzia_acertada}: {sis.duzia_ai.acertos_consecutivos_mesma_duzia} acertos seguidos!")
     
     if sis.entrada_ativa:
         e = sis.entrada_ativa
@@ -1249,5 +1261,5 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.6 | Fadiga de Dúzia | {st.session_state.get('api_selecionada', 'XXXtreme Lightning')} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.7 | EMBALO | {st.session_state.get('api_selecionada', 'XXXtreme Lightning')} | {formatar_hora_brasilia()}")
 salvar_sessao()
