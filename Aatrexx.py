@@ -197,17 +197,17 @@ def enviar_previsao_auto(previsao):
         salvar_sessao()
     except Exception as e: logging.error(f"Erro: {e}")
 
-def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero, pagamento_numero=72, pagamento_zero=72):
+def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero):
     try:
         partes = []
         if acerto_zero:
-            partes.append(f"✅ ZERO! (+R${pagamento_zero:.0f})")
+            partes.append("✅ ZERO!")
         elif numero_real == 0:
             partes.append("🟢 ZERO (não apostado)")
         else:
             duzia_real = get_duzia(numero_real)
             if acerto_numero:
-                partes.append(f"🎯 Nº EXATO {numero_real}! (+R${pagamento_numero:.0f})")
+                partes.append(f"🎯 Nº EXATO {numero_real}!")
             elif acerto_duzia:
                 partes.append(f"✅ Green - D{duzia_real}")
             else:
@@ -259,32 +259,14 @@ def enviar_telegram(mensagem, token, chat_id):
 # API - MÚLTIPLAS ROULETES
 # =============================
 
-# URLs das APIs disponíveis
 API_URLS = {
     'XXXtreme Lightning': "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremelightningroulette/latest",
     'Immersive Roulette': "https://api.casinoscores.com/svc-evolution-game-events/api/immersiveroulette/latest",
 }
 
 def get_api_url():
-    """Retorna a URL da API selecionada"""
     api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
     return API_URLS.get(api_selecionada, API_URLS['XXXtreme Lightning'])
-
-def get_pagamento_numero():
-    """Retorna o pagamento para número exato baseado na roleta selecionada"""
-    api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-    if api_selecionada == 'XXXtreme Lightning':
-        return 72  # 36x com R$ 2
-    else:
-        return 70  # 35x com R$ 2
-
-def get_pagamento_zero():
-    """Retorna o pagamento para zero baseado na roleta selecionada"""
-    api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-    if api_selecionada == 'XXXtreme Lightning':
-        return 72  # 36x com R$ 2
-    else:
-        return 70  # 35x com R$ 2
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
@@ -730,52 +712,23 @@ class SistemaBot:
         self.acertos_zero = 0
         self.erros_zero = 0
         
-        self.raios_acertados = 0
-        self.raios_perdidos = 0
-        
         self.ultimo_numero = None
         self.sinais_grafico = []
         self.numero_rodada = 0
     
     def processar_novo_numero(self, numero_data):
-        # 🆕 Suporte a múltiplos formatos de API
+        # Formato padronizado (já tratado pelo fetch_latest_result)
         if isinstance(numero_data, dict):
-            # Tenta extrair número de diferentes formatos
-            nr = None
-            lucky_numbers = []
-            lucky_multipliers = {}
-            
-            # Formato XXXtreme Lightning
-            if 'number' in numero_data:
-                nr = numero_data.get('number')
-                lucky_numbers = numero_data.get('luckyNumbers', [])
-                lucky_multipliers = numero_data.get('luckyMultipliers', {})
-            # Formato Immersive Roulette
-            elif 'data' in numero_data:
-                result = numero_data.get('data', {}).get('result', {})
-                outcome = result.get('outcome', {})
-                nr = outcome.get('number')
-                # Immersive não tem raios
-                lucky_numbers = []
-                lucky_multipliers = {}
+            nr = numero_data.get('number')
         else:
             nr = numero_data
-            lucky_numbers = []
-            lucky_multipliers = {}
         
         if nr is None or not validar_numero(nr): return
-        
-        eh_raio = nr in lucky_numbers
-        multiplicador = lucky_multipliers.get(nr, 0) if eh_raio else 0
         
         self.numero_rodada += 1
         self.duzia_ai.adicionar(nr)
         self.historico_numeros.append(nr)
         self.ultimo_numero = nr
-        
-        # 🆕 Pagamentos baseados na roleta selecionada
-        pag_numero = get_pagamento_numero()
-        pag_zero = get_pagamento_zero()
         
         if self.entrada_ativa:
             duzia_real = get_duzia(nr)
@@ -794,12 +747,8 @@ class SistemaBot:
             
             if acerto_numero_exato:
                 self.acertos_numero += 1
-                if eh_raio:
-                    self.raios_acertados += 1
             elif nr != 0:
                 self.erros_numero += 1
-                if eh_raio:
-                    self.raios_perdidos += 1
             
             if acerto_zero:
                 self.acertos_zero += 1
@@ -818,8 +767,6 @@ class SistemaBot:
             
             if acerto_zero:
                 status_visual = '🟢'
-            elif acerto_numero_exato and eh_raio:
-                status_visual = '⚡'
             elif acerto_numero_exato:
                 status_visual = '🎯'
             elif acerto_primaria:
@@ -836,8 +783,8 @@ class SistemaBot:
                 'acerto_duzia': acerto_primaria or acerto_secundaria,
                 'acerto_numero': acerto_numero_exato,
                 'acerto_zero': acerto_zero,
-                'eh_raio': eh_raio,
-                'multiplicador': multiplicador,
+                'eh_raio': False,
+                'multiplicador': 0,
                 'status': status_visual,
                 'confianca': self.entrada_ativa.get('confianca', 0),
                 'gatilho': self.entrada_ativa.get('gatilho_ativo', None),
@@ -845,7 +792,7 @@ class SistemaBot:
                 'incluir_zero': incluir_zero
             })
             if len(self.historico_entradas) > 50: self.historico_entradas = self.historico_entradas[-50:]
-            enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, pag_numero, pag_zero)
+            enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero)
             self.entrada_ativa = None
         
         previsao = self.duzia_ai.prever()
@@ -888,7 +835,6 @@ class SistemaBot:
         self.acertos_duzia = 0; self.erros_duzia = 0
         self.acertos_numero = 0; self.erros_numero = 0
         self.acertos_zero = 0; self.erros_zero = 0
-        self.raios_acertados = 0; self.raios_perdidos = 0
         self.historico_entradas = []; self.historico_numeros.clear()
         self.entrada_ativa = None; self.ultimo_numero = None
         self.sinais_grafico = []; self.numero_rodada = 0
@@ -929,8 +875,14 @@ def fetch_latest_result():
                         lm[n] = m
             return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
         else:
-            # Formato Immersive Roulette (já é o JSON completo)
-            return d
+            # Formato Immersive Roulette
+            data = d.get("data", {})
+            result = data.get("result", {})
+            outcome = result.get("outcome", {})
+            nm = outcome.get("number")
+            ts = data.get("startedAt")
+            # Immersive não tem raios
+            return {"number": nm, "timestamp": ts, "luckyNumbers": [], "luckyMultipliers": {}}
     except Exception as e:
         logging.warning(f"Erro API: {e}")
         return None
@@ -963,7 +915,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.5 - 2 APIs", layout="wide")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.5 - 2 Roletes", layout="wide")
 st.title("🎰 DuziaAI V10.9.5 - 2 ROULETES (BRT)")
 
 if "sistema" not in st.session_state:
@@ -1012,7 +964,7 @@ with st.sidebar:
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
     
-    # 🆕 Seletor de API
+    # Seletor de API
     st.markdown("### 🎰 Selecione a Roleta")
     api_opcoes = list(API_URLS.keys())
     api_atual = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
@@ -1095,14 +1047,13 @@ total_duzias = int(sis.acertos_duzia + sis.erros_duzia)
 tx_duzias = (sis.acertos_duzia / total_duzias * 100) if total_duzias > 0 else 0
 total_numeros = sis.acertos_numero + sis.erros_numero
 tx_numeros = (sis.acertos_numero / total_numeros * 100) if total_numeros > 0 else 0
-total_raios = sis.raios_acertados + sis.raios_perdidos
 
 c1.metric("🎯 Nº Exato", sis.acertos_numero, f"{tx_numeros:.0f}%")
 c2.metric("✅ Acertos Dúzia", int(sis.acertos_duzia), f"{tx_duzias:.0f}%")
 c3.metric("❌ Erros Dúzia", sis.erros_duzia)
 c4.metric("🟢 Zeros", f"{sis.acertos_zero}/{sis.acertos_zero + sis.erros_zero}")
-c5.metric("⚡ Raios", f"{sis.raios_acertados}/{total_raios}" if total_raios > 0 else "0/0")
-c6.metric("📦 Total", total_duzias)
+c5.metric("📦 Total", total_duzias)
+c6.metric("🎰 Roleta", st.session_state.get('api_selecionada', 'XXXtreme')[:10])
 
 st.markdown("---")
 cg, ce = st.columns([3,2])
@@ -1245,10 +1196,6 @@ if sis.historico_entradas:
                     "🎲": st.column_config.TextColumn("🎲 Sorteado", width="small"),
                     "Rod": st.column_config.NumberColumn("Rod", width="small"),
                 })
-    
-    total_raios_sessao = sum(1 for e in sis.historico_entradas if e.get('eh_raio'))
-    if total_raios_sessao > 0:
-        st.info(f"⚡ **Raios nesta sessão:** {total_raios_sessao} | Acertados: {sis.raios_acertados} | Perdidos: {sis.raios_perdidos}")
     
     if st.button("📥 Exportar CSV", use_container_width=True):
         if exportar_historico_csv(sis.historico_entradas): st.success("✅")
