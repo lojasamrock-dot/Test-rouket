@@ -10,6 +10,13 @@ from datetime import datetime, timezone, timedelta
 import numpy as np
 import plotly.graph_objects as plt
 
+# Importação Segura do Módulo de Machine Learning
+try:
+    from sklearn.ensemble import RandomForestClassifier
+    ML_DISPONIVEL = True
+except ImportError:
+    ML_DISPONIVEL = False
+
 # =============================
 # CONFIGURAÇÕES DE LOGGING
 # =============================
@@ -105,7 +112,7 @@ def nova_sessao():
 # =============================
 
 def _selecionar_melhores_numeros(duzia, numeros_completos, quantidade=6):
-    """Seleciona os 6 melhores números de uma dúzia baseado no histórico recente."""
+    """Seleciona dinamicamente os melhores números com base nos terminais quentes recentes."""
     if duzia == 1:
         numeros_da_duzia = list(range(1, 13))
     elif duzia == 2:
@@ -256,13 +263,12 @@ def enviar_telegram(mensagem, token, chat_id):
     except Exception as e: logging.error(f"Erro Telegram: {e}")
 
 # =============================
-# API - 3 ROULETES
+# API - MÚLTIPLAS ROULETES
 # =============================
 
 API_URLS = {
     'XXXtreme Lightning': "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremelightningroulette/latest",
     'Immersive Roulette': "https://api.casinoscores.com/svc-evolution-game-events/api/immersiveroulette/latest",
-    'Mega Roulette': "https://api.casinoscores.com/svc-evolution-game-events/api/megaroulette/latest",
 }
 
 def get_api_url():
@@ -283,7 +289,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.9.7 - COM EMBALO
+# 🧠 DUZIA AI V10.9.7 - COM ENGINE MACHINE LEARNING
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -409,6 +415,40 @@ class DuziaAI:
         if padrao in self.transicoes and self.transicoes[padrao]:
             return self.transicoes[padrao].most_common(1)[0]
         return None
+
+    # STRATEGY EXTENSION: MODELO DE INFERÊNCIA MACHINE LEARNING AUTOCALIBRÁVEL
+    def _prever_ml(self):
+        """Usa RandomForest com padrões temporais de lags estruturais para calibrar probabilidades."""
+        if not ML_DISPONIVEL or len(self.historico_completo) < 25:
+            return {1: 0.0, 2: 0.0, 3: 0.0}
+        try:
+            X, y = [], []
+            hist = list(self.historico_completo)
+            
+            # Engenharia de Features: Padrões de atraso sequencial (Lags 1 a 4)
+            for i in range(4, len(hist)):
+                if hist[i] in [1, 2, 3]:  # Foco de predição nas dúzias
+                    X.append([hist[i-1], hist[i-2], hist[i-3], hist[i-4]])
+                    y.append(hist[i])
+            
+            if len(set(y)) < 2:  # Requisito de variabilidade mínima de classes
+                return {1: 0.0, 2: 0.0, 3: 0.0}
+                
+            # Classificador Random Forest com parametrização de baixa variância para tempo real
+            clf = RandomForestClassifier(n_estimators=40, max_depth=4, random_state=42)
+            clf.fit(X, y)
+            
+            estado_atual = [[hist[-1], hist[-2], hist[-3], hist[-4]]]
+            probabilidades = clf.predict_proba(estado_atual)[0]
+            
+            ml_scores = {1: 0.0, 2: 0.0, 3: 0.0}
+            for classe, prob in zip(clf.classes_, probabilidades):
+                if classe in ml_scores:
+                    ml_scores[classe] = float(prob) * 35  # Peso de dominância adaptativa no Score
+            return ml_scores
+        except Exception as e:
+            logging.warning(f"Erro no módulo adaptativo de Machine Learning: {e}")
+            return {1: 0.0, 2: 0.0, 3: 0.0}
     
     def _get_outras_duzias(self, duzia):
         return [d for d in [1, 2, 3] if d != duzia]
@@ -590,6 +630,13 @@ class DuziaAI:
         markov = self._prever_markov()
         if markov and markov[0] != 0:
             score[markov[0]] += 10
+            
+        # ==========================================
+        # INTERCEPTAÇÃO DO MOTOR DE MACHINE LEARNING
+        # ==========================================
+        ml_scores = self._prever_ml()
+        for d in score:
+            score[d] += ml_scores.get(d, 0.0)
         
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0:
@@ -912,8 +959,7 @@ def fetch_latest_result():
         
         api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
         
-        if api_selecionada in ('XXXtreme Lightning', 'Mega Roulette'):
-            # Formato XXXtreme Lightning e Mega Roulette (idênticos)
+        if api_selecionada == 'XXXtreme Lightning':
             gd = d.get("data", {})
             rs = gd.get("result", {})
             nm = rs.get("outcome", {}).get("number")
@@ -928,7 +974,6 @@ def fetch_latest_result():
                         lm[n] = m
             return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
         else:
-            # Formato Immersive Roulette
             data = d.get("data", {})
             result = data.get("result", {})
             outcome = result.get("outcome", {})
@@ -967,8 +1012,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.7 - 3 Roletas", layout="wide")
-st.title("🎰 DuziaAI V10.9.7 - 3 ROULETAS (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.7 - EMBALO", layout="wide")
+st.title("🎰 DuziaAI V10.9.7 - GATILHO EMBALO (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1011,7 +1056,7 @@ if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_cha
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.7 - 3 ROULETES")
+    st.markdown("## ⚙️ V10.9.7 - EMBALO")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -1023,17 +1068,16 @@ with st.sidebar:
     st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
     
     if st.session_state.api_selecionada == 'XXXtreme Lightning':
-        st.success("⚡ Raios: 50x-2000x | Nº: 36x | Zero: 36x | Dúzia: 3x")
-    elif st.session_state.api_selecionada == 'Mega Roulette':
-        st.warning("⚡ Raios: 50x-500x | Nº: 24x | Zero: 24x | Dúzia: 2x")
+        st.success("⚡ Raios: 50x-2000x | Nº: 36x | Zero: 36x")
     else:
-        st.info("🎯 Sem raios | Nº: 35x | Zero: 35x | Dúzia: 2x")
+        st.info("🎯 Sem raios | Nº: 35x | Zero: 35x")
     
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
+    st.caption("🤖 ML ADAPTATIVO: RandomForest ativo")
     st.caption("🔥 EMBALO: 3+ mesma dúzia em 4 giros")
     st.caption("🔄 FADIGA DE DÚZIA: 4+ acertos = muda")
     st.caption("🏓 RITMO_PING_PONG (+5 reforço)")
@@ -1121,6 +1165,7 @@ with cg:
             textposition='auto'
         )])
         titulo = f"🎯 {'⚠️ GATILHO: '+gatilho['tipo'] if gatilho else 'Sem gatilho'}"
+        if ML_DISPONIVEL and len(sis.historico_numeros) >= 25: titulo += " | 🤖 ML Active"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ALERTA ZERO!"
         fig.update_layout(title=titulo, height=250, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
@@ -1266,5 +1311,5 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.7 | 3 Roletas | {st.session_state.get('api_selecionada', 'XXXtreme Lightning')} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.7 | EMBALO + ML | {st.session_state.get('api_selecionada', 'XXXtreme Lightning')} | {formatar_hora_brasilia()}")
 salvar_sessao()
