@@ -204,7 +204,7 @@ def enviar_previsao_auto(previsao):
         salvar_sessao()
     except Exception as e: logging.error(f"Erro: {e}")
 
-def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero):
+def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero, eh_raio=False, multiplicador=0):
     try:
         partes = []
         if acerto_zero:
@@ -214,7 +214,10 @@ def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero)
         else:
             duzia_real = get_duzia(numero_real)
             if acerto_numero:
-                partes.append(f"🎯 Nº EXATO {numero_real}!")
+                if eh_raio:
+                    partes.append(f"⚡ RAIO {multiplicador}X! Nº {numero_real}")
+                else:
+                    partes.append(f"🎯 Nº EXATO {numero_real}!")
             elif acerto_duzia:
                 partes.append(f"✅ Green - D{duzia_real}")
             else:
@@ -234,7 +237,9 @@ def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero)
         # Telegram Alternativo
         if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
             if acerto_duzia or acerto_zero:
-                if acerto_numero:
+                if acerto_numero and eh_raio:
+                    msg_alt = f"⚡ GREEN RAIO {multiplicador}X! Nº {numero_real}"
+                elif acerto_numero:
                     msg_alt = f"🎯 GREEN! Nº {numero_real}"
                 elif acerto_zero:
                     msg_alt = "🟢 GREEN ZERO!"
@@ -263,12 +268,13 @@ def enviar_telegram(mensagem, token, chat_id):
     except Exception as e: logging.error(f"Erro Telegram: {e}")
 
 # =============================
-# API - MÚLTIPLAS ROULETES
+# API - 3 ROULETES
 # =============================
 
 API_URLS = {
     'XXXtreme Lightning': "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremelightningroulette/latest",
     'Immersive Roulette': "https://api.casinoscores.com/svc-evolution-game-events/api/immersiveroulette/latest",
+    'Mega Roulette': "https://api.casinoscores.com/svc-evolution-game-events/api/megaroulette/latest",
 }
 
 def get_api_url():
@@ -289,7 +295,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.9.7 - COM ENGINE MACHINE LEARNING
+# 🧠 DUZIA AI V10.9.8 - COM ML + FILTROS DE ERRO + RAIOS
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -416,38 +422,30 @@ class DuziaAI:
             return self.transicoes[padrao].most_common(1)[0]
         return None
 
-    # STRATEGY EXTENSION: MODELO DE INFERÊNCIA MACHINE LEARNING AUTOCALIBRÁVEL
+    # MACHINE LEARNING
     def _prever_ml(self):
-        """Usa RandomForest com padrões temporais de lags estruturais para calibrar probabilidades."""
         if not ML_DISPONIVEL or len(self.historico_completo) < 25:
             return {1: 0.0, 2: 0.0, 3: 0.0}
         try:
             X, y = [], []
             hist = list(self.historico_completo)
-            
-            # Engenharia de Features: Padrões de atraso sequencial (Lags 1 a 4)
             for i in range(4, len(hist)):
-                if hist[i] in [1, 2, 3]:  # Foco de predição nas dúzias
+                if hist[i] in [1, 2, 3]:
                     X.append([hist[i-1], hist[i-2], hist[i-3], hist[i-4]])
                     y.append(hist[i])
-            
-            if len(set(y)) < 2:  # Requisito de variabilidade mínima de classes
+            if len(set(y)) < 2:
                 return {1: 0.0, 2: 0.0, 3: 0.0}
-                
-            # Classificador Random Forest com parametrização de baixa variância para tempo real
             clf = RandomForestClassifier(n_estimators=40, max_depth=4, random_state=42)
             clf.fit(X, y)
-            
             estado_atual = [[hist[-1], hist[-2], hist[-3], hist[-4]]]
             probabilidades = clf.predict_proba(estado_atual)[0]
-            
             ml_scores = {1: 0.0, 2: 0.0, 3: 0.0}
             for classe, prob in zip(clf.classes_, probabilidades):
                 if classe in ml_scores:
-                    ml_scores[classe] = float(prob) * 35  # Peso de dominância adaptativa no Score
+                    ml_scores[classe] = float(prob) * 35
             return ml_scores
         except Exception as e:
-            logging.warning(f"Erro no módulo adaptativo de Machine Learning: {e}")
+            logging.warning(f"Erro ML: {e}")
             return {1: 0.0, 2: 0.0, 3: 0.0}
     
     def _get_outras_duzias(self, duzia):
@@ -477,19 +475,16 @@ class DuziaAI:
         u = list(self.historico)[-10:]
         nums = self.numeros_completos[-5:] if len(self.numeros_completos) >= 5 else self.numeros_completos
         
-        # Z1: Zero duplo
         if len(nums) >= 2 and nums[-1] == 0:
             self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         if len(nums) >= 3 and 0 in nums[-3:-1]:
             self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
-        # Z2: Streak 3+
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
                 self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
-        # Z4: Alternância 4+ em 5
         if len(u) >= 5:
             ultimas_5 = u[-5:]
             trocas = sum(1 for i in range(1, len(ultimas_5)) 
@@ -497,20 +492,17 @@ class DuziaAI:
             if trocas >= 4:
                 self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
-        # Z5: 3 dúzias diferentes em 3
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             duzias_presentes = set(d for d in ultimas_3 if d != 0)
             if len(duzias_presentes) == 3:
                 self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
-        # Z6: Streak 2 + zero recente
         if len(u) >= 2:
             if u[-1] == u[-2] and u[-1] != 0:
                 if 0 in u[-6:]:
                     self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         
-        # Z7: Streak de 2 simples
         if len(u) >= 2:
             if u[-1] == u[-2] and u[-1] != 0:
                 self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
@@ -518,32 +510,26 @@ class DuziaAI:
         self.alerta_zero_ativo = False
         return False
     
-    # EMBALO (3+ repetições da mesma dúzia nos últimos 4 giros)
     def detectar_embalo(self):
         u = list(self.historico)[-4:]
         if len(u) < 3:
             return None
-        
         freq = Counter([d for d in u if d != 0])
         if freq:
             dom = freq.most_common(1)[0]
             if dom[1] >= 3 and dom[0] != 0:
                 return {'tipo': 'EMBALO', 'duzia': dom[0], 'forca': 9}
-        
         return None
     
-    # RITMO_PING_PONG (6 giros)
     def detectar_ritmo_ping_pong(self):
         u = list(self.historico)[-6:]
         if len(u) < 4:
             return None
-        
         pares = {}
         for i in range(1, len(u)):
             if u[i] != u[i-1] and u[i] != 0 and u[i-1] != 0:
                 par = tuple(sorted([u[i], u[i-1]]))
                 pares[par] = pares.get(par, 0) + 1
-        
         if pares:
             par_principal = max(pares, key=pares.get)
             count = pares[par_principal]
@@ -560,19 +546,16 @@ class DuziaAI:
         u = list(self.historico)
         freq = Counter([d for d in u if d != 0])
         
-        # EMBALO (prioridade máxima - sequências longas)
         embalo = self.detectar_embalo()
         if embalo:
             self.ultimo_gatilho = 'EMBALO'
             return embalo
         
-        # RITMO_PING_PONG (6 giros)
         ping_pong = self.detectar_ritmo_ping_pong()
         if ping_pong:
             self.ultimo_gatilho = 'RITMO_PING_PONG'
             return ping_pong
         
-        # RITMO_BINARIO
         if len(u) >= 4:
             ult_4 = [u[-1], u[-2], u[-3], u[-4]]
             if 0 not in ult_4:
@@ -580,7 +563,6 @@ class DuziaAI:
                     self.ultimo_gatilho = 'RITMO_BINARIO'
                     return {'tipo': 'RITMO_BINARIO', 'duzia': ult_4[1], 'forca': 9}
 
-        # QUEBRA_POS_ZERO
         if 0 in u[-6:]:
             pos_zero = len(u) - 1 - u[::-1].index(0)
             depois_zero = u[pos_zero+1:]
@@ -588,7 +570,6 @@ class DuziaAI:
                 self.ultimo_gatilho = 'QUEBRA_POS_ZERO'
                 return {'tipo': 'QUEBRA_POS_ZERO', 'duzia': depois_zero[-1], 'forca': 8}
         
-        # EXAUSTAO_DOMINANCIA
         if len(u) >= 10:
             ultimas_10 = u[-10:]
             freq_10 = Counter([d for d in ultimas_10 if d != 0])
@@ -602,7 +583,6 @@ class DuziaAI:
                         self.ultimo_gatilho = 'EXAUSTAO_DOMINANCIA'
                         return {'tipo': 'EXAUSTAO_DOMINANCIA', 'duzia': dz_emergente, 'forca': 7}
         
-        # MUDANCA_VELOCIDADE
         if len(u) >= 8:
             freq_1 = Counter([d for d in u[-8:-4] if d != 0])
             freq_2 = Counter([d for d in u[-4:] if d != 0])
@@ -631,9 +611,6 @@ class DuziaAI:
         if markov and markov[0] != 0:
             score[markov[0]] += 10
             
-        # ==========================================
-        # INTERCEPTAÇÃO DO MOTOR DE MACHINE LEARNING
-        # ==========================================
         ml_scores = self._prever_ml()
         for d in score:
             score[d] += ml_scores.get(d, 0.0)
@@ -642,7 +619,6 @@ class DuziaAI:
         if gatilho and gatilho['duzia'] != 0:
             score[gatilho['duzia']] += gatilho['forca'] * 2
         
-        # Reforço RITMO_PING_PONG e EMBALO
         if gatilho and gatilho['tipo'] in ('RITMO_PING_PONG', 'EMBALO'):
             score[gatilho['duzia']] += 5
         
@@ -697,7 +673,6 @@ class DuziaAI:
         
         confianca = min(3.5, max(1.0, s1 / max(1, s2) * 1.5))
 
-        # Ajuste confiança com alerta zero
         if self.alerta_zero_ativo and confianca >= 3.4:
             confianca = min(3.3, confianca)
         
@@ -706,6 +681,7 @@ class DuziaAI:
             confianca *= 0.5
         
         pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
+        motivo = ""
         
         # Kill Switch de Teimosia
         if self.ultimo_resultado_duzia == False and self.ultima_confianca >= 3.4:
@@ -713,22 +689,33 @@ class DuziaAI:
                 d1 = d2
                 s1 = s2
         
-        # Filtro: EXAUSTAO + Alerta Zero (sem anti-erro) = NÃO ENTRA
+        # 🆕 FILTRO 1: EMBALO + Confiança Alta + Alerta Zero = BLOQUEAR
+        if gatilho and gatilho['tipo'] == 'EMBALO' and confianca >= 3.3 and self.alerta_zero_ativo:
+            pode_entrar = False
+            motivo = "🚫 EMBALO + Conf Alta + Zero: Alto risco de erro"
+        
+        # 🆕 FILTRO 2: Anti-Erro + Alerta Zero + Confiança Baixa = BLOQUEAR
+        if self.modo_anti_erro and self.alerta_zero_ativo and confianca < 2.5:
+            pode_entrar = False
+            motivo = "🚫 Anti-Erro + Zero + Conf Baixa: Aguardar próximo giro"
+        
+        # Filtro: EXAUSTAO + Alerta Zero (sem anti-erro)
         if gatilho and gatilho['tipo'] == 'EXAUSTAO_DOMINANCIA' and self.alerta_zero_ativo and not self.modo_anti_erro:
             pode_entrar = False
             motivo = "🚫 EXAUSTAO + Zero: Padrão de alto risco"
         
         if self.modo_anti_erro:
             if self.erros_consecutivos == 1:
-                motivo = f"🔄 ANTI-ERRO: Seguindo última real"
+                motivo = f"🔄 ANTI-ERRO: Seguindo última real" if not motivo else motivo
             else:
-                motivo = f"🔄 ANTI-ERRO x{self.erros_consecutivos}: Apostando na ausente"
+                motivo = f"🔄 ANTI-ERRO x{self.erros_consecutivos}: Apostando na ausente" if not motivo else motivo
         else:
-            motivo = "" if pode_entrar else f"Score baixo ({s1:.1f})"
+            if not motivo:
+                motivo = "" if pode_entrar else f"Score baixo ({s1:.1f})"
         
         previsao = {
             "entrar": pode_entrar,
-            "motivo": motivo if pode_entrar else motivo,
+            "motivo": motivo,
             "score": score,
             "confianca": round(confianca, 2),
             "duzia": d1,
@@ -751,14 +738,13 @@ class DuziaAI:
         if self.alerta_zero_ativo: 
             previsao['incluir_zero'] = True
 
-        # REGRA FADIGA DE DÚZIA
         if self.acertos_consecutivos_mesma_duzia >= 4 and self.ultima_duzia_acertada is not None:
             duzia_fadigada = self.ultima_duzia_acertada
             if previsao['duzia'] == duzia_fadigada:
                 outras = self._get_outras_duzias(duzia_fadigada)
                 freq_outras = {d: u.count(d) for d in outras}
                 duzia_mudanca = max(freq_outras, key=freq_outras.get)
-                logging.info(f"🔄 FADIGA D{duzia_fadigada} ({self.acertos_consecutivos_mesma_duzia}x): Mudando para D{duzia_mudanca}")
+                logging.info(f"🔄 FADIGA D{duzia_fadigada}: Mudando para D{duzia_mudanca}")
                 previsao['duzia'] = duzia_mudanca
         
         if self.consecutivos_amarelos >= 2:
@@ -818,12 +804,21 @@ class SistemaBot:
         self.numero_rodada = 0
     
     def processar_novo_numero(self, numero_data):
+        # 🆕 Extrair número E raios do dicionário
         if isinstance(numero_data, dict):
             nr = numero_data.get('number')
+            lucky_numbers = numero_data.get('luckyNumbers', [])
+            lucky_multipliers = numero_data.get('luckyMultipliers', {})
         else:
             nr = numero_data
+            lucky_numbers = []
+            lucky_multipliers = {}
         
         if nr is None or not validar_numero(nr): return
+        
+        # 🆕 Verificar se é raio
+        eh_raio = nr in lucky_numbers
+        multiplicador = lucky_multipliers.get(nr, 0) if eh_raio else 0
         
         self.numero_rodada += 1
         self.duzia_ai.adicionar(nr)
@@ -867,6 +862,8 @@ class SistemaBot:
             
             if acerto_zero:
                 status_visual = '🟢'
+            elif acerto_numero_exato and eh_raio:
+                status_visual = '⚡'
             elif acerto_numero_exato:
                 status_visual = '🎯'
             elif acerto_primaria:
@@ -883,8 +880,8 @@ class SistemaBot:
                 'acerto_duzia': acerto_primaria or acerto_secundaria,
                 'acerto_numero': acerto_numero_exato,
                 'acerto_zero': acerto_zero,
-                'eh_raio': False,
-                'multiplicador': 0,
+                'eh_raio': eh_raio,
+                'multiplicador': multiplicador,
                 'status': status_visual,
                 'confianca': self.entrada_ativa.get('confianca', 0),
                 'gatilho': self.entrada_ativa.get('gatilho_ativo', None),
@@ -892,7 +889,7 @@ class SistemaBot:
                 'incluir_zero': incluir_zero
             })
             if len(self.historico_entradas) > 50: self.historico_entradas = self.historico_entradas[-50:]
-            enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero)
+            enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, eh_raio, multiplicador)
             self.entrada_ativa = None
         
         previsao = self.duzia_ai.prever()
@@ -959,7 +956,9 @@ def fetch_latest_result():
         
         api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
         
-        if api_selecionada == 'XXXtreme Lightning':
+        # 🆕 Tratamento separado para cada API
+        if api_selecionada in ('XXXtreme Lightning', 'Mega Roulette'):
+            # Formato com raios (XXXtreme Lightning e Mega Roulette)
             gd = d.get("data", {})
             rs = gd.get("result", {})
             nm = rs.get("outcome", {}).get("number")
@@ -974,6 +973,7 @@ def fetch_latest_result():
                         lm[n] = m
             return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
         else:
+            # Formato Immersive Roulette (sem raios)
             data = d.get("data", {})
             result = data.get("result", {})
             outcome = result.get("outcome", {})
@@ -1012,8 +1012,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.7 - EMBALO", layout="wide")
-st.title("🎰 DuziaAI V10.9.7 - GATILHO EMBALO (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.8 - Raios + Filtros", layout="wide")
+st.title("🎰 DuziaAI V10.9.8 - RAIOS + FILTROS DE ERRO (BRT)")
 
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
@@ -1056,7 +1056,7 @@ if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_cha
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.7 - EMBALO")
+    st.markdown("## ⚙️ V10.9.8 - RAIOS + FILTROS")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -1068,9 +1068,11 @@ with st.sidebar:
     st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
     
     if st.session_state.api_selecionada == 'XXXtreme Lightning':
-        st.success("⚡ Raios: 50x-2000x | Nº: 36x | Zero: 36x")
+        st.success("⚡ Raios: 50x-2000x | Nº: 36x | Zero: 36x | Dúzia: 3x")
+    elif st.session_state.api_selecionada == 'Mega Roulette':
+        st.warning("⚡ Raios: 50x-500x | Nº: 24x | Zero: 24x | Dúzia: 2x")
     else:
-        st.info("🎯 Sem raios | Nº: 35x | Zero: 35x")
+        st.info("🎯 Sem raios | Nº: 35x | Zero: 35x | Dúzia: 2x")
     
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -1078,9 +1080,12 @@ with st.sidebar:
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
     st.caption("🤖 ML ADAPTATIVO: RandomForest ativo")
+    st.caption("⚡ RAIOS: Captura corrigida!")
+    st.caption("🚫 FILTRO: EMBALO + Conf Alta + Zero")
+    st.caption("🚫 FILTRO: Anti-Erro + Zero + Conf Baixa")
     st.caption("🔥 EMBALO: 3+ mesma dúzia em 4 giros")
     st.caption("🔄 FADIGA DE DÚZIA: 4+ acertos = muda")
-    st.caption("🏓 RITMO_PING_PONG (+5 reforço)")
+    st.caption("🏓 RITMO_PING_PONG")
     st.caption("🎯 RITMO_BINARIO")
     st.caption("💥 QUEBRA_POS_ZERO")
     st.caption("🔥 EXAUSTAO_DOMINANCIA")
@@ -1165,7 +1170,7 @@ with cg:
             textposition='auto'
         )])
         titulo = f"🎯 {'⚠️ GATILHO: '+gatilho['tipo'] if gatilho else 'Sem gatilho'}"
-        if ML_DISPONIVEL and len(sis.historico_numeros) >= 25: titulo += " | 🤖 ML Active"
+        if ML_DISPONIVEL and len(sis.historico_numeros) >= 25: titulo += " | 🤖 ML"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ALERTA ZERO!"
         fig.update_layout(title=titulo, height=250, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
@@ -1311,5 +1316,5 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.7 | EMBALO + ML | {st.session_state.get('api_selecionada', 'XXXtreme Lightning')} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.8 | Raios + Filtros | {st.session_state.get('api_selecionada', 'XXXtreme Lightning')} | {formatar_hora_brasilia()}")
 salvar_sessao()
