@@ -10,13 +10,6 @@ from datetime import datetime, timezone, timedelta
 import numpy as np
 import plotly.graph_objects as plt
 
-# Importação Segura do Módulo de Machine Learning
-try:
-    from sklearn.ensemble import RandomForestClassifier
-    ML_DISPONIVEL = True
-except ImportError:
-    ML_DISPONIVEL = False
-
 # =============================
 # CONFIGURAÇÕES DE LOGGING
 # =============================
@@ -112,7 +105,7 @@ def nova_sessao():
 # =============================
 
 def _selecionar_melhores_numeros(duzia, numeros_completos, quantidade=6):
-    """Seleciona dinamicamente os melhores números com base nos terminais quentes recentes."""
+    """Seleciona os 6 melhores números de uma dúzia baseado no histórico recente."""
     if duzia == 1:
         numeros_da_duzia = list(range(1, 13))
     elif duzia == 2:
@@ -289,7 +282,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🧠 DUZIA AI V10.9.7 - COM ENGINE MACHINE LEARNING
+# 🧠 DUZIA AI V10.9.7 - COM GATILHO EMBALO
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -415,40 +408,6 @@ class DuziaAI:
         if padrao in self.transicoes and self.transicoes[padrao]:
             return self.transicoes[padrao].most_common(1)[0]
         return None
-
-    # STRATEGY EXTENSION: MODELO DE INFERÊNCIA MACHINE LEARNING AUTOCALIBRÁVEL
-    def _prever_ml(self):
-        """Usa RandomForest com padrões temporais de lags estruturais para calibrar probabilidades."""
-        if not ML_DISPONIVEL or len(self.historico_completo) < 25:
-            return {1: 0.0, 2: 0.0, 3: 0.0}
-        try:
-            X, y = [], []
-            hist = list(self.historico_completo)
-            
-            # Engenharia de Features: Padrões de atraso sequencial (Lags 1 a 4)
-            for i in range(4, len(hist)):
-                if hist[i] in [1, 2, 3]:  # Foco de predição nas dúzias
-                    X.append([hist[i-1], hist[i-2], hist[i-3], hist[i-4]])
-                    y.append(hist[i])
-            
-            if len(set(y)) < 2:  # Requisito de variabilidade mínima de classes
-                return {1: 0.0, 2: 0.0, 3: 0.0}
-                
-            # Classificador Random Forest com parametrização de baixa variância para tempo real
-            clf = RandomForestClassifier(n_estimators=40, max_depth=4, random_state=42)
-            clf.fit(X, y)
-            
-            estado_atual = [[hist[-1], hist[-2], hist[-3], hist[-4]]]
-            probabilidades = clf.predict_proba(estado_atual)[0]
-            
-            ml_scores = {1: 0.0, 2: 0.0, 3: 0.0}
-            for classe, prob in zip(clf.classes_, probabilidades):
-                if classe in ml_scores:
-                    ml_scores[classe] = float(prob) * 35  # Peso de dominância adaptativa no Score
-            return ml_scores
-        except Exception as e:
-            logging.warning(f"Erro no módulo adaptativo de Machine Learning: {e}")
-            return {1: 0.0, 2: 0.0, 3: 0.0}
     
     def _get_outras_duzias(self, duzia):
         return [d for d in [1, 2, 3] if d != duzia]
@@ -518,7 +477,7 @@ class DuziaAI:
         self.alerta_zero_ativo = False
         return False
     
-    # EMBALO (3+ repetições da mesma dúzia nos últimos 4 giros)
+    # 🆕 V10.9.7 - EMBALO (3+ repetições da mesma dúzia nos últimos 4 giros)
     def detectar_embalo(self):
         u = list(self.historico)[-4:]
         if len(u) < 3:
@@ -560,7 +519,7 @@ class DuziaAI:
         u = list(self.historico)
         freq = Counter([d for d in u if d != 0])
         
-        # EMBALO (prioridade máxima - sequências longas)
+        # 🆕 EMBALO (prioridade máxima - sequências longas)
         embalo = self.detectar_embalo()
         if embalo:
             self.ultimo_gatilho = 'EMBALO'
@@ -630,13 +589,6 @@ class DuziaAI:
         markov = self._prever_markov()
         if markov and markov[0] != 0:
             score[markov[0]] += 10
-            
-        # ==========================================
-        # INTERCEPTAÇÃO DO MOTOR DE MACHINE LEARNING
-        # ==========================================
-        ml_scores = self._prever_ml()
-        for d in score:
-            score[d] += ml_scores.get(d, 0.0)
         
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0:
@@ -1077,7 +1029,6 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("🤖 ML ADAPTATIVO: RandomForest ativo")
     st.caption("🔥 EMBALO: 3+ mesma dúzia em 4 giros")
     st.caption("🔄 FADIGA DE DÚZIA: 4+ acertos = muda")
     st.caption("🏓 RITMO_PING_PONG (+5 reforço)")
@@ -1165,7 +1116,6 @@ with cg:
             textposition='auto'
         )])
         titulo = f"🎯 {'⚠️ GATILHO: '+gatilho['tipo'] if gatilho else 'Sem gatilho'}"
-        if ML_DISPONIVEL and len(sis.historico_numeros) >= 25: titulo += " | 🤖 ML Active"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ALERTA ZERO!"
         fig.update_layout(title=titulo, height=250, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
@@ -1311,5 +1261,5 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.7 | EMBALO + ML | {st.session_state.get('api_selecionada', 'XXXtreme Lightning')} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.7 | EMBALO | {st.session_state.get('api_selecionada', 'XXXtreme Lightning')} | {formatar_hora_brasilia()}")
 salvar_sessao()
