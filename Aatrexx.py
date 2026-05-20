@@ -96,7 +96,6 @@ def carregar_dados_persistidos(api_name):
         if os.path.exists(paths['session']):
             with open(paths['session'], 'rb') as f: 
                 dados = pickle.load(f)
-                # Carregar entradas se existir
                 if os.path.exists(paths['entradas']):
                     with open(paths['entradas'], 'r') as f2:
                         dados['historico_entradas'] = json.load(f2)
@@ -268,6 +267,100 @@ def validar_numero(valor):
     try:
         num = int(valor); return 0 <= num <= 36
     except: return False
+
+# =============================
+# 🆕 3 FUNÇÕES DE CAPTURA INDEPENDENTES
+# =============================
+
+def fetch_XXXtreme_Lightning():
+    """Captura específica para XXXtreme Lightning Roulette"""
+    try:
+        url = API_URLS['XXXtreme Lightning']
+        r = requests.get(url, headers=HEADERS, timeout=5)
+        r.raise_for_status()
+        d = r.json()
+        
+        gd = d.get("data", {})
+        rs = gd.get("result", {})
+        nm = rs.get("outcome", {}).get("number")
+        ts = gd.get("startedAt")
+        
+        # Extrair raios (luckyNumbers)
+        ln, lm = [], {}
+        for item in rs.get('luckyNumbersList', []):
+            n = item.get('number')
+            if n is not None:
+                ln.append(n)
+                m = item.get('roundedMultiplier')
+                if m is not None: lm[n] = m
+        
+        logging.info(f"⚡ XXXtreme: Nº {nm} | Raios: {ln} | Multiplicadores: {lm}")
+        return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
+    except Exception as e:
+        logging.warning(f"❌ Erro XXXtreme: {e}")
+        return None
+
+def fetch_Immersive_Roulette():
+    """Captura específica para Immersive Roulette"""
+    try:
+        url = API_URLS['Immersive Roulette']
+        r = requests.get(url, headers=HEADERS, timeout=5)
+        r.raise_for_status()
+        d = r.json()
+        
+        data = d.get("data", {})
+        result = data.get("result", {})
+        outcome = result.get("outcome", {})
+        nm = outcome.get("number")
+        ts = data.get("startedAt")
+        
+        logging.info(f"🎯 Immersive: Nº {nm}")
+        # Immersive NÃO TEM raios
+        return {"number": nm, "timestamp": ts, "luckyNumbers": [], "luckyMultipliers": {}}
+    except Exception as e:
+        logging.warning(f"❌ Erro Immersive: {e}")
+        return None
+
+def fetch_Mega_Roulette():
+    """Captura específica para Mega Roulette"""
+    try:
+        url = API_URLS['Mega Roulette']
+        r = requests.get(url, headers=HEADERS, timeout=5)
+        r.raise_for_status()
+        d = r.json()
+        
+        gd = d.get("data", {})
+        rs = gd.get("result", {})
+        nm = rs.get("outcome", {}).get("number")
+        ts = gd.get("startedAt")
+        
+        # Extrair raios (luckyNumbers) - mesmo formato da XXXtreme
+        ln, lm = [], {}
+        for item in rs.get('luckyNumbersList', []):
+            n = item.get('number')
+            if n is not None:
+                ln.append(n)
+                m = item.get('roundedMultiplier')
+                if m is not None: lm[n] = m
+        
+        logging.info(f"⚡ Mega: Nº {nm} | Raios: {ln} | Multiplicadores: {lm}")
+        return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
+    except Exception as e:
+        logging.warning(f"❌ Erro Mega: {e}")
+        return None
+
+# 🆕 Dicionário que mapeia cada roleta para sua função de captura
+FETCH_FUNCTIONS = {
+    'XXXtreme Lightning': fetch_XXXtreme_Lightning,
+    'Immersive Roulette': fetch_Immersive_Roulette,
+    'Mega Roulette': fetch_Mega_Roulette,
+}
+
+def fetch_latest_result():
+    """Roteador que chama a função de captura correta para a roleta selecionada"""
+    api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+    fetch_func = FETCH_FUNCTIONS.get(api_selecionada, fetch_XXXtreme_Lightning)
+    return fetch_func()
 
 # =============================
 # 🧠 DUZIA AI V10.9.8
@@ -677,7 +770,7 @@ class SistemaBot:
         self.numero_rodada = 0
     
     def processar_novo_numero(self, numero_data):
-        # 🆕 Extrair número - formato padronizado
+        # Extrair número e raios do dicionário
         if isinstance(numero_data, dict):
             nr = numero_data.get('number')
             lucky_numbers = numero_data.get('luckyNumbers', [])
@@ -685,15 +778,9 @@ class SistemaBot:
         else:
             nr = numero_data; lucky_numbers = []; lucky_multipliers = {}
         
-        # 🆕 Verificação robusta do número
-        if nr is None:
-            logging.warning(f"❌ Número None recebido: {numero_data}")
-            return
+        if nr is None or not validar_numero(nr): return
         
-        if not validar_numero(nr):
-            logging.warning(f"❌ Número inválido: {nr}")
-            return
-        
+        # Verificar se é raio
         eh_raio = nr in lucky_numbers
         multiplicador = lucky_multipliers.get(nr, 0) if eh_raio else 0
         
@@ -808,52 +895,6 @@ def salvar_resultado_em_arquivo(historico, caminho):
         with open(caminho, "w", encoding='utf-8') as f: json.dump(historico, f, indent=2)
     except Exception as e: logging.error(f"Erro: {e}")
 
-def fetch_latest_result():
-    """Busca o último resultado da API selecionada"""
-    try:
-        url = get_api_url()
-        logging.info(f"🔍 Buscando: {url}")
-        r = requests.get(url, headers=HEADERS, timeout=5)
-        r.raise_for_status()
-        d = r.json()
-        
-        api_selecionada = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-        
-        if api_selecionada in ('XXXtreme Lightning', 'Mega Roulette'):
-            # Formato com raios
-            gd = d.get("data", {})
-            rs = gd.get("result", {})
-            nm = rs.get("outcome", {}).get("number")
-            ts = gd.get("startedAt")
-            ln, lm = [], {}
-            for item in rs.get('luckyNumbersList', []):
-                n = item.get('number')
-                if n is not None:
-                    ln.append(n)
-                    m = item.get('roundedMultiplier')
-                    if m is not None: lm[n] = m
-            result = {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
-            logging.info(f"✅ {api_selecionada}: Nº {nm} | Raios: {ln}")
-            return result
-        else:
-            # 🆕 CORRIGIDO: Formato Immersive Roulette
-            data = d.get("data", {})
-            result = data.get("result", {})
-            outcome = result.get("outcome", {})
-            nm = outcome.get("number")
-            ts = data.get("startedAt")
-            
-            # Log para debug
-            if nm is not None:
-                logging.info(f"✅ Immersive Roulette: Nº {nm}")
-            else:
-                logging.warning(f"⚠️ Immersive: número não encontrado no JSON: {d}")
-            
-            return {"number": nm, "timestamp": ts, "luckyNumbers": [], "luckyMultipliers": {}}
-    except Exception as e:
-        logging.warning(f"❌ Erro API: {e}")
-        return None
-
 def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     import csv
     try:
@@ -877,16 +918,17 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.8 - Corrigido", layout="wide")
-st.title("🎰 DuziaAI V10.9.8 - IMMERSIVE CORRIGIDA (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.8 - 3 Capturas", layout="wide")
+st.title("🎰 DuziaAI V10.9.8 - 3 CAPTURAS INDEPENDENTES (BRT)")
 
-# Inicializar chaves de sessão para cada roleta
+# Inicializar
 if "api_selecionada" not in st.session_state:
     st.session_state.api_selecionada = 'XXXtreme Lightning'
 
 if "ultima_api" not in st.session_state:
     st.session_state.ultima_api = st.session_state.api_selecionada
 
+# Detectar troca de roleta
 if st.session_state.api_selecionada != st.session_state.ultima_api:
     st.session_state.ultima_api = st.session_state.api_selecionada
     st.session_state.sistema = SistemaBot()
@@ -919,14 +961,14 @@ if "sistema" not in st.session_state:
         sis = st.session_state.sistema
         for n in dados.get('historico_numeros', []):
             sis.duzia_ai.adicionar(n); sis.historico_numeros.append(n)
-        sis.numero_rodada = dados.get('numero_rodada', len(dados.get('historico_numeros', [])))
+        sis.numero_rodada = dados.get('numero_rodada')
         sis.acertos_duzia = dados.get('acertos_duzia', 0)
         sis.erros_duzia = dados.get('erros_duzia', 0)
         sis.acertos_numero = dados.get('acertos_numero', 0)
         sis.erros_numero = dados.get('erros_numero', 0)
         sis.acertos_zero = dados.get('acertos_zero', 0)
         sis.erros_zero = dados.get('erros_zero', 0)
-        sis.entrada_ativa = dados.get('entrada_ativa', None)
+        sis.entrada_ativa = dados.get('entrada_ativa')
         sis.historico_entradas = dados.get('historico_entradas', [])
         paths = get_session_paths(st.session_state.api_selecionada)
         if os.path.exists(paths['historico']):
@@ -944,7 +986,7 @@ if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_cha
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.8 - CORRIGIDO")
+    st.markdown("## ⚙️ V10.9.8 - 3 CAPTURAS")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -969,11 +1011,12 @@ with st.sidebar:
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("📂 Dados INDEPENDENTES por roleta")
+    st.caption("📂 3 capturas INDEPENDENTES")
+    st.caption("⚡ fetch_XXXtreme_Lightning()")
+    st.caption("🎯 fetch_Immersive_Roulette()")
+    st.caption("⚡ fetch_Mega_Roulette()")
     st.caption("🤖 ML ADAPTATIVO")
-    st.caption("⚡ RAIOS capturados")
     st.caption("🚫 Filtros de erro ativos")
-    st.caption("✅ Immersive CORRIGIDA")
     st.markdown("---")
     with st.expander("🔔 Telegram PRINCIPAL", expanded=False):
         st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
@@ -1164,5 +1207,5 @@ with col_t2:
     if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt: st.success("📢 Alternativo: CONFIGURADO")
     else: st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.8 | Immersive Corrigida | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.8 | 3 Capturas Independentes | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
