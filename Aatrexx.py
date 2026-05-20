@@ -42,6 +42,48 @@ def timestamp_brasilia():
     return hora_brasilia().isoformat()
 
 # =============================
+# 🆕 CONFIGURAÇÕES INDEPENDENTES POR ROLETA
+# =============================
+ROLETA_CONFIGS = {
+    'XXXtreme Lightning': {
+        'pagamento_numero': 36,
+        'pagamento_zero': 36,
+        'pagamento_duzia': 3,
+        'confianca_minima_entrada': 2.0,
+        'embalo_peso': 9,
+        'embalo_reforco': 5,
+        'bloquear_alerta_zero_conf_alta': True,
+        'bloquear_anti_erro_zero_conf_baixa': True,
+        'filtro_conf_baixa': 2.0,
+        'fadiga_duzia': 4,
+    },
+    'Immersive Roulette': {
+        'pagamento_numero': 35,
+        'pagamento_zero': 35,
+        'pagamento_duzia': 2,
+        'confianca_minima_entrada': 2.0,
+        'embalo_peso': 9,
+        'embalo_reforco': 5,
+        'bloquear_alerta_zero_conf_alta': True,
+        'bloquear_anti_erro_zero_conf_baixa': True,
+        'filtro_conf_baixa': 2.0,
+        'fadiga_duzia': 4,
+    },
+    'Mega Roulette': {
+        'pagamento_numero': 24,
+        'pagamento_zero': 24,
+        'pagamento_duzia': 2,
+        'confianca_minima_entrada': 2.5,      # Mais restritivo
+        'embalo_peso': 6,                      # Peso reduzido (46% acerto)
+        'embalo_reforco': 3,                   # Reforço reduzido
+        'bloquear_alerta_zero_conf_alta': True, # 50% dos erros têm Alerta Zero
+        'bloquear_anti_erro_zero_conf_baixa': True,
+        'filtro_conf_baixa': 2.5,              # Mais restritivo (31% erros < 2.5)
+        'fadiga_duzia': 3,                     # Mais sensível à fadiga
+    },
+}
+
+# =============================
 # CONFIGURAÇÕES DE PERSISTÊNCIA POR ROLETA
 # =============================
 def get_session_paths(api_name):
@@ -269,7 +311,7 @@ def validar_numero(valor):
     except: return False
 
 # =============================
-# 🆕 3 FUNÇÕES DE CAPTURA INDEPENDENTES
+# 3 FUNÇÕES DE CAPTURA INDEPENDENTES
 # =============================
 
 def fetch_XXXtreme_Lightning():
@@ -279,13 +321,10 @@ def fetch_XXXtreme_Lightning():
         r = requests.get(url, headers=HEADERS, timeout=5)
         r.raise_for_status()
         d = r.json()
-        
         gd = d.get("data", {})
         rs = gd.get("result", {})
         nm = rs.get("outcome", {}).get("number")
         ts = gd.get("startedAt")
-        
-        # Extrair raios (luckyNumbers)
         ln, lm = [], {}
         for item in rs.get('luckyNumbersList', []):
             n = item.get('number')
@@ -293,8 +332,7 @@ def fetch_XXXtreme_Lightning():
                 ln.append(n)
                 m = item.get('roundedMultiplier')
                 if m is not None: lm[n] = m
-        
-        logging.info(f"⚡ XXXtreme: Nº {nm} | Raios: {ln} | Multiplicadores: {lm}")
+        logging.info(f"⚡ XXXtreme: Nº {nm} | Raios: {ln}")
         return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
     except Exception as e:
         logging.warning(f"❌ Erro XXXtreme: {e}")
@@ -307,15 +345,12 @@ def fetch_Immersive_Roulette():
         r = requests.get(url, headers=HEADERS, timeout=5)
         r.raise_for_status()
         d = r.json()
-        
         data = d.get("data", {})
         result = data.get("result", {})
         outcome = result.get("outcome", {})
         nm = outcome.get("number")
         ts = data.get("startedAt")
-        
         logging.info(f"🎯 Immersive: Nº {nm}")
-        # Immersive NÃO TEM raios
         return {"number": nm, "timestamp": ts, "luckyNumbers": [], "luckyMultipliers": {}}
     except Exception as e:
         logging.warning(f"❌ Erro Immersive: {e}")
@@ -328,13 +363,10 @@ def fetch_Mega_Roulette():
         r = requests.get(url, headers=HEADERS, timeout=5)
         r.raise_for_status()
         d = r.json()
-        
         gd = d.get("data", {})
         rs = gd.get("result", {})
         nm = rs.get("outcome", {}).get("number")
         ts = gd.get("startedAt")
-        
-        # Extrair raios (luckyNumbers) - mesmo formato da XXXtreme
         ln, lm = [], {}
         for item in rs.get('luckyNumbersList', []):
             n = item.get('number')
@@ -342,14 +374,12 @@ def fetch_Mega_Roulette():
                 ln.append(n)
                 m = item.get('roundedMultiplier')
                 if m is not None: lm[n] = m
-        
-        logging.info(f"⚡ Mega: Nº {nm} | Raios: {ln} | Multiplicadores: {lm}")
+        logging.info(f"⚡ Mega: Nº {nm} | Raios: {ln}")
         return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
     except Exception as e:
         logging.warning(f"❌ Erro Mega: {e}")
         return None
 
-# 🆕 Dicionário que mapeia cada roleta para sua função de captura
 FETCH_FUNCTIONS = {
     'XXXtreme Lightning': fetch_XXXtreme_Lightning,
     'Immersive Roulette': fetch_Immersive_Roulette,
@@ -363,7 +393,7 @@ def fetch_latest_result():
     return fetch_func()
 
 # =============================
-# 🧠 DUZIA AI V10.9.8
+# 🧠 DUZIA AI V10.9.9 - ESTRATÉGIAS INDEPENDENTES POR ROLETA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -396,6 +426,12 @@ class DuziaAI:
         self.zeros_previstos = 0
         self.acertos_consecutivos_mesma_duzia = 0
         self.ultima_duzia_acertada = None
+    
+    # 🆕 Método para obter configurações da roleta atual
+    def _get_config(self):
+        """Retorna as configurações específicas da roleta selecionada"""
+        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+        return ROLETA_CONFIGS.get(api_name, ROLETA_CONFIGS['XXXtreme Lightning'])
         
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -489,7 +525,6 @@ class DuziaAI:
                 if classe in ml_scores: ml_scores[classe] = float(prob) * 35
             return ml_scores
         except Exception as e:
-            logging.warning(f"Erro ML: {e}")
             return {1: 0.0, 2: 0.0, 3: 0.0}
     
     def _get_outras_duzias(self, duzia): return [d for d in [1, 2, 3] if d != duzia]
@@ -539,7 +574,9 @@ class DuziaAI:
         freq = Counter([d for d in u if d != 0])
         if freq:
             dom = freq.most_common(1)[0]
-            if dom[1] >= 3 and dom[0] != 0: return {'tipo': 'EMBALO', 'duzia': dom[0], 'forca': 9}
+            if dom[1] >= 3 and dom[0] != 0:
+                config = self._get_config()
+                return {'tipo': 'EMBALO', 'duzia': dom[0], 'forca': config['embalo_peso']}
         return None
     
     def detectar_ritmo_ping_pong(self):
@@ -562,7 +599,6 @@ class DuziaAI:
     
     def detectar_gatilhos(self):
         u = list(self.historico)
-        freq = Counter([d for d in u if d != 0])
         
         embalo = self.detectar_embalo()
         if embalo: self.ultimo_gatilho = 'EMBALO'; return embalo
@@ -591,7 +627,7 @@ class DuziaAI:
                 dom = freq_10.most_common(1)[0]
                 if dom[1] >= 7 and dom[0] != 0:
                     outras = self._get_outras_duzias(dom[0])
-                    freq_outras = {d: freq.get(d, 0) for d in outras}
+                    freq_outras = {d: self.frequencia().get(d, 0) for d in outras}
                     dz_emergente = max(freq_outras, key=freq_outras.get)
                     if dz_emergente != 0:
                         self.ultimo_gatilho = 'EXAUSTAO_DOMINANCIA'
@@ -610,6 +646,7 @@ class DuziaAI:
         return None
     
     def calcular_score(self):
+        config = self._get_config()
         score = {1: 0, 2: 0, 3: 0}
         
         freq = self.frequencia()
@@ -628,7 +665,10 @@ class DuziaAI:
         
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0: score[gatilho['duzia']] += gatilho['forca'] * 2
-        if gatilho and gatilho['tipo'] in ('RITMO_PING_PONG', 'EMBALO'): score[gatilho['duzia']] += 5
+        
+        # 🆕 Reforço específico por roleta
+        if gatilho and gatilho['tipo'] in ('RITMO_PING_PONG', 'EMBALO'):
+            score[gatilho['duzia']] += config['embalo_reforco']
         
         u = list(self.historico)
         if len(u) >= 2 and u[-1] == u[-2] and u[-1] != 0: score[u[-1]] += 30
@@ -663,6 +703,7 @@ class DuziaAI:
     def prever(self):
         if self.pausa_ate and hora_brasilia() < self.pausa_ate: return {"entrar": False, "motivo": "⏸️ Pausa"}
         
+        config = self._get_config()
         score, gatilho = self.calcular_score()
         ranking = sorted(score.items(), key=lambda x: x[1], reverse=True)
         d1, s1 = ranking[0]; d2, s2 = ranking[1]
@@ -684,10 +725,15 @@ class DuziaAI:
         if self.ultimo_resultado_duzia == False and self.ultima_confianca >= 3.4:
             if d1 == self.ultima_previsao_duzia: d1 = d2; s1 = s2
         
-        if gatilho and gatilho['tipo'] == 'EMBALO' and confianca >= 3.3 and self.alerta_zero_ativo:
-            pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
-        if self.modo_anti_erro and self.alerta_zero_ativo and confianca < 2.5:
-            pode_entrar = False; motivo = "🚫 Anti-Erro + Zero + Conf Baixa"
+        # 🆕 Filtros com configurações por roleta
+        if config['bloquear_alerta_zero_conf_alta']:
+            if gatilho and gatilho['tipo'] == 'EMBALO' and confianca >= 3.3 and self.alerta_zero_ativo:
+                pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
+        
+        if config['bloquear_anti_erro_zero_conf_baixa']:
+            if self.modo_anti_erro and self.alerta_zero_ativo and confianca < config['filtro_conf_baixa']:
+                pode_entrar = False; motivo = f"🚫 Anti-Erro + Zero + Conf < {config['filtro_conf_baixa']}"
+        
         if gatilho and gatilho['tipo'] == 'EXAUSTAO_DOMINANCIA' and self.alerta_zero_ativo and not self.modo_anti_erro:
             pode_entrar = False; motivo = "🚫 EXAUSTAO + Zero"
         
@@ -710,10 +756,12 @@ class DuziaAI:
         return previsao
     
     def _balancear(self, previsao):
+        config = self._get_config()
         u = list(self.historico)
         if self.alerta_zero_ativo: previsao['incluir_zero'] = True
 
-        if self.acertos_consecutivos_mesma_duzia >= 4 and self.ultima_duzia_acertada is not None:
+        # 🆕 Fadiga de dúzia com threshold por roleta
+        if self.acertos_consecutivos_mesma_duzia >= config['fadiga_duzia'] and self.ultima_duzia_acertada is not None:
             duzia_fadigada = self.ultima_duzia_acertada
             if previsao['duzia'] == duzia_fadigada:
                 outras = self._get_outras_duzias(duzia_fadigada)
@@ -770,7 +818,6 @@ class SistemaBot:
         self.numero_rodada = 0
     
     def processar_novo_numero(self, numero_data):
-        # Extrair número e raios do dicionário
         if isinstance(numero_data, dict):
             nr = numero_data.get('number')
             lucky_numbers = numero_data.get('luckyNumbers', [])
@@ -780,7 +827,6 @@ class SistemaBot:
         
         if nr is None or not validar_numero(nr): return
         
-        # Verificar se é raio
         eh_raio = nr in lucky_numbers
         multiplicador = lucky_multipliers.get(nr, 0) if eh_raio else 0
         
@@ -918,8 +964,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.8 - 3 Capturas", layout="wide")
-st.title("🎰 DuziaAI V10.9.8 - 3 CAPTURAS INDEPENDENTES (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.9 - Estratégias por Roleta", layout="wide")
+st.title("🎰 DuziaAI V10.9.9 - ESTRATÉGIAS INDEPENDENTES (BRT)")
 
 # Inicializar
 if "api_selecionada" not in st.session_state:
@@ -928,7 +974,6 @@ if "api_selecionada" not in st.session_state:
 if "ultima_api" not in st.session_state:
     st.session_state.ultima_api = st.session_state.api_selecionada
 
-# Detectar troca de roleta
 if st.session_state.api_selecionada != st.session_state.ultima_api:
     st.session_state.ultima_api = st.session_state.api_selecionada
     st.session_state.sistema = SistemaBot()
@@ -986,7 +1031,7 @@ if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_cha
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.8 - 3 CAPTURAS")
+    st.markdown("## ⚙️ V10.9.9 - ESTRATÉGIAS POR ROLETA")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -999,12 +1044,17 @@ with st.sidebar:
     st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
     
     api_name = st.session_state.api_selecionada
+    config = ROLETA_CONFIGS.get(api_name, ROLETA_CONFIGS['XXXtreme Lightning'])
+    
     if api_name == 'XXXtreme Lightning':
-        st.success("⚡ Raios: 50x-2000x | Nº: 36x | Zero: 36x | Dúzia: 3x")
+        st.success(f"⚡ Raios: 50x-2000x | Nº: {config['pagamento_numero']}x | Zero: {config['pagamento_zero']}x | Dúzia: {config['pagamento_duzia']}x")
+        st.caption(f"EMBALO peso: {config['embalo_peso']} | Fadiga: {config['fadiga_duzia']}x | Conf mín: {config['confianca_minima_entrada']}")
     elif api_name == 'Mega Roulette':
-        st.warning("⚡ Raios: 50x-500x | Nº: 24x | Zero: 24x | Dúzia: 2x")
+        st.warning(f"⚡ Raios: 50x-500x | Nº: {config['pagamento_numero']}x | Zero: {config['pagamento_zero']}x | Dúzia: {config['pagamento_duzia']}x")
+        st.caption(f"🔧 AJUSTADA | EMBALO peso: {config['embalo_peso']} | Fadiga: {config['fadiga_duzia']}x | Conf mín: {config['confianca_minima_entrada']}")
     else:
-        st.info("🎯 Sem raios | Nº: 35x | Zero: 35x | Dúzia: 2x")
+        st.info(f"🎯 Sem raios | Nº: {config['pagamento_numero']}x | Zero: {config['pagamento_zero']}x | Dúzia: {config['pagamento_duzia']}x")
+        st.caption(f"EMBALO peso: {config['embalo_peso']} | Fadiga: {config['fadiga_duzia']}x | Conf mín: {config['confianca_minima_entrada']}")
     
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -1012,11 +1062,9 @@ with st.sidebar:
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
     st.caption("📂 3 capturas INDEPENDENTES")
-    st.caption("⚡ fetch_XXXtreme_Lightning()")
-    st.caption("🎯 fetch_Immersive_Roulette()")
-    st.caption("⚡ fetch_Mega_Roulette()")
+    st.caption("⚙️ Estratégias por roleta")
     st.caption("🤖 ML ADAPTATIVO")
-    st.caption("🚫 Filtros de erro ativos")
+    st.caption("🚫 Filtros configuráveis")
     st.markdown("---")
     with st.expander("🔔 Telegram PRINCIPAL", expanded=False):
         st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
@@ -1207,5 +1255,5 @@ with col_t2:
     if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt: st.success("📢 Alternativo: CONFIGURADO")
     else: st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.8 | 3 Capturas Independentes | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.9 | Estratégias por Roleta | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
