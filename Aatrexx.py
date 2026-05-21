@@ -283,7 +283,7 @@ def enviar_previsao_auto(previsao):
             enviar_telegram(f"🔔 {msg}\n🔢 {melhores_str}", st.session_state.telegram_token, st.session_state.telegram_chat_id)
         
         if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
-            msg_alt = f"🎯 Entrada: {melhores_str}"
+            msg_alt = f"🎯: {melhores_str}"
             if incluir_zero: msg_alt += " + 🟢 ZERO"
             enviar_telegram(msg_alt, st.session_state.telegram_token_alt, st.session_state.telegram_chat_id_alt)
         
