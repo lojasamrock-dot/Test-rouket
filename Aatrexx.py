@@ -56,6 +56,8 @@ ROLETA_CONFIGS = {
         'bloquear_anti_erro_zero_conf_baixa': True,
         'filtro_conf_baixa': 2.0,
         'fadiga_duzia': 4,
+        'ritmo_alternado_peso': 10,
+        'ritmo_alternado_forca': 10,
     },
     'Immersive Roulette': {
         'pagamento_numero': 35,
@@ -68,6 +70,8 @@ ROLETA_CONFIGS = {
         'bloquear_anti_erro_zero_conf_baixa': True,
         'filtro_conf_baixa': 2.0,
         'fadiga_duzia': 4,
+        'ritmo_alternado_peso': 10,
+        'ritmo_alternado_forca': 10,
     },
     'Mega Roulette': {
         'pagamento_numero': 24,
@@ -80,6 +84,8 @@ ROLETA_CONFIGS = {
         'bloquear_anti_erro_zero_conf_baixa': True,
         'filtro_conf_baixa': 2.5,
         'fadiga_duzia': 3,
+        'ritmo_alternado_peso': 8,
+        'ritmo_alternado_forca': 8,
     },
 }
 
@@ -151,7 +157,6 @@ def salvar_sessao():
         with open(paths['performance_mesa'], 'w') as f: json.dump(dict(sis.performance_por_mesa), f)
         with open(paths['performance_horario'], 'w') as f: json.dump(dict(sis.performance_por_horario), f)
         
-        # Salvar controle de sessão
         sessao_data = {
             'rodadas_na_sessao': sis.rodadas_na_sessao,
             'sessao_ativa': sis.sessao_ativa,
@@ -464,7 +469,7 @@ def fetch_latest_result():
     return fetch_func()
 
 # =============================
-# DUZIA AI - COM TRACKING DE MESA/HORÁRIO
+# 🧠 DUZIA AI - COM NOVO GATILHO RITMO_ALTERNADO
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -497,6 +502,11 @@ class DuziaAI:
         self.zeros_previstos = 0
         self.acertos_consecutivos_mesma_duzia = 0
         self.ultima_duzia_acertada = None
+        
+        # 🆕 Rastreamento do ritmo alternado
+        self.ritmo_alternado_par = None
+        self.ritmo_alternado_contagem = 0
+        self.ultimo_ritmo_alternado = None
         
         self.mesa_atual = None
         self.performance_por_mesa = defaultdict(lambda: {'acertos': 0, 'erros': 0})
@@ -534,6 +544,9 @@ class DuziaAI:
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
         
+        # 🆕 Atualizar rastreamento de ritmo alternado
+        self._atualizar_ritmo_alternado(d)
+        
         if d != 0:
             self.duzias_que_sairam.append(d)
             if len(self.duzias_que_sairam) > 10: self.duzias_que_sairam = self.duzias_que_sairam[-10:]
@@ -545,6 +558,47 @@ class DuziaAI:
             self.transicoes[padrao][d] += 1
         if len(self.historico_completo) > 200: self.historico_completo = self.historico_completo[-200:]
         if len(self.numeros_completos) > 200: self.numeros_completos = self.numeros_completos[-200:]
+    
+    def _atualizar_ritmo_alternado(self, nova_duzia):
+        """🆕 Detecta e rastreia padrões de alternância tipo DANÇA (D1-D3-D1-D3 ou D2-D3-D2-D3)"""
+        if nova_duzia == 0:
+            return
+        
+        u = list(self.historico)
+        if len(u) < 3:
+            return
+        
+        # Pega as últimas 8 dúzias (ignorando zeros) para análise
+        recentes = [d for d in u[-8:] if d != 0]
+        
+        if len(recentes) < 4:
+            self.ritmo_alternado_par = None
+            self.ritmo_alternado_contagem = 0
+            return
+        
+        # Verifica padrão de alternância nas últimas 4-6 posições
+        # Procura por padrão A-B-A-B ou B-A-B-A
+        for inicio in range(len(recentes) - 3):
+            seq = recentes[inicio:inicio+4]
+            if seq[0] != seq[1] and seq[0] == seq[2] and seq[1] == seq[3]:
+                # Encontrou padrão A-B-A-B
+                par = tuple(sorted([seq[0], seq[1]]))
+                
+                # Verifica se é o mesmo par que já estava rastreando
+                if self.ritmo_alternado_par == par:
+                    self.ritmo_alternado_contagem += 1
+                else:
+                    self.ritmo_alternado_par = par
+                    self.ritmo_alternado_contagem = 1
+                
+                # Se a contagem for >= 2 (padrão se repetiu), ativa o gatilho
+                if self.ritmo_alternado_contagem >= 2:
+                    self.ultimo_ritmo_alternado = par
+                return
+        
+        # Se não encontrou padrão, reseta
+        self.ritmo_alternado_par = None
+        self.ritmo_alternado_contagem = 0
     
     def registrar_previsao(self, duzia, confianca):
         self.ultimas_previsoes.append(duzia)
@@ -706,8 +760,99 @@ class DuziaAI:
                 if proxima != 0: return {'tipo': 'RITMO_PING_PONG', 'duzia': proxima, 'forca': 9}
         return None
     
+    def detectar_ritmo_alternado(self):
+        """🆕 Detecta padrão de DANÇA - alternância consistente entre duas dúzias (ex: D1-D3-D1-D3)"""
+        u = list(self.historico)
+        recentes = [d for d in u[-8:] if d != 0]
+        
+        if len(recentes) < 6:
+            return None
+        
+        config = self._get_config()
+        
+        # Método 1: Verificar as últimas 6 dúzias para padrão A-B-A-B-A-B
+        ultimas_6 = recentes[-6:] if len(recentes) >= 6 else recentes
+        if len(ultimas_6) >= 6:
+            # Verifica padrão perfeito A-B-A-B-A-B
+            if (ultimas_6[0] == ultimas_6[2] == ultimas_6[4] and 
+                ultimas_6[1] == ultimas_6[3] == ultimas_6[5] and
+                ultimas_6[0] != ultimas_6[1] and 
+                ultimas_6[0] != 0 and ultimas_6[1] != 0):
+                
+                # Padrão A-B-A-B-A-B, próximo deve ser A
+                proxima = ultimas_6[0]
+                return {
+                    'tipo': 'RITMO_ALTERNADO',
+                    'duzia': proxima,
+                    'forca': config['ritmo_alternado_forca'],
+                    'par': (ultimas_6[0], ultimas_6[1])
+                }
+        
+        # Método 2: Verificar últimas 5 para padrão A-B-A-B-A
+        ultimas_5 = recentes[-5:] if len(recentes) >= 5 else recentes
+        if len(ultimas_5) >= 5:
+            if (ultimas_5[0] == ultimas_5[2] == ultimas_5[4] and 
+                ultimas_5[1] == ultimas_5[3] and
+                ultimas_5[0] != ultimas_5[1] and
+                ultimas_5[0] != 0 and ultimas_5[1] != 0):
+                
+                # Padrão A-B-A-B-A, próximo deve ser B
+                proxima = ultimas_5[1]
+                return {
+                    'tipo': 'RITMO_ALTERNADO',
+                    'duzia': proxima,
+                    'forca': config['ritmo_alternado_forca'],
+                    'par': (ultimas_5[0], ultimas_5[1])
+                }
+        
+        # Método 3: Verificar últimas 4 para padrão A-B-A-B
+        ultimas_4 = recentes[-4:] if len(recentes) >= 4 else recentes
+        if len(ultimas_4) >= 4:
+            if (ultimas_4[0] == ultimas_4[2] and 
+                ultimas_4[1] == ultimas_4[3] and
+                ultimas_4[0] != ultimas_4[1] and
+                ultimas_4[0] != 0 and ultimas_4[1] != 0):
+                
+                # Padrão A-B-A-B, próximo deve ser A
+                proxima = ultimas_4[0]
+                return {
+                    'tipo': 'RITMO_ALTERNADO',
+                    'duzia': proxima,
+                    'forca': config['ritmo_alternado_forca'] - 2,
+                    'par': (ultimas_4[0], ultimas_4[1])
+                }
+        
+        # Método 4: Usar o rastreador interno de ritmo alternado
+        if (self.ritmo_alternado_contagem >= 2 and 
+            self.ultimo_ritmo_alternado is not None):
+            par = self.ultimo_ritmo_alternado
+            ultima = recentes[-1]
+            # Determina qual deve ser a próxima
+            if ultima == par[0]:
+                proxima = par[1]
+            elif ultima == par[1]:
+                proxima = par[0]
+            else:
+                return None
+            
+            if proxima != 0:
+                return {
+                    'tipo': 'RITMO_ALTERNADO',
+                    'duzia': proxima,
+                    'forca': config['ritmo_alternado_forca'],
+                    'par': par
+                }
+        
+        return None
+    
     def detectar_gatilhos(self):
         u = list(self.historico)
+        
+        # 🆕 NOVO GATILHO: RITMO_ALTERNADO (DANÇA) - PRIORIDADE MÁXIMA
+        ritmo_alternado = self.detectar_ritmo_alternado()
+        if ritmo_alternado:
+            self.ultimo_gatilho = 'RITMO_ALTERNADO'
+            return ritmo_alternado
         
         embalo = self.detectar_embalo()
         if embalo: self.ultimo_gatilho = 'EMBALO'; return embalo
@@ -775,6 +920,15 @@ class DuziaAI:
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0: score[gatilho['duzia']] += gatilho['forca'] * 2
         
+        # 🆕 Reforço extra para RITMO_ALTERNADO
+        if gatilho and gatilho['tipo'] == 'RITMO_ALTERNADO':
+            score[gatilho['duzia']] += config['ritmo_alternado_peso']
+            # Penaliza a terceira dúzia (a que não faz parte da dança)
+            if 'par' in gatilho:
+                for d in [1, 2, 3]:
+                    if d not in gatilho['par']:
+                        score[d] *= 0.3
+        
         if gatilho and gatilho['tipo'] in ('RITMO_PING_PONG', 'EMBALO'):
             score[gatilho['duzia']] += config['embalo_reforco']
         
@@ -827,7 +981,12 @@ class DuziaAI:
         u_list = list(self.historico)
         if 0 in u_list[-3:]: confianca *= 0.5
         
+        # 🆕 RITMO_ALTERNADO força entrada com confiança máxima
         pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
+        if gatilho and gatilho['tipo'] == 'RITMO_ALTERNADO':
+            pode_entrar = True
+            confianca = min(3.5, confianca * 1.2)
+        
         motivo = ""
         
         if self.ultimo_resultado_duzia == False and self.ultima_confianca >= 3.4:
@@ -835,7 +994,9 @@ class DuziaAI:
         
         if config['bloquear_alerta_zero_conf_alta']:
             if gatilho and gatilho['tipo'] == 'EMBALO' and confianca >= 3.3 and self.alerta_zero_ativo:
-                pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
+                # 🆕 RITMO_ALTERNADO não é bloqueado por alerta zero
+                if gatilho['tipo'] != 'RITMO_ALTERNADO':
+                    pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
         
         if config['bloquear_anti_erro_zero_conf_baixa']:
             if self.modo_anti_erro and self.alerta_zero_ativo and confianca < config['filtro_conf_baixa']:
@@ -975,16 +1136,13 @@ class SistemaBot:
     
     def pode_processar(self):
         """Verifica se pode processar novos números"""
-        # Se não tem sessão ativa, não processa
         if not self.sessao_ativa:
-            # Verifica se a pausa acabou
             if self.sessao_pausa_ate and hora_brasilia() >= self.sessao_pausa_ate:
                 self.sessao_pausa_ate = None
                 self.sessao_ativa = False
                 salvar_sessao()
             return False
         
-        # Se atingiu o limite, encerra
         if self.rodadas_na_sessao >= self.rodadas_por_sessao:
             self._encerrar_sessao()
             return False
@@ -1005,13 +1163,11 @@ class SistemaBot:
         
         if nr is None or not validar_numero(nr): return
         
-        # Sempre adiciona ao histórico e IA para manter o tracking
         self.numero_rodada += 1
         self.duzia_ai.adicionar(nr)
         self.historico_numeros.append(nr)
         self.ultimo_numero = nr
         
-        # Verifica se pode processar (sessão ativa)
         if not self.pode_processar():
             salvar_sessao()
             return
@@ -1045,7 +1201,6 @@ class SistemaBot:
             
             acertou_duzia = acerto_primaria or acerto_secundaria
             
-            # Atualizar estatísticas da sessão
             self.rodadas_na_sessao += 1
             if acertou_duzia or acerto_zero:
                 self.acertos_sessao += 1
@@ -1091,12 +1246,10 @@ class SistemaBot:
             enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, eh_raio, multiplicador)
             self.entrada_ativa = None
             
-            # Verificar se a sessão terminou
             if not self.pode_processar():
                 salvar_sessao()
                 return
         
-        # Só faz previsão se a sessão estiver ativa
         if self.sessao_ativa and self.rodadas_na_sessao < self.rodadas_por_sessao:
             previsao = self.duzia_ai.prever()
             
@@ -1181,7 +1334,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # APLICAÇÃO STREAMLIT
 # =============================
 st.set_page_config(page_title="🎰 DuziaAI V10.9.10 - Sessão 10 Rodadas", layout="wide")
-st.title("🎰 DuziaAI V10.9.10 - SESSÃO 10 RODADAS (BRT)")
+st.title("🎰 DuziaAI V10.9.10 - SESSÃO 10 RODADAS + RITMO ALTERNADO (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1201,7 +1354,6 @@ if "telegram_token_alt" not in st.session_state:
 if "telegram_chat_id_alt" not in st.session_state:
     st.session_state.telegram_chat_id_alt = config_global.get('telegram_chat_id_alt', '')
 
-# Configurações de sessão
 if "rodadas_por_sessao" not in st.session_state:
     st.session_state.rodadas_por_sessao = config_global.get('rodadas_por_sessao', 10)
 if "pausa_entre_sessoes" not in st.session_state:
@@ -1293,11 +1445,10 @@ if "historico" not in st.session_state: st.session_state.historico = []
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.10 - SESSÃO 10 RODADAS")
+    st.markdown("## ⚙️ V10.9.10 - DANÇA")
     
     sis = st.session_state.sistema
     
-    # Status da sessão
     st.markdown("### 📊 Status da Sessão")
     if sis.sessao_ativa:
         st.success(f"🟢 Sessão #{sis.total_sessoes} ATIVA")
@@ -1312,21 +1463,13 @@ with st.sidebar:
         minutos = tempo_restante // 60
         segundos = tempo_restante % 60
         st.warning(f"⏸️ Pausa: {minutos:02d}:{segundos:02d}")
-        st.caption(f"Sessão #{sis.total_sessoes} encerrada")
-        if sis.acertos_sessao + sis.erros_sessao > 0:
-            taxa = (sis.acertos_sessao / (sis.acertos_sessao + sis.erros_sessao)) * 100
-            st.caption(f"Resultado: {sis.acertos_sessao}✅ / {sis.erros_sessao}❌ ({taxa:.0f}%)")
     else:
         st.info("⚪ Nenhuma sessão ativa")
-        if sis.total_sessoes > 0:
-            st.caption(f"Total de sessões realizadas: {sis.total_sessoes}")
     
-    # Botão para iniciar sessão
     botao_desabilitado = sis.sessao_ativa or (sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate)
     
     if botao_desabilitado:
-        st.button("🚀 INICIAR SESSÃO", use_container_width=True, disabled=True, 
-                 help="Sessão em andamento ou em pausa")
+        st.button("🚀 INICIAR SESSÃO", use_container_width=True, disabled=True)
     else:
         if st.button("🚀 INICIAR SESSÃO", use_container_width=True, type="primary"):
             if sis.iniciar_sessao():
@@ -1340,7 +1483,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Configurações da sessão
     st.markdown("### ⏱️ Configurações")
     rodadas = st.number_input("Rodadas por sessão:", min_value=5, max_value=30, 
                                value=st.session_state.rodadas_por_sessao, step=5)
@@ -1370,11 +1512,11 @@ with st.sidebar:
     config = ROLETA_CONFIGS.get(api_name, ROLETA_CONFIGS['XXXtreme Lightning'])
     
     if api_name == 'XXXtreme Lightning':
-        st.success(f"⚡ Raios: 50x-2000x | Nº: {config['pagamento_numero']}x | Dúzia: {config['pagamento_duzia']}x")
+        st.success(f"⚡ Raios: 50x-2000x | Dúzia: {config['pagamento_duzia']}x")
     elif api_name == 'Mega Roulette':
-        st.warning(f"⚡ Raios: 50x-500x | Nº: {config['pagamento_numero']}x | Dúzia: {config['pagamento_duzia']}x")
+        st.warning(f"⚡ Raios: 50x-500x | Dúzia: {config['pagamento_duzia']}x")
     else:
-        st.info(f"🎯 Sem raios | Nº: {config['pagamento_numero']}x | Dúzia: {config['pagamento_duzia']}x")
+        st.info(f"🎯 Sem raios | Dúzia: {config['pagamento_duzia']}x")
     
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -1432,7 +1574,6 @@ st.markdown("---")
 sis = st.session_state.sistema
 api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
 
-# Métricas
 st.subheader(f"📊 CONFERÊNCIA - {api_name}")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 total_duzias = int(sis.acertos_duzia + sis.erros_duzia)
@@ -1447,7 +1588,6 @@ c4.metric("🟢 Zeros", f"{sis.acertos_zero}/{sis.acertos_zero + sis.erros_zero}
 c5.metric("📦 Total", total_duzias)
 c6.metric("🎰", api_name[:10])
 
-# Métricas da sessão
 if sis.total_sessoes > 0:
     st.markdown("---")
     st.subheader(f"📈 Sessão #{sis.total_sessoes}")
@@ -1500,15 +1640,12 @@ with ce:
     st.subheader("🎰 Entrada Atual")
     if sis.duzia_ai.alerta_zero_ativo: st.warning("⚠️ ALERTA ZERO! 🟢")
     
-    # Mostrar status da sessão na área de entrada
     if not sis.sessao_ativa:
         if sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
             tempo_restante = (sis.sessao_pausa_ate - hora_brasilia()).seconds
-            st.info(f"⏸️ Pausa: {tempo_restante//60:02d}:{tempo_restante%60:02d}\nClique 'INICIAR SESSÃO' quando acabar")
+            st.info(f"⏸️ Pausa: {tempo_restante//60:02d}:{tempo_restante%60:02d}")
         else:
-            st.info("🔴 Sessão não iniciada\nClique 'INICIAR SESSÃO' para começar")
-    elif sis.rodadas_na_sessao >= sis.rodadas_por_sessao:
-        st.warning("⏸️ Sessão concluída! Aguardando pausa...")
+            st.info("🔴 Clique 'INICIAR SESSÃO' para começar")
     
     if sis.entrada_ativa and sis.sessao_ativa:
         e = sis.entrada_ativa
@@ -1570,12 +1707,9 @@ if sis.historico_entradas:
             "Z": zero, "🔄": anti, "Duz": duz, "Nº": num, "Zer": zer,
         })
     st.dataframe(dados, use_container_width=True, height=300)
-    
-    if st.button("📥 Exportar CSV", use_container_width=True):
-        if exportar_historico_csv(sis.historico_entradas): st.success("✅")
 else: 
     st.info("Nenhuma entrada.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V10.9.10 | Sessão 10 Rodadas | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.10 | Sessão 10 Rodadas + Ritmo Alternado | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
