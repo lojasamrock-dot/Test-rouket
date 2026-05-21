@@ -9,6 +9,9 @@ import pickle
 from datetime import datetime, timezone, timedelta
 import numpy as np
 import plotly.graph_objects as plt
+import csv
+import base64
+from io import StringIO, BytesIO
 
 # Importação Segura do Módulo de Machine Learning
 try:
@@ -40,6 +43,9 @@ def formatar_hora_brasilia(dt=None):
 
 def timestamp_brasilia():
     return hora_brasilia().isoformat()
+
+def data_brasilia():
+    return hora_brasilia().strftime('%Y-%m-%d')
 
 # =============================
 # CONFIGURAÇÕES INDEPENDENTES POR ROLETA
@@ -93,6 +99,22 @@ ROLETA_CONFIGS = {
 # CONFIGURAÇÕES GLOBAIS PERSISTENTES
 # =============================
 CONFIG_GLOBAL_PATH = "config_global.json"
+PASTA_SESSOES = "sessoes_salvas"
+
+def criar_pasta_sessoes():
+    """Cria a pasta de sessões se não existir"""
+    if not os.path.exists(PASTA_SESSOES):
+        os.makedirs(PASTA_SESSOES)
+    # Criar subpastas por roleta
+    for roleta in ['xxxtreme_lightning', 'immersive_roulette', 'mega_roulette']:
+        pasta_roleta = os.path.join(PASTA_SESSOES, roleta)
+        if not os.path.exists(pasta_roleta):
+            os.makedirs(pasta_roleta)
+
+def get_pasta_sessao(api_name):
+    """Retorna o caminho da pasta de sessões para a roleta específica"""
+    safe_name = api_name.lower().replace(' ', '_')
+    return os.path.join(PASTA_SESSOES, safe_name)
 
 def salvar_config_global():
     """Salva configurações globais"""
@@ -107,6 +129,7 @@ def salvar_config_global():
         'api_selecionada': st.session_state.get('api_selecionada', 'XXXtreme Lightning'),
         'rodadas_por_sessao': st.session_state.get('rodadas_por_sessao', 10),
         'pausa_entre_sessoes': st.session_state.get('pausa_entre_sessoes', 5),
+        'salvar_sessoes_auto': st.session_state.get('salvar_sessoes_auto', True),
     }
     try:
         with open(CONFIG_GLOBAL_PATH, 'w') as f: json.dump(config, f)
@@ -134,7 +157,201 @@ def get_session_paths(api_name):
         'performance_mesa': f"performance_mesa_{safe_name}.json",
         'performance_horario': f"performance_horario_{safe_name}.json",
         'sessao_controle': f"sessao_controle_{safe_name}.json",
+        'historico_sessoes': f"historico_sessoes_{safe_name}.json",
     }
+
+# =============================
+# 🆕 SISTEMA DE ARQUIVAMENTO DE SESSÕES
+# =============================
+class GerenciadorSessoes:
+    """Gerencia o salvamento e download de sessões encerradas"""
+    
+    def __init__(self, api_name):
+        self.api_name = api_name
+        self.pasta_sessao = get_pasta_sessao(api_name)
+        criar_pasta_sessoes()
+    
+    def salvar_sessao_encerrada(self, numero_sessao, dados_sessao, historico_entradas):
+        """Salva uma sessão encerrada em arquivo JSON"""
+        try:
+            data = data_brasilia()
+            hora = formatar_hora_brasilia()
+            
+            nome_arquivo = f"sessao_{numero_sessao:03d}_{data}_{hora.replace(':', '-')}.json"
+            caminho = os.path.join(self.pasta_sessao, nome_arquivo)
+            
+            sessao_completa = {
+                'numero_sessao': numero_sessao,
+                'data': data,
+                'hora_encerramento': hora,
+                'roleta': self.api_name,
+                'estatisticas': dados_sessao,
+                'entradas': historico_entradas,
+                'timestamp': timestamp_brasilia()
+            }
+            
+            with open(caminho, 'w', encoding='utf-8') as f:
+                json.dump(sessao_completa, f, indent=2, ensure_ascii=False)
+            
+            logging.info(f"💾 Sessão #{numero_sessao} salva em: {caminho}")
+            
+            # Atualizar histórico de sessões
+            self._atualizar_historico_sessoes(numero_sessao, dados_sessao, nome_arquivo)
+            
+            return caminho
+        except Exception as e:
+            logging.error(f"Erro ao salvar sessão: {e}")
+            return None
+    
+    def _atualizar_historico_sessoes(self, numero_sessao, dados_sessao, nome_arquivo):
+        """Mantém um índice de todas as sessões salvas"""
+        paths = get_session_paths(self.api_name)
+        historico_path = paths['historico_sessoes']
+        
+        historico = []
+        if os.path.exists(historico_path):
+            try:
+                with open(historico_path, 'r') as f:
+                    historico = json.load(f)
+            except: pass
+        
+        historico.append({
+            'numero_sessao': numero_sessao,
+            'data': data_brasilia(),
+            'hora': formatar_hora_brasilia(),
+            'arquivo': nome_arquivo,
+            'acertos': dados_sessao.get('acertos', 0),
+            'erros': dados_sessao.get('erros', 0),
+            'taxa_acerto': dados_sessao.get('taxa_acerto', 0),
+            'total_rodadas': dados_sessao.get('total_rodadas', 0),
+        })
+        
+        # Manter apenas últimas 100 sessões no índice
+        if len(historico) > 100:
+            historico = historico[-100:]
+        
+        try:
+            with open(historico_path, 'w') as f:
+                json.dump(historico, f, indent=2)
+        except Exception as e:
+            logging.error(f"Erro ao salvar histórico de sessões: {e}")
+    
+    def listar_sessoes(self):
+        """Lista todas as sessões salvas"""
+        sessoes = []
+        if os.path.exists(self.pasta_sessao):
+            for arquivo in sorted(os.listdir(self.pasta_sessao), reverse=True):
+                if arquivo.endswith('.json') and arquivo.startswith('sessao_'):
+                    caminho = os.path.join(self.pasta_sessao, arquivo)
+                    try:
+                        with open(caminho, 'r') as f:
+                            dados = json.load(f)
+                            dados['arquivo'] = arquivo
+                            dados['caminho'] = caminho
+                            sessoes.append(dados)
+                    except: pass
+        return sessoes
+    
+    def listar_sessoes_do_dia(self, data=None):
+        """Lista sessões de uma data específica (padrão: hoje)"""
+        if data is None:
+            data = data_brasilia()
+        
+        sessoes = []
+        todas = self.listar_sessoes()
+        for s in todas:
+            if s.get('data') == data:
+                sessoes.append(s)
+        return sessoes
+    
+    def consolidar_sessoes_dia(self, data=None):
+        """Consolida todas as sessões de um dia em um único arquivo"""
+        if data is None:
+            data = data_brasilia()
+        
+        sessoes_dia = self.listar_sessoes_do_dia(data)
+        if not sessoes_dia:
+            return None
+        
+        consolidado = {
+            'data': data,
+            'roleta': self.api_name,
+            'total_sessoes': len(sessoes_dia),
+            'sessoes': [],
+            'resumo_geral': {
+                'total_acertos': 0,
+                'total_erros': 0,
+                'total_rodadas': 0,
+            }
+        }
+        
+        for sessao in sessoes_dia:
+            stats = sessao.get('estatisticas', {})
+            consolidado['sessoes'].append({
+                'numero': sessao.get('numero_sessao'),
+                'hora': sessao.get('hora_encerramento'),
+                'acertos': stats.get('acertos', 0),
+                'erros': stats.get('erros', 0),
+                'taxa': stats.get('taxa_acerto', 0),
+                'entradas': sessao.get('entradas', [])
+            })
+            consolidado['resumo_geral']['total_acertos'] += stats.get('acertos', 0)
+            consolidado['resumo_geral']['total_erros'] += stats.get('erros', 0)
+            consolidado['resumo_geral']['total_rodadas'] += stats.get('total_rodadas', 0)
+        
+        total = consolidado['resumo_geral']['total_acertos'] + consolidado['resumo_geral']['total_erros']
+        consolidado['resumo_geral']['taxa_geral'] = round(
+            (consolidado['resumo_geral']['total_acertos'] / max(1, total)) * 100, 1
+        )
+        
+        nome_arquivo = f"consolidado_{data}_{self.api_name.lower().replace(' ', '_')}.json"
+        caminho = os.path.join(self.pasta_sessao, nome_arquivo)
+        
+        with open(caminho, 'w', encoding='utf-8') as f:
+            json.dump(consolidado, f, indent=2, ensure_ascii=False)
+        
+        return caminho
+    
+    def gerar_csv_sessao(self, dados_sessao):
+        """Gera CSV de uma sessão específica"""
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        writer.writerow(['Rodada', 'Hora', 'Número', 'Raio', 'Dúzia Real', 'Dúzia Prevista', 
+                         'Cobertura', 'Confiança', 'Gatilho', 'Zero', 'Anti-Erro', 
+                         'Acerto Dúzia', 'Acerto Número', 'Acerto Zero', 'Status'])
+        
+        for e in dados_sessao.get('entradas', []):
+            real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
+            prev = f"D{e.get('duzia_prevista','?')}"
+            cob = f"D{e.get('duzia_sec_prevista','?')}" if e.get('duzia_sec_prevista') and e.get('duzia_sec_prevista') != e.get('duzia_prevista') else "-"
+            zero = 'Sim' if e.get('incluir_zero') else 'Não'
+            anti = 'Sim' if e.get('modo_anti_erro') else 'Não'
+            duz = 'Sim' if e.get('acerto_duzia') else 'Não'
+            num = 'Sim' if e.get('acerto_numero') else 'Não'
+            zer = 'Sim' if e.get('acerto_zero') else 'Não'
+            
+            numero = e.get('numero', 0)
+            raio = f"{e.get('multiplicador',0)}x" if e.get('eh_raio') else '-'
+            
+            writer.writerow([
+                e.get('rodada'), e.get('hora'), numero, raio, real, prev, cob,
+                f"{e.get('confianca',0):.1f}", e.get('gatilho','-') if e.get('gatilho') else '-',
+                zero, anti, duz, num, zer, e.get('status','?')
+            ])
+        
+        return output.getvalue()
+    
+    def get_download_link(self, conteudo, nome_arquivo, tipo='json'):
+        """Gera um link de download para um arquivo"""
+        if tipo == 'csv':
+            b64 = base64.b64encode(conteudo.encode()).decode()
+            mime = 'text/csv'
+        else:
+            b64 = base64.b64encode(conteudo.encode()).decode()
+            mime = 'application/json'
+        
+        return f'<a href="data:{mime};base64,{b64}" download="{nome_arquivo}">📥 Baixar {nome_arquivo}</a>'
 
 def salvar_sessao():
     try:
@@ -469,7 +686,7 @@ def fetch_latest_result():
     return fetch_func()
 
 # =============================
-# 🧠 DUZIA AI - COM NOVO GATILHO RITMO_ALTERNADO
+# DUZIA AI - COM GATILHO RITMO_ALTERNADO
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -503,7 +720,6 @@ class DuziaAI:
         self.acertos_consecutivos_mesma_duzia = 0
         self.ultima_duzia_acertada = None
         
-        # 🆕 Rastreamento do ritmo alternado
         self.ritmo_alternado_par = None
         self.ritmo_alternado_contagem = 0
         self.ultimo_ritmo_alternado = None
@@ -544,7 +760,6 @@ class DuziaAI:
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
         
-        # 🆕 Atualizar rastreamento de ritmo alternado
         self._atualizar_ritmo_alternado(d)
         
         if d != 0:
@@ -560,7 +775,7 @@ class DuziaAI:
         if len(self.numeros_completos) > 200: self.numeros_completos = self.numeros_completos[-200:]
     
     def _atualizar_ritmo_alternado(self, nova_duzia):
-        """🆕 Detecta e rastreia padrões de alternância tipo DANÇA (D1-D3-D1-D3 ou D2-D3-D2-D3)"""
+        """Detecta e rastreia padrões de alternância tipo DANÇA"""
         if nova_duzia == 0:
             return
         
@@ -568,7 +783,6 @@ class DuziaAI:
         if len(u) < 3:
             return
         
-        # Pega as últimas 8 dúzias (ignorando zeros) para análise
         recentes = [d for d in u[-8:] if d != 0]
         
         if len(recentes) < 4:
@@ -576,27 +790,21 @@ class DuziaAI:
             self.ritmo_alternado_contagem = 0
             return
         
-        # Verifica padrão de alternância nas últimas 4-6 posições
-        # Procura por padrão A-B-A-B ou B-A-B-A
         for inicio in range(len(recentes) - 3):
             seq = recentes[inicio:inicio+4]
             if seq[0] != seq[1] and seq[0] == seq[2] and seq[1] == seq[3]:
-                # Encontrou padrão A-B-A-B
                 par = tuple(sorted([seq[0], seq[1]]))
                 
-                # Verifica se é o mesmo par que já estava rastreando
                 if self.ritmo_alternado_par == par:
                     self.ritmo_alternado_contagem += 1
                 else:
                     self.ritmo_alternado_par = par
                     self.ritmo_alternado_contagem = 1
                 
-                # Se a contagem for >= 2 (padrão se repetiu), ativa o gatilho
                 if self.ritmo_alternado_contagem >= 2:
                     self.ultimo_ritmo_alternado = par
                 return
         
-        # Se não encontrou padrão, reseta
         self.ritmo_alternado_par = None
         self.ritmo_alternado_contagem = 0
     
@@ -761,7 +969,7 @@ class DuziaAI:
         return None
     
     def detectar_ritmo_alternado(self):
-        """🆕 Detecta padrão de DANÇA - alternância consistente entre duas dúzias (ex: D1-D3-D1-D3)"""
+        """Detecta padrão de DANÇA - alternância consistente entre duas dúzias"""
         u = list(self.historico)
         recentes = [d for d in u[-8:] if d != 0]
         
@@ -770,16 +978,13 @@ class DuziaAI:
         
         config = self._get_config()
         
-        # Método 1: Verificar as últimas 6 dúzias para padrão A-B-A-B-A-B
         ultimas_6 = recentes[-6:] if len(recentes) >= 6 else recentes
         if len(ultimas_6) >= 6:
-            # Verifica padrão perfeito A-B-A-B-A-B
             if (ultimas_6[0] == ultimas_6[2] == ultimas_6[4] and 
                 ultimas_6[1] == ultimas_6[3] == ultimas_6[5] and
                 ultimas_6[0] != ultimas_6[1] and 
                 ultimas_6[0] != 0 and ultimas_6[1] != 0):
                 
-                # Padrão A-B-A-B-A-B, próximo deve ser A
                 proxima = ultimas_6[0]
                 return {
                     'tipo': 'RITMO_ALTERNADO',
@@ -788,7 +993,6 @@ class DuziaAI:
                     'par': (ultimas_6[0], ultimas_6[1])
                 }
         
-        # Método 2: Verificar últimas 5 para padrão A-B-A-B-A
         ultimas_5 = recentes[-5:] if len(recentes) >= 5 else recentes
         if len(ultimas_5) >= 5:
             if (ultimas_5[0] == ultimas_5[2] == ultimas_5[4] and 
@@ -796,7 +1000,6 @@ class DuziaAI:
                 ultimas_5[0] != ultimas_5[1] and
                 ultimas_5[0] != 0 and ultimas_5[1] != 0):
                 
-                # Padrão A-B-A-B-A, próximo deve ser B
                 proxima = ultimas_5[1]
                 return {
                     'tipo': 'RITMO_ALTERNADO',
@@ -805,7 +1008,6 @@ class DuziaAI:
                     'par': (ultimas_5[0], ultimas_5[1])
                 }
         
-        # Método 3: Verificar últimas 4 para padrão A-B-A-B
         ultimas_4 = recentes[-4:] if len(recentes) >= 4 else recentes
         if len(ultimas_4) >= 4:
             if (ultimas_4[0] == ultimas_4[2] and 
@@ -813,7 +1015,6 @@ class DuziaAI:
                 ultimas_4[0] != ultimas_4[1] and
                 ultimas_4[0] != 0 and ultimas_4[1] != 0):
                 
-                # Padrão A-B-A-B, próximo deve ser A
                 proxima = ultimas_4[0]
                 return {
                     'tipo': 'RITMO_ALTERNADO',
@@ -822,12 +1023,10 @@ class DuziaAI:
                     'par': (ultimas_4[0], ultimas_4[1])
                 }
         
-        # Método 4: Usar o rastreador interno de ritmo alternado
         if (self.ritmo_alternado_contagem >= 2 and 
             self.ultimo_ritmo_alternado is not None):
             par = self.ultimo_ritmo_alternado
             ultima = recentes[-1]
-            # Determina qual deve ser a próxima
             if ultima == par[0]:
                 proxima = par[1]
             elif ultima == par[1]:
@@ -848,7 +1047,6 @@ class DuziaAI:
     def detectar_gatilhos(self):
         u = list(self.historico)
         
-        # 🆕 NOVO GATILHO: RITMO_ALTERNADO (DANÇA) - PRIORIDADE MÁXIMA
         ritmo_alternado = self.detectar_ritmo_alternado()
         if ritmo_alternado:
             self.ultimo_gatilho = 'RITMO_ALTERNADO'
@@ -920,10 +1118,8 @@ class DuziaAI:
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0: score[gatilho['duzia']] += gatilho['forca'] * 2
         
-        # 🆕 Reforço extra para RITMO_ALTERNADO
         if gatilho and gatilho['tipo'] == 'RITMO_ALTERNADO':
             score[gatilho['duzia']] += config['ritmo_alternado_peso']
-            # Penaliza a terceira dúzia (a que não faz parte da dança)
             if 'par' in gatilho:
                 for d in [1, 2, 3]:
                     if d not in gatilho['par']:
@@ -981,7 +1177,6 @@ class DuziaAI:
         u_list = list(self.historico)
         if 0 in u_list[-3:]: confianca *= 0.5
         
-        # 🆕 RITMO_ALTERNADO força entrada com confiança máxima
         pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
         if gatilho and gatilho['tipo'] == 'RITMO_ALTERNADO':
             pode_entrar = True
@@ -994,7 +1189,6 @@ class DuziaAI:
         
         if config['bloquear_alerta_zero_conf_alta']:
             if gatilho and gatilho['tipo'] == 'EMBALO' and confianca >= 3.3 and self.alerta_zero_ativo:
-                # 🆕 RITMO_ALTERNADO não é bloqueado por alerta zero
                 if gatilho['tipo'] != 'RITMO_ALTERNADO':
                     pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
         
@@ -1096,6 +1290,11 @@ class SistemaBot:
         self.total_sessoes = 0
         self.acertos_sessao = 0
         self.erros_sessao = 0
+        
+        # 🆕 Gerenciador de sessões para download
+        self.gerenciador_sessoes = GerenciadorSessoes(
+            st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+        )
     
     def iniciar_sessao(self):
         """Inicia uma nova sessão manualmente"""
@@ -1118,6 +1317,26 @@ class SistemaBot:
         self.sessao_pausa_ate = hora_brasilia() + timedelta(minutes=self.pausa_entre_sessoes)
         
         taxa = (self.acertos_sessao / max(1, self.acertos_sessao + self.erros_sessao)) * 100
+        
+        # 🆕 Salvar sessão automaticamente
+        if st.session_state.get('salvar_sessoes_auto', True):
+            entradas_sessao = []
+            inicio = len(self.historico_entradas) - self.rodadas_na_sessao
+            if inicio < 0: inicio = 0
+            entradas_sessao = self.historico_entradas[inicio:]
+            
+            dados_sessao = {
+                'acertos': self.acertos_sessao,
+                'erros': self.erros_sessao,
+                'taxa_acerto': round(taxa, 1),
+                'total_rodadas': self.rodadas_na_sessao,
+                'rodadas_por_sessao': self.rodadas_por_sessao,
+            }
+            
+            self.gerenciador_sessoes.salvar_sessao_encerrada(
+                self.total_sessoes, dados_sessao, entradas_sessao
+            )
+        
         logging.info(f"⏸️ Sessão #{self.total_sessoes} encerrada! "
                     f"Acertos: {self.acertos_sessao}/{self.acertos_sessao + self.erros_sessao} ({taxa:.0f}%) | "
                     f"Pausa de {self.pausa_entre_sessoes} minutos")
@@ -1126,7 +1345,8 @@ class SistemaBot:
             enviar_telegram(
                 f"⏸️ Sessão #{self.total_sessoes} encerrada!\n"
                 f"📊 {self.acertos_sessao}✅ / {self.erros_sessao}❌ ({taxa:.0f}%)\n"
-                f"⏰ Pausa de {self.pausa_entre_sessoes} min",
+                f"⏰ Pausa de {self.pausa_entre_sessoes} min\n"
+                f"💾 Sessão salva automaticamente!",
                 st.session_state.telegram_token,
                 st.session_state.telegram_chat_id
             )
@@ -1334,7 +1554,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # APLICAÇÃO STREAMLIT
 # =============================
 st.set_page_config(page_title="🎰 DuziaAI V10.9.10 - Sessão 10 Rodadas", layout="wide")
-st.title("🎰 DuziaAI V10.9.10 - SESSÃO 10 RODADAS + RITMO ALTERNADO (BRT)")
+st.title("🎰 DuziaAI V10.9.10 - SESSÃO 10 RODADAS + RITMO ALTERNADO + DOWNLOAD (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1358,6 +1578,8 @@ if "rodadas_por_sessao" not in st.session_state:
     st.session_state.rodadas_por_sessao = config_global.get('rodadas_por_sessao', 10)
 if "pausa_entre_sessoes" not in st.session_state:
     st.session_state.pausa_entre_sessoes = config_global.get('pausa_entre_sessoes', 5)
+if "salvar_sessoes_auto" not in st.session_state:
+    st.session_state.salvar_sessoes_auto = config_global.get('salvar_sessoes_auto', True)
 
 if st.session_state.api_selecionada != st.session_state.ultima_api:
     st.session_state.ultima_api = st.session_state.api_selecionada
@@ -1445,7 +1667,7 @@ if "historico" not in st.session_state: st.session_state.historico = []
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.10 - DANÇA")
+    st.markdown("## ⚙️ V10.9.10 - DANÇA + DOWNLOAD")
     
     sis = st.session_state.sistema
     
@@ -1480,6 +1702,96 @@ with st.sidebar:
     
     if st.button("🆕 RESET TOTAL", use_container_width=True):
         if nova_sessao(): st.success("✅ Reset completo!"); st.rerun()
+    
+    st.markdown("---")
+    
+    # 🆕 Configurações de salvamento automático
+    st.markdown("### 💾 Download de Sessões")
+    st.session_state.salvar_sessoes_auto = st.checkbox(
+        "💾 Salvar sessões automaticamente", 
+        value=st.session_state.salvar_sessoes_auto,
+        help="Ao encerrar cada sessão, salva automaticamente em JSON"
+    )
+    
+    # 🆕 Seção de download de sessões
+    with st.expander("📥 BAIXAR SESSÕES", expanded=False):
+        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+        gerenciador = GerenciadorSessoes(api_name)
+        
+        # Listar sessões disponíveis
+        sessoes = gerenciador.listar_sessoes()
+        
+        if sessoes:
+            st.caption(f"📂 {len(sessoes)} sessões disponíveis")
+            
+            # Opção para baixar sessão específica
+            st.markdown("#### 📥 Sessão Específica")
+            sessao_opcoes = [f"Sessão #{s.get('numero_sessao', '?')} - {s.get('data', '?')} {s.get('hora_encerramento', '?')}" for s in sessoes[:20]]
+            
+            if sessao_opcoes:
+                sessao_selecionada = st.selectbox("Selecionar sessão:", sessao_opcoes, key="select_sessao")
+                
+                if sessao_selecionada:
+                    idx = sessao_opcoes.index(sessao_selecionada)
+                    if idx < len(sessoes):
+                        sessao = sessoes[idx]
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            # Download JSON
+                            conteudo_json = json.dumps(sessao, indent=2, ensure_ascii=False)
+                            st.markdown(
+                                gerenciador.get_download_link(conteudo_json, f"sessao_{sessao.get('numero_sessao', '?')}.json", 'json'),
+                                unsafe_allow_html=True
+                            )
+                        with col2:
+                            # Download CSV
+                            conteudo_csv = gerenciador.gerar_csv_sessao(sessao)
+                            st.markdown(
+                                gerenciador.get_download_link(conteudo_csv, f"sessao_{sessao.get('numero_sessao', '?')}.csv", 'csv'),
+                                unsafe_allow_html=True
+                            )
+                        
+                        # Mostrar estatísticas da sessão
+                        stats = sessao.get('estatisticas', {})
+                        st.caption(f"✅ {stats.get('acertos', 0)} | ❌ {stats.get('erros', 0)} | 📊 {stats.get('taxa_acerto', 0)}%")
+            
+            st.markdown("---")
+            
+            # 🆕 Download do consolidado do dia
+            st.markdown("#### 📊 Consolidado do Dia")
+            data_hoje = data_brasilia()
+            sessoes_hoje = gerenciador.listar_sessoes_do_dia(data_hoje)
+            
+            if sessoes_hoje:
+                st.caption(f"📅 {data_hoje}: {len(sessoes_hoje)} sessões")
+                
+                if st.button("📊 Gerar Consolidado Hoje", use_container_width=True):
+                    caminho = gerenciador.consolidar_sessoes_dia(data_hoje)
+                    if caminho:
+                        with open(caminho, 'r') as f:
+                            conteudo = f.read()
+                        st.markdown(
+                            gerenciador.get_download_link(conteudo, f"consolidado_{data_hoje}.json", 'json'),
+                            unsafe_allow_html=True
+                        )
+                        st.success("✅ Consolidado gerado!")
+            else:
+                st.caption(f"📅 Nenhuma sessão hoje ({data_hoje})")
+            
+            st.markdown("---")
+            
+            # Download de todas as sessões
+            if st.button("📦 Baixar Todas as Sessões (JSON)", use_container_width=True):
+                todas_sessoes = gerenciador.listar_sessoes()
+                if todas_sessoes:
+                    conteudo = json.dumps({'total_sessoes': len(todas_sessoes), 'sessoes': todas_sessoes}, indent=2, ensure_ascii=False)
+                    st.markdown(
+                        gerenciador.get_download_link(conteudo, f"todas_sessoes_{api_name.lower().replace(' ', '_')}.json", 'json'),
+                        unsafe_allow_html=True
+                    )
+        else:
+            st.info("Nenhuma sessão salva ainda. Inicie e encerre uma sessão para gerar arquivos.")
     
     st.markdown("---")
     
@@ -1711,5 +2023,5 @@ else:
     st.info("Nenhuma entrada.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V10.9.10 | Sessão 10 Rodadas + Ritmo Alternado | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.10 | Sessão 10 Rodadas + Ritmo Alternado + Download | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
