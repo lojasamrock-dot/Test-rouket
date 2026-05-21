@@ -46,9 +46,9 @@ def timestamp_brasilia():
 # =============================
 ROLETA_CONFIGS = {
     'XXXtreme Lightning': {
-        'pagamento_numero': 36,
-        'pagamento_zero': 36,
-        'pagamento_duzia': 3,
+        'pagamento_numero': 20,  # Número normal paga 20x
+        'pagamento_zero': 20,     # Zero paga 20x
+        'pagamento_duzia': 3,     # Dúzia paga 3x
         'confianca_minima_entrada': 2.0,
         'embalo_peso': 9,
         'embalo_reforco': 5,
@@ -73,15 +73,44 @@ ROLETA_CONFIGS = {
         'pagamento_numero': 24,
         'pagamento_zero': 24,
         'pagamento_duzia': 2,
-        'confianca_minima_entrada': 2.5,      # Mais restritivo
-        'embalo_peso': 6,                      # Peso reduzido (46% acerto)
-        'embalo_reforco': 3,                   # Reforço reduzido
-        'bloquear_alerta_zero_conf_alta': True, # 50% dos erros têm Alerta Zero
+        'confianca_minima_entrada': 2.5,
+        'embalo_peso': 6,
+        'embalo_reforco': 3,
+        'bloquear_alerta_zero_conf_alta': True,
         'bloquear_anti_erro_zero_conf_baixa': True,
-        'filtro_conf_baixa': 2.5,              # Mais restritivo (31% erros < 2.5)
-        'fadiga_duzia': 3,                     # Mais sensível à fadiga
+        'filtro_conf_baixa': 2.5,
+        'fadiga_duzia': 3,
     },
 }
+
+# =============================
+# 🆕 CONFIGURAÇÕES GLOBAIS PERSISTENTES
+# =============================
+CONFIG_GLOBAL_PATH = "config_global.json"
+
+def salvar_config_global():
+    """Salva configurações globais (Telegram, etc.)"""
+    config = {
+        'telegram_token': st.session_state.get('telegram_token', ''),
+        'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
+        'telegram_token_alt': st.session_state.get('telegram_token_alt', ''),
+        'telegram_chat_id_alt': st.session_state.get('telegram_chat_id_alt', ''),
+        'modo_automatico': st.session_state.get('modo_automatico', True),
+        'modo_agressivo': st.session_state.get('modo_agressivo', False),
+        'janela_duzia_ai': st.session_state.get('janela_duzia_ai', 30),
+        'api_selecionada': st.session_state.get('api_selecionada', 'XXXtreme Lightning'),
+    }
+    try:
+        with open(CONFIG_GLOBAL_PATH, 'w') as f: json.dump(config, f)
+    except Exception as e: logging.error(f"Erro ao salvar config global: {e}")
+
+def carregar_config_global():
+    """Carrega configurações globais salvas"""
+    try:
+        if os.path.exists(CONFIG_GLOBAL_PATH):
+            with open(CONFIG_GLOBAL_PATH, 'r') as f: return json.load(f)
+    except: pass
+    return {}
 
 # =============================
 # CONFIGURAÇÕES DE PERSISTÊNCIA POR ROLETA
@@ -94,6 +123,8 @@ def get_session_paths(api_name):
         'historico': f"historico_roleta_{safe_name}.json",
         'performance': f"performance_bot_{safe_name}.json",
         'entradas': f"historico_entradas_{safe_name}.json",
+        'performance_mesa': f"performance_mesa_{safe_name}.json",
+        'performance_horario': f"performance_horario_{safe_name}.json",
     }
 
 def salvar_sessao():
@@ -114,6 +145,10 @@ def salvar_sessao():
         with open(paths['performance'], 'w') as f: json.dump(performance_data, f)
         with open(paths['entradas'], 'w') as f: json.dump(sis.historico_entradas, f)
         
+        # 🆕 Salvar performance por mesa e horário
+        with open(paths['performance_mesa'], 'w') as f: json.dump(dict(sis.performance_por_mesa), f)
+        with open(paths['performance_horario'], 'w') as f: json.dump(dict(sis.performance_por_horario), f)
+        
         session_data = {
             'historico_numeros': list(sis.historico_numeros),
             'entrada_ativa': sis.entrada_ativa,
@@ -126,6 +161,9 @@ def salvar_sessao():
             'numero_rodada': sis.numero_rodada,
         }
         with open(paths['session'], 'wb') as f: pickle.dump(session_data, f)
+        
+        # 🆕 Salvar configurações globais
+        salvar_config_global()
         return True
     except Exception as e:
         logging.error(f"Erro ao salvar: {e}")
@@ -134,6 +172,7 @@ def salvar_sessao():
 def carregar_dados_persistidos(api_name):
     """Carrega dados persistidos de uma roleta específica"""
     paths = get_session_paths(api_name)
+    dados = {}
     try:
         if os.path.exists(paths['session']):
             with open(paths['session'], 'rb') as f: 
@@ -141,9 +180,15 @@ def carregar_dados_persistidos(api_name):
                 if os.path.exists(paths['entradas']):
                     with open(paths['entradas'], 'r') as f2:
                         dados['historico_entradas'] = json.load(f2)
-                return dados
+                # 🆕 Carregar performance por mesa e horário
+                if os.path.exists(paths['performance_mesa']):
+                    with open(paths['performance_mesa'], 'r') as f3:
+                        dados['performance_por_mesa'] = json.load(f3)
+                if os.path.exists(paths['performance_horario']):
+                    with open(paths['performance_horario'], 'r') as f4:
+                        dados['performance_por_horario'] = json.load(f4)
     except: pass
-    return None
+    return dados
 
 def limpar_sessao():
     try:
@@ -325,6 +370,10 @@ def fetch_XXXtreme_Lightning():
         rs = gd.get("result", {})
         nm = rs.get("outcome", {}).get("number")
         ts = gd.get("startedAt")
+        # 🆕 Extrair informações da mesa
+        table_info = gd.get("table", {})
+        table_id = table_info.get("id", "unknown")
+        table_name = table_info.get("name", "Desconhecida")
         ln, lm = [], {}
         for item in rs.get('luckyNumbersList', []):
             n = item.get('number')
@@ -332,8 +381,8 @@ def fetch_XXXtreme_Lightning():
                 ln.append(n)
                 m = item.get('roundedMultiplier')
                 if m is not None: lm[n] = m
-        logging.info(f"⚡ XXXtreme: Nº {nm} | Raios: {ln}")
-        return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
+        logging.info(f"⚡ XXXtreme: Nº {nm} | Mesa: {table_name} | Raios: {ln}")
+        return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm, "table_id": table_id, "table_name": table_name}
     except Exception as e:
         logging.warning(f"❌ Erro XXXtreme: {e}")
         return None
@@ -350,8 +399,12 @@ def fetch_Immersive_Roulette():
         outcome = result.get("outcome", {})
         nm = outcome.get("number")
         ts = data.get("startedAt")
-        logging.info(f"🎯 Immersive: Nº {nm}")
-        return {"number": nm, "timestamp": ts, "luckyNumbers": [], "luckyMultipliers": {}}
+        # 🆕 Extrair informações da mesa
+        table_info = data.get("table", {})
+        table_id = table_info.get("id", "unknown")
+        table_name = table_info.get("name", "Desconhecida")
+        logging.info(f"🎯 Immersive: Nº {nm} | Mesa: {table_name}")
+        return {"number": nm, "timestamp": ts, "luckyNumbers": [], "luckyMultipliers": {}, "table_id": table_id, "table_name": table_name}
     except Exception as e:
         logging.warning(f"❌ Erro Immersive: {e}")
         return None
@@ -367,6 +420,10 @@ def fetch_Mega_Roulette():
         rs = gd.get("result", {})
         nm = rs.get("outcome", {}).get("number")
         ts = gd.get("startedAt")
+        # 🆕 Extrair informações da mesa
+        table_info = gd.get("table", {})
+        table_id = table_info.get("id", "unknown")
+        table_name = table_info.get("name", "Desconhecida")
         ln, lm = [], {}
         for item in rs.get('luckyNumbersList', []):
             n = item.get('number')
@@ -374,8 +431,8 @@ def fetch_Mega_Roulette():
                 ln.append(n)
                 m = item.get('roundedMultiplier')
                 if m is not None: lm[n] = m
-        logging.info(f"⚡ Mega: Nº {nm} | Raios: {ln}")
-        return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm}
+        logging.info(f"⚡ Mega: Nº {nm} | Mesa: {table_name} | Raios: {ln}")
+        return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm, "table_id": table_id, "table_name": table_name}
     except Exception as e:
         logging.warning(f"❌ Erro Mega: {e}")
         return None
@@ -393,7 +450,7 @@ def fetch_latest_result():
     return fetch_func()
 
 # =============================
-# 🧠 DUZIA AI V10.9.9 - ESTRATÉGIAS INDEPENDENTES POR ROLETA
+# 🧠 DUZIA AI V10.9.10 - COM TRACKING DE MESA/HORÁRIO
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -426,12 +483,41 @@ class DuziaAI:
         self.zeros_previstos = 0
         self.acertos_consecutivos_mesma_duzia = 0
         self.ultima_duzia_acertada = None
+        
+        # 🆕 Tracking de mesa e horário
+        self.mesa_atual = None
+        self.performance_por_mesa = defaultdict(lambda: {'acertos': 0, 'erros': 0})
+        self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
     
-    # 🆕 Método para obter configurações da roleta atual
     def _get_config(self):
         """Retorna as configurações específicas da roleta selecionada"""
         api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-        return ROLETA_CONFIGS.get(api_name, ROLETA_CONFIGS['XXXtreme Lightning'])
+        config = ROLETA_CONFIGS.get(api_name, ROLETA_CONFIGS['XXXtreme Lightning']).copy()
+        
+        # 🆕 Ajustar configurações baseado na performance da mesa atual
+        if self.mesa_atual and self.mesa_atual in self.performance_por_mesa:
+            perf = self.performance_por_mesa[self.mesa_atual]
+            total = perf['acertos'] + perf['erros']
+            if total >= 10:
+                taxa = perf['acertos'] / total
+                if taxa < 0.55:  # Mesa com baixa performance
+                    config['confianca_minima_entrada'] += 0.5
+                    config['filtro_conf_baixa'] += 0.5
+                    logging.info(f"⚠️ Mesa {self.mesa_atual} com baixa performance ({taxa:.0%}) - Aumentando filtros")
+        
+        # 🆕 Ajustar por horário
+        hora = datetime.now().hour
+        turno = "manhã" if 6 <= hora < 12 else "tarde" if 12 <= hora < 18 else "noite"
+        if turno in self.performance_por_horario:
+            perf = self.performance_por_horario[turno]
+            total = perf['acertos'] + perf['erros']
+            if total >= 10:
+                taxa = perf['acertos'] / total
+                if taxa < 0.55:
+                    config['confianca_minima_entrada'] += 0.3
+                    logging.info(f"⚠️ Turno {turno} com baixa performance ({taxa:.0%}) - Ajustando")
+        
+        return config
         
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -457,13 +543,28 @@ class DuziaAI:
         self.ultima_confianca = confianca
         if len(self.ultimas_previsoes) > 10: self.ultimas_previsoes = self.ultimas_previsoes[-10:]
     
-    def registrar_resultado(self, duzia_real, acertou_duzia, acertou_numero, acertou_zero):
+    def registrar_resultado(self, duzia_real, acertou_duzia, acertou_numero, acertou_zero, mesa_id=None):
         self.ultimos_resultados.append({
             'duzia': duzia_real, 'acertou_duzia': acertou_duzia,
             'acertou_numero': acertou_numero, 'acertou_zero': acertou_zero
         })
         self.ultimo_resultado_duzia = acertou_duzia
         self.ultimo_resultado_numero = acertou_numero
+        
+        # 🆕 Registrar performance por mesa e horário
+        if mesa_id:
+            self.mesa_atual = mesa_id
+            if acertou_duzia or acertou_zero:
+                self.performance_por_mesa[mesa_id]['acertos'] += 1
+            else:
+                self.performance_por_mesa[mesa_id]['erros'] += 1
+        
+        hora = datetime.now().hour
+        turno = "manhã" if 6 <= hora < 12 else "tarde" if 12 <= hora < 18 else "noite"
+        if acertou_duzia or acertou_zero:
+            self.performance_por_horario[turno]['acertos'] += 1
+        else:
+            self.performance_por_horario[turno]['erros'] += 1
         
         if len(self.ultimos_resultados) > 20: self.ultimos_resultados = self.ultimos_resultados[-20:]
         
@@ -666,7 +767,6 @@ class DuziaAI:
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0: score[gatilho['duzia']] += gatilho['forca'] * 2
         
-        # 🆕 Reforço específico por roleta
         if gatilho and gatilho['tipo'] in ('RITMO_PING_PONG', 'EMBALO'):
             score[gatilho['duzia']] += config['embalo_reforco']
         
@@ -725,7 +825,6 @@ class DuziaAI:
         if self.ultimo_resultado_duzia == False and self.ultima_confianca >= 3.4:
             if d1 == self.ultima_previsao_duzia: d1 = d2; s1 = s2
         
-        # 🆕 Filtros com configurações por roleta
         if config['bloquear_alerta_zero_conf_alta']:
             if gatilho and gatilho['tipo'] == 'EMBALO' and confianca >= 3.3 and self.alerta_zero_ativo:
                 pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
@@ -738,7 +837,7 @@ class DuziaAI:
             pode_entrar = False; motivo = "🚫 EXAUSTAO + Zero"
         
         if self.modo_anti_erro:
-            if self.erros_consecutivos == 1: motivo = f"🔄 ANTI-ERRO: Seguindo última real" if not motivo else motivo
+            if self.erros_consecutivos == 1: motivo = f"🔄 ANTI-ERRO" if not motivo else motivo
             else: motivo = f"🔄 ANTI-ERRO x{self.erros_consecutivos}" if not motivo else motivo
         else:
             if not motivo: motivo = "" if pode_entrar else f"Score baixo ({s1:.1f})"
@@ -760,7 +859,6 @@ class DuziaAI:
         u = list(self.historico)
         if self.alerta_zero_ativo: previsao['incluir_zero'] = True
 
-        # 🆕 Fadiga de dúzia com threshold por roleta
         if self.acertos_consecutivos_mesma_duzia >= config['fadiga_duzia'] and self.ultima_duzia_acertada is not None:
             duzia_fadigada = self.ultima_duzia_acertada
             if previsao['duzia'] == duzia_fadigada:
@@ -816,14 +914,21 @@ class SistemaBot:
         self.ultimo_numero = None
         self.sinais_grafico = []
         self.numero_rodada = 0
+        
+        # 🆕 Performance por mesa e horário
+        self.performance_por_mesa = defaultdict(lambda: {'acertos': 0, 'erros': 0})
+        self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
     
     def processar_novo_numero(self, numero_data):
         if isinstance(numero_data, dict):
             nr = numero_data.get('number')
             lucky_numbers = numero_data.get('luckyNumbers', [])
             lucky_multipliers = numero_data.get('luckyMultipliers', {})
+            table_id = numero_data.get('table_id', 'unknown')
+            table_name = numero_data.get('table_name', 'Desconhecida')
         else:
             nr = numero_data; lucky_numbers = []; lucky_multipliers = {}
+            table_id = 'unknown'; table_name = 'Desconhecida'
         
         if nr is None or not validar_numero(nr): return
         
@@ -860,7 +965,22 @@ class SistemaBot:
             elif nr != 0: self.erros_duzia += 1
             
             acertou_duzia = acerto_primaria or acerto_secundaria
-            self.duzia_ai.registrar_resultado(duzia_real, acertou_duzia, acerto_numero_exato, acerto_zero)
+            
+            # 🆕 Registrar com mesa_id
+            self.duzia_ai.registrar_resultado(duzia_real, acertou_duzia, acerto_numero_exato, acerto_zero, table_id)
+            
+            # 🆕 Atualizar performance por mesa e horário
+            if acertou_duzia or acerto_zero:
+                self.performance_por_mesa[table_id]['acertos'] += 1
+            else:
+                self.performance_por_mesa[table_id]['erros'] += 1
+            
+            hora = datetime.now().hour
+            turno = "manhã" if 6 <= hora < 12 else "tarde" if 12 <= hora < 18 else "noite"
+            if acertou_duzia or acerto_zero:
+                self.performance_por_horario[turno]['acertos'] += 1
+            else:
+                self.performance_por_horario[turno]['erros'] += 1
             
             if acerto_zero: status_visual = '🟢'
             elif acerto_numero_exato and eh_raio: status_visual = '⚡'
@@ -880,7 +1000,8 @@ class SistemaBot:
                 'confianca': self.entrada_ativa.get('confianca', 0),
                 'gatilho': self.entrada_ativa.get('gatilho_ativo', None),
                 'modo_anti_erro': self.entrada_ativa.get('modo_anti_erro', False),
-                'incluir_zero': incluir_zero
+                'incluir_zero': incluir_zero,
+                'table_id': table_id, 'table_name': table_name
             })
             if len(self.historico_entradas) > 50: self.historico_entradas = self.historico_entradas[-50:]
             enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, eh_raio, multiplicador)
@@ -946,7 +1067,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     try:
         with open(caminho, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Cob','Conf','Gat','Z','🔄','Duz','Num','Zer','St'])
+            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Cob','Conf','Gat','Z','🔄','Mesa','Duz','Num','Zer','St'])
             for e in historico_entradas:
                 real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
                 prev = f"D{e.get('duzia_prevista','?')}"
@@ -957,22 +1078,36 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
                 num = '✅' if e.get('acerto_numero') else '-'
                 zer = '✅' if e.get('acerto_zero') else '-'
                 raio = f"⚡{e.get('multiplicador',0)}x" if e.get('eh_raio') else '-'
-                writer.writerow([e.get('rodada'), e.get('hora'), e.get('numero'), raio, real, prev, cob, f"{e.get('confianca',0):.1f}", e.get('gatilho','-') if e.get('gatilho') else '-', zero, anti, duz, num, zer, e.get('status','?')])
+                mesa = e.get('table_name', '?')[:15] if e.get('table_name') else '?'
+                writer.writerow([e.get('rodada'), e.get('hora'), e.get('numero'), raio, real, prev, cob, f"{e.get('confianca',0):.1f}", e.get('gatilho','-') if e.get('gatilho') else '-', zero, anti, mesa, duz, num, zer, e.get('status','?')])
         return True
     except Exception as e: logging.error(f"Erro CSV: {e}"); return False
 
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.9 - Estratégias por Roleta", layout="wide")
-st.title("🎰 DuziaAI V10.9.9 - ESTRATÉGIAS INDEPENDENTES (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.10 - Persistência Total", layout="wide")
+st.title("🎰 DuziaAI V10.9.10 - PERSISTÊNCIA TOTAL (BRT)")
 
-# Inicializar
+# 🆕 Carregar configurações globais (Telegram, etc.)
+config_global = carregar_config_global()
+
+# Inicializar estado
 if "api_selecionada" not in st.session_state:
-    st.session_state.api_selecionada = 'XXXtreme Lightning'
+    st.session_state.api_selecionada = config_global.get('api_selecionada', 'XXXtreme Lightning')
 
 if "ultima_api" not in st.session_state:
     st.session_state.ultima_api = st.session_state.api_selecionada
+
+# 🆕 Restaurar configurações do Telegram
+if "telegram_token" not in st.session_state:
+    st.session_state.telegram_token = config_global.get('telegram_token', '')
+if "telegram_chat_id" not in st.session_state:
+    st.session_state.telegram_chat_id = config_global.get('telegram_chat_id', '')
+if "telegram_token_alt" not in st.session_state:
+    st.session_state.telegram_token_alt = config_global.get('telegram_token_alt', '')
+if "telegram_chat_id_alt" not in st.session_state:
+    st.session_state.telegram_chat_id_alt = config_global.get('telegram_chat_id_alt', '')
 
 if st.session_state.api_selecionada != st.session_state.ultima_api:
     st.session_state.ultima_api = st.session_state.api_selecionada
@@ -992,6 +1127,15 @@ if st.session_state.api_selecionada != st.session_state.ultima_api:
         sis.erros_zero = dados.get('erros_zero', 0)
         sis.entrada_ativa = dados.get('entrada_ativa', None)
         sis.historico_entradas = dados.get('historico_entradas', [])
+        # 🆕 Restaurar performance por mesa/horário
+        if 'performance_por_mesa' in dados:
+            for k, v in dados['performance_por_mesa'].items():
+                sis.performance_por_mesa[k] = v
+                sis.duzia_ai.performance_por_mesa[k] = v
+        if 'performance_por_horario' in dados:
+            for k, v in dados['performance_por_horario'].items():
+                sis.performance_por_horario[k] = v
+                sis.duzia_ai.performance_por_horario[k] = v
         paths = get_session_paths(st.session_state.api_selecionada)
         if os.path.exists(paths['historico']):
             with open(paths['historico'], 'r') as f: st.session_state.historico = json.load(f)
@@ -1015,23 +1159,31 @@ if "sistema" not in st.session_state:
         sis.erros_zero = dados.get('erros_zero', 0)
         sis.entrada_ativa = dados.get('entrada_ativa')
         sis.historico_entradas = dados.get('historico_entradas', [])
+        if 'performance_por_mesa' in dados:
+            for k, v in dados['performance_por_mesa'].items():
+                sis.performance_por_mesa[k] = v
+                sis.duzia_ai.performance_por_mesa[k] = v
+        if 'performance_por_horario' in dados:
+            for k, v in dados['performance_por_horario'].items():
+                sis.performance_por_horario[k] = v
+                sis.duzia_ai.performance_por_horario[k] = v
         paths = get_session_paths(st.session_state.api_selecionada)
         if os.path.exists(paths['historico']):
             with open(paths['historico'], 'r') as f: st.session_state.historico = json.load(f)
 
-defaults = {'modo_automatico': True, 'modo_agressivo': False, 'janela_duzia_ai': 30}
-for k, v in defaults.items():
-    if k not in st.session_state: st.session_state[k] = v
+# 🆕 Restaurar configurações
+if "modo_automatico" not in st.session_state:
+    st.session_state.modo_automatico = config_global.get('modo_automatico', True)
+if "modo_agressivo" not in st.session_state:
+    st.session_state.modo_agressivo = config_global.get('modo_agressivo', False)
+if "janela_duzia_ai" not in st.session_state:
+    st.session_state.janela_duzia_ai = config_global.get('janela_duzia_ai', 30)
 
 if "historico" not in st.session_state: st.session_state.historico = []
-if "telegram_token" not in st.session_state: st.session_state.telegram_token = ""
-if "telegram_chat_id" not in st.session_state: st.session_state.telegram_chat_id = ""
-if "telegram_token_alt" not in st.session_state: st.session_state.telegram_token_alt = ""
-if "telegram_chat_id_alt" not in st.session_state: st.session_state.telegram_chat_id_alt = ""
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.9 - ESTRATÉGIAS POR ROLETA")
+    st.markdown("## ⚙️ V10.9.10 - PERSISTÊNCIA TOTAL")
     if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
     st.markdown("---")
@@ -1048,23 +1200,35 @@ with st.sidebar:
     
     if api_name == 'XXXtreme Lightning':
         st.success(f"⚡ Raios: 50x-2000x | Nº: {config['pagamento_numero']}x | Zero: {config['pagamento_zero']}x | Dúzia: {config['pagamento_duzia']}x")
-        st.caption(f"EMBALO peso: {config['embalo_peso']} | Fadiga: {config['fadiga_duzia']}x | Conf mín: {config['confianca_minima_entrada']}")
     elif api_name == 'Mega Roulette':
         st.warning(f"⚡ Raios: 50x-500x | Nº: {config['pagamento_numero']}x | Zero: {config['pagamento_zero']}x | Dúzia: {config['pagamento_duzia']}x")
-        st.caption(f"🔧 AJUSTADA | EMBALO peso: {config['embalo_peso']} | Fadiga: {config['fadiga_duzia']}x | Conf mín: {config['confianca_minima_entrada']}")
     else:
         st.info(f"🎯 Sem raios | Nº: {config['pagamento_numero']}x | Zero: {config['pagamento_zero']}x | Dúzia: {config['pagamento_duzia']}x")
-        st.caption(f"EMBALO peso: {config['embalo_peso']} | Fadiga: {config['fadiga_duzia']}x | Conf mín: {config['confianca_minima_entrada']}")
     
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
     st.markdown("---")
-    st.caption("📂 3 capturas INDEPENDENTES")
-    st.caption("⚙️ Estratégias por roleta")
-    st.caption("🤖 ML ADAPTATIVO")
-    st.caption("🚫 Filtros configuráveis")
+    
+    # 🆕 Performance por Mesa
+    if sis := st.session_state.get('sistema'):
+        if hasattr(sis, 'performance_por_mesa') and sis.performance_por_mesa:
+            with st.expander("📊 Performance por Mesa", expanded=False):
+                for mesa_id, perf in list(sis.performance_por_mesa.items())[-5:]:
+                    total = perf['acertos'] + perf['erros']
+                    if total > 0:
+                        taxa = perf['acertos'] / total * 100
+                        st.caption(f"🟢 Mesa {mesa_id}: {taxa:.0f}% ({perf['acertos']}/{total})")
+        
+        if hasattr(sis, 'performance_por_horario') and sis.performance_por_horario:
+            with st.expander("🕐 Performance por Turno", expanded=False):
+                for turno, perf in sis.performance_por_horario.items():
+                    total = perf['acertos'] + perf['erros']
+                    if total > 0:
+                        taxa = perf['acertos'] / total * 100
+                        st.caption(f"{'🌅' if turno=='manhã' else '☀️' if turno=='tarde' else '🌙'} {turno}: {taxa:.0f}% ({perf['acertos']}/{total})")
+    
     st.markdown("---")
     with st.expander("🔔 Telegram PRINCIPAL", expanded=False):
         st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
@@ -1094,7 +1258,7 @@ with c2:
     if st.button("🎯 Enviar", use_container_width=True, type="primary"):
         if validar_numero(entrada):
             nr = int(entrada)
-            st.session_state.historico.append({"number": nr, "timestamp": timestamp_brasilia(), "luckyNumbers": [], "luckyMultipliers": {}})
+            st.session_state.historico.append({"number": nr, "timestamp": timestamp_brasilia(), "luckyNumbers": [], "luckyMultipliers": {}, "table_id": "manual", "table_name": "Entrada Manual"})
             st.session_state.sistema.processar_novo_numero(nr)
             paths = get_session_paths(st.session_state.api_selecionada)
             salvar_resultado_em_arquivo(st.session_state.historico, paths['historico'])
@@ -1255,5 +1419,5 @@ with col_t2:
     if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt: st.success("📢 Alternativo: CONFIGURADO")
     else: st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.9 | Estratégias por Roleta | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.10 | Persistência Total | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
