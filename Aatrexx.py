@@ -9,6 +9,7 @@ import pickle
 from datetime import datetime, timezone, timedelta
 import numpy as np
 import plotly.graph_objects as plt
+import time
 
 # Importação Segura do Módulo de Machine Learning
 try:
@@ -46,9 +47,9 @@ def timestamp_brasilia():
 # =============================
 ROLETA_CONFIGS = {
     'XXXtreme Lightning': {
-        'pagamento_numero': 20,  # Número normal paga 20x
-        'pagamento_zero': 20,     # Zero paga 20x
-        'pagamento_duzia': 3,     # Dúzia paga 3x
+        'pagamento_numero': 20,
+        'pagamento_zero': 20,
+        'pagamento_duzia': 3,
         'confianca_minima_entrada': 2.0,
         'embalo_peso': 9,
         'embalo_reforco': 5,
@@ -99,6 +100,9 @@ def salvar_config_global():
         'modo_agressivo': st.session_state.get('modo_agressivo', False),
         'janela_duzia_ai': st.session_state.get('janela_duzia_ai', 30),
         'api_selecionada': st.session_state.get('api_selecionada', 'XXXtreme Lightning'),
+        'sessao_ativa': st.session_state.get('sessao_ativa', False),
+        'giros_restantes': st.session_state.get('giros_restantes', 10),
+        'pausa_ate': st.session_state.get('pausa_ate', None),
     }
     try:
         with open(CONFIG_GLOBAL_PATH, 'w') as f: json.dump(config, f)
@@ -210,6 +214,79 @@ def nova_sessao():
         st.session_state.historico = []
         logging.info(f"🆕 NOVA SESSÃO INICIADA - {api_name}"); return True
     except Exception as e: logging.error(f"Erro: {e}"); return False
+
+# =============================
+# 🆕 SISTEMA DE SESSÃO POR GIROS
+# =============================
+
+def iniciar_sessao_giros():
+    """Inicia uma nova sessão de 10 giros"""
+    st.session_state.sessao_ativa = True
+    st.session_state.giros_restantes = 10
+    st.session_state.giros_total_sessao = 10
+    st.session_state.pausa_ate = None
+    st.session_state.sessao_inicio = hora_brasilia()
+    st.session_state.sessao_giros_realizados = 0
+    salvar_config_global()
+    logging.info(f"🎯 Sessão de {st.session_state.giros_total_sessao} giros iniciada!")
+
+def encerrar_sessao_giros():
+    """Encerra a sessão atual e inicia pausa de 5 minutos"""
+    st.session_state.sessao_ativa = False
+    st.session_state.giros_restantes = 0
+    st.session_state.pausa_ate = (hora_brasilia() + timedelta(minutes=5)).isoformat()
+    st.session_state.sessao_fim = hora_brasilia()
+    salvar_config_global()
+    logging.info(f"⏸️ Sessão encerrada! Pausa até {st.session_state.pausa_ate}")
+
+def verificar_pausa():
+    """Verifica se a pausa já terminou"""
+    if st.session_state.get('pausa_ate'):
+        try:
+            pausa_ate = datetime.fromisoformat(st.session_state.pausa_ate)
+            if hora_brasilia() >= pausa_ate:
+                st.session_state.pausa_ate = None
+                logging.info("✅ Pausa de 5 minutos finalizada! Pronto para nova sessão.")
+                return True
+        except:
+            st.session_state.pausa_ate = None
+    return False
+
+def processar_giro(numero_data):
+    """Processa um giro e atualiza o contador da sessão"""
+    if not st.session_state.get('sessao_ativa', False):
+        return
+    
+    # Decrementa giros restantes
+    st.session_state.giros_restantes -= 1
+    st.session_state.sessao_giros_realizados += 1
+    
+    # Verifica se a sessão terminou
+    if st.session_state.giros_restantes <= 0:
+        encerrar_sessao_giros()
+        return False
+    
+    salvar_config_global()
+    return True
+
+def pode_processar_giro():
+    """Verifica se pode processar um novo giro"""
+    # Verifica se está em pausa
+    verificar_pausa()
+    
+    # Se tem pausa ativa, não pode processar
+    if st.session_state.get('pausa_ate'):
+        return False
+    
+    # Se sessão não está ativa, não pode processar
+    if not st.session_state.get('sessao_ativa', False):
+        return False
+    
+    # Se não tem mais giros, não pode processar
+    if st.session_state.get('giros_restantes', 0) <= 0:
+        return False
+    
+    return True
 
 # =============================
 # NOTIFICAÇÕES
@@ -370,7 +447,6 @@ def fetch_XXXtreme_Lightning():
         rs = gd.get("result", {})
         nm = rs.get("outcome", {}).get("number")
         ts = gd.get("startedAt")
-        # 🆕 Extrair informações da mesa
         table_info = gd.get("table", {})
         table_id = table_info.get("id", "unknown")
         table_name = table_info.get("name", "Desconhecida")
@@ -399,7 +475,6 @@ def fetch_Immersive_Roulette():
         outcome = result.get("outcome", {})
         nm = outcome.get("number")
         ts = data.get("startedAt")
-        # 🆕 Extrair informações da mesa
         table_info = data.get("table", {})
         table_id = table_info.get("id", "unknown")
         table_name = table_info.get("name", "Desconhecida")
@@ -420,7 +495,6 @@ def fetch_Mega_Roulette():
         rs = gd.get("result", {})
         nm = rs.get("outcome", {}).get("number")
         ts = gd.get("startedAt")
-        # 🆕 Extrair informações da mesa
         table_info = gd.get("table", {})
         table_id = table_info.get("id", "unknown")
         table_name = table_info.get("name", "Desconhecida")
@@ -920,6 +994,10 @@ class SistemaBot:
         self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
     
     def processar_novo_numero(self, numero_data):
+        # 🆕 Verificar se pode processar giro (sistema de sessão)
+        if not pode_processar_giro():
+            return
+        
         if isinstance(numero_data, dict):
             nr = numero_data.get('number')
             lucky_numbers = numero_data.get('luckyNumbers', [])
@@ -1007,6 +1085,9 @@ class SistemaBot:
             enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, eh_raio, multiplicador)
             self.entrada_ativa = None
         
+        # 🆕 Processar o giro na sessão
+        processar_giro(nr)
+        
         previsao = self.duzia_ai.prever()
         
         if previsao['entrar']:
@@ -1086,11 +1167,30 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.10 - Persistência Total", layout="wide")
-st.title("🎰 DuziaAI V10.9.10 - PERSISTÊNCIA TOTAL (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.10 - Sessão 10 Giros", layout="wide")
+st.title("🎰 DuziaAI V10.9.10 - SESSÃO 10 GIROS (BRT)")
 
 # 🆕 Carregar configurações globais (Telegram, etc.)
 config_global = carregar_config_global()
+
+# 🆕 Inicializar estados da sessão
+if "sessao_ativa" not in st.session_state:
+    st.session_state.sessao_ativa = config_global.get('sessao_ativa', False)
+if "giros_restantes" not in st.session_state:
+    st.session_state.giros_restantes = config_global.get('giros_restantes', 10)
+if "pausa_ate" not in st.session_state:
+    pausa = config_global.get('pausa_ate', None)
+    if pausa:
+        try:
+            st.session_state.pausa_ate = datetime.fromisoformat(pausa).isoformat() if isinstance(pausa, str) else None
+        except:
+            st.session_state.pausa_ate = None
+    else:
+        st.session_state.pausa_ate = None
+if "sessao_inicio" not in st.session_state:
+    st.session_state.sessao_inicio = None
+if "sessao_giros_realizados" not in st.session_state:
+    st.session_state.sessao_giros_realizados = 0
 
 # Inicializar estado
 if "api_selecionada" not in st.session_state:
@@ -1127,7 +1227,6 @@ if st.session_state.api_selecionada != st.session_state.ultima_api:
         sis.erros_zero = dados.get('erros_zero', 0)
         sis.entrada_ativa = dados.get('entrada_ativa', None)
         sis.historico_entradas = dados.get('historico_entradas', [])
-        # 🆕 Restaurar performance por mesa/horário
         if 'performance_por_mesa' in dados:
             for k, v in dados['performance_por_mesa'].items():
                 sis.performance_por_mesa[k] = v
@@ -1181,11 +1280,43 @@ if "janela_duzia_ai" not in st.session_state:
 
 if "historico" not in st.session_state: st.session_state.historico = []
 
+# 🆕 Verificar pausa
+verificar_pausa()
+
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.10 - PERSISTÊNCIA TOTAL")
-    if st.button("🆕 NOVA SESSÃO", use_container_width=True, type="primary"):
+    st.markdown("## ⚙️ V10.9.10 - SESSÃO 10 GIROS")
+    
+    # 🆕 Botão de sessão
+    if st.session_state.get('pausa_ate'):
+        pausa_ate = datetime.fromisoformat(st.session_state.pausa_ate)
+        tempo_restante = pausa_ate - hora_brasilia()
+        if tempo_restante.total_seconds() > 0:
+            minutos = int(tempo_restante.total_seconds() // 60)
+            segundos = int(tempo_restante.total_seconds() % 60)
+            st.warning(f"⏸️ PAUSA ATIVA: {minutos:02d}:{segundos:02d}")
+            st.button("🎯 Iniciar Nova Sessão (10 Giros)", use_container_width=True, type="primary", disabled=True)
+        else:
+            st.success("✅ Pausa finalizada!")
+            if st.button("🎯 Iniciar Nova Sessão (10 Giros)", use_container_width=True, type="primary"):
+                iniciar_sessao_giros()
+                st.rerun()
+    elif st.session_state.get('sessao_ativa', False):
+        st.success(f"🔄 SESSÃO ATIVA: {st.session_state.giros_restantes} giros restantes")
+        st.progress(st.session_state.sessao_giros_realizados / 10 if hasattr(st.session_state, 'sessao_giros_realizados') and st.session_state.sessao_giros_realizados > 0 else 0)
+        if st.button("🛑 Encerrar Sessão", use_container_width=True, type="secondary"):
+            encerrar_sessao_giros()
+            st.rerun()
+    else:
+        if st.button("🎯 Iniciar Nova Sessão (10 Giros)", use_container_width=True, type="primary"):
+            iniciar_sessao_giros()
+            st.rerun()
+    
+    st.markdown("---")
+    
+    if st.button("🆕 NOVA SESSÃO (Reset Total)", use_container_width=True):
         if nova_sessao(): st.success("✅ Nova sessão!"); st.rerun()
+    
     st.markdown("---")
     
     st.markdown("### 🎰 Selecione a Roleta")
@@ -1282,6 +1413,21 @@ if st.session_state.modo_automatico:
 st.markdown("---")
 sis = st.session_state.sistema
 api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+
+# 🆕 Mostrar status da sessão
+if st.session_state.get('sessao_ativa', False):
+    st.success(f"🎯 Sessão Ativa: {st.session_state.giros_restantes} giros restantes de {getattr(st.session_state, 'giros_total_sessao', 10)}")
+elif st.session_state.get('pausa_ate'):
+    pausa_ate = datetime.fromisoformat(st.session_state.pausa_ate)
+    tempo_restante = pausa_ate - hora_brasilia()
+    if tempo_restante.total_seconds() > 0:
+        minutos = int(tempo_restante.total_seconds() // 60)
+        segundos = int(tempo_restante.total_seconds() % 60)
+        st.warning(f"⏸️ Em pausa: {minutos:02d}:{segundos:02d} restantes")
+    else:
+        st.info("✅ Pronto para iniciar nova sessão")
+else:
+    st.info("🎯 Pronto para iniciar sessão")
 
 # Métricas
 st.subheader(f"📊 CONFERÊNCIA - {api_name}")
@@ -1419,5 +1565,5 @@ with col_t2:
     if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt: st.success("📢 Alternativo: CONFIGURADO")
     else: st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V10.9.10 | Persistência Total | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.10 | Sessão 10 Giros | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
