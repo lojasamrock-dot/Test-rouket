@@ -51,7 +51,6 @@ def data_brasilia():
 # 🆕 SETUPS INDEPENDENTES POR ROLETA
 # =============================
 
-# Setup BASE (valores padrão)
 SETUP_BASE = {
     'pagamento_numero': 20,
     'pagamento_zero': 20,
@@ -77,9 +76,9 @@ SETUP_BASE = {
     'ritmo_v_confirmacoes': 2,
 }
 
-# 🆕 SETUP XXXTREME LIGHTNING - AGRESSIVO (JÁ CALIBRADO)
+# 🆕 SETUP XXXTREME LIGHTNING - AGRESSIVO
 SETUP_XXXTREME = {
-    **SETUP_BASE,  # Herda tudo do base
+    **SETUP_BASE,
     'pagamento_numero': 20,
     'pagamento_zero': 20,
     'pagamento_duzia': 3,
@@ -102,8 +101,11 @@ SETUP_XXXTREME = {
     'ritmo_v_peso': 9,
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
-    # 🆕 Ajustes específicos XXXtreme
+    # 🆕 EMBALO XXXTREME: Agressivo (3 consecutivas, bloqueia 4+)
     'usar_embalo': True,
+    'embalo_consecutivas_min': 3,
+    'embalo_janela': 6,
+    # Gatilhos ativos
     'usar_ritmo_alternado': True,
     'usar_ritmo_v': True,
     'usar_ritmo_ping_pong': True,
@@ -118,51 +120,53 @@ SETUP_XXXTREME = {
     'score_anti_erro_peso': 25,
 }
 
-# 🆕 SETUP IMMERSIVE ROULETTE - CONSERVADOR (NOVO)
+# 🆕 SETUP IMMERSIVE ROULETTE - CONSERVADOR (EMBALO AJUSTADO)
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35,
     'pagamento_zero': 35,
     'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.2,     # Mais conservador
-    'embalo_peso': 5,                      # EMBALO reduzido (50% acerto)
-    'embalo_reforco': 2,                   # Reforço reduzido
+    'confianca_minima_entrada': 2.2,
+    'embalo_peso': 5,
+    'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True,
     'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.2,             # Mais rigoroso
-    'fadiga_duzia': 3,                     # Cansa mais rápido
+    'filtro_conf_baixa': 2.2,
+    'fadiga_duzia': 3,
     'ritmo_alternado_peso': 8,
     'ritmo_alternado_forca': 8,
-    'max_repeticoes_embalo': 3,           # Mais restritivo (era 4)
-    'confianca_maxima_segura': 3.1,       # Mais rigoroso (era 3.3)
+    'max_repeticoes_embalo': 3,
+    'confianca_maxima_segura': 3.1,
     'rodadas_verificacao_conf_alta': 5,
-    'pausa_pos_raio': 0,                   # Sem pausa (não tem raios)
+    'pausa_pos_raio': 0,
     'raio_alto_minimo': 0,
-    'zero_termometro_max': 12,            # ZERO mais frequente
+    'zero_termometro_max': 12,
     'anti_erro_skip_discordancia': True,
     'ritmo_v_peso': 8,
     'ritmo_v_forca': 8,
     'ritmo_v_confirmacoes': 2,
-    # 🆕 Ajustes específicos Immersive
-    'usar_embalo': True,                   # Mantido mas com peso reduzido
-    'usar_ritmo_alternado': True,          # 60% acerto - MANTER
-    'usar_ritmo_v': True,                  # NOVO
-    'usar_ritmo_ping_pong': False,         # DESABILITADO (0% acerto)
+    # 🆕 EMBALO IMMERSIVE: Conservador (2 consecutivas, bloqueia 3+)
+    'usar_embalo': True,
+    'embalo_consecutivas_min': 2,
+    'embalo_janela': 4,
+    # Gatilhos desabilitados
+    'usar_ritmo_alternado': True,
+    'usar_ritmo_v': True,
+    'usar_ritmo_ping_pong': False,
     'usar_ritmo_binario': True,
     'usar_quebra_pos_zero': True,
-    'usar_exaustao_dominancia': False,     # DESABILITADO (0% acerto)
-    'usar_mudanca_velocidade': False,      # DESABILITADO (50% - não confiável)
-    'score_frequencia_peso': 45,           # MAIS peso na frequência (62.5% sem gatilho)
-    'score_streak_peso': 6,               # MENOS peso no streak
+    'usar_exaustao_dominancia': False,
+    'usar_mudanca_velocidade': False,
+    'score_frequencia_peso': 45,
+    'score_streak_peso': 6,
     'score_markov_peso': 8,
     'score_ml_peso': 30,
     'score_anti_erro_peso': 20,
-    # 🆕 Horários recomendados
-    'horario_bloqueio_inicio': 0,         # 00:00
-    'horario_bloqueio_fim': 12,           # 12:00 (bloqueia madrugada)
+    'horario_bloqueio_inicio': 0,
+    'horario_bloqueio_fim': 12,
 }
 
-# 🆕 SETUP MEGA ROULETTE - MODERADO (ORIGINAL)
+# 🆕 SETUP MEGA ROULETTE - MODERADO
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24,
@@ -187,8 +191,11 @@ SETUP_MEGA = {
     'ritmo_v_peso': 7,
     'ritmo_v_forca': 7,
     'ritmo_v_confirmacoes': 2,
-    # 🆕 Ajustes específicos Mega
+    # 🆕 EMBALO MEGA: Moderado (2 consecutivas, bloqueia 3+)
     'usar_embalo': True,
+    'embalo_consecutivas_min': 2,
+    'embalo_janela': 5,
+    # Gatilhos ativos
     'usar_ritmo_alternado': True,
     'usar_ritmo_v': True,
     'usar_ritmo_ping_pong': True,
@@ -203,7 +210,6 @@ SETUP_MEGA = {
     'score_anti_erro_peso': 25,
 }
 
-# Mapeamento de setups
 ROLETA_CONFIGS = {
     'XXXtreme Lightning': SETUP_XXXTREME,
     'Immersive Roulette': SETUP_IMMERSIVE,
@@ -763,7 +769,7 @@ def fetch_latest_result():
     return fetch_func()
 
 # =============================
-# 🧠 DUZIA AI V10.9.13 - COM SETUPS INDEPENDENTES
+# 🧠 DUZIA AI V10.9.14 - EMBALO INDEPENDENTE POR ROLETA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -817,7 +823,6 @@ class DuziaAI:
         self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
     
     def _get_config(self):
-        """🆕 Retorna o setup específico da roleta selecionada"""
         api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
         return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
         
@@ -1061,24 +1066,51 @@ class DuziaAI:
             if u[-1] == u[-2] and u[-1] != 0: self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
         self.alerta_zero_ativo = False; return False
     
+    # 🆕 NOVO DETECTOR DE EMBALO - INDEPENDENTE POR ROLETA
     def detectar_embalo(self):
+        """
+        EMBALO AJUSTADO POR ROLETA:
+        - XXXtreme: 3 consecutivas mínimas, bloqueia 4+
+        - Immersive: 2 consecutivas mínimas, bloqueia 3+
+        - Mega: 2 consecutivas mínimas, bloqueia 3+
+        """
         config = self._get_config()
         if not config.get('usar_embalo', True):
             return None
         
-        u = list(self.historico)[-6:]
-        if len(u) < 3: return None
+        u = list(self.historico)
+        if len(u) < 3:
+            return None
         
-        freq = Counter([d for d in u if d != 0])
-        if freq:
-            dom = freq.most_common(1)[0]
-            
-            if dom[1] >= 3 and dom[0] != 0:
-                if dom[1] >= config['max_repeticoes_embalo']:
-                    logging.info(f"⚠️ EMBALO de D{dom[0]} já tem {dom[1]} repetições - limite atingido!")
-                    return None
-                
-                return {'tipo': 'EMBALO', 'duzia': dom[0], 'forca': config['embalo_peso']}
+        # 🆕 Usar janela específica da roleta
+        janela = config.get('embalo_janela', 6)
+        recentes = [d for d in u[-janela:] if d != 0]
+        
+        if len(recentes) < 2:
+            return None
+        
+        # 🆕 Contar repetições CONSECUTIVAS (do final para o início)
+        ultima = recentes[-1]
+        consecutivas = 0
+        for d in reversed(recentes):
+            if d == ultima:
+                consecutivas += 1
+            else:
+                break
+        
+        consecutivas_min = config.get('embalo_consecutivas_min', 3)
+        max_rep = config.get('max_repeticoes_embalo', 4)
+        
+        # 🆕 Se atingiu o limite máximo de repetições, BLOQUEAR
+        if consecutivas >= max_rep:
+            logging.info(f"⚠️ EMBALO BLOQUEADO: D{ultima} já tem {consecutivas} repetições consecutivas (limite: {max_rep})")
+            return None
+        
+        # 🆕 Se tem o mínimo de consecutivas, ATIVAR
+        if consecutivas >= consecutivas_min and ultima != 0:
+            logging.info(f"✅ EMBALO ATIVADO: D{ultima} com {consecutivas} repetições consecutivas")
+            return {'tipo': 'EMBALO', 'duzia': ultima, 'forca': config['embalo_peso']}
+        
         return None
     
     def detectar_ritmo_ping_pong(self):
@@ -1216,7 +1248,7 @@ class DuziaAI:
         u = list(self.historico)
         config = self._get_config()
         
-        # RITMO_V - verifica se está habilitado
+        # RITMO_V
         if config.get('usar_ritmo_v', True):
             ritmo_v = self.detectar_ritmo_v()
             if ritmo_v:
@@ -1230,7 +1262,7 @@ class DuziaAI:
                 self.ultimo_gatilho = 'RITMO_ALTERNADO'
                 return ritmo_alternado
         
-        # EMBALO
+        # 🆕 EMBALO (com novo detector independente)
         if config.get('usar_embalo', True):
             embalo = self.detectar_embalo()
             if embalo: self.ultimo_gatilho = 'EMBALO'; return embalo
@@ -1361,7 +1393,6 @@ class DuziaAI:
         
         config = self._get_config()
         
-        # 🆕 Verificar bloqueio de horário (para Immersive madrugada)
         hora_atual = datetime.now().hour
         if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
             inicio = config['horario_bloqueio_inicio']
@@ -1775,8 +1806,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.13 - Setups Independentes", layout="wide")
-st.title("🎰 DuziaAI V10.9.13 - SETUPS INDEPENDENTES POR ROLETA (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.14 - EMBALO Independente", layout="wide")
+st.title("🎰 DuziaAI V10.9.14 - EMBALO INDEPENDENTE POR ROLETA (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1889,7 +1920,7 @@ if "historico" not in st.session_state: st.session_state.historico = []
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.13 - SETUPS INDEPENDENTES")
+    st.markdown("## ⚙️ V10.9.14 - EMBALO INDEPENDENTE")
     
     sis = st.session_state.sistema
     
@@ -2029,17 +2060,13 @@ with st.sidebar:
     api_name = st.session_state.api_selecionada
     config = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
     
-    # 🆕 Mostrar informações do setup ativo
     if api_name == 'XXXtreme Lightning':
-        st.success(f"⚡ SETUP: AGRESSIVO | Raios: 50x-2000x | Dúzia: {config['pagamento_duzia']}x")
-        st.caption("🎯 Todos os gatilhos ATIVOS | Peso EMBALO: 9 | Conf Max: 3.3")
+        st.success(f"⚡ SETUP: AGRESSIVO | EMBALO: 3 consecutivas (bloqueia 4+)")
     elif api_name == 'Immersive Roulette':
-        st.info(f"🎯 SETUP: CONSERVADOR | Sem raios | Dúzia: {config['pagamento_duzia']}x")
-        st.caption("⚠️ EXAUSTAO+MUDANCA+PING_PONG DESABILITADOS | Peso EMBALO: 5 | Conf Max: 3.1")
-        st.caption("🔒 Madrugada BLOQUEADA (00:00-12:00) | Foco: Score Base (62.5%)")
+        st.info(f"🎯 SETUP: CONSERVADOR | EMBALO: 2 consecutivas (bloqueia 3+)")
+        st.caption("⚠️ EXAUSTAO+MUDANCA+PING_PONG DESABILITADOS")
     elif api_name == 'Mega Roulette':
-        st.warning(f"⚡ SETUP: MODERADO | Raios: 50x-500x | Dúzia: {config['pagamento_duzia']}x")
-        st.caption("🎯 Setup original preservado | Todos os gatilhos ATIVOS")
+        st.warning(f"⚡ SETUP: MODERADO | EMBALO: 2 consecutivas (bloqueia 3+)")
     
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -2237,5 +2264,5 @@ else:
     st.info("Nenhuma entrada.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V10.9.13 | Setups Independentes | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.14 | EMBALO Independente por Roleta | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
