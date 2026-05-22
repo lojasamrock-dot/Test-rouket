@@ -48,7 +48,7 @@ def data_brasilia():
     return hora_brasilia().strftime('%Y-%m-%d')
 
 # =============================
-# 🆕 CONFIGURAÇÕES APRIMORADAS POR ROLETA
+# CONFIGURAÇÕES APRIMORADAS POR ROLETA
 # =============================
 ROLETA_CONFIGS = {
     'XXXtreme Lightning': {
@@ -64,14 +64,18 @@ ROLETA_CONFIGS = {
         'fadiga_duzia': 4,
         'ritmo_alternado_peso': 10,
         'ritmo_alternado_forca': 10,
-        # 🆕 Novas configurações de calibração
-        'max_repeticoes_embalo': 4,        # Limite de repetições para EMBALO
-        'confianca_maxima_segura': 3.3,     # Confiança acima disso requer verificação extra
-        'rodadas_verificacao_conf_alta': 5, # Janela para verificar confiança alta
-        'pausa_pos_raio': 2,               # Rodadas de pausa após raio alto
-        'raio_alto_minimo': 200,            # Multiplicador considerado "alto"
-        'zero_termometro_max': 15,          # Máximo de rodadas sem zero antes de forçar
-        'anti_erro_skip_discordancia': True, # Pular entrada se anti-erro + indicadores discordam
+        # Novas configurações de calibração
+        'max_repeticoes_embalo': 4,
+        'confianca_maxima_segura': 3.3,
+        'rodadas_verificacao_conf_alta': 5,
+        'pausa_pos_raio': 2,
+        'raio_alto_minimo': 100,  # 🆕 Reduzido de 200 para 100
+        'zero_termometro_max': 15,
+        'anti_erro_skip_discordancia': True,
+        # 🆕 Configurações do RITMO_V
+        'ritmo_v_peso': 9,
+        'ritmo_v_forca': 9,
+        'ritmo_v_confirmacoes': 2,  # Confirmações necessárias
     },
     'Immersive Roulette': {
         'pagamento_numero': 35,
@@ -86,13 +90,16 @@ ROLETA_CONFIGS = {
         'fadiga_duzia': 4,
         'ritmo_alternado_peso': 10,
         'ritmo_alternado_forca': 10,
-        'max_repeticoes_embalo': 4,
-        'confianca_maxima_segura': 3.3,
+        'max_repeticoes_embalo': 3,
+        'confianca_maxima_segura': 3.2,
         'rodadas_verificacao_conf_alta': 5,
-        'pausa_pos_raio': 0,  # Immersive não tem raios
+        'pausa_pos_raio': 0,
         'raio_alto_minimo': 0,
-        'zero_termometro_max': 15,
+        'zero_termometro_max': 12,
         'anti_erro_skip_discordancia': True,
+        'ritmo_v_peso': 8,
+        'ritmo_v_forca': 8,
+        'ritmo_v_confirmacoes': 2,
     },
     'Mega Roulette': {
         'pagamento_numero': 24,
@@ -114,6 +121,9 @@ ROLETA_CONFIGS = {
         'raio_alto_minimo': 150,
         'zero_termometro_max': 12,
         'anti_erro_skip_discordancia': True,
+        'ritmo_v_peso': 7,
+        'ritmo_v_forca': 7,
+        'ritmo_v_confirmacoes': 2,
     },
 }
 
@@ -124,7 +134,6 @@ CONFIG_GLOBAL_PATH = "config_global.json"
 PASTA_SESSOES = "sessoes_salvas"
 
 def criar_pasta_sessoes():
-    """Cria a pasta de sessões se não existir"""
     if not os.path.exists(PASTA_SESSOES):
         os.makedirs(PASTA_SESSOES)
     for roleta in ['xxxtreme_lightning', 'immersive_roulette', 'mega_roulette']:
@@ -133,12 +142,10 @@ def criar_pasta_sessoes():
             os.makedirs(pasta_roleta)
 
 def get_pasta_sessao(api_name):
-    """Retorna o caminho da pasta de sessões para a roleta específica"""
     safe_name = api_name.lower().replace(' ', '_')
     return os.path.join(PASTA_SESSOES, safe_name)
 
 def salvar_config_global():
-    """Salva configurações globais"""
     config = {
         'telegram_token': st.session_state.get('telegram_token', ''),
         'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
@@ -157,7 +164,6 @@ def salvar_config_global():
     except Exception as e: logging.error(f"Erro ao salvar config global: {e}")
 
 def carregar_config_global():
-    """Carrega configurações globais salvas"""
     try:
         if os.path.exists(CONFIG_GLOBAL_PATH):
             with open(CONFIG_GLOBAL_PATH, 'r') as f: return json.load(f)
@@ -168,7 +174,6 @@ def carregar_config_global():
 # CONFIGURAÇÕES DE PERSISTÊNCIA POR ROLETA
 # =============================
 def get_session_paths(api_name):
-    """Retorna os caminhos de arquivo específicos para cada roleta"""
     safe_name = api_name.lower().replace(' ', '_')
     return {
         'session': f"session_data_{safe_name}.pkl",
@@ -185,15 +190,12 @@ def get_session_paths(api_name):
 # SISTEMA DE ARQUIVAMENTO DE SESSÕES
 # =============================
 class GerenciadorSessoes:
-    """Gerencia o salvamento e download de sessões encerradas"""
-    
     def __init__(self, api_name):
         self.api_name = api_name
         self.pasta_sessao = get_pasta_sessao(api_name)
         criar_pasta_sessoes()
     
     def salvar_sessao_encerrada(self, numero_sessao, dados_sessao, historico_entradas):
-        """Salva uma sessão encerrada em arquivo JSON"""
         try:
             data = data_brasilia()
             hora = formatar_hora_brasilia()
@@ -222,7 +224,6 @@ class GerenciadorSessoes:
             return None
     
     def _atualizar_historico_sessoes(self, numero_sessao, dados_sessao, nome_arquivo):
-        """Mantém um índice de todas as sessões salvas"""
         paths = get_session_paths(self.api_name)
         historico_path = paths['historico_sessoes']
         
@@ -254,7 +255,6 @@ class GerenciadorSessoes:
             logging.error(f"Erro ao salvar histórico de sessões: {e}")
     
     def listar_sessoes(self):
-        """Lista todas as sessões salvas"""
         sessoes = []
         if os.path.exists(self.pasta_sessao):
             for arquivo in sorted(os.listdir(self.pasta_sessao), reverse=True):
@@ -270,7 +270,6 @@ class GerenciadorSessoes:
         return sessoes
     
     def listar_sessoes_do_dia(self, data=None):
-        """Lista sessões de uma data específica"""
         if data is None:
             data = data_brasilia()
         sessoes = []
@@ -281,7 +280,6 @@ class GerenciadorSessoes:
         return sessoes
     
     def consolidar_sessoes_dia(self, data=None):
-        """Consolida todas as sessões de um dia"""
         if data is None:
             data = data_brasilia()
         
@@ -325,7 +323,6 @@ class GerenciadorSessoes:
         return caminho
     
     def gerar_csv_sessao(self, dados_sessao):
-        """Gera CSV de uma sessão específica"""
         output = StringIO()
         writer = csv.writer(output)
         
@@ -355,7 +352,6 @@ class GerenciadorSessoes:
         return output.getvalue()
     
     def get_download_link(self, conteudo, nome_arquivo, tipo='json'):
-        """Gera um link de download para um arquivo"""
         if tipo == 'csv':
             b64 = base64.b64encode(conteudo.encode()).decode()
             mime = 'text/csv'
@@ -421,7 +417,6 @@ def salvar_sessao():
         return False
 
 def carregar_dados_persistidos(api_name):
-    """Carrega dados persistidos de uma roleta específica"""
     paths = get_session_paths(api_name)
     dados = {}
     try:
@@ -470,7 +465,6 @@ def nova_sessao():
 # =============================
 
 def _selecionar_melhores_numeros(duzia, numeros_completos, quantidade=6):
-    """Seleciona dinamicamente os melhores números com base nos terminais quentes recentes."""
     if duzia == 1: numeros_da_duzia = list(range(1, 13))
     elif duzia == 2: numeros_da_duzia = list(range(13, 25))
     else: numeros_da_duzia = list(range(25, 37))
@@ -605,10 +599,6 @@ def validar_numero(valor):
         num = int(valor); return 0 <= num <= 36
     except: return False
 
-# =============================
-# 3 FUNÇÕES DE CAPTURA INDEPENDENTES
-# =============================
-
 def fetch_XXXtreme_Lightning():
     try:
         url = API_URLS['XXXtreme Lightning']
@@ -690,7 +680,7 @@ def fetch_latest_result():
     return fetch_func()
 
 # =============================
-# 🧠 DUZIA AI V10.9.11 - COM 5 CORREÇÕES DE ERROS
+# 🧠 DUZIA AI V10.9.12 - COM NOVO GATILHO RITMO_V
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -728,7 +718,11 @@ class DuziaAI:
         self.ritmo_alternado_contagem = 0
         self.ultimo_ritmo_alternado = None
         
-        # 🆕 Novos rastreadores para correções
+        # 🆕 Rastreadores do RITMO_V
+        self.ritmo_v_padrao = None
+        self.ritmo_v_contagem = 0
+        self.ultimo_ritmo_v = None
+        
         self.rodadas_desde_zero = 0
         self.ultimo_raio_alto = 0
         self.rodadas_pos_raio = 0
@@ -750,15 +744,14 @@ class DuziaAI:
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
         
-        # 🆕 CORREÇÃO 3: Termômetro do Zero
         if numero == 0:
             self.rodadas_desde_zero = 0
         else:
             self.rodadas_desde_zero += 1
         
         self._atualizar_ritmo_alternado(d)
+        self._atualizar_ritmo_v(d)  # 🆕 Atualizar rastreador RITMO_V
         
-        # 🆕 CORREÇÃO 2: Rastrear contagem de embalo
         if d != 0:
             if d == self.duzia_embalo_atual:
                 self.contagem_embalo_atual += 1
@@ -778,7 +771,6 @@ class DuziaAI:
         if len(self.historico_completo) > 200: self.historico_completo = self.historico_completo[-200:]
         if len(self.numeros_completos) > 200: self.numeros_completos = self.numeros_completos[-200:]
         
-        # 🆕 CORREÇÃO 5: Rastrear pausa pós-raio
         if self.em_pausa_pos_raio:
             self.rodadas_pos_raio += 1
             if self.rodadas_pos_raio >= self._get_config()['pausa_pos_raio']:
@@ -817,6 +809,48 @@ class DuziaAI:
         self.ritmo_alternado_par = None
         self.ritmo_alternado_contagem = 0
     
+    # 🆕 NOVO MÉTODO: Rastreador do padrão RITMO_V (D3→D1→D3)
+    def _atualizar_ritmo_v(self, nova_duzia):
+        """
+        Detecta o padrão D3 → D1 → D3 (desce para D1, sobe para D3)
+        Também detecta: D1 → D3 → D1, D2 → D1 → D2, etc.
+        Padrão de "V" ou "ressalto"
+        """
+        if nova_duzia == 0:
+            return
+        
+        u = list(self.historico)
+        recentes = [d for d in u[-10:] if d != 0]
+        
+        if len(recentes) < 3:
+            return
+        
+        # Pega as últimas 3 dúzias (excluindo zeros)
+        ultimas_3 = recentes[-3:]
+        
+        # Verifica padrão A → B → A (ex: D3 → D1 → D3)
+        if ultimas_3[0] == ultimas_3[2] and ultimas_3[0] != ultimas_3[1]:
+            # Encontrou um padrão V!
+            duzia_base = ultimas_3[0]  # A dúzia que repete (ex: D3)
+            duzia_meio = ultimas_3[1]  # A dúzia do meio (ex: D1)
+            
+            # Cria uma chave única para este padrão
+            padrao_v = (duzia_base, duzia_meio)
+            
+            if self.ritmo_v_padrao == padrao_v:
+                self.ritmo_v_contagem += 1
+            else:
+                self.ritmo_v_padrao = padrao_v
+                self.ritmo_v_contagem = 1
+            
+            if self.ritmo_v_contagem >= 1:
+                self.ultimo_ritmo_v = padrao_v
+        else:
+            # Verifica se quebrou o padrão
+            if self.ritmo_v_padrao is not None:
+                self.ritmo_v_padrao = None
+                self.ritmo_v_contagem = 0
+    
     def registrar_previsao(self, duzia, confianca):
         self.ultimas_previsoes.append(duzia)
         self.ultima_previsao_duzia = duzia
@@ -831,7 +865,6 @@ class DuziaAI:
         self.ultimo_resultado_duzia = acertou_duzia
         self.ultimo_resultado_numero = acertou_numero
         
-        # 🆕 CORREÇÃO 5: Detectar raio alto e ativar pausa
         config = self._get_config()
         if eh_raio and multiplicador >= config['raio_alto_minimo']:
             self.em_pausa_pos_raio = True
@@ -957,7 +990,6 @@ class DuziaAI:
         self.alerta_zero_ativo = False; return False
     
     def detectar_embalo(self):
-        """🆕 CORREÇÃO 2: EMBALO com limite de repetições"""
         u = list(self.historico)[-6:]
         if len(u) < 3: return None
         
@@ -967,11 +999,9 @@ class DuziaAI:
         if freq:
             dom = freq.most_common(1)[0]
             
-            # CORREÇÃO: Verificar se o embalo já passou do limite seguro
             if dom[1] >= 3 and dom[0] != 0:
-                # Se já repetiu mais que o máximo configurado, NÃO recomendar
                 if dom[1] >= config['max_repeticoes_embalo']:
-                    logging.info(f"⚠️ EMBALO de D{dom[0]} já tem {dom[1]} repetições - limite de {config['max_repeticoes_embalo']} atingido!")
+                    logging.info(f"⚠️ EMBALO de D{dom[0]} já tem {dom[1]} repetições - limite atingido!")
                     return None
                 
                 return {'tipo': 'EMBALO', 'duzia': dom[0], 'forca': config['embalo_peso']}
@@ -996,21 +1026,17 @@ class DuziaAI:
         return None
     
     def detectar_ritmo_alternado(self):
-        """🆕 CORREÇÃO: RITMO_ALTERNADO mais rigoroso"""
         u = list(self.historico)
         recentes = [d for d in u[-10:] if d != 0]
         
-        # CORREÇÃO: Exige pelo menos 6 confirmações (era 4)
         if len(recentes) < 8:
             return None
         
         config = self._get_config()
         
-        # CORREÇÃO: Verificar se há ZERO nas últimas 3 rodadas
         if 0 in u[-3:]:
             return None
         
-        # Método 1: 8 confirmações A-B-A-B-A-B-A-B
         ultimas_8 = recentes[-8:] if len(recentes) >= 8 else recentes
         if len(ultimas_8) >= 8:
             if (ultimas_8[0] == ultimas_8[2] == ultimas_8[4] == ultimas_8[6] and 
@@ -1027,7 +1053,6 @@ class DuziaAI:
                     'par': (ultimas_8[0], ultimas_8[1])
                 }
         
-        # Método 2: 6 confirmações A-B-A-B-A-B
         ultimas_6 = recentes[-6:] if len(recentes) >= 6 else recentes
         if len(ultimas_6) >= 6:
             if (ultimas_6[0] == ultimas_6[2] == ultimas_6[4] and 
@@ -1046,10 +1071,97 @@ class DuziaAI:
         
         return None
     
+    # 🆕 NOVO MÉTODO: Detectar padrão RITMO_V (D3→D1→D3)
+    def detectar_ritmo_v(self):
+        """
+        Detecta o padrão de "V" ou "ressalto":
+        D3 → D1 → D3 (desce pra D1, volta pra D3)
+        D1 → D3 → D1 (sobe pra D3, volta pra D1)
+        D2 → D1 → D2 (desce pra D1, volta pra D2)
+        D3 → D2 → D3 (desce pra D2, volta pra D3)
+        """
+        u = list(self.historico)
+        recentes = [d for d in u[-10:] if d != 0]
+        
+        if len(recentes) < 3:
+            return None
+        
+        config = self._get_config()
+        
+        # Verifica se há ZERO nas últimas 2 rodadas - se sim, não ativa
+        if 0 in u[-2:]:
+            return None
+        
+        # Método 1: Verificar as últimas 3 dúzias para padrão A→B→A
+        ultimas_3 = recentes[-3:]
+        
+        if ultimas_3[0] == ultimas_3[2] and ultimas_3[0] != ultimas_3[1]:
+            # Padrão V detectado!
+            duzia_base = ultimas_3[0]  # Dúzia que repetiu
+            duzia_meio = ultimas_3[1]  # Dúzia do meio
+            
+            logging.info(f"🔄 RITMO_V detectado: D{duzia_base}→D{duzia_meio}→D{duzia_base}")
+            
+            return {
+                'tipo': 'RITMO_V',
+                'duzia': duzia_base,  # Prevê que a dúzia base vai repetir novamente
+                'forca': config['ritmo_v_forca'],
+                'padrao': (duzia_base, duzia_meio)
+            }
+        
+        # Método 2: Verificar padrão mais longo (5 dúzias): A→B→A→B→A
+        if len(recentes) >= 5:
+            ultimas_5 = recentes[-5:]
+            if (ultimas_5[0] == ultimas_5[2] == ultimas_5[4] and 
+                ultimas_5[1] == ultimas_5[3] and
+                ultimas_5[0] != ultimas_5[1]):
+                
+                duzia_base = ultimas_5[0]
+                duzia_meio = ultimas_5[1]
+                
+                logging.info(f"🔄 RITMO_V 5x: D{duzia_base}→D{duzia_meio}→D{duzia_base}→D{duzia_meio}→D{duzia_base}")
+                
+                return {
+                    'tipo': 'RITMO_V',
+                    'duzia': duzia_meio,  # Próxima deve ser a do meio
+                    'forca': config['ritmo_v_forca'] + 1,
+                    'padrao': (duzia_base, duzia_meio)
+                }
+        
+        # Método 3: Usar rastreador interno
+        if self.ritmo_v_contagem >= config['ritmo_v_confirmacoes'] and self.ultimo_ritmo_v is not None:
+            duzia_base, duzia_meio = self.ultimo_ritmo_v
+            ultima = recentes[-1]
+            
+            # Determina a próxima baseado na última
+            if ultima == duzia_base:
+                proxima = duzia_meio
+            elif ultima == duzia_meio:
+                proxima = duzia_base
+            else:
+                return None
+            
+            logging.info(f"🔄 RITMO_V rastreador: D{duzia_base}↔D{duzia_meio} → Próxima: D{proxima}")
+            
+            return {
+                'tipo': 'RITMO_V',
+                'duzia': proxima,
+                'forca': config['ritmo_v_forca'],
+                'padrao': (duzia_base, duzia_meio)
+            }
+        
+        return None
+    
     def detectar_gatilhos(self):
         u = list(self.historico)
         
-        # RITMO_ALTERNADO primeiro (prioridade)
+        # 🆕 RITMO_V - NOVO GATILHO (prioridade 2)
+        ritmo_v = self.detectar_ritmo_v()
+        if ritmo_v:
+            self.ultimo_gatilho = 'RITMO_V'
+            return ritmo_v
+        
+        # RITMO_ALTERNADO (prioridade 1)
         ritmo_alternado = self.detectar_ritmo_alternado()
         if ritmo_alternado:
             self.ultimo_gatilho = 'RITMO_ALTERNADO'
@@ -1121,6 +1233,15 @@ class DuziaAI:
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0: score[gatilho['duzia']] += gatilho['forca'] * 2
         
+        # 🆕 Reforço para RITMO_V
+        if gatilho and gatilho['tipo'] == 'RITMO_V':
+            score[gatilho['duzia']] += config['ritmo_v_peso']
+            # Penaliza a dúzia que NÃO faz parte do padrão V
+            if 'padrao' in gatilho:
+                for d in [1, 2, 3]:
+                    if d not in gatilho['padrao']:
+                        score[d] *= 0.4
+        
         if gatilho and gatilho['tipo'] == 'RITMO_ALTERNADO':
             score[gatilho['duzia']] += config['ritmo_alternado_peso']
             if 'par' in gatilho:
@@ -1167,7 +1288,6 @@ class DuziaAI:
         
         config = self._get_config()
         
-        # 🆕 CORREÇÃO 5: Pausa pós-raio alto
         if self.em_pausa_pos_raio:
             return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
         
@@ -1186,32 +1306,31 @@ class DuziaAI:
         u_list = list(self.historico)
         if 0 in u_list[-3:]: confianca *= 0.5
         
-        # 🆕 CORREÇÃO 1: Filtro de confiança alta - verificação extra
         pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
         
-        if confianca >= config['confianca_maxima_segura'] and not gatilho:
-            # Verificar histórico recente para confirmar padrão
-            recentes = [d for d in u_list[-config['rodadas_verificacao_conf_alta']:] if d != 0]
-            if len(recentes) >= 5:
-                freq_recente = Counter(recentes)
-                # Se a dúzia prevista não é a mais frequente no histórico recente, reduzir confiança
-                if freq_recente.most_common(1)[0][0] != d1:
-                    confianca *= 0.7
-                    logging.info(f"⚠️ Confiança alta ({confianca:.1f}) mas dúzia D{d1} não é a mais frequente - reduzindo")
+        # 🆕 RITMO_V força entrada
+        if gatilho and gatilho['tipo'] == 'RITMO_V':
+            pode_entrar = True
+            confianca = min(3.5, confianca * 1.15)
         
         if gatilho and gatilho['tipo'] == 'RITMO_ALTERNADO':
             pode_entrar = True
             confianca = min(3.5, confianca * 1.2)
         
+        if confianca >= config['confianca_maxima_segura'] and not gatilho:
+            recentes = [d for d in u_list[-config['rodadas_verificacao_conf_alta']:] if d != 0]
+            if len(recentes) >= 5:
+                freq_recente = Counter(recentes)
+                if freq_recente.most_common(1)[0][0] != d1:
+                    confianca *= 0.7
+                    logging.info(f"⚠️ Confiança alta ({confianca:.1f}) mas dúzia D{d1} não é a mais frequente - reduzindo")
+        
         motivo = ""
         
-        # 🆕 CORREÇÃO 4: Anti-erro melhorado - pular se houver discordância
         if self.modo_anti_erro and config['anti_erro_skip_discordancia']:
-            # Verificar se a dúzia prevista pelo score e pelo anti-erro são diferentes
             if self.duzias_que_sairam:
                 dz_real = self.duzias_que_sairam[-1]
                 if dz_real != 0 and dz_real != d1 and dz_real != d2:
-                    # Anti-erro discorda do score principal - PULAR entrada
                     pode_entrar = False
                     motivo = "🚫 Anti-Erro: discordância entre indicadores"
                     logging.info(f"🚫 ANTI-ERRO SKIP: Score diz D{d1}, cobertura D{d2}, mas última real foi D{dz_real}")
@@ -1221,7 +1340,7 @@ class DuziaAI:
         
         if config['bloquear_alerta_zero_conf_alta']:
             if gatilho and gatilho['tipo'] == 'EMBALO' and confianca >= 3.3 and self.alerta_zero_ativo:
-                if gatilho['tipo'] != 'RITMO_ALTERNADO':
+                if gatilho['tipo'] not in ('RITMO_ALTERNADO', 'RITMO_V'):  # 🆕 RITMO_V não é bloqueado
                     pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
         
         if config['bloquear_anti_erro_zero_conf_baixa']:
@@ -1237,7 +1356,6 @@ class DuziaAI:
         else:
             if not motivo: motivo = "" if pode_entrar else f"Score baixo ({s1:.1f})"
         
-        # 🆕 CORREÇÃO 3: Termômetro do Zero - forçar inclusão
         incluir_zero = self.alerta_zero_ativo
         if self.rodadas_desde_zero >= config['zero_termometro_max']:
             incluir_zero = True
@@ -1584,8 +1702,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.11 - 5 Correções", layout="wide")
-st.title("🎰 DuziaAI V10.9.11 - 5 CORREÇÕES DE ERROS (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.12 - RITMO_V", layout="wide")
+st.title("🎰 DuziaAI V10.9.12 - NOVO GATILHO RITMO_V (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1698,7 +1816,7 @@ if "historico" not in st.session_state: st.session_state.historico = []
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.11 - 5 CORREÇÕES")
+    st.markdown("## ⚙️ V10.9.12 - RITMO_V")
     
     sis = st.session_state.sistema
     
@@ -1736,7 +1854,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Download de sessões
     st.markdown("### 💾 Download de Sessões")
     st.session_state.salvar_sessoes_auto = st.checkbox(
         "💾 Salvar sessões automaticamente", 
@@ -2044,5 +2161,5 @@ else:
     st.info("Nenhuma entrada.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V10.9.11 | 5 Correções de Erros | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.12 | Novo Gatilho RITMO_V | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
