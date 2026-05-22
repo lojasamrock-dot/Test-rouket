@@ -48,83 +48,166 @@ def data_brasilia():
     return hora_brasilia().strftime('%Y-%m-%d')
 
 # =============================
-# CONFIGURAÇÕES APRIMORADAS POR ROLETA
+# 🆕 SETUPS INDEPENDENTES POR ROLETA
 # =============================
+
+# Setup BASE (valores padrão)
+SETUP_BASE = {
+    'pagamento_numero': 20,
+    'pagamento_zero': 20,
+    'pagamento_duzia': 3,
+    'confianca_minima_entrada': 2.0,
+    'embalo_peso': 9,
+    'embalo_reforco': 5,
+    'bloquear_alerta_zero_conf_alta': True,
+    'bloquear_anti_erro_zero_conf_baixa': True,
+    'filtro_conf_baixa': 2.0,
+    'fadiga_duzia': 4,
+    'ritmo_alternado_peso': 10,
+    'ritmo_alternado_forca': 10,
+    'max_repeticoes_embalo': 4,
+    'confianca_maxima_segura': 3.3,
+    'rodadas_verificacao_conf_alta': 5,
+    'pausa_pos_raio': 2,
+    'raio_alto_minimo': 100,
+    'zero_termometro_max': 15,
+    'anti_erro_skip_discordancia': True,
+    'ritmo_v_peso': 9,
+    'ritmo_v_forca': 9,
+    'ritmo_v_confirmacoes': 2,
+}
+
+# 🆕 SETUP XXXTREME LIGHTNING - AGRESSIVO (JÁ CALIBRADO)
+SETUP_XXXTREME = {
+    **SETUP_BASE,  # Herda tudo do base
+    'pagamento_numero': 20,
+    'pagamento_zero': 20,
+    'pagamento_duzia': 3,
+    'confianca_minima_entrada': 2.0,
+    'embalo_peso': 9,
+    'embalo_reforco': 5,
+    'bloquear_alerta_zero_conf_alta': True,
+    'bloquear_anti_erro_zero_conf_baixa': True,
+    'filtro_conf_baixa': 2.0,
+    'fadiga_duzia': 4,
+    'ritmo_alternado_peso': 10,
+    'ritmo_alternado_forca': 10,
+    'max_repeticoes_embalo': 4,
+    'confianca_maxima_segura': 3.3,
+    'rodadas_verificacao_conf_alta': 5,
+    'pausa_pos_raio': 2,
+    'raio_alto_minimo': 100,
+    'zero_termometro_max': 15,
+    'anti_erro_skip_discordancia': True,
+    'ritmo_v_peso': 9,
+    'ritmo_v_forca': 9,
+    'ritmo_v_confirmacoes': 2,
+    # 🆕 Ajustes específicos XXXtreme
+    'usar_embalo': True,
+    'usar_ritmo_alternado': True,
+    'usar_ritmo_v': True,
+    'usar_ritmo_ping_pong': True,
+    'usar_ritmo_binario': True,
+    'usar_quebra_pos_zero': True,
+    'usar_exaustao_dominancia': True,
+    'usar_mudanca_velocidade': True,
+    'score_frequencia_peso': 40,
+    'score_streak_peso': 8,
+    'score_markov_peso': 10,
+    'score_ml_peso': 35,
+    'score_anti_erro_peso': 25,
+}
+
+# 🆕 SETUP IMMERSIVE ROULETTE - CONSERVADOR (NOVO)
+SETUP_IMMERSIVE = {
+    **SETUP_BASE,
+    'pagamento_numero': 35,
+    'pagamento_zero': 35,
+    'pagamento_duzia': 2,
+    'confianca_minima_entrada': 2.2,     # Mais conservador
+    'embalo_peso': 5,                      # EMBALO reduzido (50% acerto)
+    'embalo_reforco': 2,                   # Reforço reduzido
+    'bloquear_alerta_zero_conf_alta': True,
+    'bloquear_anti_erro_zero_conf_baixa': True,
+    'filtro_conf_baixa': 2.2,             # Mais rigoroso
+    'fadiga_duzia': 3,                     # Cansa mais rápido
+    'ritmo_alternado_peso': 8,
+    'ritmo_alternado_forca': 8,
+    'max_repeticoes_embalo': 3,           # Mais restritivo (era 4)
+    'confianca_maxima_segura': 3.1,       # Mais rigoroso (era 3.3)
+    'rodadas_verificacao_conf_alta': 5,
+    'pausa_pos_raio': 0,                   # Sem pausa (não tem raios)
+    'raio_alto_minimo': 0,
+    'zero_termometro_max': 12,            # ZERO mais frequente
+    'anti_erro_skip_discordancia': True,
+    'ritmo_v_peso': 8,
+    'ritmo_v_forca': 8,
+    'ritmo_v_confirmacoes': 2,
+    # 🆕 Ajustes específicos Immersive
+    'usar_embalo': True,                   # Mantido mas com peso reduzido
+    'usar_ritmo_alternado': True,          # 60% acerto - MANTER
+    'usar_ritmo_v': True,                  # NOVO
+    'usar_ritmo_ping_pong': False,         # DESABILITADO (0% acerto)
+    'usar_ritmo_binario': True,
+    'usar_quebra_pos_zero': True,
+    'usar_exaustao_dominancia': False,     # DESABILITADO (0% acerto)
+    'usar_mudanca_velocidade': False,      # DESABILITADO (50% - não confiável)
+    'score_frequencia_peso': 45,           # MAIS peso na frequência (62.5% sem gatilho)
+    'score_streak_peso': 6,               # MENOS peso no streak
+    'score_markov_peso': 8,
+    'score_ml_peso': 30,
+    'score_anti_erro_peso': 20,
+    # 🆕 Horários recomendados
+    'horario_bloqueio_inicio': 0,         # 00:00
+    'horario_bloqueio_fim': 12,           # 12:00 (bloqueia madrugada)
+}
+
+# 🆕 SETUP MEGA ROULETTE - MODERADO (ORIGINAL)
+SETUP_MEGA = {
+    **SETUP_BASE,
+    'pagamento_numero': 24,
+    'pagamento_zero': 24,
+    'pagamento_duzia': 2,
+    'confianca_minima_entrada': 2.5,
+    'embalo_peso': 6,
+    'embalo_reforco': 3,
+    'bloquear_alerta_zero_conf_alta': True,
+    'bloquear_anti_erro_zero_conf_baixa': True,
+    'filtro_conf_baixa': 2.5,
+    'fadiga_duzia': 3,
+    'ritmo_alternado_peso': 8,
+    'ritmo_alternado_forca': 8,
+    'max_repeticoes_embalo': 3,
+    'confianca_maxima_segura': 3.2,
+    'rodadas_verificacao_conf_alta': 5,
+    'pausa_pos_raio': 2,
+    'raio_alto_minimo': 150,
+    'zero_termometro_max': 12,
+    'anti_erro_skip_discordancia': True,
+    'ritmo_v_peso': 7,
+    'ritmo_v_forca': 7,
+    'ritmo_v_confirmacoes': 2,
+    # 🆕 Ajustes específicos Mega
+    'usar_embalo': True,
+    'usar_ritmo_alternado': True,
+    'usar_ritmo_v': True,
+    'usar_ritmo_ping_pong': True,
+    'usar_ritmo_binario': True,
+    'usar_quebra_pos_zero': True,
+    'usar_exaustao_dominancia': True,
+    'usar_mudanca_velocidade': True,
+    'score_frequencia_peso': 40,
+    'score_streak_peso': 8,
+    'score_markov_peso': 10,
+    'score_ml_peso': 35,
+    'score_anti_erro_peso': 25,
+}
+
+# Mapeamento de setups
 ROLETA_CONFIGS = {
-    'XXXtreme Lightning': {
-        'pagamento_numero': 20,
-        'pagamento_zero': 20,
-        'pagamento_duzia': 3,
-        'confianca_minima_entrada': 2.0,
-        'embalo_peso': 9,
-        'embalo_reforco': 5,
-        'bloquear_alerta_zero_conf_alta': True,
-        'bloquear_anti_erro_zero_conf_baixa': True,
-        'filtro_conf_baixa': 2.0,
-        'fadiga_duzia': 4,
-        'ritmo_alternado_peso': 10,
-        'ritmo_alternado_forca': 10,
-        # Novas configurações de calibração
-        'max_repeticoes_embalo': 4,
-        'confianca_maxima_segura': 3.3,
-        'rodadas_verificacao_conf_alta': 5,
-        'pausa_pos_raio': 2,
-        'raio_alto_minimo': 100,  # 🆕 Reduzido de 200 para 100
-        'zero_termometro_max': 15,
-        'anti_erro_skip_discordancia': True,
-        # 🆕 Configurações do RITMO_V
-        'ritmo_v_peso': 9,
-        'ritmo_v_forca': 9,
-        'ritmo_v_confirmacoes': 2,  # Confirmações necessárias
-    },
-    'Immersive Roulette': {
-        'pagamento_numero': 35,
-        'pagamento_zero': 35,
-        'pagamento_duzia': 2,
-        'confianca_minima_entrada': 2.0,
-        'embalo_peso': 9,
-        'embalo_reforco': 5,
-        'bloquear_alerta_zero_conf_alta': True,
-        'bloquear_anti_erro_zero_conf_baixa': True,
-        'filtro_conf_baixa': 2.0,
-        'fadiga_duzia': 4,
-        'ritmo_alternado_peso': 10,
-        'ritmo_alternado_forca': 10,
-        'max_repeticoes_embalo': 3,
-        'confianca_maxima_segura': 3.2,
-        'rodadas_verificacao_conf_alta': 5,
-        'pausa_pos_raio': 0,
-        'raio_alto_minimo': 0,
-        'zero_termometro_max': 12,
-        'anti_erro_skip_discordancia': True,
-        'ritmo_v_peso': 8,
-        'ritmo_v_forca': 8,
-        'ritmo_v_confirmacoes': 2,
-    },
-    'Mega Roulette': {
-        'pagamento_numero': 24,
-        'pagamento_zero': 24,
-        'pagamento_duzia': 2,
-        'confianca_minima_entrada': 2.5,
-        'embalo_peso': 6,
-        'embalo_reforco': 3,
-        'bloquear_alerta_zero_conf_alta': True,
-        'bloquear_anti_erro_zero_conf_baixa': True,
-        'filtro_conf_baixa': 2.5,
-        'fadiga_duzia': 3,
-        'ritmo_alternado_peso': 8,
-        'ritmo_alternado_forca': 8,
-        'max_repeticoes_embalo': 3,
-        'confianca_maxima_segura': 3.2,
-        'rodadas_verificacao_conf_alta': 5,
-        'pausa_pos_raio': 2,
-        'raio_alto_minimo': 150,
-        'zero_termometro_max': 12,
-        'anti_erro_skip_discordancia': True,
-        'ritmo_v_peso': 7,
-        'ritmo_v_forca': 7,
-        'ritmo_v_confirmacoes': 2,
-    },
+    'XXXtreme Lightning': SETUP_XXXTREME,
+    'Immersive Roulette': SETUP_IMMERSIVE,
+    'Mega Roulette': SETUP_MEGA,
 }
 
 # =============================
@@ -680,7 +763,7 @@ def fetch_latest_result():
     return fetch_func()
 
 # =============================
-# 🧠 DUZIA AI V10.9.12 - COM NOVO GATILHO RITMO_V
+# 🧠 DUZIA AI V10.9.13 - COM SETUPS INDEPENDENTES
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -718,7 +801,6 @@ class DuziaAI:
         self.ritmo_alternado_contagem = 0
         self.ultimo_ritmo_alternado = None
         
-        # 🆕 Rastreadores do RITMO_V
         self.ritmo_v_padrao = None
         self.ritmo_v_contagem = 0
         self.ultimo_ritmo_v = None
@@ -735,8 +817,9 @@ class DuziaAI:
         self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
     
     def _get_config(self):
+        """🆕 Retorna o setup específico da roleta selecionada"""
         api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-        return ROLETA_CONFIGS.get(api_name, ROLETA_CONFIGS['XXXtreme Lightning']).copy()
+        return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
         
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -750,7 +833,7 @@ class DuziaAI:
             self.rodadas_desde_zero += 1
         
         self._atualizar_ritmo_alternado(d)
-        self._atualizar_ritmo_v(d)  # 🆕 Atualizar rastreador RITMO_V
+        self._atualizar_ritmo_v(d)
         
         if d != 0:
             if d == self.duzia_embalo_atual:
@@ -809,13 +892,7 @@ class DuziaAI:
         self.ritmo_alternado_par = None
         self.ritmo_alternado_contagem = 0
     
-    # 🆕 NOVO MÉTODO: Rastreador do padrão RITMO_V (D3→D1→D3)
     def _atualizar_ritmo_v(self, nova_duzia):
-        """
-        Detecta o padrão D3 → D1 → D3 (desce para D1, sobe para D3)
-        Também detecta: D1 → D3 → D1, D2 → D1 → D2, etc.
-        Padrão de "V" ou "ressalto"
-        """
         if nova_duzia == 0:
             return
         
@@ -825,16 +902,12 @@ class DuziaAI:
         if len(recentes) < 3:
             return
         
-        # Pega as últimas 3 dúzias (excluindo zeros)
         ultimas_3 = recentes[-3:]
         
-        # Verifica padrão A → B → A (ex: D3 → D1 → D3)
         if ultimas_3[0] == ultimas_3[2] and ultimas_3[0] != ultimas_3[1]:
-            # Encontrou um padrão V!
-            duzia_base = ultimas_3[0]  # A dúzia que repete (ex: D3)
-            duzia_meio = ultimas_3[1]  # A dúzia do meio (ex: D1)
+            duzia_base = ultimas_3[0]
+            duzia_meio = ultimas_3[1]
             
-            # Cria uma chave única para este padrão
             padrao_v = (duzia_base, duzia_meio)
             
             if self.ritmo_v_padrao == padrao_v:
@@ -846,7 +919,6 @@ class DuziaAI:
             if self.ritmo_v_contagem >= 1:
                 self.ultimo_ritmo_v = padrao_v
         else:
-            # Verifica se quebrou o padrão
             if self.ritmo_v_padrao is not None:
                 self.ritmo_v_padrao = None
                 self.ritmo_v_contagem = 0
@@ -866,7 +938,7 @@ class DuziaAI:
         self.ultimo_resultado_numero = acertou_numero
         
         config = self._get_config()
-        if eh_raio and multiplicador >= config['raio_alto_minimo']:
+        if eh_raio and multiplicador >= config['raio_alto_minimo'] and config['pausa_pos_raio'] > 0:
             self.em_pausa_pos_raio = True
             self.rodadas_pos_raio = 0
             self.ultimo_raio_alto = multiplicador
@@ -990,10 +1062,12 @@ class DuziaAI:
         self.alerta_zero_ativo = False; return False
     
     def detectar_embalo(self):
+        config = self._get_config()
+        if not config.get('usar_embalo', True):
+            return None
+        
         u = list(self.historico)[-6:]
         if len(u) < 3: return None
-        
-        config = self._get_config()
         
         freq = Counter([d for d in u if d != 0])
         if freq:
@@ -1008,6 +1082,10 @@ class DuziaAI:
         return None
     
     def detectar_ritmo_ping_pong(self):
+        config = self._get_config()
+        if not config.get('usar_ritmo_ping_pong', True):
+            return None
+        
         u = list(self.historico)[-6:]
         if len(u) < 4: return None
         pares = {}
@@ -1026,13 +1104,15 @@ class DuziaAI:
         return None
     
     def detectar_ritmo_alternado(self):
+        config = self._get_config()
+        if not config.get('usar_ritmo_alternado', True):
+            return None
+        
         u = list(self.historico)
         recentes = [d for d in u[-10:] if d != 0]
         
         if len(recentes) < 8:
             return None
-        
-        config = self._get_config()
         
         if 0 in u[-3:]:
             return None
@@ -1045,7 +1125,6 @@ class DuziaAI:
                 ultimas_8[0] != 0 and ultimas_8[1] != 0):
                 
                 proxima = ultimas_8[0]
-                logging.info(f"🎯 RITMO_ALTERNADO 8x: D{ultimas_8[0]}-D{ultimas_8[1]} → Próxima: D{proxima}")
                 return {
                     'tipo': 'RITMO_ALTERNADO',
                     'duzia': proxima,
@@ -1061,7 +1140,6 @@ class DuziaAI:
                 ultimas_6[0] != 0 and ultimas_6[1] != 0):
                 
                 proxima = ultimas_6[0]
-                logging.info(f"🎯 RITMO_ALTERNADO 6x: D{ultimas_6[0]}-D{ultimas_6[1]} → Próxima: D{proxima}")
                 return {
                     'tipo': 'RITMO_ALTERNADO',
                     'duzia': proxima,
@@ -1071,45 +1149,33 @@ class DuziaAI:
         
         return None
     
-    # 🆕 NOVO MÉTODO: Detectar padrão RITMO_V (D3→D1→D3)
     def detectar_ritmo_v(self):
-        """
-        Detecta o padrão de "V" ou "ressalto":
-        D3 → D1 → D3 (desce pra D1, volta pra D3)
-        D1 → D3 → D1 (sobe pra D3, volta pra D1)
-        D2 → D1 → D2 (desce pra D1, volta pra D2)
-        D3 → D2 → D3 (desce pra D2, volta pra D3)
-        """
+        config = self._get_config()
+        if not config.get('usar_ritmo_v', True):
+            return None
+        
         u = list(self.historico)
         recentes = [d for d in u[-10:] if d != 0]
         
         if len(recentes) < 3:
             return None
         
-        config = self._get_config()
-        
-        # Verifica se há ZERO nas últimas 2 rodadas - se sim, não ativa
         if 0 in u[-2:]:
             return None
         
-        # Método 1: Verificar as últimas 3 dúzias para padrão A→B→A
         ultimas_3 = recentes[-3:]
         
         if ultimas_3[0] == ultimas_3[2] and ultimas_3[0] != ultimas_3[1]:
-            # Padrão V detectado!
-            duzia_base = ultimas_3[0]  # Dúzia que repetiu
-            duzia_meio = ultimas_3[1]  # Dúzia do meio
-            
-            logging.info(f"🔄 RITMO_V detectado: D{duzia_base}→D{duzia_meio}→D{duzia_base}")
+            duzia_base = ultimas_3[0]
+            duzia_meio = ultimas_3[1]
             
             return {
                 'tipo': 'RITMO_V',
-                'duzia': duzia_base,  # Prevê que a dúzia base vai repetir novamente
+                'duzia': duzia_base,
                 'forca': config['ritmo_v_forca'],
                 'padrao': (duzia_base, duzia_meio)
             }
         
-        # Método 2: Verificar padrão mais longo (5 dúzias): A→B→A→B→A
         if len(recentes) >= 5:
             ultimas_5 = recentes[-5:]
             if (ultimas_5[0] == ultimas_5[2] == ultimas_5[4] and 
@@ -1119,29 +1185,23 @@ class DuziaAI:
                 duzia_base = ultimas_5[0]
                 duzia_meio = ultimas_5[1]
                 
-                logging.info(f"🔄 RITMO_V 5x: D{duzia_base}→D{duzia_meio}→D{duzia_base}→D{duzia_meio}→D{duzia_base}")
-                
                 return {
                     'tipo': 'RITMO_V',
-                    'duzia': duzia_meio,  # Próxima deve ser a do meio
+                    'duzia': duzia_meio,
                     'forca': config['ritmo_v_forca'] + 1,
                     'padrao': (duzia_base, duzia_meio)
                 }
         
-        # Método 3: Usar rastreador interno
         if self.ritmo_v_contagem >= config['ritmo_v_confirmacoes'] and self.ultimo_ritmo_v is not None:
             duzia_base, duzia_meio = self.ultimo_ritmo_v
             ultima = recentes[-1]
             
-            # Determina a próxima baseado na última
             if ultima == duzia_base:
                 proxima = duzia_meio
             elif ultima == duzia_meio:
                 proxima = duzia_base
             else:
                 return None
-            
-            logging.info(f"🔄 RITMO_V rastreador: D{duzia_base}↔D{duzia_meio} → Próxima: D{proxima}")
             
             return {
                 'tipo': 'RITMO_V',
@@ -1154,61 +1214,76 @@ class DuziaAI:
     
     def detectar_gatilhos(self):
         u = list(self.historico)
+        config = self._get_config()
         
-        # 🆕 RITMO_V - NOVO GATILHO (prioridade 2)
-        ritmo_v = self.detectar_ritmo_v()
-        if ritmo_v:
-            self.ultimo_gatilho = 'RITMO_V'
-            return ritmo_v
+        # RITMO_V - verifica se está habilitado
+        if config.get('usar_ritmo_v', True):
+            ritmo_v = self.detectar_ritmo_v()
+            if ritmo_v:
+                self.ultimo_gatilho = 'RITMO_V'
+                return ritmo_v
         
-        # RITMO_ALTERNADO (prioridade 1)
-        ritmo_alternado = self.detectar_ritmo_alternado()
-        if ritmo_alternado:
-            self.ultimo_gatilho = 'RITMO_ALTERNADO'
-            return ritmo_alternado
+        # RITMO_ALTERNADO
+        if config.get('usar_ritmo_alternado', True):
+            ritmo_alternado = self.detectar_ritmo_alternado()
+            if ritmo_alternado:
+                self.ultimo_gatilho = 'RITMO_ALTERNADO'
+                return ritmo_alternado
         
-        embalo = self.detectar_embalo()
-        if embalo: self.ultimo_gatilho = 'EMBALO'; return embalo
+        # EMBALO
+        if config.get('usar_embalo', True):
+            embalo = self.detectar_embalo()
+            if embalo: self.ultimo_gatilho = 'EMBALO'; return embalo
         
-        ping_pong = self.detectar_ritmo_ping_pong()
-        if ping_pong: self.ultimo_gatilho = 'RITMO_PING_PONG'; return ping_pong
+        # RITMO_PING_PONG
+        if config.get('usar_ritmo_ping_pong', True):
+            ping_pong = self.detectar_ritmo_ping_pong()
+            if ping_pong: self.ultimo_gatilho = 'RITMO_PING_PONG'; return ping_pong
         
-        if len(u) >= 4:
-            ult_4 = [u[-1], u[-2], u[-3], u[-4]]
-            if 0 not in ult_4:
-                if ult_4[0] == ult_4[2] and ult_4[1] == ult_4[3] and ult_4[0] != ult_4[1]:
-                    self.ultimo_gatilho = 'RITMO_BINARIO'
-                    return {'tipo': 'RITMO_BINARIO', 'duzia': ult_4[1], 'forca': 9}
+        # RITMO_BINARIO
+        if config.get('usar_ritmo_binario', True):
+            if len(u) >= 4:
+                ult_4 = [u[-1], u[-2], u[-3], u[-4]]
+                if 0 not in ult_4:
+                    if ult_4[0] == ult_4[2] and ult_4[1] == ult_4[3] and ult_4[0] != ult_4[1]:
+                        self.ultimo_gatilho = 'RITMO_BINARIO'
+                        return {'tipo': 'RITMO_BINARIO', 'duzia': ult_4[1], 'forca': 9}
 
-        if 0 in u[-6:]:
-            pos_zero = len(u) - 1 - u[::-1].index(0)
-            depois_zero = u[pos_zero+1:]
-            if len(depois_zero) >= 1 and depois_zero[-1] != 0:
-                self.ultimo_gatilho = 'QUEBRA_POS_ZERO'
-                return {'tipo': 'QUEBRA_POS_ZERO', 'duzia': depois_zero[-1], 'forca': 8}
+        # QUEBRA_POS_ZERO
+        if config.get('usar_quebra_pos_zero', True):
+            if 0 in u[-6:]:
+                pos_zero = len(u) - 1 - u[::-1].index(0)
+                depois_zero = u[pos_zero+1:]
+                if len(depois_zero) >= 1 and depois_zero[-1] != 0:
+                    self.ultimo_gatilho = 'QUEBRA_POS_ZERO'
+                    return {'tipo': 'QUEBRA_POS_ZERO', 'duzia': depois_zero[-1], 'forca': 8}
         
-        if len(u) >= 10:
-            ultimas_10 = u[-10:]
-            freq_10 = Counter([d for d in ultimas_10 if d != 0])
-            if freq_10:
-                dom = freq_10.most_common(1)[0]
-                if dom[1] >= 7 and dom[0] != 0:
-                    outras = self._get_outras_duzias(dom[0])
-                    freq_outras = {d: self.frequencia().get(d, 0) for d in outras}
-                    dz_emergente = max(freq_outras, key=freq_outras.get)
-                    if dz_emergente != 0:
-                        self.ultimo_gatilho = 'EXAUSTAO_DOMINANCIA'
-                        return {'tipo': 'EXAUSTAO_DOMINANCIA', 'duzia': dz_emergente, 'forca': 7}
+        # EXAUSTAO_DOMINANCIA
+        if config.get('usar_exaustao_dominancia', True):
+            if len(u) >= 10:
+                ultimas_10 = u[-10:]
+                freq_10 = Counter([d for d in ultimas_10 if d != 0])
+                if freq_10:
+                    dom = freq_10.most_common(1)[0]
+                    if dom[1] >= 7 and dom[0] != 0:
+                        outras = self._get_outras_duzias(dom[0])
+                        freq_outras = {d: self.frequencia().get(d, 0) for d in outras}
+                        dz_emergente = max(freq_outras, key=freq_outras.get)
+                        if dz_emergente != 0:
+                            self.ultimo_gatilho = 'EXAUSTAO_DOMINANCIA'
+                            return {'tipo': 'EXAUSTAO_DOMINANCIA', 'duzia': dz_emergente, 'forca': 7}
         
-        if len(u) >= 8:
-            freq_1 = Counter([d for d in u[-8:-4] if d != 0])
-            freq_2 = Counter([d for d in u[-4:] if d != 0])
-            if freq_1 and freq_2:
-                dom_1 = freq_1.most_common(1)[0]
-                dom_2 = freq_2.most_common(1)[0]
-                if dom_1[0] != dom_2[0] and dom_2[1] >= 3 and dom_2[0] != 0:
-                    self.ultimo_gatilho = 'MUDANCA_VELOCIDADE'
-                    return {'tipo': 'MUDANCA_VELOCIDADE', 'duzia': dom_2[0], 'forca': 6}
+        # MUDANCA_VELOCIDADE
+        if config.get('usar_mudanca_velocidade', True):
+            if len(u) >= 8:
+                freq_1 = Counter([d for d in u[-8:-4] if d != 0])
+                freq_2 = Counter([d for d in u[-4:] if d != 0])
+                if freq_1 and freq_2:
+                    dom_1 = freq_1.most_common(1)[0]
+                    dom_2 = freq_2.most_common(1)[0]
+                    if dom_1[0] != dom_2[0] and dom_2[1] >= 3 and dom_2[0] != 0:
+                        self.ultimo_gatilho = 'MUDANCA_VELOCIDADE'
+                        return {'tipo': 'MUDANCA_VELOCIDADE', 'duzia': dom_2[0], 'forca': 6}
         
         return None
     
@@ -1219,13 +1294,13 @@ class DuziaAI:
         freq = self.frequencia()
         total = sum(freq.values())
         if total > 0:
-            for d in score: score[d] = (freq.get(d, 0) / total) * 40
+            for d in score: score[d] = (freq.get(d, 0) / total) * config['score_frequencia_peso']
         
         streak_count, streak_d = self.streak()
-        if streak_d and streak_d != 0: score[streak_d] += streak_count * 8
+        if streak_d and streak_d != 0: score[streak_d] += streak_count * config['score_streak_peso']
         
         markov = self._prever_markov()
-        if markov and markov[0] != 0: score[markov[0]] += 10
+        if markov and markov[0] != 0: score[markov[0]] += config['score_markov_peso']
             
         ml_scores = self._prever_ml()
         for d in score: score[d] += ml_scores.get(d, 0.0)
@@ -1233,10 +1308,8 @@ class DuziaAI:
         gatilho = self.detectar_gatilhos()
         if gatilho and gatilho['duzia'] != 0: score[gatilho['duzia']] += gatilho['forca'] * 2
         
-        # 🆕 Reforço para RITMO_V
         if gatilho and gatilho['tipo'] == 'RITMO_V':
             score[gatilho['duzia']] += config['ritmo_v_peso']
-            # Penaliza a dúzia que NÃO faz parte do padrão V
             if 'padrao' in gatilho:
                 for d in [1, 2, 3]:
                     if d not in gatilho['padrao']:
@@ -1259,7 +1332,7 @@ class DuziaAI:
             if self.duzias_que_sairam:
                 dz_real = self.duzias_que_sairam[-1]
                 if dz_real != 0:
-                    score[dz_real] += 25
+                    score[dz_real] += config['score_anti_erro_peso']
                     if self.ultimas_previsoes:
                         dz_errada = self.ultimas_previsoes[-1]
                         if dz_errada in score: score[dz_errada] *= 0.3
@@ -1288,6 +1361,14 @@ class DuziaAI:
         
         config = self._get_config()
         
+        # 🆕 Verificar bloqueio de horário (para Immersive madrugada)
+        hora_atual = datetime.now().hour
+        if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
+            inicio = config['horario_bloqueio_inicio']
+            fim = config['horario_bloqueio_fim']
+            if inicio <= hora_atual < fim:
+                return {"entrar": False, "motivo": f"⏸️ Horário bloqueado ({inicio:02d}:00-{fim:02d}:00)"}
+        
         if self.em_pausa_pos_raio:
             return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
         
@@ -1308,14 +1389,9 @@ class DuziaAI:
         
         pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
         
-        # 🆕 RITMO_V força entrada
-        if gatilho and gatilho['tipo'] == 'RITMO_V':
+        if gatilho and gatilho['tipo'] in ('RITMO_V', 'RITMO_ALTERNADO'):
             pode_entrar = True
             confianca = min(3.5, confianca * 1.15)
-        
-        if gatilho and gatilho['tipo'] == 'RITMO_ALTERNADO':
-            pode_entrar = True
-            confianca = min(3.5, confianca * 1.2)
         
         if confianca >= config['confianca_maxima_segura'] and not gatilho:
             recentes = [d for d in u_list[-config['rodadas_verificacao_conf_alta']:] if d != 0]
@@ -1323,7 +1399,6 @@ class DuziaAI:
                 freq_recente = Counter(recentes)
                 if freq_recente.most_common(1)[0][0] != d1:
                     confianca *= 0.7
-                    logging.info(f"⚠️ Confiança alta ({confianca:.1f}) mas dúzia D{d1} não é a mais frequente - reduzindo")
         
         motivo = ""
         
@@ -1332,15 +1407,14 @@ class DuziaAI:
                 dz_real = self.duzias_que_sairam[-1]
                 if dz_real != 0 and dz_real != d1 and dz_real != d2:
                     pode_entrar = False
-                    motivo = "🚫 Anti-Erro: discordância entre indicadores"
-                    logging.info(f"🚫 ANTI-ERRO SKIP: Score diz D{d1}, cobertura D{d2}, mas última real foi D{dz_real}")
+                    motivo = "🚫 Anti-Erro: discordância"
         
         if self.ultimo_resultado_duzia == False and self.ultima_confianca >= 3.4:
             if d1 == self.ultima_previsao_duzia: d1 = d2; s1 = s2
         
         if config['bloquear_alerta_zero_conf_alta']:
             if gatilho and gatilho['tipo'] == 'EMBALO' and confianca >= 3.3 and self.alerta_zero_ativo:
-                if gatilho['tipo'] not in ('RITMO_ALTERNADO', 'RITMO_V'):  # 🆕 RITMO_V não é bloqueado
+                if gatilho['tipo'] not in ('RITMO_ALTERNADO', 'RITMO_V'):
                     pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
         
         if config['bloquear_anti_erro_zero_conf_baixa']:
@@ -1360,7 +1434,6 @@ class DuziaAI:
         if self.rodadas_desde_zero >= config['zero_termometro_max']:
             incluir_zero = True
             if not motivo: motivo = "🟢 Termômetro Zero"
-            logging.info(f"🟢 TERMÔMETRO ZERO: {self.rodadas_desde_zero} rodadas sem zero - forçando inclusão")
         
         previsao = {
             "entrar": pode_entrar, "motivo": motivo, "score": score,
@@ -1702,8 +1775,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V10.9.12 - RITMO_V", layout="wide")
-st.title("🎰 DuziaAI V10.9.12 - NOVO GATILHO RITMO_V (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V10.9.13 - Setups Independentes", layout="wide")
+st.title("🎰 DuziaAI V10.9.13 - SETUPS INDEPENDENTES POR ROLETA (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1816,7 +1889,7 @@ if "historico" not in st.session_state: st.session_state.historico = []
 
 # Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ V10.9.12 - RITMO_V")
+    st.markdown("## ⚙️ V10.9.13 - SETUPS INDEPENDENTES")
     
     sis = st.session_state.sistema
     
@@ -1898,14 +1971,12 @@ with st.sidebar:
                         st.caption(f"✅ {stats.get('acertos', 0)} | ❌ {stats.get('erros', 0)} | 📊 {stats.get('taxa_acerto', 0)}%")
             
             st.markdown("---")
-            
             st.markdown("#### 📊 Consolidado do Dia")
             data_hoje = data_brasilia()
             sessoes_hoje = gerenciador.listar_sessoes_do_dia(data_hoje)
             
             if sessoes_hoje:
                 st.caption(f"📅 {data_hoje}: {len(sessoes_hoje)} sessões")
-                
                 if st.button("📊 Gerar Consolidado Hoje", use_container_width=True):
                     caminho = gerenciador.consolidar_sessoes_dia(data_hoje)
                     if caminho:
@@ -1956,14 +2027,19 @@ with st.sidebar:
     st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
     
     api_name = st.session_state.api_selecionada
-    config = ROLETA_CONFIGS.get(api_name, ROLETA_CONFIGS['XXXtreme Lightning'])
+    config = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
     
+    # 🆕 Mostrar informações do setup ativo
     if api_name == 'XXXtreme Lightning':
-        st.success(f"⚡ Raios: 50x-2000x | Dúzia: {config['pagamento_duzia']}x")
+        st.success(f"⚡ SETUP: AGRESSIVO | Raios: 50x-2000x | Dúzia: {config['pagamento_duzia']}x")
+        st.caption("🎯 Todos os gatilhos ATIVOS | Peso EMBALO: 9 | Conf Max: 3.3")
+    elif api_name == 'Immersive Roulette':
+        st.info(f"🎯 SETUP: CONSERVADOR | Sem raios | Dúzia: {config['pagamento_duzia']}x")
+        st.caption("⚠️ EXAUSTAO+MUDANCA+PING_PONG DESABILITADOS | Peso EMBALO: 5 | Conf Max: 3.1")
+        st.caption("🔒 Madrugada BLOQUEADA (00:00-12:00) | Foco: Score Base (62.5%)")
     elif api_name == 'Mega Roulette':
-        st.warning(f"⚡ Raios: 50x-500x | Dúzia: {config['pagamento_duzia']}x")
-    else:
-        st.info(f"🎯 Sem raios | Dúzia: {config['pagamento_duzia']}x")
+        st.warning(f"⚡ SETUP: MODERADO | Raios: 50x-500x | Dúzia: {config['pagamento_duzia']}x")
+        st.caption("🎯 Setup original preservado | Todos os gatilhos ATIVOS")
     
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -2161,5 +2237,5 @@ else:
     st.info("Nenhuma entrada.")
 
 st.markdown("---")
-st.caption(f"🤖 DuziaAI V10.9.12 | Novo Gatilho RITMO_V | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V10.9.13 | Setups Independentes | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
