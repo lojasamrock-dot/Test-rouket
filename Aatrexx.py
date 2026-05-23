@@ -75,7 +75,6 @@ SETUP_BASE = {
     'ritmo_v_peso': 9,
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
-    # 🆕 Configurações ML
     'ml_janela_treino': 20,
     'ml_atualizar_a_cada': 5,
     'score_ml_peso': 35,
@@ -83,133 +82,66 @@ SETUP_BASE = {
 
 SETUP_XXXTREME = {
     **SETUP_BASE,
-    'pagamento_numero': 20,
-    'pagamento_zero': 20,
-    'pagamento_duzia': 3,
-    'confianca_minima_entrada': 2.0,
-    'embalo_peso': 9,
-    'embalo_reforco': 5,
-    'bloquear_alerta_zero_conf_alta': True,
-    'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.0,
-    'fadiga_duzia': 4,
-    'ritmo_alternado_peso': 10,
-    'ritmo_alternado_forca': 10,
-    'max_repeticoes_embalo': 4,
-    'confianca_maxima_segura': 3.3,
-    'rodadas_verificacao_conf_alta': 5,
-    'pausa_pos_raio': 2,
-    'raio_alto_minimo': 100,
-    'zero_termometro_max': 15,
-    'anti_erro_skip_discordancia': True,
-    'ritmo_v_peso': 9,
-    'ritmo_v_forca': 9,
-    'ritmo_v_confirmacoes': 2,
-    'usar_embalo': True,
-    'embalo_consecutivas_min': 3,
-    'embalo_janela': 6,
-    'usar_ritmo_alternado': True,
-    'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': True,
-    'usar_ritmo_binario': True,
-    'usar_quebra_pos_zero': True,
-    'usar_exaustao_dominancia': True,
+    'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
+    'confianca_minima_entrada': 2.0, 'embalo_peso': 9, 'embalo_reforco': 5,
+    'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
+    'filtro_conf_baixa': 2.0, 'fadiga_duzia': 4,
+    'ritmo_alternado_peso': 10, 'ritmo_alternado_forca': 10,
+    'max_repeticoes_embalo': 4, 'confianca_maxima_segura': 3.3,
+    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 2, 'raio_alto_minimo': 100,
+    'zero_termometro_max': 15, 'anti_erro_skip_discordancia': True,
+    'ritmo_v_peso': 9, 'ritmo_v_forca': 9, 'ritmo_v_confirmacoes': 2,
+    'usar_embalo': True, 'embalo_consecutivas_min': 3, 'embalo_janela': 6,
+    'usar_ritmo_alternado': True, 'usar_ritmo_v': True,
+    'usar_ritmo_ping_pong': True, 'usar_ritmo_binario': True,
+    'usar_quebra_pos_zero': True, 'usar_exaustao_dominancia': True,
     'usar_mudanca_velocidade': True,
-    'score_frequencia_peso': 40,
-    'score_streak_peso': 8,
-    'score_markov_peso': 10,
-    'score_ml_peso': 35,
-    'score_anti_erro_peso': 25,
-    'ml_janela_treino': 20,
-    'ml_atualizar_a_cada': 5,
+    'score_frequencia_peso': 40, 'score_streak_peso': 8,
+    'score_markov_peso': 10, 'score_ml_peso': 35, 'score_anti_erro_peso': 25,
+    'ml_janela_treino': 20, 'ml_atualizar_a_cada': 5,
 }
 
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
-    'pagamento_numero': 35,
-    'pagamento_zero': 35,
-    'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.2,
-    'embalo_peso': 5,
-    'embalo_reforco': 2,
-    'bloquear_alerta_zero_conf_alta': True,
-    'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.2,
-    'fadiga_duzia': 3,
-    'ritmo_alternado_peso': 8,
-    'ritmo_alternado_forca': 8,
-    'max_repeticoes_embalo': 3,
-    'confianca_maxima_segura': 3.1,
-    'rodadas_verificacao_conf_alta': 5,
-    'pausa_pos_raio': 0,
-    'raio_alto_minimo': 0,
-    'zero_termometro_max': 12,
-    'anti_erro_skip_discordancia': True,
-    'ritmo_v_peso': 8,
-    'ritmo_v_forca': 8,
-    'ritmo_v_confirmacoes': 2,
-    'usar_embalo': True,
-    'embalo_consecutivas_min': 2,
-    'embalo_janela': 4,
-    'usar_ritmo_alternado': True,
-    'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': False,
-    'usar_ritmo_binario': True,
-    'usar_quebra_pos_zero': True,
-    'usar_exaustao_dominancia': False,
+    'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
+    'confianca_minima_entrada': 2.2, 'embalo_peso': 5, 'embalo_reforco': 2,
+    'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
+    'filtro_conf_baixa': 2.2, 'fadiga_duzia': 3,
+    'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
+    'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
+    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 0, 'raio_alto_minimo': 0,
+    'zero_termometro_max': 12, 'anti_erro_skip_discordancia': True,
+    'ritmo_v_peso': 8, 'ritmo_v_forca': 8, 'ritmo_v_confirmacoes': 2,
+    'usar_embalo': True, 'embalo_consecutivas_min': 2, 'embalo_janela': 4,
+    'usar_ritmo_alternado': True, 'usar_ritmo_v': True,
+    'usar_ritmo_ping_pong': False, 'usar_ritmo_binario': True,
+    'usar_quebra_pos_zero': True, 'usar_exaustao_dominancia': False,
     'usar_mudanca_velocidade': False,
-    'score_frequencia_peso': 45,
-    'score_streak_peso': 6,
-    'score_markov_peso': 8,
-    'score_ml_peso': 30,
-    'score_anti_erro_peso': 20,
-    'horario_bloqueio_inicio': 0,
-    'horario_bloqueio_fim': 12,
-    'ml_janela_treino': 20,
-    'ml_atualizar_a_cada': 5,
+    'score_frequencia_peso': 45, 'score_streak_peso': 6,
+    'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
+    'horario_bloqueio_inicio': 0, 'horario_bloqueio_fim': 12,
+    'ml_janela_treino': 20, 'ml_atualizar_a_cada': 5,
 }
 
 SETUP_MEGA = {
     **SETUP_BASE,
-    'pagamento_numero': 24,
-    'pagamento_zero': 24,
-    'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.5,
-    'embalo_peso': 5,
-    'embalo_reforco': 2,
-    'bloquear_alerta_zero_conf_alta': True,
-    'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.5,
-    'fadiga_duzia': 3,
-    'ritmo_alternado_peso': 8,
-    'ritmo_alternado_forca': 8,
-    'max_repeticoes_embalo': 3,
-    'confianca_maxima_segura': 3.1,
-    'rodadas_verificacao_conf_alta': 5,
-    'pausa_pos_raio': 2,
-    'raio_alto_minimo': 150,
-    'zero_termometro_max': 12,
-    'anti_erro_skip_discordancia': True,
-    'ritmo_v_peso': 7,
-    'ritmo_v_forca': 7,
-    'ritmo_v_confirmacoes': 2,
-    'usar_embalo': True,
-    'embalo_consecutivas_min': 2,
-    'embalo_janela': 4,
-    'usar_ritmo_alternado': True,
-    'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': False,
-    'usar_ritmo_binario': True,
-    'usar_quebra_pos_zero': False,
-    'usar_exaustao_dominancia': False,
+    'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
+    'confianca_minima_entrada': 2.5, 'embalo_peso': 5, 'embalo_reforco': 2,
+    'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
+    'filtro_conf_baixa': 2.5, 'fadiga_duzia': 3,
+    'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
+    'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
+    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 2, 'raio_alto_minimo': 150,
+    'zero_termometro_max': 12, 'anti_erro_skip_discordancia': True,
+    'ritmo_v_peso': 7, 'ritmo_v_forca': 7, 'ritmo_v_confirmacoes': 2,
+    'usar_embalo': True, 'embalo_consecutivas_min': 2, 'embalo_janela': 4,
+    'usar_ritmo_alternado': True, 'usar_ritmo_v': True,
+    'usar_ritmo_ping_pong': False, 'usar_ritmo_binario': True,
+    'usar_quebra_pos_zero': False, 'usar_exaustao_dominancia': False,
     'usar_mudanca_velocidade': False,
-    'score_frequencia_peso': 45,
-    'score_streak_peso': 6,
-    'score_markov_peso': 8,
-    'score_ml_peso': 30,
-    'score_anti_erro_peso': 20,
-    'ml_janela_treino': 20,
-    'ml_atualizar_a_cada': 5,
+    'score_frequencia_peso': 45, 'score_streak_peso': 6,
+    'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
+    'ml_janela_treino': 20, 'ml_atualizar_a_cada': 5,
 }
 
 ROLETA_CONFIGS = {
@@ -733,7 +665,6 @@ class DuziaAI:
         
         # 🆕 ML Online
         self.modelo_ml = None
-        self.ultima_atualizacao_ml = 0
         self.ultimo_treino_ml = 0
         
         self.mesa_atual = None
@@ -744,39 +675,26 @@ class DuziaAI:
         api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
         return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
     
-    # 🆕 EXTRATOR DE FEATURES OTIMIZADO
     def extrair_features_estado(self, janela=20):
-        """
-        Constrói o vetor de features para o modelo ML.
-        Traduz a dinâmica fluida da mesa em dados absolutos.
-        Janela de 20 rodadas para treinamento online.
-        """
         if len(self.historico_completo) < 4 or len(self.numeros_completos) < 4:
             return None
         
-        # Recortes da janela de análise
         numeros_janela = self.numeros_completos[-janela:]
         duzias_janela = [d for d in self.historico_completo[-janela:] if d != 0]
-        
-        # 1. Últimas 4 dúzias (memória imediata)
         ultimas_4 = self.historico_completo[-4:]
         
-        # 2. Terminais Dinâmicos Quentes (Top 2 da janela)
         terminais = [n % 10 for n in numeros_janela if n != 0]
         contagem_terminais = Counter(terminais).most_common(2)
         t1_quente = contagem_terminais[0][0] if len(contagem_terminais) > 0 else -1
         t2_quente = contagem_terminais[1][0] if len(contagem_terminais) > 1 else -1
         
-        # 3. Temperatura do Zero (rodadas desde o último zero)
         try:
             rodadas_sem_zero = numeros_janela[::-1].index(0)
         except ValueError:
             rodadas_sem_zero = janela
         
-        # 4. Dúzia Dominante da janela
         duzia_dominante = Counter(duzias_janela).most_common(1)[0][0] if duzias_janela else -1
         
-        # 5. Gatilho Ativo (codificado)
         gatilho_atual = self.detectar_gatilhos()
         tipo_gatilho = 0
         if gatilho_atual:
@@ -787,32 +705,16 @@ class DuziaAI:
             }
             tipo_gatilho = mapa_gatilhos.get(gatilho_atual['tipo'], 0)
         
-        # 6. Montagem do Vetor Final (9 features)
-        vetor_features = [
-            ultimas_4[0],        # Dúzia -4
-            ultimas_4[1],        # Dúzia -3
-            ultimas_4[2],        # Dúzia -2
-            ultimas_4[3],        # Última Dúzia
-            t1_quente,           # Terminal Dinâmico Primário
-            t2_quente,           # Terminal Dinâmico Secundário
-            rodadas_sem_zero,    # Termômetro do Zero
-            duzia_dominante,     # Dúzia com mais peso
-            tipo_gatilho         # Ritmo atual da mesa
+        return [
+            ultimas_4[0], ultimas_4[1], ultimas_4[2], ultimas_4[3],
+            t1_quente, t2_quente, rodadas_sem_zero, duzia_dominante, tipo_gatilho
         ]
-        
-        return vetor_features
     
-    # 🆕 TREINAMENTO ML ONLINE
     def _treinar_ml_online(self):
-        """
-        Treina o modelo RandomForest com os dados da janela de 20 rodadas.
-        Atualiza a cada 'ml_atualizar_a_cada' rodadas.
-        """
         config = self._get_config()
         janela_treino = config.get('ml_janela_treino', 20)
         atualizar_a_cada = config.get('ml_atualizar_a_cada', 5)
         
-        # Verifica se precisa atualizar
         rodada_atual = len(self.historico_completo)
         if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada:
             return False
@@ -822,19 +724,15 @@ class DuziaAI:
         
         try:
             X, y = [], []
-            
-            # Usa a janela de 20 para treinar
             inicio = max(0, len(self.historico_completo) - janela_treino - 4)
             
             for i in range(inicio + 4, len(self.historico_completo)):
-                # Reconstrói o estado para cada ponto
                 hist_duzias_temp = self.historico_completo[:i]
                 hist_numeros_temp = self.numeros_completos[:i]
                 
                 if len(hist_duzias_temp) < 4 or len(hist_numeros_temp) < 4:
                     continue
                 
-                # Features do momento
                 numeros_janela = hist_numeros_temp[-janela_treino:]
                 duzias_janela = [d for d in hist_duzias_temp[-janela_treino:] if d != 0]
                 ultimas_4 = hist_duzias_temp[-4:]
@@ -856,7 +754,6 @@ class DuziaAI:
                     t1, t2, rodadas_sem_zero, duzia_dominante, 0
                 ]
                 
-                # Target: a dúzia que realmente saiu
                 target = self.historico_completo[i]
                 if target in [1, 2, 3]:
                     X.append(features)
@@ -865,7 +762,6 @@ class DuziaAI:
             if len(X) < 10:
                 return False
             
-            # Treina o modelo
             self.modelo_ml = RandomForestClassifier(
                 n_estimators=50, max_depth=5, random_state=42, n_jobs=-1
             )
@@ -917,7 +813,6 @@ class DuziaAI:
             if self.rodadas_pos_raio >= self._get_config()['pausa_pos_raio']:
                 self.em_pausa_pos_raio = False
         
-        # 🆕 Treinar ML a cada X rodadas
         self._treinar_ml_online()
     
     def _atualizar_ritmo_alternado(self, nova_duzia):
@@ -1030,12 +925,7 @@ class DuziaAI:
             return self.transicoes[padrao].most_common(1)[0]
         return None
 
-    # 🆕 PREVISÃO ML OTIMIZADA (APENAS INFERÊNCIA)
     def _prever_ml(self):
-        """
-        Usa o modelo treinado online para prever.
-        Não faz fit, apenas predict_proba.
-        """
         if not ML_DISPONIVEL or self.modelo_ml is None:
             return {1: 0.0, 2: 0.0, 3: 0.0}
         
@@ -1043,12 +933,10 @@ class DuziaAI:
             return {1: 0.0, 2: 0.0, 3: 0.0}
         
         try:
-            # Extrai features do estado atual
             features = self.extrair_features_estado(janela=20)
             if not features:
                 return {1: 0.0, 2: 0.0, 3: 0.0}
             
-            # Predição instantânea (sem fit!)
             probabilidades = self.modelo_ml.predict_proba([features])[0]
             
             config = self._get_config()
@@ -1268,7 +1156,6 @@ class DuziaAI:
         markov = self._prever_markov()
         if markov and markov[0] != 0: score[markov[0]] += config['score_markov_peso']
         
-        # 🆕 ML Otimizado (apenas inferência)
         ml_scores = self._prever_ml()
         for d in score: score[d] += ml_scores.get(d, 0.0)
         
@@ -1802,7 +1689,9 @@ if "janela_duzia_ai" not in st.session_state:
     st.session_state.janela_duzia_ai = config_global.get('janela_duzia_ai', 30)
 if "historico" not in st.session_state: st.session_state.historico = []
 
-# Sidebar
+# =============================
+# SIDEBAR COMPLETA
+# =============================
 with st.sidebar:
     st.markdown("## ⚙️ V11.0.0 - ML ONLINE")
     sis = st.session_state.sistema
@@ -1812,11 +1701,24 @@ with st.sidebar:
         st.success(f"🟢 Sessão #{sis.total_sessoes} ATIVA")
         st.progress(sis.rodadas_na_sessao / sis.rodadas_por_sessao)
         st.caption(f"Rodadas: {sis.rodadas_na_sessao}/{sis.rodadas_por_sessao}")
+        st.caption(f"Acertos: {sis.acertos_sessao} | Erros: {sis.erros_sessao}")
+        if sis.acertos_sessao + sis.erros_sessao > 0:
+            taxa = (sis.acertos_sessao / (sis.acertos_sessao + sis.erros_sessao)) * 100
+            st.caption(f"Taxa: {taxa:.0f}%")
     elif sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
         tempo_restante = (sis.sessao_pausa_ate - hora_brasilia()).seconds
-        st.warning(f"⏸️ Pausa: {tempo_restante//60:02d}:{tempo_restante%60:02d}")
+        minutos = tempo_restante // 60
+        segundos = tempo_restante % 60
+        st.warning(f"⏸️ Pausa: {minutos:02d}:{segundos:02d}")
+        if sis.total_sessoes > 0:
+            st.caption(f"Sessão #{sis.total_sessoes} encerrada")
+            if sis.acertos_sessao + sis.erros_sessao > 0:
+                taxa = (sis.acertos_sessao / (sis.acertos_sessao + sis.erros_sessao)) * 100
+                st.caption(f"Resultado: {sis.acertos_sessao}✅ / {sis.erros_sessao}❌ ({taxa:.0f}%)")
     else:
         st.info("⚪ Nenhuma sessão ativa")
+        if sis.total_sessoes > 0:
+            st.caption(f"Total de sessões: {sis.total_sessoes}")
     
     botao_desabilitado = sis.sessao_ativa or (sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate)
     if botao_desabilitado:
@@ -1830,14 +1732,97 @@ with st.sidebar:
         if nova_sessao(): st.success("✅ Reset completo!"); st.rerun()
     
     st.markdown("---")
+    
+    # ⏱️ CONFIGURAÇÕES DE SESSÃO
+    st.markdown("### ⏱️ Configurações da Sessão")
+    rodadas = st.number_input("Rodadas por sessão:", min_value=5, max_value=30, 
+                               value=st.session_state.rodadas_por_sessao, step=5)
+    pausa = st.number_input("Pausa entre sessões (min):", min_value=1, max_value=30,
+                            value=st.session_state.pausa_entre_sessoes, step=1)
+    
+    if rodadas != st.session_state.rodadas_por_sessao:
+        st.session_state.rodadas_por_sessao = rodadas
+        sis.rodadas_por_sessao = rodadas
+        salvar_sessao()
+    if pausa != st.session_state.pausa_entre_sessoes:
+        st.session_state.pausa_entre_sessoes = pausa
+        sis.pausa_entre_sessoes = pausa
+        salvar_sessao()
+    
+    st.markdown("---")
+    
+    # 💾 DOWNLOAD DE SESSÕES
+    st.markdown("### 💾 Download de Sessões")
+    st.session_state.salvar_sessoes_auto = st.checkbox(
+        "💾 Salvar sessões automaticamente", 
+        value=st.session_state.salvar_sessoes_auto
+    )
+    
+    with st.expander("📥 BAIXAR SESSÕES", expanded=False):
+        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+        gerenciador = GerenciadorSessoes(api_name)
+        sessoes = gerenciador.listar_sessoes()
+        
+        if sessoes:
+            st.caption(f"📂 {len(sessoes)} sessões disponíveis")
+            st.markdown("#### 📥 Sessão Específica")
+            sessao_opcoes = [f"Sessão #{s.get('numero_sessao', '?')} - {s.get('data', '?')} {s.get('hora_encerramento', '?')}" for s in sessoes[:20]]
+            if sessao_opcoes:
+                sessao_selecionada = st.selectbox("Selecionar sessão:", sessao_opcoes, key="select_sessao")
+                if sessao_selecionada:
+                    idx = sessao_opcoes.index(sessao_selecionada)
+                    if idx < len(sessoes):
+                        sessao = sessoes[idx]
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            conteudo_json = json.dumps(sessao, indent=2, ensure_ascii=False)
+                            st.markdown(gerenciador.get_download_link(conteudo_json, f"sessao_{sessao.get('numero_sessao', '?')}.json", 'json'), unsafe_allow_html=True)
+                        with col2:
+                            conteudo_csv = gerenciador.gerar_csv_sessao(sessao)
+                            st.markdown(gerenciador.get_download_link(conteudo_csv, f"sessao_{sessao.get('numero_sessao', '?')}.csv", 'csv'), unsafe_allow_html=True)
+                        stats = sessao.get('estatisticas', {})
+                        st.caption(f"✅ {stats.get('acertos', 0)} | ❌ {stats.get('erros', 0)} | 📊 {stats.get('taxa_acerto', 0)}%")
+            
+            st.markdown("---")
+            st.markdown("#### 📊 Consolidado do Dia")
+            data_hoje = data_brasilia()
+            sessoes_hoje = gerenciador.listar_sessoes_do_dia(data_hoje)
+            if sessoes_hoje:
+                st.caption(f"📅 {data_hoje}: {len(sessoes_hoje)} sessões")
+                if st.button("📊 Gerar Consolidado Hoje", use_container_width=True):
+                    caminho = gerenciador.consolidar_sessoes_dia(data_hoje)
+                    if caminho:
+                        with open(caminho, 'r') as f: conteudo = f.read()
+                        st.markdown(gerenciador.get_download_link(conteudo, f"consolidado_{data_hoje}.json", 'json'), unsafe_allow_html=True)
+                        st.success("✅ Consolidado gerado!")
+            
+            if st.button("📦 Baixar Todas as Sessões (JSON)", use_container_width=True):
+                todas_sessoes = gerenciador.listar_sessoes()
+                if todas_sessoes:
+                    conteudo = json.dumps({'total_sessoes': len(todas_sessoes), 'sessoes': todas_sessoes}, indent=2, ensure_ascii=False)
+                    st.markdown(gerenciador.get_download_link(conteudo, f"todas_sessoes_{api_name.lower().replace(' ', '_')}.json", 'json'), unsafe_allow_html=True)
+        else:
+            st.info("Nenhuma sessão salva ainda.")
+    
+    st.markdown("---")
+    
+    # 🎰 SELEÇÃO DE ROLETA
     st.markdown("### 🎰 Selecione a Roleta")
     api_opcoes = list(API_URLS.keys())
     api_atual = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
     api_index = api_opcoes.index(api_atual) if api_atual in api_opcoes else 0
     st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
     api_name = st.session_state.api_selecionada
+    config = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
     
-    # 🆕 Status do ML
+    if api_name == 'XXXtreme Lightning':
+        st.success(f"⚡ AGRESSIVO | EMBALO: 3 consecutivas | ~68%")
+    elif api_name == 'Immersive Roulette':
+        st.info(f"🎯 CONSERVADOR | EMBALO: 2 consecutivas | ~75%")
+    elif api_name == 'Mega Roulette':
+        st.warning(f"⚡ CORRIGIDO | EMBALO: 2 consecutivas | ~73%")
+    
+    # 🧠 Status do ML
     if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
         st.success(f"🧠 ML ATIVO | Treinado na rodada {sis.duzia_ai.ultimo_treino_ml}")
     else:
@@ -1845,10 +1830,33 @@ with st.sidebar:
     
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela", 10, 50, st.session_state.janela_duzia_ai, 5)
-    st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo", value=st.session_state.modo_agressivo)
+    st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
     st.session_state.modo_automatico = st.checkbox("🤖 Auto", value=st.session_state.modo_automatico)
+    
+    st.markdown("---")
+    
+    # 🔔 TELEGRAM
+    with st.expander("🔔 Telegram", expanded=False):
+        st.markdown("#### Telegram PRINCIPAL")
+        st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
+        st.session_state.telegram_chat_id = st.text_input("Chat ID Principal", value=st.session_state.telegram_chat_id)
+        st.markdown("#### Telegram ALTERNATIVO")
+        st.session_state.telegram_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password")
+        st.session_state.telegram_chat_id_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt)
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("💾 Salvar", use_container_width=True): 
+            paths = get_session_paths(st.session_state.api_selecionada)
+            salvar_resultado_em_arquivo(st.session_state.historico, paths['historico'])
+            salvar_sessao(); st.success("✅")
+    with c2:
+        if st.button("📥 CSV", use_container_width=True):
+            if exportar_historico_csv(st.session_state.sistema.historico_entradas): st.success("✅")
 
-# Conteúdo principal
+# =============================
+# CONTEÚDO PRINCIPAL
+# =============================
 st.subheader("🎲 Inserir Números")
 c1, c2, c3 = st.columns([3,1,1])
 with c1:
@@ -1945,24 +1953,80 @@ with ce:
     if sis.duzia_ai.alerta_zero_ativo: st.warning("⚠️ ALERTA ZERO! 🟢")
     if sis.duzia_ai.em_pausa_pos_raio: st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
     
+    if not sis.sessao_ativa:
+        if sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
+            tempo_restante = (sis.sessao_pausa_ate - hora_brasilia()).seconds
+            st.info(f"⏸️ Pausa: {tempo_restante//60:02d}:{tempo_restante%60:02d}")
+        else:
+            st.info("🔴 Clique 'INICIAR SESSÃO' para começar")
+    
     if sis.entrada_ativa and sis.sessao_ativa:
         e = sis.entrada_ativa
         conf = e.get('confianca', 0)
-        dz_princ = e.get('duzia_prevista', 0)
+        dz_princ = e.get('duzia_prevista', 0); dz_sec = e.get('duzia_sec_prevista')
         gat = e.get('gatilho_ativo')
+        duzia_principal = dz_princ
+        duzia_secundaria = dz_sec if dz_sec and dz_sec != dz_princ else None
+        melhores_principal = _selecionar_melhores_numeros(duzia_principal, list(sis.historico_numeros), 6)
+        if duzia_secundaria: melhores_secundaria = _selecionar_melhores_numeros(duzia_secundaria, list(sis.historico_numeros), 6)
+        else: melhores_secundaria = None
         cor = "#FF6347" if e.get('modo_anti_erro') else "#FFD700"
         st.markdown(f"""
         <div style="background-color:{cor}15; border:2px solid {cor}; border-radius:15px; padding:15px;">
             <h2 style="color:{cor}; text-align:center;">🎯 D{dz_princ}</h2>
             <p style="text-align:center; font-size:1.1em;">Confiança: {conf:.2f} {'| 🎯 '+gat if gat else ''}</p>
+            {f'<p style="text-align:center; color:#FFA500;">🛡️ Cobertura: D{dz_sec}</p>' if duzia_secundaria else ''}
         </div>""", unsafe_allow_html=True)
+        st.write(f"**🎲 6 melhores D{duzia_principal}:** {', '.join(map(str, melhores_principal))}")
+        if melhores_secundaria: st.write(f"**🛡️ 6 melhores D{duzia_secundaria}:** {', '.join(map(str, melhores_secundaria))}")
         st.progress(min(1.0, max(0.0, conf/5.0)))
     else:
         st.info("🔍 Aguardando sinal...")
     
     if sis.ultimo_numero is not None:
+        st.markdown("---")
         st.write(f"**🔄 Último:** {'🟢 ZERO' if sis.ultimo_numero==0 else f'#{sis.ultimo_numero} (D{get_duzia(sis.ultimo_numero)})'}")
 
 st.markdown("---")
+st.subheader("📝 Histórico")
+
+if sis.historico_entradas:
+    dados = []
+    for e in reversed(sis.historico_entradas[-15:]):
+        real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
+        prev = f"D{e.get('duzia_prevista','?')}"
+        cob = f"D{e.get('duzia_sec_prevista','?')}" if e.get('duzia_sec_prevista') and e.get('duzia_sec_prevista') != e.get('duzia_prevista') else "-"
+        zero = '🟢' if e.get('incluir_zero') else '-'
+        anti = '🔄' if e.get('modo_anti_erro') else '-'
+        duz = '✅' if e.get('acerto_duzia') else '❌'
+        num = '🎯' if e.get('acerto_numero') else '-'
+        zer = '🟢' if e.get('acerto_zero') else '-'
+        numero_sorteado = e.get('numero', 0)
+        if e.get('eh_raio'): num_display = f"⚡{numero_sorteado} ({e.get('multiplicador',0)}x)"
+        elif numero_sorteado == 0: num_display = "0"
+        else: num_display = str(numero_sorteado)
+        dados.append({
+            "Rod": e.get('rodada'), "Hora": e.get('hora'), "🎲": num_display,
+            "Real": real, "Prev": prev, "Cob": cob,
+            "Conf": f"{e.get('confianca',0):.1f}", "Gat": e.get('gatilho','-') if e.get('gatilho') else '-',
+            "Z": zero, "🔄": anti, "Duz": duz, "Nº": num, "Zer": zer,
+        })
+    st.dataframe(dados, use_container_width=True, height=300)
+    
+    if st.button("📥 Exportar CSV", use_container_width=True):
+        if exportar_historico_csv(sis.historico_entradas): st.success("✅")
+else: 
+    st.info("Nenhuma entrada.")
+
+st.markdown("---")
+st.caption("📡 **Status Telegram:**")
+col_t1, col_t2 = st.columns(2)
+with col_t1:
+    if st.session_state.telegram_token and st.session_state.telegram_chat_id: st.success("🔔 Principal: CONFIGURADO")
+    else: st.warning("🔔 Principal: NÃO CONFIGURADO")
+with col_t2:
+    if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt: st.success("📢 Alternativo: CONFIGURADO")
+    else: st.warning("📢 Alternativo: NÃO CONFIGURADO")
+
 st.caption(f"🤖 DuziaAI V11.0.0 | ML Online Janela 20 | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
