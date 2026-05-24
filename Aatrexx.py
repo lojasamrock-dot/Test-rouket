@@ -75,7 +75,7 @@ SETUP_BASE = {
     'ritmo_v_peso': 9,
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
-    'ml_janela_treino': 100,
+    'ml_janela_treino': 20,
     'ml_atualizar_a_cada': 5,
     'score_ml_peso': 35,
 }
