@@ -618,7 +618,7 @@ def fetch_latest_result():
     return fetch_func()
 
 # =============================
-# 🧠 DUZIA AI V11.0.0 - ML ONLINE
+# 🧠 DUZIA AI V12.0.0 - ML ONLINE + ENTROPIA + JANELA DINÂMICA
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -664,6 +664,8 @@ class DuziaAI:
         self.mesa_atual = None
         self.performance_por_mesa = defaultdict(lambda: {'acertos': 0, 'erros': 0})
         self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
+        self.entropia_mesa = 0.0  # 🆕 Monitor de Entropia - Nível de caos da mesa
+        self.janela_ml_atual = 100  # 🆕 Janela dinâmica de treinamento ML
     
     def _get_config(self):
         api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
@@ -688,20 +690,50 @@ class DuziaAI:
             tipo_gatilho = mapa_gatilhos.get(gatilho_atual['tipo'], 0)
         return [ultimas_4[0], ultimas_4[1], ultimas_4[2], ultimas_4[3], t1_quente, t2_quente, rodadas_sem_zero, duzia_dominante, tipo_gatilho]
     
+    def atualizar_janela_ml(self):
+        """Define o tamanho da janela de treino baseado na volatilidade das dúzias."""
+        ultimos = list(self.historico)[-50:]
+        if len(ultimos) < 30:
+            self.janela_ml_atual = 100
+            return self.janela_ml_atual
+        
+        # Calcula a dispersão das últimas 50 jogadas
+        counts = Counter(ultimos)
+        variancia = np.var(list(counts.values()))
+        
+        # Se a variância for baixa, a mesa está constante (janela curta = 50)
+        # Se a variância for alta, a mesa está caótica (janela longa = 200)
+        if variancia < 2.0:
+            self.janela_ml_atual = 50
+        elif variancia < 5.0:
+            self.janela_ml_atual = 100
+        else:
+            self.janela_ml_atual = 200
+        
+        return self.janela_ml_atual
+    
     def _treinar_ml_online(self):
         config = self._get_config()
-        janela_treino = config.get('ml_janela_treino', 100)
         atualizar_a_cada = config.get('ml_atualizar_a_cada', 5)
         rodada_atual = len(self.historico_completo)
-        if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada: return False
-        if len(self.historico_completo) < janela_treino + 4: return False
+        
+        if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada:
+            return False
+        
+        # 🆕 Atualiza a janela dinâmica antes de treinar
+        janela_treino = self.atualizar_janela_ml()
+        
+        if len(self.historico_completo) < janela_treino + 4:
+            return False
+        
         try:
             X, y = [], []
             inicio = max(0, len(self.historico_completo) - janela_treino - 4)
             for i in range(inicio + 4, len(self.historico_completo)):
                 hist_duzias_temp = self.historico_completo[:i]
                 hist_numeros_temp = self.numeros_completos[:i]
-                if len(hist_duzias_temp) < 4 or len(hist_numeros_temp) < 4: continue
+                if len(hist_duzias_temp) < 4 or len(hist_numeros_temp) < 4:
+                    continue
                 numeros_janela = hist_numeros_temp[-janela_treino:]
                 duzias_janela = [d for d in hist_duzias_temp[-janela_treino:] if d != 0]
                 ultimas_4 = hist_duzias_temp[-4:]
@@ -709,21 +741,47 @@ class DuziaAI:
                 contagem_terminais = Counter(terminais).most_common(2)
                 t1 = contagem_terminais[0][0] if len(contagem_terminais) > 0 else -1
                 t2 = contagem_terminais[1][0] if len(contagem_terminais) > 1 else -1
-                try: rodadas_sem_zero = numeros_janela[::-1].index(0)
-                except ValueError: rodadas_sem_zero = janela_treino
+                try:
+                    rodadas_sem_zero = numeros_janela[::-1].index(0)
+                except ValueError:
+                    rodadas_sem_zero = janela_treino
                 duzia_dominante = Counter(duzias_janela).most_common(1)[0][0] if duzias_janela else -1
                 features = [ultimas_4[0], ultimas_4[1], ultimas_4[2], ultimas_4[3], t1, t2, rodadas_sem_zero, duzia_dominante, 0]
                 target = self.historico_completo[i]
-                if target in [1, 2, 3]: X.append(features); y.append(target)
-            if len(X) < 10: return False
+                if target in [1, 2, 3]:
+                    X.append(features)
+                    y.append(target)
+            
+            if len(X) < 10:
+                return False
+            
             self.modelo_ml = RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42, n_jobs=-1)
             self.modelo_ml.fit(X, y)
             self.ultimo_treino_ml = rodada_atual
-            logging.info(f"🧠 ML Treinado! Amostras: {len(X)} | Rodada: {rodada_atual}")
+            logging.info(f"🧠 ML Treinado! Amostras: {len(X)} | Janela Dinâmica: {janela_treino} | Rodada: {rodada_atual}")
             return True
         except Exception as e:
             logging.error(f"❌ Erro no treinamento ML: {e}")
             return False
+    
+    def calcular_entropia(self):
+        """Calcula o índice de caos da mesa (0.0 a 1.0)."""
+        if len(self.historico) < 10:
+            return 0.5  # Mesa nova
+        
+        # Analisa a distribuição das últimas 10 rodadas
+        ultimos = list(self.historico)[-10:]
+        counts = Counter(ultimos)
+        
+        # Se muitos números diferentes apareceram, a entropia é alta
+        probabilidades = [c / len(ultimos) for c in counts.values()]
+        
+        # Cálculo de Entropia de Shannon simplificado
+        entropia = -sum(p * np.log2(p) for p in probabilidades)
+        
+        # Normaliza para 0 a 1 (3.32 é log2 de 10)
+        self.entropia_mesa = min(1.0, entropia / 3.32)
+        return self.entropia_mesa
     
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -782,7 +840,6 @@ class DuziaAI:
         self.ultimas_previsoes.append(duzia); self.ultima_previsao_duzia = duzia; self.ultima_confianca = confianca
         if len(self.ultimas_previsoes) > 10: self.ultimas_previsoes = self.ultimas_previsoes[-10:]
     
-    #def registrar_resultado(self, duzia_real, acertou_duzia, acertou_numero, acertou_zero, mesa_id=None, eh_raio=False, multiplicador=0):
     def registrar_resultado(self, duzia_real, acertou_duzia, acertou_numero, acertou_zero, mesa_id=None, eh_raio=False, multiplicador=0):
         self.ultimos_resultados.append({'duzia': duzia_real, 'acertou_duzia': acertou_duzia, 'acertou_numero': acertou_numero, 'acertou_zero': acertou_zero})
         self.ultimo_resultado_duzia = acertou_duzia; self.ultimo_resultado_numero = acertou_numero
@@ -828,8 +885,6 @@ class DuziaAI:
             self.entradas_consecutivas = 0; self.pausa_ate = None
             
         if acertou_duzia or acertou_zero: self.entradas_consecutivas += 1
- 
-        
     
     def streak(self):
         if not self.historico: return 0, None
@@ -1076,17 +1131,29 @@ class DuziaAI:
             for d in score: score[d] = (score[d] / total_score) * 100
         return score, gatilho
     
-    #def prever(self):
     def prever(self):
-        if self.pausa_ate and hora_brasilia() < self.pausa_ate: return {"entrar": False, "motivo": "⏸️ Pausa"}
+        if self.pausa_ate and hora_brasilia() < self.pausa_ate:
+            return {"entrar": False, "motivo": "⏸️ Pausa"}
         
         config = self._get_config()
         hora_atual = datetime.now().hour
         if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
-            inicio = config['horario_bloqueio_inicio']; fim = config['horario_bloqueio_fim']
-            if inicio <= hora_atual < fim: return {"entrar": False, "motivo": f"⏸️ Horário bloqueado ({inicio:02d}:00-{fim:02d}:00)"}
-            
-        if self.em_pausa_pos_raio: return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
+            inicio = config['horario_bloqueio_inicio']
+            fim = config['horario_bloqueio_fim']
+            if inicio <= hora_atual < fim:
+                return {"entrar": False, "motivo": f"⏸️ Horário bloqueado ({inicio:02d}:00-{fim:02d}:00)"}
+        
+        if self.em_pausa_pos_raio:
+            return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
+        
+        # 🆕 TRAVA DE ENTROPIA: Não opera em mesas caóticas
+        entropia = self.calcular_entropia()
+        if entropia > 0.85:  # Se o caos for maior que 85%, não entra
+            # 🆕 Se a janela ML já está no máximo e entropia continua alta, hiberna
+            if self.janela_ml_atual >= 200:
+                self.pausa_ate = hora_brasilia() + timedelta(minutes=3)
+                return {"entrar": False, "motivo": f"🌪️ HIBERNAÇÃO: Entropia crítica ({entropia:.2f}) + Janela ML Máxima"}
+            return {"entrar": False, "motivo": f"🌪️ Mesa Caótica (Entropia: {entropia:.2f})"}
         
         score, gatilho = self.calcular_score()
         ranking = sorted(score.items(), key=lambda x: x[1], reverse=True)
@@ -1156,8 +1223,6 @@ class DuziaAI:
         if pode_entrar: previsao = self._balancear(previsao)
         self.ultimo_gatilho = None
         return previsao
-
-        
     
     def _balancear(self, previsao):
         config = self._get_config()
@@ -1354,8 +1419,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V11.0.0 - ML Online", layout="wide")
-st.title("🎰 DuziaAI V11.0.0 - ML ONLINE + SETUPS CORRIGIDOS (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V12.0.0 - ML Dinâmico + Entropia", layout="wide")
+st.title("🎰 DuziaAI V12.0.0 - ML DINÂMICO + ENTROPIA + HIBERNAÇÃO (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1427,7 +1492,7 @@ if "historico" not in st.session_state: st.session_state.historico = []
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V11.0.0 - ML ONLINE")
+    st.markdown("## ⚙️ V12.0.0 - ML DINÂMICO")
     sis = st.session_state.sistema
     
     st.markdown("### 📊 Status da Sessão")
@@ -1444,6 +1509,35 @@ with st.sidebar:
         st.warning(f"⏸️ Pausa: {tempo_restante//60:02d}:{tempo_restante%60:02d}")
     else:
         st.info("⚪ Nenhuma sessão ativa")
+    
+    # 🆕 Indicadores Avançados
+    if len(sis.duzia_ai.historico) >= 10:
+        st.markdown("---")
+        st.markdown("### 🧠 Inteligência Adaptativa")
+        
+        entropia_atual = sis.duzia_ai.entropia_mesa
+        janela_ml = sis.duzia_ai.janela_ml_atual
+        
+        col_e, col_j = st.columns(2)
+        with col_e:
+            if entropia_atual > 0.85:
+                st.error(f"🌪️ Entropia: {entropia_atual:.2f}")
+            elif entropia_atual > 0.6:
+                st.warning(f"🌤️ Entropia: {entropia_atual:.2f}")
+            else:
+                st.success(f"✨ Entropia: {entropia_atual:.2f}")
+            st.progress(entropia_atual)
+        
+        with col_j:
+            if janela_ml <= 50:
+                st.success(f"🎯 Janela ML: {janela_ml}")
+                st.caption("Modo: Precisão")
+            elif janela_ml <= 100:
+                st.info(f"📊 Janela ML: {janela_ml}")
+                st.caption("Modo: Equilibrado")
+            else:
+                st.warning(f"🔍 Janela ML: {janela_ml}")
+                st.caption("Modo: Profundo")
     
     botao_desabilitado = sis.sessao_ativa or (sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate)
     if botao_desabilitado: st.button("🚀 INICIAR SESSÃO", use_container_width=True, disabled=True)
@@ -1529,6 +1623,7 @@ with st.sidebar:
     
     if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
         st.success(f"🧠 ML ATIVO | Treinado na rodada {sis.duzia_ai.ultimo_treino_ml}")
+        st.caption(f"📏 Janela dinâmica: {sis.duzia_ai.janela_ml_atual} rodadas")
     else: st.info("🧠 ML Aguardando dados...")
     
     st.markdown("---")
@@ -1628,8 +1723,13 @@ with cg:
             text=[f'{score[1]:.0f}', f'{score[2]:.0f}', f'{score[3]:.0f}'], textposition='auto'
         )])
         titulo = f"🎯 {'⚠️ GATILHO: '+gatilho['tipo'] if gatilho else 'Sem gatilho'}"
-        if sis.duzia_ai.modelo_ml is not None: titulo += " | 🧠 ML"
+        if sis.duzia_ai.modelo_ml is not None: titulo += f" | 🧠 ML (J:{sis.duzia_ai.janela_ml_atual})"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ZERO!"
+        if len(sis.duzia_ai.historico) >= 10:
+            entropia = sis.duzia_ai.entropia_mesa
+            if entropia > 0.85: titulo += f" | 🌪️ E:{entropia:.2f}"
+            elif entropia < 0.5: titulo += f" | ✨ E:{entropia:.2f}"
+            else: titulo += f" | E:{entropia:.2f}"
         fig.update_layout(title=titulo, height=250, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
         
@@ -1650,6 +1750,13 @@ with cg:
 
 with ce:
     st.subheader("🎰 Entrada Atual")
+    if len(sis.duzia_ai.historico) >= 10:
+        entropia = sis.duzia_ai.entropia_mesa
+        if entropia > 0.85:
+            st.error(f"🌪️ MESA CAÓTICA - Entropia: {entropia:.2f}")
+            if sis.duzia_ai.janela_ml_atual >= 200:
+                st.error("🛑 HIBERNAÇÃO: Entropia crítica + Janela ML máxima")
+            st.caption("Bot pausado - Aguardando organização da mesa")
     if sis.duzia_ai.alerta_zero_ativo: st.warning("⚠️ ALERTA ZERO! 🟢")
     if sis.duzia_ai.em_pausa_pos_raio: st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
     if not sis.sessao_ativa:
@@ -1713,5 +1820,5 @@ with col_t2:
     if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt: st.success("📢 Alternativo: CONFIGURADO")
     else: st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V11.0.0 | ML Online | Setups Corrigidos | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V12.0.0 | ML Dinâmico + Entropia + Hibernação | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
