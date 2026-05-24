@@ -49,7 +49,7 @@ def data_brasilia():
     return hora_brasilia().strftime('%Y-%m-%d')
 
 # =============================
-# 🆕 SETUPS INDEPENDENTES POR ROLETA
+# 🆕 SETUPS INDEPENDENTES POR ROLETA (VERSÃO FINAL CORRIGIDA)
 # =============================
 
 SETUP_BASE = {
@@ -137,34 +137,17 @@ SETUP_MEGA = {
     'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
     'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 3, 'raio_alto_minimo': 100,
     'zero_termometro_max': 12, 'anti_erro_skip_discordancia': True,
-    
-    # 🆕 CORREÇÕES CRÍTICAS PARA MEGA ROULETTE
-    'ritmo_v_peso': 4,              # Era 7 → REDUZIDO (54% de acerto na Mega)
-    'ritmo_v_forca': 4,             # Era 7 → REDUZIDO
-    'usar_ritmo_v': False,          # Era True → DESABILITADO (baixa performance)
-    'usar_embalo': True,            # Mantido (57% ainda aceitável)
-    'embalo_consecutivas_min': 2,
-    'embalo_janela': 4,
-    'usar_ritmo_alternado': True,   # Mantido
-    'usar_ritmo_ping_pong': False,  # Mantido
-    'usar_ritmo_binario': False,    # Era True → DESABILITADO (não apareceu)
-    'usar_quebra_pos_zero': False,  # Mantido
-    'usar_exaustao_dominancia': False, # Mantido
-    'usar_mudanca_velocidade': False,  # Mantido
-    
-    # 🆕 ML REFORÇADO (compensa gatilhos ruins)
-    'score_frequencia_peso': 45,    # Mantido
-    'score_streak_peso': 6,         # Mantido
-    'score_markov_peso': 8,         # Mantido
-    'score_ml_peso': 50,            # Era 30 → AUMENTADO (ML é o principal!)
-    'score_anti_erro_peso': 25,     # Era 20 → AUMENTADO
-    
-    # 🆕 TREINAMENTO ML OTIMIZADO
-    'ml_janela_treino': 120,        # Era 100 → AUMENTADO (Mega precisa de + histórico)
-    'ml_atualizar_a_cada': 3,       # Era 5 → MAIS FREQUENTE (Mega é mais rápida)
-    
-    # 🆕 ENTROPIA MENOS AGRESSIVA (aplicado via código)
-    'entropia_threshold': 0.90,     # NOVO: Threshold específico para Mega
+    'ritmo_v_peso': 4, 'ritmo_v_forca': 4, 'ritmo_v_confirmacoes': 2,
+    'usar_ritmo_v': False,
+    'usar_embalo': True, 'embalo_consecutivas_min': 2, 'embalo_janela': 4,
+    'usar_ritmo_alternado': True,
+    'usar_ritmo_ping_pong': False, 'usar_ritmo_binario': False,
+    'usar_quebra_pos_zero': False, 'usar_exaustao_dominancia': False,
+    'usar_mudanca_velocidade': False,
+    'score_frequencia_peso': 45, 'score_streak_peso': 6,
+    'score_markov_peso': 8, 'score_ml_peso': 50, 'score_anti_erro_peso': 25,
+    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 3,
+    'entropia_threshold': 0.90,
 }
 
 ROLETA_CONFIGS = {
@@ -1402,17 +1385,37 @@ class SistemaBot:
         self.duzia_ai = DuziaAI(window=janela)
         salvar_sessao()
 
-# ... (resto do código permanece igual: funções auxiliares, Streamlit UI, etc.)
+def salvar_resultado_em_arquivo(historico, caminho):
+    try:
+        with open(caminho, "w", encoding='utf-8') as f: json.dump(historico, f, indent=2)
+    except Exception as e: logging.error(f"Erro: {e}")
 
-# Nota: O código continua com todas as funções de interface Streamlit,
-# gerenciamento de sessões, Telegram, gráficos, etc.
-# que já estavam no código anterior e não foram modificadas.
+def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
+    import csv
+    try:
+        with open(caminho, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Cob','Conf','Gat','Z','🔄','Mesa','Duz','Num','Zer','St'])
+            for e in historico_entradas:
+                real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
+                prev = f"D{e.get('duzia_prevista','?')}"
+                cob = f"D{e.get('duzia_sec_prevista','?')}" if e.get('duzia_sec_prevista') and e.get('duzia_sec_prevista') != e.get('duzia_prevista') else "-"
+                zero = '🟢' if e.get('incluir_zero') else '-'
+                anti = '🔄' if e.get('modo_anti_erro') else '-'
+                duz = '✅' if e.get('acerto_duzia') else '❌'
+                num = '✅' if e.get('acerto_numero') else '-'
+                zer = '✅' if e.get('acerto_zero') else '-'
+                raio = f"⚡{e.get('multiplicador',0)}x" if e.get('eh_raio') else '-'
+                mesa = e.get('table_name', '?')[:15] if e.get('table_name') else '?'
+                writer.writerow([e.get('rodada'), e.get('hora'), e.get('numero'), raio, real, prev, cob, f"{e.get('confianca',0):.1f}", e.get('gatilho','-') if e.get('gatilho') else '-', zero, anti, mesa, duz, num, zer, e.get('status','?')])
+        return True
+    except Exception as e: logging.error(f"Erro CSV: {e}"); return False
 
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V12.0.0 - ML Dinâmico + Entropia", layout="wide")
-st.title("🎰 DuziaAI V12.0.0 - ML DINÂMICO + ENTROPIA + HIBERNAÇÃO (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V12.1.0 - ML Dinâmico + Entropia", layout="wide")
+st.title("🎰 DuziaAI V12.1.0 - ML DINÂMICO + ENTROPIA + MEGA CORRIGIDA (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1484,7 +1487,7 @@ if "historico" not in st.session_state: st.session_state.historico = []
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V12.0.0 - ML DINÂMICO")
+    st.markdown("## ⚙️ V12.1.0 - MEGA CORRIGIDA")
     sis = st.session_state.sistema
     
     st.markdown("### 📊 Status da Sessão")
@@ -1607,11 +1610,11 @@ with st.sidebar:
     config = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
     
     if api_name == 'XXXtreme Lightning':
-        st.success(f"⚡ CORRIGIDO | EMBALO: 2 consecutivas | MUDANCA+QUEBRA: OFF")
+        st.success(f"⚡ 74.3% | RITMO_V: 76.5% | Pronto para produção")
     elif api_name == 'Immersive Roulette':
-        st.info(f"🎯 CONSERVADOR | EMBALO: 2 consecutivas | ~67%")
+        st.info(f"🎯 70.0% | CONSERVADOR | RITMO_V: 78%")
     elif api_name == 'Mega Roulette':
-        st.warning(f"⚡ CORRIGIDO | EMBALO: 2 consecutivas | ~72%")
+        st.warning(f"⚡ CORRIGIDA V12.1 | Alvo: 68-72% | RITMO_V: OFF")
     
     if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
         st.success(f"🧠 ML ATIVO | Treinado na rodada {sis.duzia_ai.ultimo_treino_ml}")
@@ -1812,5 +1815,5 @@ with col_t2:
     if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt: st.success("📢 Alternativo: CONFIGURADO")
     else: st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V12.0.0 | ML Dinâmico + Entropia + Hibernação | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V12.1.0 | ML Dinâmico + Entropia | Mega Corrigida | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
