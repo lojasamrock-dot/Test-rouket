@@ -123,8 +123,8 @@ SETUP_IMMERSIVE = {
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
-    'horario_bloqueio_inicio': 2, 'horario_bloqueio_fim': 12,
-    'ml_janela_treino': 100, 'ml_atualizar_a_cada': 5,
+    'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
+    'ml_janela_treino': 100, 'ml_atualizar_a_cada': 10,
 }
 
 SETUP_MEGA = {
