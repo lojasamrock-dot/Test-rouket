@@ -1076,58 +1076,88 @@ class DuziaAI:
             for d in score: score[d] = (score[d] / total_score) * 100
         return score, gatilho
     
+    #def prever(self):
     def prever(self):
         if self.pausa_ate and hora_brasilia() < self.pausa_ate: return {"entrar": False, "motivo": "⏸️ Pausa"}
+        
         config = self._get_config()
         hora_atual = datetime.now().hour
         if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
             inicio = config['horario_bloqueio_inicio']; fim = config['horario_bloqueio_fim']
             if inicio <= hora_atual < fim: return {"entrar": False, "motivo": f"⏸️ Horário bloqueado ({inicio:02d}:00-{fim:02d}:00)"}
+            
         if self.em_pausa_pos_raio: return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
+        
         score, gatilho = self.calcular_score()
         ranking = sorted(score.items(), key=lambda x: x[1], reverse=True)
         d1, s1 = ranking[0]; d2, s2 = ranking[1]
+        
         if d2 == d1:
             outras = self._get_outras_duzias(d1)
             d2 = ranking[2][0] if len(ranking) > 2 else outras[0]
+            
         self.detectar_alerta_zero()
         confianca = min(3.5, max(1.0, s1 / max(1, s2) * 1.5))
         if self.alerta_zero_ativo and confianca >= 3.4: confianca = min(3.3, confianca)
+        
         u_list = list(self.historico)
         if 0 in u_list[-3:]: confianca *= 0.5
-        pode_entrar = s1 > 35 or gatilho is not None or self.modo_anti_erro
-        if gatilho and gatilho['tipo'] in ('RITMO_V', 'RITMO_ALTERNADO'): pode_entrar = True; confianca = min(3.5, confianca * 1.15)
+        
+        # 🛡️ TRAVA 2 APLICADA: O anti-erro não força mais a entrada. Depende do ML > 35 ou Gatilho puro.
+        pode_entrar = s1 > 35 or gatilho is not None
+        
+        if gatilho and gatilho['tipo'] in ('RITMO_V', 'RITMO_ALTERNADO'): 
+            pode_entrar = True; confianca = min(3.5, confianca * 1.15)
+            
         if confianca >= config['confianca_maxima_segura'] and not gatilho:
             recentes = [d for d in u_list[-config['rodadas_verificacao_conf_alta']:] if d != 0]
             if len(recentes) >= 5:
                 freq_recente = Counter(recentes)
                 if freq_recente.most_common(1)[0][0] != d1: confianca *= 0.7
+                
         motivo = ""
+        
+        # 🛡️ TRAVA 3 APLICADA: Se acabou de errar, a próxima aposta precisa ser cirúrgica (Confiança >= 2.8)
+        if self.modo_anti_erro and confianca < 2.8:
+            pode_entrar = False
+            motivo = "🚫 Anti-Erro: Score estatístico baixo (< 2.8). Skip!"
+            
         if self.modo_anti_erro and config['anti_erro_skip_discordancia']:
             if self.duzias_que_sairam:
                 dz_real = self.duzias_que_sairam[-1]
-                if dz_real != 0 and dz_real != d1 and dz_real != d2: pode_entrar = False; motivo = "🚫 Anti-Erro: discordância"
+                if dz_real != 0 and dz_real != d1 and dz_real != d2: 
+                    pode_entrar = False; motivo = "🚫 Anti-Erro: discordância"
+                    
         if self.ultimo_resultado_duzia == False and self.ultima_confianca >= 3.4:
             if d1 == self.ultima_previsao_duzia: d1 = d2; s1 = s2
+            
         if config['bloquear_alerta_zero_conf_alta']:
             if gatilho and gatilho['tipo'] == 'EMBALO' and confianca >= 3.3 and self.alerta_zero_ativo:
-                if gatilho['tipo'] not in ('RITMO_ALTERNADO', 'RITMO_V'): pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
+                if gatilho['tipo'] not in ('RITMO_ALTERNADO', 'RITMO_V'): 
+                    pode_entrar = False; motivo = "🚫 EMBALO + Conf Alta + Zero"
+                    
         if config['bloquear_anti_erro_zero_conf_baixa']:
             if self.modo_anti_erro and self.alerta_zero_ativo and confianca < config['filtro_conf_baixa']:
                 pode_entrar = False; motivo = f"🚫 Anti-Erro + Zero + Conf < {config['filtro_conf_baixa']}"
+                
         if self.modo_anti_erro:
-            if self.erros_consecutivos == 1: motivo = f"🔄 ANTI-ERRO" if not motivo else motivo
-            else: motivo = f"🔄 ANTI-ERRO x{self.erros_consecutivos}" if not motivo else motivo
+            if self.erros_consecutivos == 1: 
+                motivo = f"🔄 ANTI-ERRO: Recuperando" if not motivo else motivo
         else:
             if not motivo: motivo = "" if pode_entrar else f"Score baixo ({s1:.1f})"
+            
         incluir_zero = self.alerta_zero_ativo
         if self.rodadas_desde_zero >= config['zero_termometro_max']:
             incluir_zero = True
             if not motivo: motivo = "🟢 Termômetro Zero"
+            
         previsao = {"entrar": pode_entrar, "motivo": motivo, "score": score, "confianca": round(confianca, 2), "duzia": d1, "duzia_secundaria": d2, "gatilho_ativo": gatilho['tipo'] if gatilho else None, "incluir_zero": incluir_zero, "modo_anti_erro": self.modo_anti_erro, "numeros_completos": list(self.numeros_completos)}
+        
         if pode_entrar: previsao = self._balancear(previsao)
         self.ultimo_gatilho = None
         return previsao
+
+        
     
     def _balancear(self, previsao):
         config = self._get_config()
