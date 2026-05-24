@@ -782,34 +782,54 @@ class DuziaAI:
         self.ultimas_previsoes.append(duzia); self.ultima_previsao_duzia = duzia; self.ultima_confianca = confianca
         if len(self.ultimas_previsoes) > 10: self.ultimas_previsoes = self.ultimas_previsoes[-10:]
     
+    #def registrar_resultado(self, duzia_real, acertou_duzia, acertou_numero, acertou_zero, mesa_id=None, eh_raio=False, multiplicador=0):
     def registrar_resultado(self, duzia_real, acertou_duzia, acertou_numero, acertou_zero, mesa_id=None, eh_raio=False, multiplicador=0):
         self.ultimos_resultados.append({'duzia': duzia_real, 'acertou_duzia': acertou_duzia, 'acertou_numero': acertou_numero, 'acertou_zero': acertou_zero})
         self.ultimo_resultado_duzia = acertou_duzia; self.ultimo_resultado_numero = acertou_numero
+        
         config = self._get_config()
         if eh_raio and multiplicador >= config['raio_alto_minimo'] and config['pausa_pos_raio'] > 0:
             self.em_pausa_pos_raio = True; self.rodadas_pos_raio = 0; self.ultimo_raio_alto = multiplicador
+            
         if mesa_id:
             self.mesa_atual = mesa_id
             if acertou_duzia or acertou_zero: self.performance_por_mesa[mesa_id]['acertos'] += 1
             else: self.performance_por_mesa[mesa_id]['erros'] += 1
+            
         hora = datetime.now().hour
         turno = "manhã" if 6 <= hora < 12 else "tarde" if 12 <= hora < 18 else "noite"
         if acertou_duzia or acertou_zero: self.performance_por_horario[turno]['acertos'] += 1
         else: self.performance_por_horario[turno]['erros'] += 1
+        
         if len(self.ultimos_resultados) > 20: self.ultimos_resultados = self.ultimos_resultados[-20:]
+        
         if acertou_duzia and duzia_real != 0:
             if duzia_real == self.ultima_duzia_acertada: self.acertos_consecutivos_mesma_duzia += 1
             else: self.acertos_consecutivos_mesma_duzia = 1; self.ultima_duzia_acertada = duzia_real
-        else: self.acertos_consecutivos_mesma_duzia = 0; self.ultima_duzia_acertada = None
+        else: 
+            self.acertos_consecutivos_mesma_duzia = 0; self.ultima_duzia_acertada = None
+            
         if acertou_duzia and not acertou_numero and not acertou_zero: self.consecutivos_amarelos += 1
         else: self.consecutivos_amarelos = 0
+        
         if not acertou_duzia and not acertou_zero:
             self.erros_consecutivos += 1
             if duzia_real != 0: self.erros_por_duzia[duzia_real] += 1
             self.modo_anti_erro = True
-            if self.erros_consecutivos >= 3: self.pausa_ate = hora_brasilia() + timedelta(minutes=5); self.modo_anti_erro = False
-        else: self.erros_consecutivos = 0; self.modo_anti_erro = False; self.erros_por_duzia = {1: 0, 2: 0, 3: 0}; self.entradas_consecutivas = 0; self.pausa_ate = None
+            
+            # 🛡️ TRAVA 1 APLICADA: Pausa Imediata após 2 erros seguidos (Mesa cega)
+            if self.erros_consecutivos >= 2: 
+                self.pausa_ate = hora_brasilia() + timedelta(minutes=5)
+                self.modo_anti_erro = False
+                logging.info("⏸️ TRAVA ATIVADA: 2 Erros seguidos. Mesa cega. Pausando por 5 minutos.")
+        else: 
+            self.erros_consecutivos = 0; self.modo_anti_erro = False
+            self.erros_por_duzia = {1: 0, 2: 0, 3: 0}
+            self.entradas_consecutivas = 0; self.pausa_ate = None
+            
         if acertou_duzia or acertou_zero: self.entradas_consecutivas += 1
+ 
+        
     
     def streak(self):
         if not self.historico: return 0, None
