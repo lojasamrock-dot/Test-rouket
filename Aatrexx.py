@@ -75,7 +75,7 @@ SETUP_BASE = {
     'ritmo_v_peso': 9,
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
-    'ml_janela_treino': 20,
+    'ml_janela_treino': 100,
     'ml_atualizar_a_cada': 5,
     'score_ml_peso': 35,
 }
@@ -102,7 +102,7 @@ SETUP_XXXTREME = {
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 20, 'ml_atualizar_a_cada': 5,
+    'ml_janela_treino': 100, 'ml_atualizar_a_cada': 5,
 }
 
 SETUP_IMMERSIVE = {
@@ -124,7 +124,7 @@ SETUP_IMMERSIVE = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
     'horario_bloqueio_inicio': 0, 'horario_bloqueio_fim': 12,
-    'ml_janela_treino': 20, 'ml_atualizar_a_cada': 5,
+    'ml_janela_treino': 100, 'ml_atualizar_a_cada': 5,
 }
 
 SETUP_MEGA = {
@@ -145,7 +145,7 @@ SETUP_MEGA = {
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 20, 'ml_atualizar_a_cada': 5,
+    'ml_janela_treino': 100, 'ml_atualizar_a_cada': 5,
 }
 
 ROLETA_CONFIGS = {
@@ -690,7 +690,7 @@ class DuziaAI:
     
     def _treinar_ml_online(self):
         config = self._get_config()
-        janela_treino = config.get('ml_janela_treino', 20)
+        janela_treino = config.get('ml_janela_treino', 100)
         atualizar_a_cada = config.get('ml_atualizar_a_cada', 5)
         rodada_atual = len(self.historico_completo)
         if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada: return False
