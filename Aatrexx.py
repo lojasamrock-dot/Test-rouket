@@ -130,8 +130,8 @@ SETUP_IMMERSIVE = {
     'score_markov_peso': 18, 'score_ml_peso': 40, 'score_anti_erro_peso': 18,
     'score_convergencia_peso': 25, 'score_gap_peso': 15,  # V13: novos
     'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
-    'ml_janela_treino': 50, 'ml_atualizar_a_cada': 10,
-    'pausa_erros_minutos': 2.5,
+    'ml_janela_treino': 50, 'ml_atualizar_a_cada': 5,
+    'pausa_erros_minutos': 1.5,
     'pausa_hibernacao_minutos': 1.5,
     'ml_janela_fixa': 50,
     'ml_janela_dinamica': False,
