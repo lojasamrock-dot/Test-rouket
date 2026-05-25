@@ -916,9 +916,9 @@ class DuziaAI:
             return {1: 0.0, 2: 0.0, 3: 0.0}
     
     def calcular_entropia(self):
-        if len(self.historico) < 20:
+        if len(self.historico) < 6:
             return 0.5
-        ultimos = list(self.historico)[-20:]
+        ultimos = list(self.historico)[-6:]
         counts = Counter(ultimos)
         probs = [c / len(ultimos) for c in counts.values()]
         entropia = -sum(p * np.log2(p) for p in probs if p > 0)
