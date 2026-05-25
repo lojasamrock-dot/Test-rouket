@@ -49,7 +49,7 @@ def data_brasilia():
     return hora_brasilia().strftime('%Y-%m-%d')
 
 # =============================
-# 🆕 SETUPS INDEPENDENTES POR ROLETA (VERSÃO FINAL CORRIGIDA)
+# 🆕 SETUPS INDEPENDENTES POR ROLETA
 # =============================
 
 SETUP_BASE = {
@@ -75,12 +75,11 @@ SETUP_BASE = {
     'ritmo_v_peso': 9,
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
-    'ml_janela_treino': 20,
+    'ml_janela_treino': 100,
     'ml_atualizar_a_cada': 5,
     'score_ml_peso': 35,
-    # 🆕 PAUSAS REDUZIDAS PELA METADE
-    'pausa_erros_minutos': 2.5,  # Era 5 → 2.5 minutos
-    'pausa_hibernacao_minutos': 1.5,  # Era 3 → 1.5 minutos
+    'pausa_erros_minutos': 2.5,
+    'pausa_hibernacao_minutos': 1.5,
 }
 
 # 🆕 SETUP XXXTREME LIGHTNING - MANTIDO (74.3% de taxa)
@@ -92,7 +91,7 @@ SETUP_XXXTREME = {
     'filtro_conf_baixa': 2.0, 'fadiga_duzia': 4,
     'ritmo_alternado_peso': 10, 'ritmo_alternado_forca': 10,
     'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
-    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 1, 'raio_alto_minimo': 100,  # 🆕 pausa_pos_raio reduzida: 2→1
+    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 1, 'raio_alto_minimo': 100,
     'zero_termometro_max': 15, 'anti_erro_skip_discordancia': True,
     'ritmo_v_peso': 10, 'ritmo_v_forca': 10, 'ritmo_v_confirmacoes': 2,
     'usar_embalo': True, 'embalo_consecutivas_min': 2, 'embalo_janela': 4,
@@ -104,11 +103,11 @@ SETUP_XXXTREME = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 35, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 100, 'ml_atualizar_a_cada': 5,
-    'pausa_erros_minutos': 2.5,  # 🆕 Era 5 → 2.5
-    'pausa_hibernacao_minutos': 1.5,  # 🆕 Era 3 → 1.5
+    'pausa_erros_minutos': 2.5,
+    'pausa_hibernacao_minutos': 1.5,
 }
 
-# 🆕 SETUP IMMERSIVE - MANTIDO (70.0% de taxa)
+# 🆕 SETUP IMMERSIVE - JANELA ML FIXA 50 (Máxima Precisão)
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
@@ -128,12 +127,16 @@ SETUP_IMMERSIVE = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
     'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
-    'ml_janela_treino': 100, 'ml_atualizar_a_cada': 10,
-    'pausa_erros_minutos': 2.5,  # 🆕 Era 5 → 2.5
-    'pausa_hibernacao_minutos': 1.5,  # 🆕 Era 3 → 1.5
+    'ml_janela_treino': 50, 'ml_atualizar_a_cada': 10,
+    'pausa_erros_minutos': 2.5,
+    'pausa_hibernacao_minutos': 1.5,
+    
+    # 🆕 FORÇAR JANELA ML FIXA EM 50 (Máxima Precisão para Immersive)
+    'ml_janela_fixa': 50,         # Força janela fixa em 50
+    'ml_janela_dinamica': False,  # Desabilita janela dinâmica
 }
 
-# 🆕 SETUP MEGA ROULETTE - CORRIGIDO (alvo: 68-72%)
+# 🆕 SETUP MEGA ROULETTE - CORRIGIDO (72.5% de taxa)
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
@@ -142,7 +145,7 @@ SETUP_MEGA = {
     'filtro_conf_baixa': 2.5, 'fadiga_duzia': 3,
     'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
     'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
-    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 2, 'raio_alto_minimo': 100,  # 🆕 pausa_pos_raio reduzida: 3→2
+    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 2, 'raio_alto_minimo': 100,
     'zero_termometro_max': 12, 'anti_erro_skip_discordancia': True,
     'ritmo_v_peso': 4, 'ritmo_v_forca': 4, 'ritmo_v_confirmacoes': 2,
     'usar_ritmo_v': False,
@@ -155,8 +158,8 @@ SETUP_MEGA = {
     'score_markov_peso': 8, 'score_ml_peso': 50, 'score_anti_erro_peso': 25,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 3,
     'entropia_threshold': 0.90,
-    'pausa_erros_minutos': 2.5,  # 🆕 Era 5 → 2.5
-    'pausa_hibernacao_minutos': 1.5,  # 🆕 Era 3 → 1.5
+    'pausa_erros_minutos': 2.5,
+    'pausa_hibernacao_minutos': 1.5,
 }
 
 ROLETA_CONFIGS = {
@@ -629,7 +632,7 @@ def fetch_latest_result():
     return fetch_func()
 
 # =============================
-# 🧠 DUZIA AI V12.1.1 - PAUSAS REDUZIDAS PELA METADE
+# 🧠 DUZIA AI V12.1.1 - JANELA ML FIXA PARA IMMERSIVE
 # =============================
 class DuziaAI:
     def __init__(self, window=30):
@@ -702,6 +705,15 @@ class DuziaAI:
         return [ultimas_4[0], ultimas_4[1], ultimas_4[2], ultimas_4[3], t1_quente, t2_quente, rodadas_sem_zero, duzia_dominante, tipo_gatilho]
     
     def atualizar_janela_ml(self):
+        """Define o tamanho da janela de treino baseado na volatilidade das dúzias."""
+        config = self._get_config()
+        
+        # 🆕 Se tiver janela fixa configurada, usa ela
+        if config.get('ml_janela_fixa') is not None and not config.get('ml_janela_dinamica', True):
+            self.janela_ml_atual = config['ml_janela_fixa']
+            return self.janela_ml_atual
+        
+        # Comportamento original (dinâmico)
         ultimos = list(self.historico)[-50:]
         if len(ultimos) < 30:
             self.janela_ml_atual = 100
@@ -764,7 +776,7 @@ class DuziaAI:
             self.modelo_ml = RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42, n_jobs=-1)
             self.modelo_ml.fit(X, y)
             self.ultimo_treino_ml = rodada_atual
-            logging.info(f"🧠 ML Treinado! Amostras: {len(X)} | Janela Dinâmica: {janela_treino} | Rodada: {rodada_atual}")
+            logging.info(f"🧠 ML Treinado! Amostras: {len(X)} | Janela: {janela_treino} | Rodada: {rodada_atual}")
             return True
         except Exception as e:
             logging.error(f"❌ Erro no treinamento ML: {e}")
@@ -872,7 +884,6 @@ class DuziaAI:
             if duzia_real != 0: self.erros_por_duzia[duzia_real] += 1
             self.modo_anti_erro = True
             
-            # 🆕 PAUSA REDUZIDA: 5min → 2.5min
             if self.erros_consecutivos >= 2: 
                 minutos_pausa = config.get('pausa_erros_minutos', 2.5)
                 self.pausa_ate = hora_brasilia() + timedelta(minutes=minutos_pausa)
@@ -1156,7 +1167,6 @@ class DuziaAI:
         
         if entropia > threshold_entropia:
             if self.janela_ml_atual >= 200:
-                # 🆕 HIBERNAÇÃO REDUZIDA: 3min → 1.5min
                 minutos_hibernacao = config.get('pausa_hibernacao_minutos', 1.5)
                 self.pausa_ate = hora_brasilia() + timedelta(minutes=minutos_hibernacao)
                 return {"entrar": False, "motivo": f"🌪️ HIBERNAÇÃO: Entropia crítica ({entropia:.2f})"}
@@ -1424,8 +1434,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V12.1.1 - Pausas Reduzidas", layout="wide")
-st.title("🎰 DuziaAI V12.1.1 - PAUSAS REDUZIDAS 50% + MEGA CORRIGIDA (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V12.1.1 - Immersive Janela Fixa 50", layout="wide")
+st.title("🎰 DuziaAI V12.1.1 - IMMERSIVE JANELA FIXA 50 + MEGA CORRIGIDA (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1497,7 +1507,7 @@ if "historico" not in st.session_state: st.session_state.historico = []
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V12.1.1 - PAUSAS 50%")
+    st.markdown("## ⚙️ V12.1.1 - IMMERSIVE JANELA 50")
     sis = st.session_state.sistema
     
     st.markdown("### 📊 Status da Sessão")
@@ -1619,15 +1629,15 @@ with st.sidebar:
     config = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
     
     if api_name == 'XXXtreme Lightning':
-        st.success(f"⚡ 74.3% | PAUSAS: 2.5min/1.5min")
+        st.success(f"⚡ 74.3% | Janela Dinâmica | PAUSAS: 2.5min/1.5min")
     elif api_name == 'Immersive Roulette':
-        st.info(f"🎯 70.0% | PAUSAS: 2.5min/1.5min")
+        st.info(f"🎯 73.3% | JANELA FIXA 50 | PAUSAS: 2.5min/1.5min")
     elif api_name == 'Mega Roulette':
-        st.warning(f"⚡ CORRIGIDA | PAUSAS: 2.5min/1.5min")
+        st.warning(f"⚡ 72.5% | CORRIGIDA | PAUSAS: 2.5min/1.5min")
     
     if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
         st.success(f"🧠 ML ATIVO | Treinado na rodada {sis.duzia_ai.ultimo_treino_ml}")
-        st.caption(f"📏 Janela dinâmica: {sis.duzia_ai.janela_ml_atual} rodadas")
+        st.caption(f"📏 Janela: {sis.duzia_ai.janela_ml_atual} rodadas")
     else: st.info("🧠 ML Aguardando dados...")
     
     st.markdown("---")
@@ -1824,5 +1834,5 @@ with col_t2:
     if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt: st.success("📢 Alternativo: CONFIGURADO")
     else: st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V12.1.1 | Pausas Reduzidas 50% | Mega Corrigida | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V12.1.1 | Immersive Janela Fixa 50 | Mega Corrigida | {api_name} | {formatar_hora_brasilia()}")
 salvar_sessao()
