@@ -684,9 +684,9 @@ class FiltroBollinger:
             return confianca_base
         taxa = np.mean(list(self._historico_acertos)[-self.janela:])
         desvio = np.std(list(self._historico_acertos)[-self.janela:])
-        ajuste = (0.70 - taxa) * 2.0
+        ajuste = (0.60 - taxa) * 1.5
         threshold = confianca_base + ajuste + desvio * self.desvios
-        return round(max(1.5, min(3.5, threshold)), 2)
+        return round(max(1.2, min(3.0, threshold)), 2)
 
     def taxa_recente(self):
         if not self._historico_acertos:
@@ -706,7 +706,7 @@ class DetectorConvergencia:
         return {
             'duzia': melhor_duzia,
             'votos': melhor_votos,
-            'convergiu': melhor_votos >= 3,
+            'convergiu': melhor_votos >= 2,
             'distribuicao': dict(votos)
         }
 
@@ -716,7 +716,7 @@ class CooldownInteligente:
         self._em_cooldown = False
         self._padrao_erro = None
         self._rodadas_cooldown = 0
-        self._min_rodadas = 3
+        self._min_rodadas = 1
 
     def ativar(self, padrao_atual):
         self._em_cooldown = True
@@ -738,7 +738,7 @@ class CooldownInteligente:
     def ativo(self):
         return self._em_cooldown
 
-def detectar_streak_perigoso(historico_duzias, limite=4) -> bool:
+def detectar_streak_perigoso(historico_duzias, limite=6) -> bool:
     if len(historico_duzias) < limite:
         return False
     recentes = [d for d in historico_duzias[-limite-1:] if d != 0]
@@ -1291,7 +1291,7 @@ class DuziaAI:
         
         pode_entrar = (s1 > 35 or gatilho is not None) and confianca >= threshold_minimo
         
-        if confianca < 2.5 and not conv['convergiu']:
+        if confianca < 2.0 and not conv['convergiu']:
             pode_entrar = False
         
         if gatilho and gatilho['tipo'] in ('RITMO_V', 'RITMO_ALTERNADO'): 
