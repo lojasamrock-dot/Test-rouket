@@ -1244,9 +1244,9 @@ class DuziaAI:
         api_name = st.session_state.get('api_selecionada', '')
         
         if 'Mega' in api_name:
-            threshold_entropia = config.get('entropia_threshold', 0.90)
+            threshold_entropia = config.get('entropia_threshold', 0.95)
         else:
-            threshold_entropia = 0.85
+            threshold_entropia = 0.95
         
         if entropia > threshold_entropia:
             return {"entrar": False, "motivo": f"🌪️ Mesa Caótica (Entropia: {entropia:.2f})"}
