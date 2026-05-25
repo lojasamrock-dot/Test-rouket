@@ -78,8 +78,8 @@ SETUP_BASE = {
     'ritmo_v_confirmacoes': 2,
     'ml_janela_treino': 100,
     'ml_atualizar_a_cada': 5,
-    'score_ml_peso': 48,  # V13: aumentado
-    'pausa_erros_minutos': 2.5,
+    'score_ml_peso': 30,  # V13: aumentado
+    'pausa_erros_minutos': 1.5,
     'pausa_hibernacao_minutos': 1.5,
 }
 
