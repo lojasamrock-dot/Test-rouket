@@ -1848,7 +1848,7 @@ with ce:
     st.subheader("🎰 Entrada Atual")
     if len(sis.duzia_ai.historico) >= 10:
         entropia = sis.duzia_ai.entropia_mesa
-        if entropia > 0.85:
+        if entropia > 0.95:
             st.error(f"🌪️ MESA CAÓTICA - Entropia: {entropia:.2f}")
     if sis.duzia_ai.alerta_zero_ativo: st.warning("⚠️ ALERTA ZERO! 🟢")
     if sis.duzia_ai.em_pausa_pos_raio: st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
