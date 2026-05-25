@@ -1246,7 +1246,7 @@ class DuziaAI:
         if 'Mega' in api_name:
             threshold_entropia = config.get('entropia_threshold', 0.95)
         else:
-            threshold_entropia = 0.95
+            threshold_entropia = 1.00
         
         if entropia > threshold_entropia:
             return {"entrar": False, "motivo": f"🌪️ Mesa Caótica (Entropia: {entropia:.2f})"}
@@ -1848,7 +1848,7 @@ with ce:
     st.subheader("🎰 Entrada Atual")
     if len(sis.duzia_ai.historico) >= 10:
         entropia = sis.duzia_ai.entropia_mesa
-        if entropia > 0.95:
+        if entropia > 1.00:
             st.error(f"🌪️ MESA CAÓTICA - Entropia: {entropia:.2f}")
     if sis.duzia_ai.alerta_zero_ativo: st.warning("⚠️ ALERTA ZERO! 🟢")
     if sis.duzia_ai.em_pausa_pos_raio: st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
