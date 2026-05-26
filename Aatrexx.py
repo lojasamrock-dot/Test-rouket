@@ -159,7 +159,7 @@ SETUP_MEGA = {
     'score_markov_peso': 18, 'score_ml_peso': 45, 'score_anti_erro_peso': 25,
     'score_convergencia_peso': 25, 'score_gap_peso': 15,  # V13: novos
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 5,
-    'entropia_threshold': 0.99,
+    'entropia_threshold': 0.85,
     'pausa_erros_minutos': 1.5,
     'pausa_hibernacao_minutos': 1.5,
 }
