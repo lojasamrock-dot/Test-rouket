@@ -156,11 +156,11 @@ SETUP_MEGA = {
     'usar_quebra_pos_zero': False, 'usar_exaustao_dominancia': False,
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 20, 'score_streak_peso': 4,  # V13: recalibrados
-    'score_markov_peso': 18, 'score_ml_peso': 50, 'score_anti_erro_peso': 25,
+    'score_markov_peso': 18, 'score_ml_peso': 25, 'score_anti_erro_peso': 25,
     'score_convergencia_peso': 25, 'score_gap_peso': 15,  # V13: novos
-    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 3,
-    'entropia_threshold': 0.90,
-    'pausa_erros_minutos': 2.5,
+    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 5,
+    'entropia_threshold': 0.99,
+    'pausa_erros_minutos': 1.5,
     'pausa_hibernacao_minutos': 1.5,
 }
 
