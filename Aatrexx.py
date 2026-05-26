@@ -68,16 +68,16 @@ SETUP_BASE = {
     'max_repeticoes_embalo': 4,
     'confianca_maxima_segura': 3.3,
     'rodadas_verificacao_conf_alta': 5,
-    'pausa_pos_raio': 2,
+    'pausa_pos_raio': 1,
     'raio_alto_minimo': 100,
     'zero_termometro_max': 15,
     'anti_erro_skip_discordancia': True,
     'ritmo_v_peso': 9,
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
-    'ml_janela_treino': 100,
+    'ml_janela_treino': 180,
     'ml_atualizar_a_cada': 5,
-    'score_ml_peso': 35,
+    'score_ml_peso': 45,
 }
 
 # 🆕 SETUP XXXTREME LIGHTNING - CORRIGIDO (MUDANCA e QUEBRA desabilitados, EMBALO ajustado)
@@ -101,8 +101,8 @@ SETUP_XXXTREME = {
     'usar_exaustao_dominancia': True,
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
-    'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 100, 'ml_atualizar_a_cada': 5,
+    'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
+    'ml_janela_treino': 180, 'ml_atualizar_a_cada': 5,
 }
 
 SETUP_IMMERSIVE = {
@@ -122,9 +122,9 @@ SETUP_IMMERSIVE = {
     'usar_quebra_pos_zero': True, 'usar_exaustao_dominancia': False,
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
-    'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
+    'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
-    'ml_janela_treino': 100, 'ml_atualizar_a_cada': 10,
+    'ml_janela_treino': 180, 'ml_atualizar_a_cada': 5,
 }
 
 SETUP_MEGA = {
@@ -144,8 +144,8 @@ SETUP_MEGA = {
     'usar_quebra_pos_zero': False, 'usar_exaustao_dominancia': False,
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
-    'score_markov_peso': 8, 'score_ml_peso': 30, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 100, 'ml_atualizar_a_cada': 5,
+    'score_markov_peso': 8, 'score_ml_peso': 35, 'score_anti_erro_peso': 20,
+    'ml_janela_treino': 180, 'ml_atualizar_a_cada': 5,
 }
 
 ROLETA_CONFIGS = {
