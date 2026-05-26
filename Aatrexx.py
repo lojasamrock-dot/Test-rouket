@@ -141,11 +141,11 @@ SETUP_IMMERSIVE = {
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.5, 'embalo_peso': 5, 'embalo_reforco': 2,
+    'confianca_minima_entrada': 1.5, 'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.5, 'fadiga_duzia': 3,
     'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
-    'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
+    'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.0,
     'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 2, 'raio_alto_minimo': 100,
     'zero_termometro_max': 12, 'anti_erro_skip_discordancia': True,
     'ritmo_v_peso': 4, 'ritmo_v_forca': 4, 'ritmo_v_confirmacoes': 2,
@@ -156,7 +156,7 @@ SETUP_MEGA = {
     'usar_quebra_pos_zero': False, 'usar_exaustao_dominancia': False,
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 20, 'score_streak_peso': 4,  # V13: recalibrados
-    'score_markov_peso': 18, 'score_ml_peso': 25, 'score_anti_erro_peso': 25,
+    'score_markov_peso': 18, 'score_ml_peso': 45, 'score_anti_erro_peso': 25,
     'score_convergencia_peso': 25, 'score_gap_peso': 15,  # V13: novos
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 5,
     'entropia_threshold': 0.99,
