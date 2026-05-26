@@ -75,7 +75,7 @@ SETUP_BASE = {
     'ritmo_v_peso': 9,
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
-    'ml_janela_treino': 180,
+    'ml_janela_treino': 10,
     'ml_atualizar_a_cada': 5,
     'score_ml_peso': 45,
 }
@@ -102,7 +102,7 @@ SETUP_XXXTREME = {
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 180, 'ml_atualizar_a_cada': 5,
+    'ml_janela_treino': 10, 'ml_atualizar_a_cada': 5,
 }
 
 SETUP_IMMERSIVE = {
@@ -124,7 +124,7 @@ SETUP_IMMERSIVE = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
-    'ml_janela_treino': 180, 'ml_atualizar_a_cada': 5,
+    'ml_janela_treino': 10, 'ml_atualizar_a_cada': 5,
 }
 
 SETUP_MEGA = {
@@ -145,7 +145,7 @@ SETUP_MEGA = {
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 35, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 180, 'ml_atualizar_a_cada': 5,
+    'ml_janela_treino': 10, 'ml_atualizar_a_cada': 5,
 }
 
 ROLETA_CONFIGS = {
