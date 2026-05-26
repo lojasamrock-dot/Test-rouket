@@ -113,7 +113,7 @@ SETUP_XXXTREME = {
     'usar_quebra_pos_zero': True,
     'usar_exaustao_dominancia': True,
     'usar_mudanca_velocidade': True,
-    'score_frequencia_peso': 40,
+    'score_frequencia_peso': 30,
     'score_streak_peso': 8,
     'score_markov_peso': 10,
     'score_ml_peso': 35,
