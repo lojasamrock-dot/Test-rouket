@@ -277,7 +277,7 @@ def get_session_paths(api_name):
         'performance_horario': f"performance_horario_{safe_name}.json",
         'sessao_controle': f"sessao_controle_{safe_name}.json",
         'historico_sessoes': f"historico_sessoes_{safe_name}.json",
-        'memoria_padroes': f"memoria_padroes_{safe_name}.json",  # 🆕
+        'memoria_padroes': f"memoria_padroes_{safe_name}.json",
     }
 
 class GerenciadorSessoes:
@@ -384,7 +384,7 @@ class GerenciadorSessoes:
         writer = csv.writer(output)
         writer.writerow(['Rodada', 'Hora', 'Número', 'Raio', 'Dúzia Real', 'Dúzia Prevista',
                          'Cobertura', 'Confiança', 'Gatilho', 'Zero', 'Anti-Erro',
-                         'Acerto Dúzia', 'Acerto Número', 'Acerto Zero', 'Status'])
+                         'Acerto Dúzia', 'Acerto Número', 'Acerto Zero', 'Status', 'Padrão'])
         for e in dados_sessao.get('entradas', []):
             real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
             prev = f"D{e.get('duzia_prevista','?')}"
@@ -396,10 +396,11 @@ class GerenciadorSessoes:
             zer = 'Sim' if e.get('acerto_zero') else 'Não'
             numero = e.get('numero', 0)
             raio = f"{e.get('multiplicador',0)}x" if e.get('eh_raio') else '-'
+            padrao = str(e.get('padrao_usado', {}).get('sequencia', '-')) if e.get('padrao_usado') else '-'
             writer.writerow([
                 e.get('rodada'), e.get('hora'), numero, raio, real, prev, cob,
                 f"{e.get('confianca',0):.1f}", e.get('gatilho','-') if e.get('gatilho') else '-',
-                zero, anti, duz, num, zer, e.get('status','?')
+                zero, anti, duz, num, zer, e.get('status','?'), padrao
             ])
         return output.getvalue()
 
@@ -430,9 +431,8 @@ def salvar_sessao():
         with open(paths['performance_mesa'], 'w') as f: json.dump(dict(sis.performance_por_mesa), f)
         with open(paths['performance_horario'], 'w') as f: json.dump(dict(sis.performance_por_horario), f)
 
-        # 🆕 Salvar memória de padrões
-        if hasattr(sis.duzia_ai, 'memoria_padroes'):
-            sis.duzia_ai.memoria_padroes.salvar(paths['memoria_padroes'])
+        # 🆕 Salvar memória de padrões (agora interna à DuziaAI)
+        sis.duzia_ai._salvar_memoria_padroes()
 
         sessao_data = {
             'rodadas_na_sessao': sis.rodadas_na_sessao,
@@ -486,8 +486,6 @@ def carregar_dados_persistidos(api_name):
                     with open(paths['sessao_controle'], 'r') as f5:
                         sessao_data = json.load(f5)
                         dados.update(sessao_data)
-                # 🆕 Caminho da memória de padrões para carregar depois
-                dados['_memoria_padroes_path'] = paths.get('memoria_padroes', '')
     except: pass
     return dados
 
@@ -718,188 +716,6 @@ def fetch_latest_result():
 
 
 # =============================
-# 🧠 MÓDULO DE MEMÓRIA DE PADRÕES (NOVO)
-# =============================
-
-class MemoriaPadroes:
-    """
-    Mantém um banco de padrões históricos de sequências de dúzias.
-    Para cada n-grama visto, registra qual dúzia veio DEPOIS e com qual frequência.
-    Isso permite ao sistema reconhecer 'já vi essa sequência antes' e prever
-    o que historicamente saiu a seguir.
-    """
-
-    def __init__(self, ngram_min=2, ngram_max=5, min_ocorrencias=2):
-        self.ngram_min = ngram_min
-        self.ngram_max = ngram_max
-        self.min_ocorrencias = min_ocorrencias
-        # {tuple_sequencia: Counter({duzia_seguinte: contagem})}
-        self.tabela_padroes = defaultdict(Counter)
-        # Contador de quantas vezes cada padrão foi visto
-        self.contagem_padroes = Counter()
-        # Histórico dos últimos acertos/erros por padrão
-        self.acertos_por_padrao = defaultdict(int)
-        self.erros_por_padrao = defaultdict(int)
-        # Último padrão ativo para registro de resultado
-        self.ultimo_padrao_ativo = None
-        self.ultimo_padrao_previsto = None
-
-    def registrar_sequencia(self, historico_duzias):
-        """Atualiza a tabela de padrões com o histórico atual."""
-        # Filtra zeros para análise de padrão de dúzias
-        duzias = [d for d in historico_duzias if d != 0]
-        if len(duzias) < self.ngram_min + 1:
-            return
-
-        # Para cada tamanho de n-grama configurado
-        for n in range(self.ngram_min, min(self.ngram_max + 1, len(duzias))):
-            # Percorre todas as janelas possíveis no histórico
-            for i in range(len(duzias) - n):
-                padrao = tuple(duzias[i:i + n])
-                proximo = duzias[i + n]
-                self.tabela_padroes[padrao][proximo] += 1
-                self.contagem_padroes[padrao] += 1
-
-    def buscar_padrao_atual(self, historico_duzias):
-        """
-        Busca o padrão mais longo que coincide com o fim do histórico atual
-        e que tem ocorrências suficientes para ser confiável.
-        Retorna (melhor_padrao, scores_por_duzia, confianca, ocorrencias)
-        """
-        duzias = [d for d in historico_duzias if d != 0]
-        if len(duzias) < self.ngram_min:
-            return None, {1: 0.0, 2: 0.0, 3: 0.0}, 0.0, 0
-
-        melhor_padrao = None
-        melhor_scores = {1: 0.0, 2: 0.0, 3: 0.0}
-        melhor_confianca = 0.0
-        melhor_ocorrencias = 0
-
-        # Testa do maior para o menor n-grama (prioriza padrões mais longos)
-        for n in range(min(self.ngram_max, len(duzias)), self.ngram_min - 1, -1):
-            padrao = tuple(duzias[-n:])
-            if padrao not in self.tabela_padroes:
-                continue
-
-            total_ocorrencias = self.contagem_padroes.get(padrao, 0)
-            if total_ocorrencias < self.min_ocorrencias:
-                continue
-
-            seguintes = self.tabela_padroes[padrao]
-            total = sum(seguintes.values())
-            if total == 0:
-                continue
-
-            scores = {1: 0.0, 2: 0.0, 3: 0.0}
-            for duzia, cnt in seguintes.items():
-                if duzia in scores:
-                    scores[duzia] = (cnt / total) * 100
-
-            # Confiança baseada na dominância do padrão e número de ocorrências
-            max_score = max(scores.values())
-            segundo_score = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
-            dominancia = max_score - segundo_score
-            confianca = min(1.0, (dominancia / 100) * (1 + np.log1p(total_ocorrencias) / 5))
-
-            # Prefere padrões maiores E mais confiantes
-            peso_tamanho = n * 0.1
-            score_final = confianca + peso_tamanho
-
-            if score_final > (melhor_confianca + melhor_ocorrencias * 0.01):
-                melhor_padrao = padrao
-                melhor_scores = scores
-                melhor_confianca = confianca
-                melhor_ocorrencias = total_ocorrencias
-
-        return melhor_padrao, melhor_scores, melhor_confianca, melhor_ocorrencias
-
-    def registrar_resultado_padrao(self, acertou):
-        """Registra se o padrão ativo acertou ou errou."""
-        if self.ultimo_padrao_ativo is not None:
-            if acertou:
-                self.acertos_por_padrao[self.ultimo_padrao_ativo] += 1
-            else:
-                self.erros_por_padrao[self.ultimo_padrao_ativo] += 1
-        self.ultimo_padrao_ativo = None
-        self.ultimo_padrao_previsto = None
-
-    def get_taxa_acerto_padrao(self, padrao):
-        """Retorna a taxa de acerto histórica de um padrão."""
-        acertos = self.acertos_por_padrao.get(padrao, 0)
-        erros = self.erros_por_padrao.get(padrao, 0)
-        total = acertos + erros
-        if total == 0:
-            return None
-        return acertos / total
-
-    def get_stats(self):
-        """Retorna estatísticas da memória de padrões."""
-        return {
-            'total_padroes': len(self.tabela_padroes),
-            'padroes_confiaveis': sum(1 for p in self.contagem_padroes if self.contagem_padroes[p] >= self.min_ocorrencias),
-            'total_registros': sum(self.contagem_padroes.values()),
-        }
-
-    def salvar(self, caminho):
-        """Persiste a memória de padrões em disco."""
-        try:
-            dados = {
-                'tabela': {str(k): dict(v) for k, v in self.tabela_padroes.items()},
-                'contagem': {str(k): v for k, v in self.contagem_padroes.items()},
-                'acertos': {str(k): v for k, v in self.acertos_por_padrao.items()},
-                'erros': {str(k): v for k, v in self.erros_por_padrao.items()},
-            }
-            with open(caminho, 'w') as f:
-                json.dump(dados, f)
-            logging.info(f"🧩 Memória de padrões salva: {len(self.tabela_padroes)} padrões")
-        except Exception as e:
-            logging.error(f"❌ Erro ao salvar memória de padrões: {e}")
-
-    def carregar(self, caminho):
-        """Carrega a memória de padrões do disco."""
-        try:
-            if not os.path.exists(caminho):
-                return False
-            with open(caminho, 'r') as f:
-                dados = json.load(f)
-
-            import ast
-            self.tabela_padroes = defaultdict(Counter)
-            for k, v in dados.get('tabela', {}).items():
-                try:
-                    chave = tuple(ast.literal_eval(k))
-                    self.tabela_padroes[chave] = Counter({int(dk): dv for dk, dv in v.items()})
-                except: pass
-
-            self.contagem_padroes = Counter()
-            for k, v in dados.get('contagem', {}).items():
-                try:
-                    chave = tuple(ast.literal_eval(k))
-                    self.contagem_padroes[chave] = v
-                except: pass
-
-            self.acertos_por_padrao = defaultdict(int)
-            for k, v in dados.get('acertos', {}).items():
-                try:
-                    chave = tuple(ast.literal_eval(k))
-                    self.acertos_por_padrao[chave] = v
-                except: pass
-
-            self.erros_por_padrao = defaultdict(int)
-            for k, v in dados.get('erros', {}).items():
-                try:
-                    chave = tuple(ast.literal_eval(k))
-                    self.erros_por_padrao[chave] = v
-                except: pass
-
-            logging.info(f"🧩 Memória de padrões carregada: {len(self.tabela_padroes)} padrões")
-            return True
-        except Exception as e:
-            logging.error(f"❌ Erro ao carregar memória de padrões: {e}")
-            return False
-
-
-# =============================
 # FUNÇÕES AUXILIARES
 # =============================
 
@@ -945,7 +761,7 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
-# 🧠 DUZIA AI V12.0 — MEMÓRIA DE PADRÕES + ML CORRIGIDO
+# 🧠 DUZIA AI V12.0 — PADRÕES HISTÓRICOS COMO FEATURES DA ML
 # =============================
 
 class DuziaAI:
@@ -997,21 +813,22 @@ class DuziaAI:
         self.scaler_treinado = False
         self.contagem_repeticoes_mesma_duzia = 0
 
-        # 🆕 Inicializar memória de padrões
+        # 🆕 Memória de padrões INTERNA (usada APENAS para extrair features)
         config = self._get_config()
-        self.memoria_padroes = MemoriaPadroes(
-            ngram_min=config.get('memoria_ngram_min', 2),
-            ngram_max=config.get('memoria_ngram_max', 5),
-            min_ocorrencias=config.get('memoria_min_ocorrencias', 2),
-        )
-
-        # 🆕 Estado do padrão ativo para UI
-        self.padrao_ativo = None
-        self.padrao_ativo_ocorrencias = 0
-        self.padrao_ativo_confianca = 0.0
-        self.padrao_ativo_scores = {1: 0.0, 2: 0.0, 3: 0.0}
+        self.ngram_min = config.get('memoria_ngram_min', 2)
+        self.ngram_max = config.get('memoria_ngram_max', 5)
+        self.min_ocorrencias = config.get('memoria_min_ocorrencias', 2)
+        self.tabela_padroes = defaultdict(Counter)
+        self.contagem_padroes = Counter()
+        
+        # Para UI (debug)
+        self.padrao_ativo_ui = None
+        self.padrao_ativo_ocorrencias_ui = 0
+        self.padrao_ativo_confianca_ui = 0.0
+        self.padrao_ativo_scores_ui = {1: 0.0, 2: 0.0, 3: 0.0}
 
         self._carregar_modelo_salvo()
+        self._carregar_memoria_padroes()
 
     def _carregar_modelo_salvo(self):
         if not ML_DISPONIVEL:
@@ -1022,18 +839,158 @@ class DuziaAI:
             logging.info(f"🧠 Modelo ML carregado do disco para {self.api_name}")
             self.ultimo_treino_ml = 1
 
+    def _carregar_memoria_padroes(self):
+        """Carrega tabela de padrões do disco se existir."""
+        paths = get_session_paths(self.api_name)
+        mem_path = paths.get('memoria_padroes', '')
+        if mem_path and os.path.exists(mem_path):
+            try:
+                with open(mem_path, 'r') as f:
+                    dados = json.load(f)
+                import ast
+                for k, v in dados.get('tabela', {}).items():
+                    try:
+                        chave = tuple(ast.literal_eval(k))
+                        self.tabela_padroes[chave] = Counter({int(dk): dv for dk, dv in v.items()})
+                    except: pass
+                for k, v in dados.get('contagem', {}).items():
+                    try:
+                        chave = tuple(ast.literal_eval(k))
+                        self.contagem_padroes[chave] = v
+                    except: pass
+                logging.info(f"🧩 Memória de padrões carregada: {len(self.tabela_padroes)} padrões")
+            except Exception as e:
+                logging.error(f"❌ Erro ao carregar memória de padrões: {e}")
+
+    def _salvar_memoria_padroes(self):
+        """Salva tabela de padrões em disco."""
+        paths = get_session_paths(self.api_name)
+        mem_path = paths.get('memoria_padroes', '')
+        if not mem_path:
+            return
+        try:
+            dados = {
+                'tabela': {str(k): dict(v) for k, v in self.tabela_padroes.items()},
+                'contagem': {str(k): v for k, v in self.contagem_padroes.items()},
+            }
+            with open(mem_path, 'w') as f:
+                json.dump(dados, f)
+            logging.info(f"🧩 Memória de padrões salva: {len(self.tabela_padroes)} padrões")
+        except Exception as e:
+            logging.error(f"❌ Erro ao salvar memória de padrões: {e}")
+
+    def _atualizar_tabela_padroes(self, historico_duzias):
+        """Atualiza tabela de n-gramas com o histórico completo."""
+        duzias = [d for d in historico_duzias if d != 0]
+        if len(duzias) < self.ngram_min + 1:
+            return
+        for n in range(self.ngram_min, min(self.ngram_max + 1, len(duzias))):
+            for i in range(len(duzias) - n):
+                padrao = tuple(duzias[i:i + n])
+                proximo = duzias[i + n]
+                self.tabela_padroes[padrao][proximo] += 1
+                self.contagem_padroes[padrao] += 1
+
+    def _extrair_features_padroes(self, historico_duzias):
+        """
+        🆕 Extrai features de padrões históricos como features para a ML.
+        Retorna um dict com scores normalizados para cada dúzia, baseados
+        nos n-gramas que coincidem com o final do histórico.
+        """
+        duzias = [d for d in historico_duzias if d != 0]
+        
+        # Features padrão (valores default)
+        features = {
+            'padrao_d1_score': 0.0,
+            'padrao_d2_score': 0.0,
+            'padrao_d3_score': 0.0,
+            'padrao_confianca': 0.0,
+            'padrao_tamanho': 0,
+            'padrao_ocorrencias': 0,
+            'padrao_dominancia': 0.0,
+        }
+        
+        if len(duzias) < self.ngram_min:
+            return features
+        
+        melhor_score = 0.0
+        melhor_padrao = None
+        melhor_conf = 0.0
+        melhor_ocorrencias = 0
+        melhor_scores = {1: 0.0, 2: 0.0, 3: 0.0}
+        
+        # Busca o melhor padrão (do maior para o menor n-grama)
+        for n in range(min(self.ngram_max, len(duzias)), self.ngram_min - 1, -1):
+            padrao = tuple(duzias[-n:])
+            if padrao not in self.tabela_padroes:
+                continue
+            
+            total_ocorrencias = self.contagem_padroes.get(padrao, 0)
+            if total_ocorrencias < self.min_ocorrencias:
+                continue
+            
+            seguintes = self.tabela_padroes[padrao]
+            total = sum(seguintes.values())
+            if total == 0:
+                continue
+            
+            scores = {
+                1: (seguintes.get(1, 0) / total) * 100,
+                2: (seguintes.get(2, 0) / total) * 100,
+                3: (seguintes.get(3, 0) / total) * 100,
+            }
+            
+            max_s = max(scores.values())
+            segundo_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+            dominancia = (max_s - segundo_s) / 100
+            confianca = dominancia * (1 + np.log1p(total_ocorrencias) / 5)
+            
+            # Pondera por tamanho do padrão e confiança
+            score_final = confianca + (n * 0.05)
+            
+            if score_final > melhor_score:
+                melhor_score = score_final
+                melhor_padrao = padrao
+                melhor_conf = confianca
+                melhor_ocorrencias = total_ocorrencias
+                melhor_scores = scores
+        
+        if melhor_padrao is not None:
+            features['padrao_d1_score'] = melhor_scores.get(1, 0.0) / 100.0
+            features['padrao_d2_score'] = melhor_scores.get(2, 0.0) / 100.0
+            features['padrao_d3_score'] = melhor_scores.get(3, 0.0) / 100.0
+            features['padrao_confianca'] = round(melhor_conf, 4)
+            features['padrao_tamanho'] = len(melhor_padrao)
+            features['padrao_ocorrencias'] = melhor_ocorrencias
+            max_s = max(melhor_scores.values())
+            segundo_s = sorted(melhor_scores.values(), reverse=True)[1] if len(melhor_scores) > 1 else 0
+            features['padrao_dominancia'] = round((max_s - segundo_s) / 100.0, 4)
+            
+            # Atualiza UI
+            self.padrao_ativo_ui = melhor_padrao
+            self.padrao_ativo_ocorrencias_ui = melhor_ocorrencias
+            self.padrao_ativo_confianca_ui = melhor_conf
+            self.padrao_ativo_scores_ui = melhor_scores
+        else:
+            self.padrao_ativo_ui = None
+            self.padrao_ativo_ocorrencias_ui = 0
+            self.padrao_ativo_confianca_ui = 0.0
+            self.padrao_ativo_scores_ui = {1: 0.0, 2: 0.0, 3: 0.0}
+        
+        return features
+
     def _get_config(self):
         api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
         return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
 
     # =========================================================
-    # FEATURES EXPANDIDAS: 45 features (corrigidas)
+    # FEATURES EXPANDIDAS: 51 features (44 + 7 de padrões)
     # =========================================================
     def _extrair_features_core(self, historico_duzias, historico_numeros,
                                 erros_consec, rodadas_zero, repeticoes_duzia, janela=20):
         """
-        Extrai as 45 features de forma consistente tanto para treino quanto para inferência.
-        Recebe os dados necessários como parâmetros para evitar inconsistência.
+        Extrai features para treino e inferência.
+        AGORA inclui features de padrões históricos como parte do vetor.
         """
         numeros_janela = historico_numeros[-janela:] if len(historico_numeros) >= janela else historico_numeros
         duzias_janela = [d for d in historico_duzias[-janela:] if d != 0]
@@ -1042,9 +999,9 @@ class DuziaAI:
             return None
 
         # Pad ultimas_4 se necessário
-        ultimas_4_raw = historico_duzias[-4:]
+        ultimas_4_raw = list(historico_duzias[-4:])
         while len(ultimas_4_raw) < 4:
-            ultimas_4_raw = [0] + list(ultimas_4_raw)
+            ultimas_4_raw = [0] + ultimas_4_raw
         ultimas_4 = ultimas_4_raw[:4]
 
         # --- Terminais ---
@@ -1127,23 +1084,17 @@ class DuziaAI:
         mono_up = 1 if len(seq_recente) >= 3 and all(seq_recente[i] <= seq_recente[i+1] for i in range(len(seq_recente)-1)) else 0
         mono_down = 1 if len(seq_recente) >= 3 and all(seq_recente[i] >= seq_recente[i+1] for i in range(len(seq_recente)-1)) else 0
 
-        # 🆕 Feature 33: autocorrelação lag=2 (detecta ciclos de 2)
+        # Autocorrelação
         autocorr_lag2 = _calcular_autocorrelacao(duzias_janela, lag=2)
-
-        # 🆕 Feature 34: autocorrelação lag=3 (detecta ciclos de 3)
         autocorr_lag3 = _calcular_autocorrelacao(duzias_janela, lag=3)
 
-        # 🆕 Feature 35: proporção das últimas 5 dúzias que são D1
+        # Proporções recentes
         ultimas5 = [d for d in historico_duzias[-5:] if d != 0]
         prop_d1_rec5 = ultimas5.count(1) / max(1, len(ultimas5))
-
-        # 🆕 Feature 36: proporção das últimas 5 dúzias que são D2
         prop_d2_rec5 = ultimas5.count(2) / max(1, len(ultimas5))
-
-        # 🆕 Feature 37: proporção das últimas 5 dúzias que são D3
         prop_d3_rec5 = ultimas5.count(3) / max(1, len(ultimas5))
 
-        # 🆕 Feature 38: padrão ABAB (ritmo ping-pong)
+        # Ping-pong
         abab_pattern = 0
         if len(duzias_janela) >= 4:
             if (duzias_janela[-1] == duzias_janela[-3] and
@@ -1151,75 +1102,62 @@ class DuziaAI:
                 duzias_janela[-1] != duzias_janela[-2]):
                 abab_pattern = 1
 
-        # 🆕 Feature 39: dúzia que mais saiu nas últimas 3 rodadas
+        # Dominância últimas 3
         ultimas3 = [d for d in historico_duzias[-3:] if d != 0]
         duzia_dom_3 = Counter(ultimas3).most_common(1)[0][0] if ultimas3 else 0
 
-        # 🆕 Feature 40: quantidade de dúzias únicas nas últimas 6 rodadas
+        # Diversidade
         ultimas6 = [d for d in historico_duzias[-6:] if d != 0]
         diversidade_6 = len(set(ultimas6)) if ultimas6 else 0
 
-        # 🆕 Feature 41: última dúzia que saiu (0 se zero)
+        # Últimas dúzias
         ultima_duzia = historico_duzias[-1] if historico_duzias else 0
-
-        # 🆕 Feature 42: penúltima dúzia
         penultima_duzia = historico_duzias[-2] if len(historico_duzias) >= 2 else 0
-
-        # 🆕 Feature 43: diferença entre as últimas 2 dúzias (detecta alternância)
         diff_ultimas2 = abs(ultima_duzia - penultima_duzia) if (ultima_duzia != 0 and penultima_duzia != 0) else 0
 
-        # 🆕 Feature 44: rodadas desde o último erro consecutivo (usando parâmetro real)
+        # Estados
         erros_consec_real = float(erros_consec)
-
-        # 🆕 Feature 45: contagem de repetições da mesma dúzia (usando parâmetro real)
         repeticoes_real = float(repeticoes_duzia)
 
-        features = [
-            # 0-3: últimas 4 dúzias
+        # Features base (44)
+        features_base = [
             float(ultimas_4[0]), float(ultimas_4[1]), float(ultimas_4[2]), float(ultimas_4[3]),
-            # 4-6: terminais
             float(t1_quente), float(t2_quente), float(freq_terminal_zero),
-            # 7-8: zeros
             float(rodadas_sem_zero), float(contagem_zeros_janela),
-            # 9-10: dominância
             float(duzia_dominante), float(duzia_recente),
-            # 11-12: streaks
             float(streak_count), float(max_streak),
-            # 13-14: transições
             float(transicoes_recentes), float(aba_pattern),
-            # 15-20: frequências
             float(freq_d1), float(freq_d2), float(freq_d3),
             float(freq_d1_rec), float(freq_d2_rec), float(freq_d3_rec),
-            # 21-23: gaps
             float(gap_d1), float(gap_d2), float(gap_d3),
-            # 24-25: estado do jogador (agora com valores REAIS, não zeros)
             erros_consec_real, float(rodadas_zero),
-            # 26-28: estatísticas
             float(volatilidade), float(paridade), float(entropia),
-            # 29: ausência
             float(duzia_mais_ausente),
-            # 30-31: tendência
             float(mono_up), float(mono_down),
-            # 32: repetições (REAL)
             repeticoes_real,
-            # 33-34: autocorrelação (NOVO)
             float(autocorr_lag2), float(autocorr_lag3),
-            # 35-37: proporções recentes (NOVO)
             float(prop_d1_rec5), float(prop_d2_rec5), float(prop_d3_rec5),
-            # 38: ping-pong (NOVO)
             float(abab_pattern),
-            # 39: dominância últimas 3 (NOVO)
             float(duzia_dom_3),
-            # 40: diversidade últimas 6 (NOVO)
             float(diversidade_6),
-            # 41-42: últimas 2 dúzias (NOVO)
             float(ultima_duzia), float(penultima_duzia),
-            # 43: diferença (NOVO)
             float(diff_ultimas2),
         ]
 
-        # TOTAL: 44 features (índices 0-43)
-        return features
+        # 🆕 Features de padrões históricos (7 features)
+        padroes_features = self._extrair_features_padroes(historico_duzias)
+        features_padroes = [
+            padroes_features['padrao_d1_score'],
+            padroes_features['padrao_d2_score'],
+            padroes_features['padrao_d3_score'],
+            padroes_features['padrao_confianca'],
+            float(padroes_features['padrao_tamanho']),
+            float(padroes_features['padrao_ocorrencias']),
+            padroes_features['padrao_dominancia'],
+        ]
+
+        # TOTAL: 51 features (44 + 7)
+        return features_base + features_padroes
 
     def extrair_features_estado(self, janela=20):
         """Extrai features para inferência — usa estado atual do objeto."""
@@ -1235,19 +1173,15 @@ class DuziaAI:
     def _extrair_features_historico(self, historico_duzias, historico_numeros, janela=20):
         """
         Extrai features de um ponto histórico para treino.
-        CORRIGIDO: usa a mesma função core, sem placeholders zerados.
-        Os valores de erros_consec, rodadas_zero e repeticoes são calculados
-        a partir do histórico parcial para aproximar o estado real naquele momento.
+        Usa a mesma função core com features de padrões incluídas.
         """
-        # Aproximação dos estados derivados no momento histórico
-        erros_consec = 0  # Simplificação aceitável para treino
+        erros_consec = 0
         rodadas_zero = 0
         for n in reversed(historico_numeros):
             if n == 0:
                 break
             rodadas_zero += 1
 
-        # Contar repetições da última dúzia no histórico parcial
         repeticoes = 0
         duzias_hist = [d for d in historico_duzias if d != 0]
         if duzias_hist:
@@ -1268,7 +1202,7 @@ class DuziaAI:
         )
 
     def _treinar_ml_online(self):
-        """Ensemble RF + GBT com features unificadas e corretas."""
+        """Ensemble RF + GBT com 51 features (incluindo padrões)."""
         if not ML_DISPONIVEL:
             return False
 
@@ -1311,17 +1245,17 @@ class DuziaAI:
             X_arr = np.array(X)
 
             rf = RandomForestClassifier(
-                n_estimators=150,
-                max_depth=12,
+                n_estimators=200,
+                max_depth=14,
                 random_state=42,
                 n_jobs=-1,
                 class_weight='balanced',
                 min_samples_leaf=2,
             )
             gbt = GradientBoostingClassifier(
-                n_estimators=80,
-                max_depth=5,
-                learning_rate=0.1,
+                n_estimators=100,
+                max_depth=6,
+                learning_rate=0.08,
                 random_state=42,
             )
             ensemble = VotingClassifier(
@@ -1334,7 +1268,7 @@ class DuziaAI:
             self.ultimo_treino_ml = rodada_atual
 
             salvar_modelo_ml(self.modelo_ml, self.api_name)
-            logging.info(f"🧠 Ensemble ML Treinado! Amostras: {len(X)} | Rodada: {rodada_atual}")
+            logging.info(f"🧠 Ensemble ML Treinado! Amostras: {len(X)} | Rodada: {rodada_atual} | Features: {X_arr.shape[1]}")
             return True
 
         except Exception as e:
@@ -1364,8 +1298,8 @@ class DuziaAI:
             padrao = tuple(self.historico_completo[-4:-1])
             self.transicoes[padrao][d] += 1
 
-        # 🆕 Atualiza memória de padrões a cada novo número
-        self.memoria_padroes.registrar_sequencia(self.historico_completo)
+        # 🆕 Atualiza tabela de padrões com o histórico completo
+        self._atualizar_tabela_padroes(self.historico_completo)
 
         if len(self.historico_completo) > 1000:
             self.historico_completo = self.historico_completo[-1000:]
@@ -1381,7 +1315,6 @@ class DuziaAI:
         self._treinar_ml_online()
 
     def registrar_previsao(self, duzia, confianca):
-        """Atualizado para contar repetições e marcar padrão ativo."""
         self.ultimas_previsoes.append(duzia)
         self.ultima_previsao_duzia = duzia
         self.ultima_confianca = confianca
@@ -1406,9 +1339,6 @@ class DuziaAI:
         })
         self.ultimo_resultado_duzia = acertou_duzia
         self.ultimo_resultado_numero = acertou_numero
-
-        # 🆕 Registra resultado no padrão ativo
-        self.memoria_padroes.registrar_resultado_padrao(acertou_duzia or acertou_zero)
 
         config = self._get_config()
         if eh_raio and multiplicador >= config['raio_alto_minimo'] and config['pausa_pos_raio'] > 0:
@@ -1459,7 +1389,10 @@ class DuziaAI:
             self.entradas_consecutivas += 1
 
     def _prever_ml(self):
-        """Faz previsão usando o ensemble ML com features corrigidas."""
+        """
+        Faz previsão usando o ensemble ML.
+        O modelo JÁ inclui features de padrões históricos internamente.
+        """
         if not ML_DISPONIVEL or self.modelo_ml is None:
             return {1: 0.0, 2: 0.0, 3: 0.0}
 
@@ -1471,7 +1404,7 @@ class DuziaAI:
             if features is None:
                 return {1: 0.0, 2: 0.0, 3: 0.0}
 
-            # Verifica dimensão compatível com o modelo treinado
+            # Verifica dimensão compatível
             try:
                 n_features_modelo = self.modelo_ml.estimators_[0].n_features_in_
             except:
@@ -1494,7 +1427,6 @@ class DuziaAI:
 
         except Exception as e:
             logging.error(f"❌ Erro na inferência ML: {e}")
-            # Se erro de dimensão, força retreino
             if "feature" in str(e).lower() or "shape" in str(e).lower():
                 self.modelo_ml = None
                 self.ultimo_treino_ml = 0
@@ -1525,77 +1457,23 @@ class DuziaAI:
         }
         return scores
 
-    def _prever_por_padroes(self):
-        """
-        🆕 Consulta a memória de padrões para obter previsão baseada em
-        sequências históricas que já ocorreram antes.
-        Retorna (scores, padrao_encontrado, confianca, ocorrencias)
-        """
-        config = self._get_config()
-        padrao, scores, confianca, ocorrencias = self.memoria_padroes.buscar_padrao_atual(
-            self.historico_completo
-        )
-
-        # Atualiza estado do padrão ativo para UI
-        self.padrao_ativo = padrao
-        self.padrao_ativo_ocorrencias = ocorrencias
-        self.padrao_ativo_confianca = confianca
-        self.padrao_ativo_scores = scores
-
-        if padrao is not None:
-            self.memoria_padroes.ultimo_padrao_ativo = padrao
-            taxa_hist = self.memoria_padroes.get_taxa_acerto_padrao(padrao)
-            # Ajuste de confiança pela taxa histórica do padrão
-            if taxa_hist is not None:
-                if taxa_hist >= 0.65:
-                    confianca = min(1.0, confianca * 1.2)
-                elif taxa_hist < 0.4:
-                    confianca = confianca * 0.7
-
-        return scores, padrao, confianca, ocorrencias
-
     def calcular_score(self):
         """
-        🆕 Calcula scores combinando ML + Memória de Padrões.
-        Retorna (scores_finais, modo_str)
+        🆕 Calcula scores DIRETAMENTE da ML (que já inclui padrões).
+        Sem lógica separada de combinação.
         """
-        config = self._get_config()
-        peso_padrao = config.get('memoria_peso_padrao', 30)
-
         ml_scores = self._prever_ml()
-        padrao_scores, padrao_encontrado, padrao_confianca, padrao_ocorrencias = self._prever_por_padroes()
-
         ml_ativo = not all(v == 0.0 for v in ml_scores.values())
 
         if ml_ativo:
-            # Combina ML (70%) + Padrões históricos (30% — ajustável)
-            if padrao_encontrado and padrao_confianca > 0.15:
-                peso_ml = 100 - peso_padrao
-                scores_finais = {
-                    d: (ml_scores.get(d, 0) * peso_ml / 100) +
-                       (padrao_scores.get(d, 0) * peso_padrao / 100)
-                    for d in [1, 2, 3]
-                }
-                modo = f'ml+padrão(n={len(padrao_encontrado)},x{padrao_ocorrencias})'
+            if self.ultimo_treino_ml <= 1:
+                modo = 'ml_disco'
             else:
-                scores_finais = ml_scores
                 modo = 'ml'
-            return scores_finais, modo
+            return ml_scores, modo
         else:
-            # Fallback: frequência + padrões
             freq_scores = self._prever_fallback_frequencia()
-            if padrao_encontrado and padrao_confianca > 0.2:
-                peso_pad = min(50, peso_padrao + 10)
-                scores_finais = {
-                    d: (freq_scores.get(d, 0) * (100 - peso_pad) / 100) +
-                       (padrao_scores.get(d, 0) * peso_pad / 100)
-                    for d in [1, 2, 3]
-                }
-                modo = f'fallback+padrão(n={len(padrao_encontrado)},x{padrao_ocorrencias})'
-            else:
-                scores_finais = freq_scores
-                modo = 'fallback'
-            return scores_finais, modo
+            return freq_scores, 'fallback'
 
     def detectar_alerta_zero(self):
         """Detecta padrões que sugerem saída do zero (8 padrões)"""
@@ -1667,10 +1545,14 @@ class DuziaAI:
         return [d for d in [1, 2, 3] if d != duzia]
 
     # =========================================================
-    # MÉTODO PREVER ATUALIZADO COM MEMÓRIA DE PADRÕES
+    # MÉTODO PREVER — SEM LÓGICA DE PADRÕES SEPARADA
     # =========================================================
     def prever(self):
-        """Método principal de previsão com memória de padrões integrada."""
+        """
+        Método principal de previsão.
+        A ML já inclui padrões históricos como features.
+        NÃO há combinação separada de scores.
+        """
         if self.pausa_ate and hora_brasilia() < self.pausa_ate:
             return {"entrar": False, "motivo": "⏸️ Pausa"}
 
@@ -1686,6 +1568,7 @@ class DuziaAI:
         if self.em_pausa_pos_raio:
             return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
 
+        # 🆕 Scores vêm DIRETAMENTE da ML (padrões já são features)
         scores, modo = self.calcular_score()
 
         ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
@@ -1697,13 +1580,7 @@ class DuziaAI:
 
         confianca = min(3.5, max(0.5, (s1 - s2) / 20))
 
-        # 🆕 Boost de confiança quando padrão histórico confirma a previsão do ML
-        if self.padrao_ativo is not None and self.padrao_ativo_confianca > 0.2:
-            padrao_d1 = max(self.padrao_ativo_scores, key=self.padrao_ativo_scores.get)
-            if padrao_d1 == d1:
-                boost = config.get('memoria_confianca_boost', 0.4) * self.padrao_ativo_confianca
-                confianca = min(3.5, confianca + boost)
-
+        # A ML já considerou padrões nas features — não precisa de boost separado
         if self.alerta_zero_ativo and confianca >= 3.0:
             confianca = min(2.8, confianca)
 
@@ -1711,7 +1588,6 @@ class DuziaAI:
         motivo = ""
         forcar_rotacao = False
 
-        # Determina se o modo usa ML ou fallback
         modo_base = 'ml' if 'ml' in modo else 'fallback'
 
         if modo_base == 'ml':
@@ -1719,8 +1595,10 @@ class DuziaAI:
             pode_entrar = s1 > score_minimo
             if pode_entrar:
                 treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
-                if 'padrão' in modo:
-                    motivo = f"🟢 ML+Padrão ({treino_info}) | Score: {s1:.1f}"
+                # Info do padrão ativo (apenas informativo, ML já usou)
+                if self.padrao_ativo_ui is not None and self.padrao_ativo_ocorrencias_ui >= 2:
+                    seq_str = "→".join(f"D{d}" for d in self.padrao_ativo_ui)
+                    motivo = f"🟢 ML+Padrões ({treino_info}) | Score: {s1:.1f} | 🧩 {seq_str}"
                 else:
                     motivo = f"🟢 Ensemble ML ({treino_info}) | Score: {s1:.1f}"
             else:
@@ -1730,22 +1608,9 @@ class DuziaAI:
             min_rodadas_fb = config.get('ml_min_rodadas_fallback', 8)
             if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
                 pode_entrar = True
-                if 'padrão' in modo:
-                    motivo = f"🟡 Fallback+Padrão | Score: {s1:.1f}"
-                else:
-                    motivo = f"🟡 Fallback Freq | Score: {s1:.1f}"
+                motivo = f"🟡 Fallback Freq | Score: {s1:.1f}"
             else:
                 motivo = f"Aguardando ML ({len(self.historico_completo)}/40 rodadas)"
-
-        # 🆕 Permitir entrada por padrão histórico muito forte (mesmo sem ML suficiente)
-        if not pode_entrar and self.padrao_ativo is not None:
-            if self.padrao_ativo_confianca >= 0.65 and self.padrao_ativo_ocorrencias >= 4:
-                padrao_d = max(self.padrao_ativo_scores, key=self.padrao_ativo_scores.get)
-                padrao_s = self.padrao_ativo_scores[padrao_d]
-                if padrao_s >= 65:
-                    pode_entrar = True
-                    d1, s1 = padrao_d, padrao_s
-                    motivo = f"🧩 Padrão Histórico (n={len(self.padrao_ativo)}, x{self.padrao_ativo_ocorrencias}) | Conf: {self.padrao_ativo_confianca:.2f}"
 
         # Limitador de repetições da mesma dúzia
         max_rep = config.get('ml_max_repeticoes_mesma_duzia', 4)
@@ -1765,12 +1630,10 @@ class DuziaAI:
         # Filtro de confiança mínima
         confianca_min = config.get('confianca_minima_entrada', 1.3)
         if pode_entrar and confianca < confianca_min and not forcar_rotacao:
-            # Padrão histórico muito forte pode sobrepor o filtro de confiança
-            if not (self.padrao_ativo is not None and self.padrao_ativo_confianca >= 0.7):
-                pode_entrar = False
-                motivo = f"Confiança muito baixa ({confianca:.2f} < {confianca_min})"
+            pode_entrar = False
+            motivo = f"Confiança muito baixa ({confianca:.2f} < {confianca_min})"
 
-        # Filtro de confiança mínima para anti-erro (mais rigoroso)
+        # Filtro anti-erro
         if pode_entrar and self.modo_anti_erro and confianca < (confianca_min + 0.5):
             pode_entrar = False
             motivo = f"🚫 Anti-Erro: Confiança insuficiente ({confianca:.2f})"
@@ -1782,20 +1645,20 @@ class DuziaAI:
             if pode_entrar and "Termômetro" not in motivo:
                 motivo += " | 🌡️ Zero"
 
-        # Bloqueio final por confiança crítica
+        # Bloqueio final
         if confianca < 0.8:
             pode_entrar = False
             motivo = f"Confiança crítica ({confianca:.2f})"
 
-        # 🆕 Adiciona info do padrão ao retorno
+        # Info do padrão para UI (informativo apenas)
         info_padrao = None
-        if self.padrao_ativo is not None:
+        if self.padrao_ativo_ui is not None and self.padrao_ativo_ocorrencias_ui >= 2:
             info_padrao = {
-                'sequencia': list(self.padrao_ativo),
-                'ocorrencias': self.padrao_ativo_ocorrencias,
-                'confianca': round(self.padrao_ativo_confianca, 3),
-                'duzia_prevista': max(self.padrao_ativo_scores, key=self.padrao_ativo_scores.get),
-                'scores': self.padrao_ativo_scores,
+                'sequencia': list(self.padrao_ativo_ui),
+                'ocorrencias': self.padrao_ativo_ocorrencias_ui,
+                'confianca': round(self.padrao_ativo_confianca_ui, 3),
+                'duzia_prevista': max(self.padrao_ativo_scores_ui, key=self.padrao_ativo_scores_ui.get),
+                'scores': self.padrao_ativo_scores_ui,
             }
 
         previsao = {
@@ -1811,7 +1674,7 @@ class DuziaAI:
             "numeros_completos": list(self.numeros_completos),
             "modo_previsao": modo,
             "rotacao_forcada": forcar_rotacao,
-            "padrao_ativo": info_padrao,  # 🆕
+            "padrao_ativo": info_padrao,
         }
 
         return previsao
@@ -1994,7 +1857,7 @@ class SistemaBot:
                 'incluir_zero': incluir_zero,
                 'table_id': table_id,
                 'table_name': table_name,
-                'padrao_usado': self.entrada_ativa.get('padrao_ativo'),  # 🆕
+                'padrao_usado': self.entrada_ativa.get('padrao_ativo'),
             })
 
             if len(self.historico_entradas) > 100:
@@ -2036,7 +1899,7 @@ class SistemaBot:
                     'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
                     'modo_anti_erro': previsao.get('modo_anti_erro', False),
                     'incluir_zero': previsao.get('incluir_zero', False),
-                    'padrao_ativo': previsao.get('padrao_ativo'),  # 🆕
+                    'padrao_ativo': previsao.get('padrao_ativo'),
                 }
 
                 self.duzia_ai.registrar_previsao(previsao['duzia'], previsao['confianca'])
@@ -2113,8 +1976,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V12.0 - Memória de Padrões + ML Corrigido", layout="wide")
-st.title("🎰 DuziaAI V12.0 — Memória de Padrões Históricos + ML Corrigido 🧩💾 (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V12.0 - Padrões como Features da ML", layout="wide")
+st.title("🎰 DuziaAI V12.0 — Padrões Históricos como Features da ML 🧩💾 (BRT)")
 
 config_global = carregar_config_global()
 
@@ -2172,10 +2035,8 @@ if st.session_state.api_selecionada != st.session_state.ultima_api:
             for k, v in dados['performance_por_horario'].items():
                 sis.performance_por_horario[k] = v
                 sis.duzia_ai.performance_por_horario[k] = v
-        # 🆕 Carrega memória de padrões
-        mem_path = dados.get('_memoria_padroes_path', '')
-        if mem_path:
-            sis.duzia_ai.memoria_padroes.carregar(mem_path)
+        # Carrega memória de padrões
+        sis.duzia_ai._carregar_memoria_padroes()
         paths = get_session_paths(st.session_state.api_selecionada)
         if os.path.exists(paths['historico']):
             with open(paths['historico'], 'r') as f:
@@ -2218,10 +2079,8 @@ if "sistema" not in st.session_state:
             for k, v in dados['performance_por_horario'].items():
                 sis.performance_por_horario[k] = v
                 sis.duzia_ai.performance_por_horario[k] = v
-        # 🆕 Carrega memória de padrões
-        mem_path = dados.get('_memoria_padroes_path', '')
-        if mem_path:
-            sis.duzia_ai.memoria_padroes.carregar(mem_path)
+        # Carrega memória de padrões
+        sis.duzia_ai._carregar_memoria_padroes()
         paths = get_session_paths(st.session_state.api_selecionada)
         if os.path.exists(paths['historico']):
             with open(paths['historico'], 'r') as f:
@@ -2240,7 +2099,7 @@ if "historico" not in st.session_state:
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V12.0 — Memória de Padrões + ML Corrigido")
+    st.markdown("## ⚙️ V12.0 — Padrões como Features da ML")
     sis = st.session_state.sistema
 
     st.markdown("### 📊 Status da Sessão")
@@ -2358,27 +2217,30 @@ with st.sidebar:
         else:
             st.info(f"🧠 Aguardando dados... ({rodadas_atual}/8 para fallback)")
 
-    # 🆕 Status da memória de padrões
+    # Status da memória de padrões
     st.markdown("---")
-    mem_stats = sis.duzia_ai.memoria_padroes.get_stats()
-    st.caption("🧩 **Memória de Padrões:**")
+    mem_stats = {
+        'total_padroes': len(sis.duzia_ai.tabela_padroes),
+        'padroes_confiaveis': sum(1 for p in sis.duzia_ai.contagem_padroes if sis.duzia_ai.contagem_padroes[p] >= sis.duzia_ai.min_ocorrencias),
+        'total_registros': sum(sis.duzia_ai.contagem_padroes.values()),
+    }
+    st.caption("🧩 **Padrões Históricos (Features da ML):**")
     st.caption(f"• Padrões únicos: {mem_stats['total_padroes']}")
     st.caption(f"• Padrões confiáveis: {mem_stats['padroes_confiaveis']}")
     st.caption(f"• Total de registros: {mem_stats['total_registros']}")
-    if sis.duzia_ai.padrao_ativo is not None:
-        seq_str = "→".join(f"D{d}" for d in sis.duzia_ai.padrao_ativo)
-        st.success(f"🎯 Padrão ativo: {seq_str} (x{sis.duzia_ai.padrao_ativo_ocorrencias})")
+    if sis.duzia_ai.padrao_ativo_ui is not None:
+        seq_str = "→".join(f"D{d}" for d in sis.duzia_ai.padrao_ativo_ui)
+        st.success(f"🎯 Padrão ativo: {seq_str} (x{sis.duzia_ai.padrao_ativo_ocorrencias_ui})")
     else:
         st.info("🔍 Sem padrão ativo no momento")
 
     st.markdown("---")
-    st.caption("🛡️ **Correções V12.0:**")
-    st.caption("• Memória de padrões históricos")
-    st.caption("• 44 features (era 33, sem placeholders)")
-    st.caption("• Autocorrelação lag 2 e 3")
+    st.caption("🛡️ **V12.0 — Padrões como Features:**")
+    st.caption("• 51 features (44 + 7 de padrões)")
+    st.caption("• Padrões DENTRO da ML")
+    st.caption("• Ensemble RF+GBT aprende padrões")
+    st.caption("• Sem lógica separada de combinação")
     st.caption("• Dimensão treino = inferência")
-    st.caption("• Padrão forte → entrada direta")
-    st.caption("• Boost de confiança por padrão")
 
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -2483,7 +2345,7 @@ st.markdown("---")
 cg, ce = st.columns([3, 2])
 
 with cg:
-    st.subheader("📈 Scores do ML + Padrões")
+    st.subheader("📈 Scores do ML (com Padrões)")
     if len(sis.historico_numeros) >= 3:
         score, modo_atual = sis.duzia_ai.calcular_score()
 
@@ -2501,9 +2363,9 @@ with cg:
 
         if sis.duzia_ai.modelo_ml is not None:
             if sis.duzia_ai.ultimo_treino_ml <= 1:
-                titulo = "🎯 Ensemble ML (Carregado 💾)"
+                titulo = "🎯 Ensemble ML (Carregado 💾) + Padrões"
             else:
-                titulo = f"🎯 Ensemble RF+GBT (R{sis.duzia_ai.ultimo_treino_ml})"
+                titulo = f"🎯 Ensemble RF+GBT (R{sis.duzia_ai.ultimo_treino_ml}) + Padrões"
         else:
             titulo = f"🟡 Fallback Frequência ({len(sis.historico_numeros)} rodadas)"
 
@@ -2513,9 +2375,9 @@ with cg:
         if sis.duzia_ai.contagem_repeticoes_mesma_duzia >= 3:
             titulo += f" | ⚠️ Repetições: {sis.duzia_ai.contagem_repeticoes_mesma_duzia}x"
 
-        # 🆕 Mostrar padrão ativo no título
-        if sis.duzia_ai.padrao_ativo is not None:
-            seq_str = "→".join(f"D{d}" for d in sis.duzia_ai.padrao_ativo)
+        # Mostrar padrão ativo no título
+        if sis.duzia_ai.padrao_ativo_ui is not None:
+            seq_str = "→".join(f"D{d}" for d in sis.duzia_ai.padrao_ativo_ui)
             titulo += f" | 🧩 {seq_str}"
 
         fig.update_layout(
@@ -2526,9 +2388,9 @@ with cg:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # 🆕 Gráfico de padrões se disponível
-        if sis.duzia_ai.padrao_ativo is not None:
-            pad_scores = sis.duzia_ai.padrao_ativo_scores
+        # Gráfico de padrões se disponível
+        if sis.duzia_ai.padrao_ativo_ui is not None:
+            pad_scores = sis.duzia_ai.padrao_ativo_scores_ui
             fig_pad = plt.Figure(data=[plt.Bar(
                 x=['D1 (1-12)', 'D2 (13-24)', 'D3 (25-36)'],
                 y=[pad_scores.get(1, 0), pad_scores.get(2, 0), pad_scores.get(3, 0)],
@@ -2540,9 +2402,9 @@ with cg:
                 text=[f'{pad_scores.get(1,0):.1f}%', f'{pad_scores.get(2,0):.1f}%', f'{pad_scores.get(3,0):.1f}%'],
                 textposition='auto'
             )])
-            seq_str = "→".join(f"D{d}" for d in sis.duzia_ai.padrao_ativo)
+            seq_str = "→".join(f"D{d}" for d in sis.duzia_ai.padrao_ativo_ui)
             fig_pad.update_layout(
-                title=f"🧩 Padrão Histórico: {seq_str} | {sis.duzia_ai.padrao_ativo_ocorrencias}x visto | Conf: {sis.duzia_ai.padrao_ativo_confianca:.2f}",
+                title=f"🧩 Padrão: {seq_str} | {sis.duzia_ai.padrao_ativo_ocorrencias_ui}x visto | Conf: {sis.duzia_ai.padrao_ativo_confianca_ui:.2f}",
                 height=220,
                 showlegend=False,
                 yaxis_title="% Próxima Dúzia"
@@ -2597,11 +2459,11 @@ with ce:
     if sis.duzia_ai.contagem_repeticoes_mesma_duzia >= 4:
         st.warning(f"⚠️ {sis.duzia_ai.contagem_repeticoes_mesma_duzia}x mesma dúzia — Rotação em breve")
 
-    # 🆕 Exibe padrão ativo
-    if sis.duzia_ai.padrao_ativo is not None:
-        seq_str = " → ".join(f"D{d}" for d in sis.duzia_ai.padrao_ativo)
-        conf_pct = int(sis.duzia_ai.padrao_ativo_confianca * 100)
-        st.info(f"🧩 Padrão: {seq_str}\n\nVisto {sis.duzia_ai.padrao_ativo_ocorrencias}x | Confiança: {conf_pct}%")
+    # Exibe padrão ativo
+    if sis.duzia_ai.padrao_ativo_ui is not None:
+        seq_str = " → ".join(f"D{d}" for d in sis.duzia_ai.padrao_ativo_ui)
+        conf_pct = int(sis.duzia_ai.padrao_ativo_confianca_ui * 100)
+        st.info(f"🧩 Padrão: {seq_str}\n\nVisto {sis.duzia_ai.padrao_ativo_ocorrencias_ui}x | Confiança: {conf_pct}%")
 
     if not sis.sessao_ativa:
         if sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
@@ -2630,7 +2492,7 @@ with ce:
         cor = "#FF6347" if e.get('modo_anti_erro') else "#00CED1"
         icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 Ensemble ML 💾"
 
-        # 🆕 Adiciona info do padrão se disponível
+        # Info do padrão se disponível
         padrao_html = ""
         if padrao_info:
             seq_str = "→".join(f"D{d}" for d in padrao_info.get('sequencia', []))
@@ -2678,7 +2540,7 @@ if sis.historico_entradas:
             num_display = "0"
         else:
             num_display = str(numero_sorteado)
-        # 🆕 Mostra se usou padrão
+        # Mostra se usou padrão
         padrao_usado = '🧩' if e.get('padrao_usado') else '-'
         dados.append({
             "Rod": e.get('rodada'),
@@ -2719,14 +2581,18 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V12.0 | Memória de Padrões + 44 Features + ML Corrigido | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V12.0 | 51 Features (44 + 7 Padrões) | ML Ensemble RF+GBT | {api_name} | {formatar_hora_brasilia()}")
 modelo_path = get_modelo_ml_path(api_name)
 if os.path.exists(modelo_path):
     st.caption(f"💾 Modelo salvo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)")
 else:
     st.caption("⚠️ Modelo ML ainda não salvo em disco")
 
-mem_stats = sis.duzia_ai.memoria_padroes.get_stats()
+mem_stats = {
+    'total_padroes': len(sis.duzia_ai.tabela_padroes),
+    'padroes_confiaveis': sum(1 for p in sis.duzia_ai.contagem_padroes if sis.duzia_ai.contagem_padroes[p] >= sis.duzia_ai.min_ocorrencias),
+    'total_registros': sum(sis.duzia_ai.contagem_padroes.values()),
+}
 st.caption(f"🧩 Padrões: {mem_stats['total_padroes']} únicos | {mem_stats['padroes_confiaveis']} confiáveis | {mem_stats['total_registros']} registros")
 
 salvar_sessao()
