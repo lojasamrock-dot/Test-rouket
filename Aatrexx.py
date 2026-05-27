@@ -57,7 +57,7 @@ SETUP_BASE = {
     'pagamento_numero': 20,
     'pagamento_zero': 20,
     'pagamento_duzia': 3,
-    'confianca_minima_entrada': 1.3,       # 🆕 Filtro de confiança mínima
+    'confianca_minima_entrada': 1.8,       # 🆕 Filtro de confiança mínima
     'embalo_peso': 9,
     'embalo_reforco': 5,
     'bloquear_alerta_zero_conf_alta': True,
@@ -89,7 +89,7 @@ SETUP_BASE = {
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'confianca_minima_entrada': 1.3,
+    'confianca_minima_entrada': 1.8,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.0, 'fadiga_duzia': 4,
@@ -117,7 +117,7 @@ SETUP_XXXTREME = {
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.5,
+    'confianca_minima_entrada': 1.8,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.2, 'fadiga_duzia': 3,
@@ -145,7 +145,7 @@ SETUP_IMMERSIVE = {
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.5,
+    'confianca_minima_entrada': 1.8,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.5, 'fadiga_duzia': 3,
