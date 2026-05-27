@@ -61,13 +61,13 @@ SETUP_BASE = {
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
     'confianca_minima_entrada': 2.0, 'zero_termometro_max': 15,
     'pausa_pos_raio': 1, 'raio_alto_minimo': 100,
-    'ml_janela_treino': 200, 'ml_atualizar_a_cada': 5,
+    'ml_janela_treino': 150, 'ml_atualizar_a_cada': 10,
     'score_minimo_entrada': 40,         # Score ML mínimo para entrar (0-100)
     'diferenca_minima_scores': 8,       # Diferença mínima entre 1º e 2º score
     'calibrar_probabilidades': True,    # Usar CalibratedClassifierCV
     'usar_ensemble': True,              # Usar ensemble RF+GB+LR
-    'janela_features_curta': 10,        # Janela recente para features
-    'janela_features_longa': 30,        # Janela histórica para features
+    'janela_features_curta': 50,        # Janela recente para features
+    'janela_features_longa': 100,        # Janela histórica para features
     'gap_zero_alerta': 18,              # Rodadas sem zero para incluir zero
     'confianca_max_cap': 4.0,
 }
