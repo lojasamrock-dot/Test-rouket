@@ -77,9 +77,9 @@ SETUP_BASE = {
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
     'ml_janela_treino': 120,          # 🆕 Reduzido de 180 → 120 para treinar mais cedo
-    'ml_atualizar_a_cada': 8,         # 🆕 Reduzido de 10 → 8 para atualizar mais frequente
+    'ml_atualizar_a_cada': 10,         # 🆕 Reduzido de 10 → 8 para atualizar mais frequente
     'score_ml_peso': 45,
-    'ml_score_minimo_entrada': 25,    # 🆕 Reduzido de 15 → 10 para aumentar entradas
+    'ml_score_minimo_entrada': 30,    # 🆕 Reduzido de 15 → 10 para aumentar entradas
     'ml_score_minimo_fallback': 38,   # 🆕 Score mínimo no fallback por frequência
     'ml_min_rodadas_fallback': 8,     # 🆕 Mínimo de rodadas para usar fallback
 }
@@ -104,7 +104,7 @@ SETUP_XXXTREME = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 25,
+    'ml_score_minimo_entrada': 30,
     'ml_score_minimo_fallback': 38,
     'ml_min_rodadas_fallback': 8,
 }
@@ -129,7 +129,7 @@ SETUP_IMMERSIVE = {
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 25,
+    'ml_score_minimo_entrada': 30,
     'ml_score_minimo_fallback': 38,
     'ml_min_rodadas_fallback': 8,
 }
