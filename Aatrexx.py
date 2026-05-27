@@ -77,12 +77,12 @@ SETUP_BASE = {
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
     'ml_janela_treino': 120,
-    'ml_atualizar_a_cada': 8,
+    'ml_atualizar_a_cada': 10,
     'score_ml_peso': 45,
     'ml_score_minimo_entrada': 25,          # 🆕 Aumentado de 10 → 25
     'ml_score_minimo_fallback': 42,         # 🆕 Aumentado de 38 → 42
     'ml_min_rodadas_fallback': 8,
-    'ml_max_repeticoes_mesma_duzia': 4,     # 🆕 Limitador de repetições
+    'ml_max_repeticoes_mesma_duzia': 3,     # 🆕 Limitador de repetições
     'ml_score_minimo_pos_rotacao': 20,      # 🆕 Score mínimo após rotação forçada
 }
 
@@ -109,8 +109,8 @@ SETUP_XXXTREME = {
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
     'ml_score_minimo_entrada': 25,
     'ml_score_minimo_fallback': 42,
-    'ml_min_rodadas_fallback': 8,
-    'ml_max_repeticoes_mesma_duzia': 4,
+    'ml_min_rodadas_fallback': 10,
+    'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 20,
 }
 
@@ -137,8 +137,8 @@ SETUP_IMMERSIVE = {
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
     'ml_score_minimo_entrada': 25,
     'ml_score_minimo_fallback': 42,
-    'ml_min_rodadas_fallback': 8,
-    'ml_max_repeticoes_mesma_duzia': 4,
+    'ml_min_rodadas_fallback': 10,
+    'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 18,
 }
 
@@ -164,8 +164,8 @@ SETUP_MEGA = {
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
     'ml_score_minimo_entrada': 25,
     'ml_score_minimo_fallback': 42,
-    'ml_min_rodadas_fallback': 8,
-    'ml_max_repeticoes_mesma_duzia': 4,
+    'ml_min_rodadas_fallback': 10,
+    'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 18,
 }
 
