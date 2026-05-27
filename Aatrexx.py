@@ -319,7 +319,7 @@ def _selecionar_melhores_numeros(duzia, numeros_completos, quantidade=6):
 # =============================
 # 🧠 ENGENHARIA DE FEATURES V12
 # =============================
-def extrair_features_completas(historico_duzias, historico_numeros, janela_curta=10, janela_longa=30):
+def extrair_features_completas(historico_duzias, historico_numeros, janela_curta=50, janela_longa=100):
     """
     Features ricas para o modelo ML.
     Retorna vetor de 40+ features ou None se dados insuficientes.
@@ -487,7 +487,7 @@ class MotorML:
 
         X, y = [], []
         # Usar os últimos N pontos para treino (eficiente)
-        janela_treino = config.get('ml_janela_treino', 200)
+        janela_treino = config.get('ml_janela_treino', 150)
         inicio = max(min_hist, len(historico_duzias) - janela_treino)
 
         for i in range(inicio, len(historico_duzias)):
