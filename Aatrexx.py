@@ -816,7 +816,7 @@ class DuziaAI:
             
         config = self._get_config()
         janela_treino = config.get('ml_janela_treino', 180)
-        atualizar_a_cada = config.get('ml_atualizar_a_cada', 5)
+        atualizar_a_cada = config.get('ml_atualizar_a_cada', 10)
         
         rodada_atual = len(self.historico_completo)
         
