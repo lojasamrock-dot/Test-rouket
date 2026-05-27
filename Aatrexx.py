@@ -50,14 +50,14 @@ def data_brasilia():
     return hora_brasilia().strftime('%Y-%m-%d')
 
 # =============================
-# SETUPS INDEPENDENTES POR ROLETA
+# SETUPS INDEPENDENTES POR ROLETA (CORRIGIDOS)
 # =============================
 
 SETUP_BASE = {
     'pagamento_numero': 20,
     'pagamento_zero': 20,
     'pagamento_duzia': 3,
-    'confianca_minima_entrada': 2.0,
+    'confianca_minima_entrada': 1.3,       # 🆕 Filtro de confiança mínima
     'embalo_peso': 9,
     'embalo_reforco': 5,
     'bloquear_alerta_zero_conf_alta': True,
@@ -76,18 +76,21 @@ SETUP_BASE = {
     'ritmo_v_peso': 9,
     'ritmo_v_forca': 9,
     'ritmo_v_confirmacoes': 2,
-    'ml_janela_treino': 120,          # 🆕 Reduzido de 180 → 120 para treinar mais cedo
-    'ml_atualizar_a_cada': 10,         # 🆕 Reduzido de 10 → 8 para atualizar mais frequente
+    'ml_janela_treino': 120,
+    'ml_atualizar_a_cada': 8,
     'score_ml_peso': 45,
-    'ml_score_minimo_entrada': 30,    # 🆕 Reduzido de 15 → 10 para aumentar entradas
-    'ml_score_minimo_fallback': 38,   # 🆕 Score mínimo no fallback por frequência
-    'ml_min_rodadas_fallback': 8,     # 🆕 Mínimo de rodadas para usar fallback
+    'ml_score_minimo_entrada': 25,          # 🆕 Aumentado de 10 → 25
+    'ml_score_minimo_fallback': 42,         # 🆕 Aumentado de 38 → 42
+    'ml_min_rodadas_fallback': 8,
+    'ml_max_repeticoes_mesma_duzia': 4,     # 🆕 Limitador de repetições
+    'ml_score_minimo_pos_rotacao': 20,      # 🆕 Score mínimo após rotação forçada
 }
 
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'confianca_minima_entrada': 2.0, 'embalo_peso': 5, 'embalo_reforco': 2,
+    'confianca_minima_entrada': 1.3,
+    'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.0, 'fadiga_duzia': 4,
     'ritmo_alternado_peso': 10, 'ritmo_alternado_forca': 10,
@@ -103,16 +106,19 @@ SETUP_XXXTREME = {
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 30,
-    'ml_score_minimo_fallback': 38,
+    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
+    'ml_score_minimo_entrada': 25,
+    'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 8,
+    'ml_max_repeticoes_mesma_duzia': 4,
+    'ml_score_minimo_pos_rotacao': 20,
 }
 
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.2, 'embalo_peso': 5, 'embalo_reforco': 2,
+    'confianca_minima_entrada': 1.5,
+    'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.2, 'fadiga_duzia': 3,
     'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
@@ -128,16 +134,19 @@ SETUP_IMMERSIVE = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
-    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 30,
-    'ml_score_minimo_fallback': 38,
+    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
+    'ml_score_minimo_entrada': 25,
+    'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 8,
+    'ml_max_repeticoes_mesma_duzia': 4,
+    'ml_score_minimo_pos_rotacao': 18,
 }
 
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.5, 'embalo_peso': 5, 'embalo_reforco': 2,
+    'confianca_minima_entrada': 1.5,
+    'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.5, 'fadiga_duzia': 3,
     'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
@@ -154,8 +163,10 @@ SETUP_MEGA = {
     'score_markov_peso': 8, 'score_ml_peso': 35, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
     'ml_score_minimo_entrada': 25,
-    'ml_score_minimo_fallback': 38,
+    'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 8,
+    'ml_max_repeticoes_mesma_duzia': 4,
+    'ml_score_minimo_pos_rotacao': 18,
 }
 
 ROLETA_CONFIGS = {
@@ -685,11 +696,11 @@ def fetch_latest_result():
 
 
 # =============================
-# 🧠 DUZIA AI V11.3.0 — ML APRIMORADO
+# 🧠 DUZIA AI V11.3.1 — ENSEMBLE ML + LIMITADOR + FILTROS
 # =============================
 
 def _calcular_entropia(duzias):
-    """🆕 Calcula entropia de Shannon das dúzias (mede aleatoriedade)"""
+    """Calcula entropia de Shannon das dúzias (mede aleatoriedade)"""
     if not duzias:
         return 0.0
     freq = Counter(duzias)
@@ -703,7 +714,7 @@ def _calcular_entropia(duzias):
 
 
 def _calcular_gap_duzia(numeros, duzia):
-    """🆕 Calcula quantas rodadas desde que a dúzia saiu pela última vez"""
+    """Calcula quantas rodadas desde que a dúzia saiu pela última vez"""
     for i, n in enumerate(reversed(numeros)):
         if get_duzia(n) == duzia:
             return i
@@ -755,9 +766,9 @@ class DuziaAI:
         self.api_name = api_name
         self.performance_por_mesa = defaultdict(lambda: {'acertos': 0, 'erros': 0})
         self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
-        # 🆕 Scaler para normalização de features
         self.scaler = StandardScaler() if ML_DISPONIVEL else None
         self.scaler_treinado = False
+        self.contagem_repeticoes_mesma_duzia = 0  # 🆕 Contador de repetições
 
         self._carregar_modelo_salvo()
 
@@ -775,10 +786,10 @@ class DuziaAI:
         return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
 
     # =========================================================
-    # 🆕 FEATURES EXPANDIDAS: 19 → 35 features
+    # FEATURES EXPANDIDAS: 38 features
     # =========================================================
     def extrair_features_estado(self, janela=20):
-        """Extrai 35 features avançadas para o modelo ML"""
+        """Extrai 38 features avançadas para o modelo ML"""
         if len(self.historico_completo) < 5 or len(self.numeros_completos) < 5:
             return None
 
@@ -789,14 +800,12 @@ class DuziaAI:
             return None
 
         ultimas_4 = self.historico_completo[-4:]
-        ultimas_8 = self.historico_completo[-8:] if len(self.historico_completo) >= 8 else self.historico_completo
 
         # --- Terminais ---
         terminais = [n % 10 for n in numeros_janela if n != 0]
         contagem_terminais = Counter(terminais).most_common(3)
         t1_quente = contagem_terminais[0][0] if len(contagem_terminais) > 0 else -1
         t2_quente = contagem_terminais[1][0] if len(contagem_terminais) > 1 else -1
-        # 🆕 frequência do terminal 0 (pré-zero)
         freq_terminal_zero = terminais.count(0)
 
         # --- Zeros ---
@@ -804,7 +813,6 @@ class DuziaAI:
             rodadas_sem_zero = numeros_janela[::-1].index(0)
         except ValueError:
             rodadas_sem_zero = janela
-        # 🆕 Contagem de zeros na janela
         contagem_zeros_janela = numeros_janela.count(0)
 
         # --- Frequências ---
@@ -827,7 +835,6 @@ class DuziaAI:
             else:
                 break
 
-        # 🆕 Streak máximo na janela
         max_streak = 1
         cur_streak = 1
         for i in range(1, len(duzias_janela)):
@@ -843,23 +850,22 @@ class DuziaAI:
             if duzias_janela[-i] != duzias_janela[-i - 1]:
                 transicoes_recentes += 1
 
-        # 🆕 Padrão A-B-A nas últimas 3 dúzias
         aba_pattern = 0
         if len(duzias_janela) >= 3:
             if duzias_janela[-1] == duzias_janela[-3] and duzias_janela[-1] != duzias_janela[-2]:
                 aba_pattern = 1
 
-        # 🆕 Gap de cada dúzia (rodadas desde que cada uma saiu)
+        # --- Gaps ---
         gap_d1 = _calcular_gap_duzia(self.numeros_completos, 1)
         gap_d2 = _calcular_gap_duzia(self.numeros_completos, 2)
         gap_d3 = _calcular_gap_duzia(self.numeros_completos, 3)
 
-        # 🆕 Volatilidade: desvio de frequência esperada (33%)
+        # --- Volatilidade ---
         n_total = max(1, len(duzias_janela))
         esperado = n_total / 3
         volatilidade = abs(freq_d1 - esperado) + abs(freq_d2 - esperado) + abs(freq_d3 - esperado)
 
-        # 🆕 Paridade dominante (par=0, ímpar=1)
+        # --- Paridade ---
         nums_nao_zero = [n for n in numeros_janela if n != 0]
         if nums_nao_zero:
             pares = sum(1 for n in nums_nao_zero if n % 2 == 0)
@@ -867,48 +873,38 @@ class DuziaAI:
         else:
             paridade = 0.5
 
-        # 🆕 Entropia da janela (quão aleatória está a sequência)
+        # --- Entropia ---
         entropia = _calcular_entropia(duzias_janela)
 
-        # 🆕 Pressão: dúzia mais ausente tem pressão de retorno
+        # --- Dúzia mais ausente ---
         gaps = {1: gap_d1, 2: gap_d2, 3: gap_d3}
         duzia_mais_ausente = max(gaps, key=gaps.get)
 
-        # 🆕 Sequência monotônica recente (subindo ou descendo nos últimos 5)
+        # --- Tendência monotônica ---
         seq_recente = [get_duzia(n) for n in self.numeros_completos[-5:] if n != 0]
         mono_up = 1 if len(seq_recente) >= 3 and all(seq_recente[i] <= seq_recente[i+1] for i in range(len(seq_recente)-1)) else 0
         mono_down = 1 if len(seq_recente) >= 3 and all(seq_recente[i] >= seq_recente[i+1] for i in range(len(seq_recente)-1)) else 0
 
         features = [
-            # Bloco 1: histórico imediato (4)
             ultimas_4[0], ultimas_4[1], ultimas_4[2], ultimas_4[3],
-            # Bloco 2: terminais (3)
             t1_quente, t2_quente, freq_terminal_zero,
-            # Bloco 3: zeros (2)
             rodadas_sem_zero, contagem_zeros_janela,
-            # Bloco 4: dominância e recência (2)
             duzia_dominante, duzia_recente,
-            # Bloco 5: streaks (2)
             streak_count, max_streak,
-            # Bloco 6: transições e padrão (2)
             transicoes_recentes, aba_pattern,
-            # Bloco 7: frequências absolutas (6)
             freq_d1, freq_d2, freq_d3,
             freq_d1_rec, freq_d2_rec, freq_d3_rec,
-            # Bloco 8: gaps (3)
             gap_d1, gap_d2, gap_d3,
-            # Bloco 9: estado do sistema (2)
             self.erros_consecutivos, self.rodadas_desde_zero,
-            # Bloco 10: métricas estatísticas (4)
             volatilidade, paridade, entropia, duzia_mais_ausente,
-            # Bloco 11: tendência (2)
             mono_up, mono_down,
-        ]  # Total: 38 features
+            self.contagem_repeticoes_mesma_duzia,  # 🆕 Feature extra
+        ]
 
         return features
 
     def _treinar_ml_online(self):
-        """🆕 Ensemble RF + GBT com scaler e threshold reduzido"""
+        """Ensemble RF + GBT com scaler e threshold reduzido"""
         if not ML_DISPONIVEL:
             return False
 
@@ -922,7 +918,6 @@ class DuziaAI:
             if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada:
                 return False
         else:
-            # 🆕 Threshold reduzido: 40 amostras mínimas (antes precisava de janela+4)
             if len(self.historico_completo) < 40:
                 return False
 
@@ -951,7 +946,6 @@ class DuziaAI:
 
             X_arr = np.array(X)
 
-            # 🆕 Ensemble: RandomForest + GradientBoosting com soft voting
             rf = RandomForestClassifier(
                 n_estimators=150,
                 max_depth=12,
@@ -976,7 +970,7 @@ class DuziaAI:
             self.ultimo_treino_ml = rodada_atual
 
             salvar_modelo_ml(self.modelo_ml, self.api_name)
-            logging.info(f"🧠 Ensemble ML Treinado! Amostras: {len(X)} | Features: {len(X[0])} | Rodada: {rodada_atual}")
+            logging.info(f"🧠 Ensemble ML Treinado! Amostras: {len(X)} | Rodada: {rodada_atual}")
             return True
 
         except Exception as e:
@@ -1073,10 +1067,10 @@ class DuziaAI:
             freq_d1, freq_d2, freq_d3,
             freq_d1r, freq_d2r, freq_d3r,
             gap_d1, gap_d2, gap_d3,
-            0, 0,  # erros_consecutivos e rodadas_desde_zero (não disponíveis no ponto histórico)
+            0, 0, 0,  # placeholders
             volatilidade, paridade, entropia, duzia_mais_ausente,
             mono_up, mono_down,
-        ]  # 32 features (alinhado com extrair_features_estado exceto 2 de estado dinâmico → substituídos por 0)
+        ]
 
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -1115,9 +1109,20 @@ class DuziaAI:
         self._treinar_ml_online()
 
     def registrar_previsao(self, duzia, confianca):
+        """🆕 Atualizado para contar repetições"""
         self.ultimas_previsoes.append(duzia)
         self.ultima_previsao_duzia = duzia
         self.ultima_confianca = confianca
+        
+        # 🆕 Contar repetições consecutivas
+        if len(self.ultimas_previsoes) >= 2:
+            if self.ultimas_previsoes[-1] == self.ultimas_previsoes[-2]:
+                self.contagem_repeticoes_mesma_duzia += 1
+            else:
+                self.contagem_repeticoes_mesma_duzia = 1
+        else:
+            self.contagem_repeticoes_mesma_duzia = 1
+            
         if len(self.ultimas_previsoes) > 10:
             self.ultimas_previsoes = self.ultimas_previsoes[-10:]
 
@@ -1206,10 +1211,7 @@ class DuziaAI:
             return {1: 0.0, 2: 0.0, 3: 0.0}
 
     def _prever_fallback_frequencia(self):
-        """
-        🆕 Fallback por frequência relativa quando ML ainda não está pronto.
-        Usa janela curta + peso para dúzias mais ausentes (pressão de retorno).
-        """
+        """Fallback por frequência relativa + pressão de gap"""
         if len(self.historico_completo) < 5:
             return {1: 33.3, 2: 33.3, 3: 33.3}
 
@@ -1221,7 +1223,6 @@ class DuziaAI:
                 2: duzias_rec.count(2) / total,
                 3: duzias_rec.count(3) / total}
 
-        # Peso gap: dúzia mais ausente recebe bônus
         gap_d1 = _calcular_gap_duzia(self.numeros_completos, 1)
         gap_d2 = _calcular_gap_duzia(self.numeros_completos, 2)
         gap_d3 = _calcular_gap_duzia(self.numeros_completos, 3)
@@ -1235,26 +1236,17 @@ class DuziaAI:
         return scores
 
     def calcular_score(self):
-        """Calcula scores: ML se disponível, fallback por frequência caso contrário"""
+        """Calcula scores: ML se disponível, fallback caso contrário"""
         ml_scores = self._prever_ml()
 
         if all(v == 0.0 for v in ml_scores.values()):
-            # 🆕 Fallback aprimorado em vez de frequência bruta
             ml_scores = self._prever_fallback_frequencia()
             return ml_scores, 'fallback'
 
         return ml_scores, 'ml'
 
-    # =========================================================
-    # 🆕 DETECÇÃO DE ZERO APRIMORADA — 5 novos padrões
-    # =========================================================
     def detectar_alerta_zero(self):
-        """
-        Detecta padrões que sugerem saída do zero.
-        Padrões originais: (1) zero recente, (2) triplet, (3) alta alternância
-        🆕 Novos padrões: (4) gap longo, (5) A-B-A, (6) terminal 0 quente,
-                          (7) bordas repetidas (1 e 36), (8) pressão cruzada D1-D3
-        """
+        """Detecta padrões que sugerem saída do zero (8 padrões)"""
         if len(self.historico) < 2:
             self.alerta_zero_ativo = False
             return False
@@ -1262,13 +1254,13 @@ class DuziaAI:
         u = list(self.historico)[-10:]
         nums = self.numeros_completos[-8:] if len(self.numeros_completos) >= 8 else self.numeros_completos
 
-        # Padrão 1 — zero saiu agora
+        # Padrão 1 — zero recente
         if len(nums) >= 2 and nums[-1] == 0:
             self.alerta_zero_ativo = True
             self.alertas_zero_disparados += 1
             return True
 
-        # Padrão 2 — triplet (mesma dúzia 3x seguidas)
+        # Padrão 2 — triplet
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
@@ -1276,7 +1268,7 @@ class DuziaAI:
                 self.alertas_zero_disparados += 1
                 return True
 
-        # Padrão 3 — alta alternância (≥4 trocas em 5)
+        # Padrão 3 — alta alternância
         if len(u) >= 5:
             ultimas_5 = u[-5:]
             trocas = sum(1 for i in range(1, len(ultimas_5))
@@ -1286,7 +1278,7 @@ class DuziaAI:
                 self.alertas_zero_disparados += 1
                 return True
 
-        # 🆕 Padrão 4 — gap longo sem zero (≥ termômetro_max − 3)
+        # Padrão 4 — gap longo
         config = self._get_config()
         limiar_gap = max(8, config.get('zero_termometro_max', 15) - 3)
         if self.rodadas_desde_zero >= limiar_gap:
@@ -1294,7 +1286,7 @@ class DuziaAI:
             self.alertas_zero_disparados += 1
             return True
 
-        # 🆕 Padrão 5 — padrão A-B-A nas últimas 3 dúzias (retorno ao ponto de partida)
+        # Padrão 5 — A-B-A
         duzias_rec = [d for d in list(self.historico)[-5:] if d != 0]
         if len(duzias_rec) >= 3:
             if duzias_rec[-1] == duzias_rec[-3] and duzias_rec[-1] != duzias_rec[-2]:
@@ -1302,21 +1294,21 @@ class DuziaAI:
                 self.alertas_zero_disparados += 1
                 return True
 
-        # 🆕 Padrão 6 — terminal 0 quente (≥2 números terminados em 0 nas últimas 8 rodadas)
+        # Padrão 6 — terminal 0 quente
         terminais_recentes = [n % 10 for n in nums if n != 0]
         if terminais_recentes.count(0) >= 2:
             self.alerta_zero_ativo = True
             self.alertas_zero_disparados += 1
             return True
 
-        # 🆕 Padrão 7 — números de borda (1 e 36) repetidos (vizinhos do zero na roda)
-        bordas = [n for n in nums if n in (1, 3, 12, 13, 24, 25, 36)]  # vizinhos próximos do 0
+        # Padrão 7 — bordas
+        bordas = [n for n in nums if n in (1, 3, 12, 13, 24, 25, 36)]
         if len(bordas) >= 3:
             self.alerta_zero_ativo = True
             self.alertas_zero_disparados += 1
             return True
 
-        # 🆕 Padrão 8 — pressão cruzada: D1 e D3 alternando sem D2 (sinal de instabilidade)
+        # Padrão 8 — pressão cruzada
         if len(duzias_rec) >= 4:
             apenas_extremos = [d for d in duzias_rec[-4:] if d in (1, 3)]
             if len(apenas_extremos) == 4:
@@ -1330,8 +1322,11 @@ class DuziaAI:
     def _get_outras_duzias(self, duzia):
         return [d for d in [1, 2, 3] if d != duzia]
 
+    # =========================================================
+    # 🆕 MÉTODO PREVER CORRIGIDO COM LIMITADOR E FILTROS
+    # =========================================================
     def prever(self):
-        """Método principal de previsão com fallback e taxa de entrada aumentada"""
+        """Método principal de previsão com limitador de repetições e filtros"""
         if self.pausa_ate and hora_brasilia() < self.pausa_ate:
             return {"entrar": False, "motivo": "⏸️ Pausa"}
 
@@ -1352,21 +1347,21 @@ class DuziaAI:
         ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         d1, s1 = ranking[0]
         d2, s2 = ranking[1] if len(ranking) > 1 else (self._get_outras_duzias(d1)[0], 0)
+        d3, s3 = ranking[2] if len(ranking) > 2 else (self._get_outras_duzias(d1)[-1], 0)
 
         self.detectar_alerta_zero()
 
-        # Confiança proporcional à margem de diferença
         confianca = min(3.5, max(0.5, (s1 - s2) / 20))
 
         if self.alerta_zero_ativo and confianca >= 3.0:
             confianca = min(2.8, confianca)
 
-        # 🆕 Lógica de entrada separada por modo
         pode_entrar = False
         motivo = ""
+        forcar_rotacao = False
 
         if modo == 'ml':
-            score_minimo = config.get('ml_score_minimo_entrada', 10)
+            score_minimo = config.get('ml_score_minimo_entrada', 25)
             pode_entrar = s1 > score_minimo
             status_ml = "🟢"
             if pode_entrar:
@@ -1375,8 +1370,7 @@ class DuziaAI:
             else:
                 motivo = f"Score ML baixo ({s1:.1f} < {score_minimo})"
         else:
-            # 🆕 Fallback por frequência: entra se score > limiar e dados suficientes
-            score_min_fb = config.get('ml_score_minimo_fallback', 38)
+            score_min_fb = config.get('ml_score_minimo_fallback', 42)
             min_rodadas_fb = config.get('ml_min_rodadas_fallback', 8)
             if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
                 pode_entrar = True
@@ -1384,16 +1378,44 @@ class DuziaAI:
             else:
                 motivo = f"Aguardando ML ({len(self.historico_completo)}/40 rodadas)"
 
-        # Termômetro zero independe do modo
+        # 🆕 LIMITADOR DE REPETIÇÕES DA MESMA DÚZIA
+        max_rep = config.get('ml_max_repeticoes_mesma_duzia', 4)
+        if pode_entrar and len(self.ultimas_previsoes) >= max_rep:
+            ultimas_n = self.ultimas_previsoes[-max_rep:]
+            if all(p == d1 for p in ultimas_n):
+                # Forçar segunda opção
+                score_min_pos_rot = config.get('ml_score_minimo_pos_rotacao', 20)
+                if s2 > score_min_pos_rot:
+                    d1, s1 = d2, s2
+                    d2, s2 = d3, s3
+                    forcar_rotacao = True
+                    motivo = f"🔄 Rotação forçada (>{max_rep}x D{d1}) | Score: {s1:.1f}"
+                else:
+                    pode_entrar = False
+                    motivo = f"🚫 Bloqueio por repetição (>{max_rep}x mesma dúzia) e 2ª opção fraca"
+
+        # 🆕 FILTRO DE CONFIANÇA MÍNIMA
+        confianca_min = config.get('confianca_minima_entrada', 1.3)
+        if pode_entrar and confianca < confianca_min and not forcar_rotacao:
+            pode_entrar = False
+            motivo = f"Confiança muito baixa ({confianca:.2f} < {confianca_min})"
+
+        # 🆕 FILTRO DE CONFIANÇA MÍNIMA PARA ANTI-ERRO (mais rigoroso)
+        if pode_entrar and self.modo_anti_erro and confianca < (confianca_min + 0.5):
+            pode_entrar = False
+            motivo = f"🚫 Anti-Erro: Confiança insuficiente ({confianca:.2f})"
+
+        # Termômetro zero
         incluir_zero = self.alerta_zero_ativo
         if self.rodadas_desde_zero >= config['zero_termometro_max']:
             incluir_zero = True
             if pode_entrar and "Termômetro" not in motivo:
                 motivo += " | 🌡️ Zero"
 
+        # Bloqueio final por confiança extremamente baixa
         if confianca < 0.8:
             pode_entrar = False
-            motivo = f"Confiança baixa ({confianca:.2f})"
+            motivo = f"Confiança crítica ({confianca:.2f})"
 
         previsao = {
             "entrar": pode_entrar,
@@ -1406,7 +1428,8 @@ class DuziaAI:
             "incluir_zero": incluir_zero,
             "modo_anti_erro": self.modo_anti_erro,
             "numeros_completos": list(self.numeros_completos),
-            "modo_previsao": modo,  # 🆕 Expõe o modo usado
+            "modo_previsao": modo,
+            "rotacao_forcada": forcar_rotacao,  # 🆕 Informa se houve rotação
         }
 
         return previsao
@@ -1703,8 +1726,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V11.3.0 - Ensemble ML", layout="wide")
-st.title("🎰 DuziaAI V11.3.0 — Ensemble ML + Zero Aprimorado 💾 (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V11.3.1 - Ensemble ML Corrigido", layout="wide")
+st.title("🎰 DuziaAI V11.3.1 — Ensemble ML + Limitador + Filtros 💾 (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1822,7 +1845,7 @@ if "historico" not in st.session_state:
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V11.3.0 — Ensemble ML")
+    st.markdown("## ⚙️ V11.3.1 — Ensemble ML Corrigido")
     sis = st.session_state.sistema
 
     st.markdown("### 📊 Status da Sessão")
@@ -1940,6 +1963,14 @@ with st.sidebar:
         else:
             st.info(f"🧠 Aguardando dados... ({rodadas_atual}/8 para fallback)")
 
+    # 🆕 Status das correções
+    st.markdown("---")
+    st.caption("🛡️ **Correções Ativas:**")
+    st.caption("• Limitador: máx 4x mesma dúzia")
+    st.caption("• Score mínimo entrada: 25")
+    st.caption("• Confiança mínima: 1.3")
+    st.caption("• Anti-Erro: confiança +0.5")
+
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
     st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
@@ -2047,19 +2078,18 @@ with cg:
     if len(sis.historico_numeros) >= 3:
         score, modo_atual = sis.duzia_ai.calcular_score()
 
-        cor_d1 = '#FF6B6B' if score[1] == max(score.values()) else '#4ECDC4'
-        cor_d2 = '#FF6B6B' if score[2] == max(score.values()) else '#4ECDC4'
-        cor_d3 = '#FF6B6B' if score[3] == max(score.values()) else '#4ECDC4'
-
         fig = plt.Figure(data=[plt.Bar(
             x=['D1 (1-12)', 'D2 (13-24)', 'D3 (25-36)'],
             y=[score[1], score[2], score[3]],
-            marker_color=[cor_d1, cor_d2, cor_d3],
+            marker_color=[
+                '#FF6B6B' if score[1]==max(score.values()) else '#4ECDC4',
+                '#FF6B6B' if score[2]==max(score.values()) else '#4ECDC4',
+                '#FF6B6B' if score[3]==max(score.values()) else '#4ECDC4'
+            ],
             text=[f'{score[1]:.1f}', f'{score[2]:.1f}', f'{score[3]:.1f}'],
             textposition='auto'
         )])
 
-        # 🆕 Título reflete o modo atual
         if sis.duzia_ai.modelo_ml is not None:
             if sis.duzia_ai.ultimo_treino_ml <= 1:
                 titulo = "🎯 Ensemble ML (Carregado 💾)"
@@ -2070,6 +2100,10 @@ with cg:
 
         if sis.duzia_ai.alerta_zero_ativo:
             titulo += " | 🟢 ALERTA ZERO!"
+
+        # 🆕 Mostrar status do limitador
+        if sis.duzia_ai.contagem_repeticoes_mesma_duzia >= 3:
+            titulo += f" | ⚠️ Repetições: {sis.duzia_ai.contagem_repeticoes_mesma_duzia}x"
 
         fig.update_layout(
             title=titulo,
@@ -2124,6 +2158,8 @@ with ce:
         st.warning("⚠️ ALERTA ZERO! 🟢")
     if sis.duzia_ai.em_pausa_pos_raio:
         st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
+    if sis.duzia_ai.contagem_repeticoes_mesma_duzia >= 4:
+        st.warning(f"⚠️ {sis.duzia_ai.contagem_repeticoes_mesma_duzia}x mesma dúzia — Rotação em breve")
 
     if not sis.sessao_ativa:
         if sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
@@ -2230,7 +2266,7 @@ with col_t2:
     else:
         st.warning("📢 Alternativo: NÃO CONFIGURADO")
 
-st.caption(f"🤖 DuziaAI V11.3.0 | Ensemble ML (RF+GBT) | 38 Features | Zero 8 Padrões | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V11.3.1 | Ensemble ML + Limitador 4x + Filtro Confiança | {api_name} | {formatar_hora_brasilia()}")
 modelo_path = get_modelo_ml_path(api_name)
 if os.path.exists(modelo_path):
     st.caption(f"💾 Modelo salvo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)")
