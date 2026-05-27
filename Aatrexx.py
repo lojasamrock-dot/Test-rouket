@@ -78,7 +78,7 @@ SETUP_BASE = {
     'ml_janela_treino': 180,
     'ml_atualizar_a_cada': 10,
     'score_ml_peso': 45,
-    'ml_score_minimo_entrada': 25,  # 🆕 Score mínimo para entrar
+    'ml_score_minimo_entrada': 15,  # 🆕 Score mínimo para entrar
 }
 
 # 🆕 SETUP XXXTREME LIGHTNING - CORRIGIDO
@@ -102,7 +102,7 @@ SETUP_XXXTREME = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 180, 'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 25,
+    'ml_score_minimo_entrada': 15,
 }
 
 SETUP_IMMERSIVE = {
@@ -125,7 +125,7 @@ SETUP_IMMERSIVE = {
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
     'ml_janela_treino': 180, 'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 25,
+    'ml_score_minimo_entrada': 15,
 }
 
 SETUP_MEGA = {
@@ -147,7 +147,7 @@ SETUP_MEGA = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 35, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 180, 'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 25,
+    'ml_score_minimo_entrada': 15,
 }
 
 ROLETA_CONFIGS = {
