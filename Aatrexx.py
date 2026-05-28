@@ -57,7 +57,7 @@ SETUP_BASE = {
     'pagamento_numero': 20,
     'pagamento_zero': 20,
     'pagamento_duzia': 3,
-    'confianca_minima_entrada': 1.5,
+    'confianca_minima_entrada': 1.8,
     'embalo_peso': 9,
     'embalo_reforco': 5,
     'bloquear_alerta_zero_conf_alta': True,
@@ -79,20 +79,24 @@ SETUP_BASE = {
     'ml_janela_treino': 120,
     'ml_atualizar_a_cada': 10,
     'score_ml_peso': 45,
-    'ml_score_minimo_entrada': 30,
+    'ml_score_minimo_entrada': 25,
     'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 8,
     'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 20,
-    # 🆕 Configurações de padrões de 3 dúzias
-    'padrao3_min_ocorrencias': 3,
-    'padrao3_peso_features': 35,
+    # 🆕 Configurações de padrões híbridos
+    'padrao_min_ocorrencias': 3,
+    'padrao_peso_tam2': 20,
+    'padrao_peso_tam3': 50,
+    'padrao_peso_tam4': 30,
+    'padrao_conf_minima_tam2': 2,
+    'padrao_conf_minima_tam4': 6,
 }
 
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'confianca_minima_entrada': 1.5,
+    'confianca_minima_entrada': 1.8,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.0, 'fadiga_duzia': 4,
@@ -110,18 +114,19 @@ SETUP_XXXTREME = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 30,
+    'ml_score_minimo_entrada': 25,
     'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 10,
     'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 20,
-    'padrao3_min_ocorrencias': 3, 'padrao3_peso_features': 35,
+    'padrao_min_ocorrencias': 3, 'padrao_peso_tam2': 20, 'padrao_peso_tam3': 50, 'padrao_peso_tam4': 30,
+    'padrao_conf_minima_tam2': 2, 'padrao_conf_minima_tam4': 6,
 }
 
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.5,
+    'confianca_minima_entrada': 1.8,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.2, 'fadiga_duzia': 3,
@@ -139,18 +144,19 @@ SETUP_IMMERSIVE = {
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 30,
+    'ml_score_minimo_entrada': 25,
     'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 10,
     'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 18,
-    'padrao3_min_ocorrencias': 3, 'padrao3_peso_features': 30,
+    'padrao_min_ocorrencias': 3, 'padrao_peso_tam2': 25, 'padrao_peso_tam3': 45, 'padrao_peso_tam4': 30,
+    'padrao_conf_minima_tam2': 2, 'padrao_conf_minima_tam4': 5,
 }
 
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.5,
+    'confianca_minima_entrada': 1.8,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.5, 'fadiga_duzia': 3,
@@ -167,12 +173,13 @@ SETUP_MEGA = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 35, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 30,
+    'ml_score_minimo_entrada': 25,
     'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 10,
     'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 18,
-    'padrao3_min_ocorrencias': 3, 'padrao3_peso_features': 32,
+    'padrao_min_ocorrencias': 3, 'padrao_peso_tam2': 20, 'padrao_peso_tam3': 50, 'padrao_peso_tam4': 30,
+    'padrao_conf_minima_tam2': 2, 'padrao_conf_minima_tam4': 6,
 }
 
 ROLETA_CONFIGS = {
@@ -268,7 +275,7 @@ def get_session_paths(api_name):
         'performance_horario': f"performance_horario_{safe_name}.json",
         'sessao_controle': f"sessao_controle_{safe_name}.json",
         'historico_sessoes': f"historico_sessoes_{safe_name}.json",
-        'padroes3': f"padroes3_{safe_name}.json",
+        'padroes_hibridos': f"padroes_hibridos_{safe_name}.json",
     }
 
 class GerenciadorSessoes:
@@ -375,7 +382,7 @@ class GerenciadorSessoes:
         writer = csv.writer(output)
         writer.writerow(['Rodada', 'Hora', 'Número', 'Raio', 'Dúzia Real', 'Dúzia Prevista',
                          'Cobertura', 'Confiança', 'Gatilho', 'Zero', 'Anti-Erro',
-                         'Acerto Dúzia', 'Acerto Número', 'Acerto Zero', 'Status', 'Padrão 3'])
+                         'Acerto Dúzia', 'Acerto Número', 'Acerto Zero', 'Status', 'Padrão'])
         for e in dados_sessao.get('entradas', []):
             real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
             prev = f"D{e.get('duzia_prevista','?')}"
@@ -387,7 +394,7 @@ class GerenciadorSessoes:
             zer = 'Sim' if e.get('acerto_zero') else 'Não'
             numero = e.get('numero', 0)
             raio = f"{e.get('multiplicador',0)}x" if e.get('eh_raio') else '-'
-            padrao = str(e.get('padrao3_info', {}).get('gatilho', '-')) if e.get('padrao3_info') else '-'
+            padrao = str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-'
             writer.writerow([
                 e.get('rodada'), e.get('hora'), numero, raio, real, prev, cob,
                 f"{e.get('confianca',0):.1f}", e.get('gatilho','-') if e.get('gatilho') else '-',
@@ -422,8 +429,8 @@ def salvar_sessao():
         with open(paths['performance_mesa'], 'w') as f: json.dump(dict(sis.performance_por_mesa), f)
         with open(paths['performance_horario'], 'w') as f: json.dump(dict(sis.performance_por_horario), f)
 
-        # 🆕 Salvar padrões de 3 dúzias
-        sis.duzia_ai._salvar_padroes3()
+        # Salvar padrões híbridos
+        sis.duzia_ai._salvar_padroes_hibridos()
 
         sessao_data = {
             'rodadas_na_sessao': sis.rodadas_na_sessao,
@@ -746,7 +753,7 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
-# 🧠 DUZIA AI V12.0 — PADRÕES DE 3 DÚZIAS COMO FEATURES DA ML
+# 🧠 DUZIA AI V12.0 — SISTEMA HÍBRIDO DE PADRÕES (2+3+4 DÚZIAS)
 # =============================
 
 class DuziaAI:
@@ -798,21 +805,28 @@ class DuziaAI:
         self.scaler_treinado = False
         self.contagem_repeticoes_mesma_duzia = 0
 
-        # 🆕 Tabela de padrões de 3 dúzias
-        # Formato: {(d1, d2): Counter({d3: contagem})}
-        # Ex: {(1, 2): {1: 5, 2: 3, 3: 8}} significa que 
-        #     quando saiu D1 depois D2, a 3ª foi D1 5x, D2 3x, D3 8x
-        self.padroes3 = defaultdict(Counter)
+        # 🆕 Tabelas de padrões híbridos (2, 3 e 4 dúzias)
+        # Padrão 2: {d1: Counter({d2: count})} — "D1 → ?"
+        self.padroes_tam2 = defaultdict(Counter)
+        # Padrão 3: {(d1,d2): Counter({d3: count})} — "D1→D2 → ?"
+        self.padroes_tam3 = defaultdict(Counter)
+        # Padrão 4: {(d1,d2,d3): Counter({d4: count})} — "D1→D2→D3 → ?"
+        self.padroes_tam4 = defaultdict(Counter)
+        
         config = self._get_config()
-        self.padrao3_min_ocorrencias = config.get('padrao3_min_ocorrencias', 3)
+        self.padrao_min_ocorrencias = config.get('padrao_min_ocorrencias', 3)
+        self.peso_tam2 = config.get('padrao_peso_tam2', 20)
+        self.peso_tam3 = config.get('padrao_peso_tam3', 50)
+        self.peso_tam4 = config.get('padrao_peso_tam4', 30)
+        self.conf_min_tam2 = config.get('padrao_conf_minima_tam2', 2)
+        self.conf_min_tam4 = config.get('padrao_conf_minima_tam4', 6)
         
         # Para UI
-        self.padrao3_ativo = None  # (d1, d2) atual
-        self.padrao3_stats = None  # estatísticas do par atual
-        self.padrao3_ultimo_resultado = None  # para tracking de acerto
+        self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
+        self.padrao_stats_ui = {'tam2': None, 'tam3': None, 'tam4': None}
 
         self._carregar_modelo_salvo()
-        self._carregar_padroes3()
+        self._carregar_padroes_hibridos()
 
     def _carregar_modelo_salvo(self):
         if not ML_DISPONIVEL:
@@ -823,129 +837,206 @@ class DuziaAI:
             logging.info(f"🧠 Modelo ML carregado do disco para {self.api_name}")
             self.ultimo_treino_ml = 1
 
-    def _salvar_padroes3(self):
-        """Salva tabela de padrões de 3 dúzias."""
+    def _salvar_padroes_hibridos(self):
+        """Salva todas as tabelas de padrões híbridos."""
         paths = get_session_paths(self.api_name)
-        caminho = paths.get('padroes3', '')
+        caminho = paths.get('padroes_hibridos', '')
         if not caminho:
             return
         try:
-            dados = {str(k): dict(v) for k, v in self.padroes3.items()}
+            dados = {
+                'tam2': {str(k): dict(v) for k, v in self.padroes_tam2.items()},
+                'tam3': {str(k): dict(v) for k, v in self.padroes_tam3.items()},
+                'tam4': {str(k): dict(v) for k, v in self.padroes_tam4.items()},
+            }
             with open(caminho, 'w') as f:
                 json.dump(dados, f)
-            logging.info(f"🧩 Padrões de 3 dúzias salvos: {len(self.padroes3)} pares")
+            logging.info(f"🧩 Padrões híbridos salvos: tam2={len(self.padroes_tam2)}, tam3={len(self.padroes_tam3)}, tam4={len(self.padroes_tam4)}")
         except Exception as e:
-            logging.error(f"❌ Erro ao salvar padrões 3: {e}")
+            logging.error(f"❌ Erro ao salvar padrões híbridos: {e}")
 
-    def _carregar_padroes3(self):
-        """Carrega tabela de padrões de 3 dúzias."""
+    def _carregar_padroes_hibridos(self):
+        """Carrega todas as tabelas de padrões híbridos."""
         paths = get_session_paths(self.api_name)
-        caminho = paths.get('padroes3', '')
+        caminho = paths.get('padroes_hibridos', '')
         if caminho and os.path.exists(caminho):
             try:
                 with open(caminho, 'r') as f:
                     dados = json.load(f)
                 import ast
-                for k, v in dados.items():
+                for k, v in dados.get('tam2', {}).items():
+                    try:
+                        chave = int(k)
+                        self.padroes_tam2[chave] = Counter({int(dk): dv for dk, dv in v.items()})
+                    except: pass
+                for k, v in dados.get('tam3', {}).items():
                     try:
                         chave = tuple(ast.literal_eval(k))
-                        self.padroes3[chave] = Counter({int(dk): dv for dk, dv in v.items()})
+                        self.padroes_tam3[chave] = Counter({int(dk): dv for dk, dv in v.items()})
                     except: pass
-                logging.info(f"🧩 Padrões de 3 dúzias carregados: {len(self.padroes3)} pares")
+                for k, v in dados.get('tam4', {}).items():
+                    try:
+                        chave = tuple(ast.literal_eval(k))
+                        self.padroes_tam4[chave] = Counter({int(dk): dv for dk, dv in v.items()})
+                    except: pass
+                logging.info(f"🧩 Padrões híbridos carregados: tam2={len(self.padroes_tam2)}, tam3={len(self.padroes_tam3)}, tam4={len(self.padroes_tam4)}")
             except Exception as e:
-                logging.error(f"❌ Erro ao carregar padrões 3: {e}")
+                logging.error(f"❌ Erro ao carregar padrões híbridos: {e}")
 
-    def _atualizar_padroes3(self, historico_duzias):
-        """
-        Atualiza tabela de padrões de 3 dúzias.
-        Para cada sequência de 3 dúzias consecutivas no histórico,
-        registra: (d1, d2) → d3
-        """
-        duzias = [d for d in historico_duzias if d != 0]
-        if len(duzias) < 3:
-            return
-        
-        # Percorre todas as janelas de 3 no histórico
-        for i in range(len(duzias) - 2):
-            d1, d2, d3 = duzias[i], duzias[i+1], duzias[i+2]
-            self.padroes3[(d1, d2)][d3] += 1
-
-    def _extrair_features_padroes3(self, historico_duzias):
-        """
-        🆕 Extrai features baseadas nos padrões de 3 dúzias.
-        Dado o par (última_dúzia, penúltima_dúzia), busca qual a 3ª mais provável.
-        Retorna features para cada dúzia possível como fechamento.
-        """
+    def _atualizar_padroes_hibridos(self, historico_duzias):
+        """Atualiza todas as tabelas de padrões."""
         duzias = [d for d in historico_duzias if d != 0]
         
-        # Features padrão (valores default)
-        features = {
-            'padrao3_d1_score': 0.0,
-            'padrao3_d2_score': 0.0, 
-            'padrao3_d3_score': 0.0,
-            'padrao3_confianca': 0.0,
-            'padrao3_ocorrencias': 0,
-            'padrao3_dominancia': 0.0,
-            'padrao3_melhor_duzia': 0,  # 1, 2 ou 3
-        }
+        # Padrão 2: uma dúzia → próxima
+        if len(duzias) >= 2:
+            for i in range(len(duzias) - 1):
+                self.padroes_tam2[duzias[i]][duzias[i+1]] += 1
         
-        if len(duzias) < 2:
-            self.padrao3_ativo = None
-            self.padrao3_stats = None
+        # Padrão 3: duas dúzias → terceira
+        if len(duzias) >= 3:
+            for i in range(len(duzias) - 2):
+                par = (duzias[i], duzias[i+1])
+                self.padroes_tam3[par][duzias[i+2]] += 1
+        
+        # Padrão 4: três dúzias → quarta
+        if len(duzias) >= 4:
+            for i in range(len(duzias) - 3):
+                trio = (duzias[i], duzias[i+1], duzias[i+2])
+                self.padroes_tam4[trio][duzias[i+3]] += 1
+
+    def _extrair_features_padroes_hibridos(self, historico_duzias):
+        """
+        🆕 Sistema HÍBRIDO: extrai features de padrões de 2, 3 e 4 dúzias.
+        Peso adaptativo: 20% tam2 + 50% tam3 + 30% tam4
+        """
+        duzias = [d for d in historico_duzias if d != 0]
+        
+        # Features (22 features de padrões)
+        features = {}
+        
+        # Inicializa com zeros
+        for prefixo in ['p2', 'p3', 'p4']:
+            for k in ['d1', 'd2', 'd3', 'conf', 'total', 'dom']:
+                features[f'{prefixo}_{k}'] = 0.0
+        
+        # Scores combinados
+        features.update({
+            'combo_d1': 0.0, 'combo_d2': 0.0, 'combo_d3': 0.0, 'combo_conf': 0.0,
+        })
+        
+        if len(duzias) < 1:
             return features
         
-        # Pega as últimas 2 dúzias como gatilho
-        d1 = duzias[-2]  # penúltima
-        d2 = duzias[-1]  # última
+        combo_scores = {1: 0.0, 2: 0.0, 3: 0.0}
+        combo_conf_total = 0.0
+        soma_pesos = 0.0
         
-        par = (d1, d2)
-        self.padrao3_ativo = par
+        # --- Padrão 2: ÚLTIMA dúzia → próxima (peso 20%) ---
+        if len(duzias) >= 1:
+            d1 = duzias[-1]
+            if d1 in self.padroes_tam2:
+                dist = self.padroes_tam2[d1]
+                total = sum(dist.values())
+                if total >= self.conf_min_tam2:
+                    scores = {k: dist.get(k, 0)/total for k in [1,2,3]}
+                    max_s = max(scores.values())
+                    seg_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+                    
+                    features['p2_d1'] = scores.get(1, 0.0)
+                    features['p2_d2'] = scores.get(2, 0.0)
+                    features['p2_d3'] = scores.get(3, 0.0)
+                    features['p2_conf'] = round((max_s - seg_s) * min(1.0, total/20), 4)
+                    features['p2_total'] = float(total)
+                    features['p2_dom'] = round(max_s - seg_s, 4)
+                    
+                    peso = self.peso_tam2 / 100.0
+                    for k in [1,2,3]:
+                        combo_scores[k] += scores[k] * features['p2_conf'] * peso
+                    combo_conf_total += features['p2_conf'] * peso
+                    soma_pesos += peso
+                    
+                    self.padrao_stats_ui['tam2'] = {
+                        'gatilho': f"D{d1}", 'total': total,
+                        'scores': scores, 'conf': features['p2_conf']
+                    }
+                    self.padrao_ativo_ui['tam2'] = d1
+                else:
+                    self.padrao_stats_ui['tam2'] = None
+                    self.padrao_ativo_ui['tam2'] = None
         
-        if par not in self.padroes3:
-            self.padrao3_stats = {'par': par, 'total': 0, 'distribuicao': {}}
-            return features
+        # --- Padrão 3: últimas 2 dúzias → próxima (peso 50%) ---
+        if len(duzias) >= 2:
+            d1, d2 = duzias[-2], duzias[-1]
+            par = (d1, d2)
+            if par in self.padroes_tam3:
+                dist = self.padroes_tam3[par]
+                total = sum(dist.values())
+                if total >= self.padrao_min_ocorrencias:
+                    scores = {k: dist.get(k, 0)/total for k in [1,2,3]}
+                    max_s = max(scores.values())
+                    seg_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+                    
+                    features['p3_d1'] = scores.get(1, 0.0)
+                    features['p3_d2'] = scores.get(2, 0.0)
+                    features['p3_d3'] = scores.get(3, 0.0)
+                    features['p3_conf'] = round((max_s - seg_s) * (1 + np.log1p(total)/5), 4)
+                    features['p3_total'] = float(total)
+                    features['p3_dom'] = round(max_s - seg_s, 4)
+                    
+                    peso = self.peso_tam3 / 100.0
+                    for k in [1,2,3]:
+                        combo_scores[k] += scores[k] * features['p3_conf'] * peso
+                    combo_conf_total += features['p3_conf'] * peso
+                    soma_pesos += peso
+                    
+                    self.padrao_stats_ui['tam3'] = {
+                        'gatilho': f"D{d1}→D{d2}", 'total': total,
+                        'scores': scores, 'conf': features['p3_conf']
+                    }
+                    self.padrao_ativo_ui['tam3'] = par
+                else:
+                    self.padrao_stats_ui['tam3'] = None
+                    self.padrao_ativo_ui['tam3'] = None
         
-        distrib = self.padroes3[par]
-        total = sum(distrib.values())
+        # --- Padrão 4: últimas 3 dúzias → próxima (peso 30%) ---
+        if len(duzias) >= 3:
+            d1, d2, d3 = duzias[-3], duzias[-2], duzias[-1]
+            trio = (d1, d2, d3)
+            if trio in self.padroes_tam4:
+                dist = self.padroes_tam4[trio]
+                total = sum(dist.values())
+                if total >= self.conf_min_tam4:
+                    scores = {k: dist.get(k, 0)/total for k in [1,2,3]}
+                    max_s = max(scores.values())
+                    seg_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+                    
+                    features['p4_d1'] = scores.get(1, 0.0)
+                    features['p4_d2'] = scores.get(2, 0.0)
+                    features['p4_d3'] = scores.get(3, 0.0)
+                    features['p4_conf'] = round((max_s - seg_s) * (1 + np.log1p(total)/3), 4)
+                    features['p4_total'] = float(total)
+                    features['p4_dom'] = round(max_s - seg_s, 4)
+                    
+                    peso = self.peso_tam4 / 100.0
+                    for k in [1,2,3]:
+                        combo_scores[k] += scores[k] * features['p4_conf'] * peso
+                    combo_conf_total += features['p4_conf'] * peso
+                    soma_pesos += peso
+                    
+                    self.padrao_stats_ui['tam4'] = {
+                        'gatilho': f"D{d1}→D{d2}→D{d3}", 'total': total,
+                        'scores': scores, 'conf': features['p4_conf']
+                    }
+                    self.padrao_ativo_ui['tam4'] = trio
+                else:
+                    self.padrao_stats_ui['tam4'] = None
+                    self.padrao_ativo_ui['tam4'] = None
         
-        if total < self.padrao3_min_ocorrencias:
-            self.padrao3_stats = {'par': par, 'total': total, 'distribuicao': dict(distrib)}
-            return features
-        
-        # Calcula scores normalizados (0-1) para cada dúzia
-        scores = {
-            1: distrib.get(1, 0) / total,
-            2: distrib.get(2, 0) / total,
-            3: distrib.get(3, 0) / total,
-        }
-        
-        max_s = max(scores.values())
-        segundo_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
-        dominancia = max_s - segundo_s
-        
-        # Confiança baseada na dominância e total de ocorrências
-        confianca = dominancia * (1 + np.log1p(total) / 4)
-        confianca = min(1.0, confianca)
-        
-        melhor_duzia = max(scores, key=scores.get)
-        
-        features['padrao3_d1_score'] = scores.get(1, 0.0)
-        features['padrao3_d2_score'] = scores.get(2, 0.0)
-        features['padrao3_d3_score'] = scores.get(3, 0.0)
-        features['padrao3_confianca'] = round(confianca, 4)
-        features['padrao3_ocorrencias'] = total
-        features['padrao3_dominancia'] = round(dominancia, 4)
-        features['padrao3_melhor_duzia'] = melhor_duzia
-        
-        # Stats para UI
-        self.padrao3_stats = {
-            'par': par,
-            'total': total,
-            'distribuicao': {k: v for k, v in distrib.items()},
-            'scores': scores,
-            'confianca': confianca,
-            'melhor_duzia': melhor_duzia,
-        }
+        # --- Scores combinados ---
+        if soma_pesos > 0:
+            for k in [1,2,3]:
+                features[f'combo_d{k}'] = round(combo_scores[k] / soma_pesos, 4)
+            features['combo_conf'] = round(combo_conf_total / soma_pesos, 4)
         
         return features
 
@@ -954,13 +1045,13 @@ class DuziaAI:
         return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
 
     # =========================================================
-    # FEATURES EXPANDIDAS: 52 features (45 + 7 de padrões de 3)
+    # FEATURES EXPANDIDAS: 67 features (45 + 22 de padrões híbridos)
     # =========================================================
     def _extrair_features_core(self, historico_duzias, historico_numeros,
                                 erros_consec, rodadas_zero, repeticoes_duzia, janela=20):
         """
         Extrai features para treino e inferência.
-        Inclui features de padrões de 3 dúzias.
+        Inclui features de padrões híbridos (2+3+4 dúzias).
         """
         numeros_janela = historico_numeros[-janela:] if len(historico_numeros) >= janela else historico_numeros
         duzias_janela = [d for d in historico_duzias[-janela:] if d != 0]
@@ -1114,20 +1205,25 @@ class DuziaAI:
             float(diff_ultimas2),
         ]
 
-        # 🆕 Features de padrões de 3 dúzias (7 features)
-        padroes3_features = self._extrair_features_padroes3(historico_duzias)
-        features_padroes3 = [
-            padroes3_features['padrao3_d1_score'],
-            padroes3_features['padrao3_d2_score'],
-            padroes3_features['padrao3_d3_score'],
-            padroes3_features['padrao3_confianca'],
-            float(padroes3_features['padrao3_ocorrencias']),
-            padroes3_features['padrao3_dominancia'],
-            float(padroes3_features['padrao3_melhor_duzia']),
+        # 🆕 Features de padrões híbridos (22 features)
+        padroes_features = self._extrair_features_padroes_hibridos(historico_duzias)
+        features_padroes = [
+            # Padrão 2 (6 features)
+            padroes_features['p2_d1'], padroes_features['p2_d2'], padroes_features['p2_d3'],
+            padroes_features['p2_conf'], padroes_features['p2_total'], padroes_features['p2_dom'],
+            # Padrão 3 (6 features)
+            padroes_features['p3_d1'], padroes_features['p3_d2'], padroes_features['p3_d3'],
+            padroes_features['p3_conf'], padroes_features['p3_total'], padroes_features['p3_dom'],
+            # Padrão 4 (6 features)
+            padroes_features['p4_d1'], padroes_features['p4_d2'], padroes_features['p4_d3'],
+            padroes_features['p4_conf'], padroes_features['p4_total'], padroes_features['p4_dom'],
+            # Combo (4 features)
+            padroes_features['combo_d1'], padroes_features['combo_d2'], padroes_features['combo_d3'],
+            padroes_features['combo_conf'],
         ]
 
-        # TOTAL: 52 features (45 + 7)
-        return features_base + features_padroes3
+        # TOTAL: 67 features (45 + 22)
+        return features_base + features_padroes
 
     def extrair_features_estado(self, janela=20):
         return self._extrair_features_core(
@@ -1167,7 +1263,7 @@ class DuziaAI:
         )
 
     def _treinar_ml_online(self):
-        """Ensemble RF + GBT com 52 features (incluindo padrões de 3)."""
+        """Ensemble RF + GBT com 67 features (incluindo padrões híbridos)."""
         if not ML_DISPONIVEL:
             return False
 
@@ -1263,14 +1359,8 @@ class DuziaAI:
             padrao = tuple(self.historico_completo[-4:-1])
             self.transicoes[padrao][d] += 1
 
-        # 🆕 Atualiza tabela de padrões de 3 dúzias
-        self._atualizar_padroes3(self.historico_completo)
-
-        # 🆕 Verifica resultado do padrão 3 anterior
-        if self.padrao3_ultimo_resultado is not None and d != 0:
-            previsto = self.padrao3_ultimo_resultado
-            # A ML decidiu se usou ou não — apenas registramos para debug
-            self.padrao3_ultimo_resultado = None
+        # 🆕 Atualiza tabelas de padrões híbridos
+        self._atualizar_padroes_hibridos(self.historico_completo)
 
         if len(self.historico_completo) > 1000:
             self.historico_completo = self.historico_completo[-1000:]
@@ -1505,7 +1595,7 @@ class DuziaAI:
         return [d for d in [1, 2, 3] if d != duzia]
 
     # =========================================================
-    # MÉTODO PREVER — ML já inclui padrões de 3 dúzias
+    # MÉTODO PREVER — ML com padrões híbridos
     # =========================================================
     def prever(self):
         if self.pausa_ate and hora_brasilia() < self.pausa_ate:
@@ -1523,7 +1613,6 @@ class DuziaAI:
         if self.em_pausa_pos_raio:
             return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
 
-        # Scores vêm DIRETAMENTE da ML (padrões de 3 já são features)
         scores, modo = self.calcular_score()
 
         ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
@@ -1549,19 +1638,19 @@ class DuziaAI:
             pode_entrar = s1 > score_minimo
             if pode_entrar:
                 treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
-                # Info do padrão 3 ativo
-                if self.padrao3_ativo is not None and self.padrao3_stats and self.padrao3_stats.get('total', 0) >= self.padrao3_min_ocorrencias:
-                    d1p, d2p = self.padrao3_ativo
-                    melhor = self.padrao3_stats.get('melhor_duzia', 0)
-                    motivo = f"🟢 ML+Padrão3 ({treino_info}) | Score: {s1:.1f} | D{d1p}→D{d2p}→? "
-                    if melhor == d1:
-                        motivo += "✅"
-                    elif melhor == d2:
-                        motivo += "🟡"
-                    else:
-                        motivo += "ℹ️"
-                else:
-                    motivo = f"🟢 Ensemble ML ({treino_info}) | Score: {s1:.1f}"
+                # Info dos padrões ativos
+                partes_padrao = []
+                if self.padrao_stats_ui.get('tam2'):
+                    partes_padrao.append(f"P2:{self.padrao_stats_ui['tam2']['gatilho']}")
+                if self.padrao_stats_ui.get('tam3'):
+                    partes_padrao.append(f"P3:{self.padrao_stats_ui['tam3']['gatilho']}")
+                if self.padrao_stats_ui.get('tam4'):
+                    partes_padrao.append(f"P4:{self.padrao_stats_ui['tam4']['gatilho']}")
+                
+                info_padroes = " | ".join(partes_padrao) if partes_padrao else ""
+                motivo = f"🟢 ML Híbrido ({treino_info}) | Score: {s1:.1f}"
+                if info_padroes:
+                    motivo += f" | 🧩 {info_padroes}"
             else:
                 motivo = f"Score ML baixo ({s1:.1f} < {score_minimo})"
         else:
@@ -1573,7 +1662,7 @@ class DuziaAI:
             else:
                 motivo = f"Aguardando ML ({len(self.historico_completo)}/40 rodadas)"
 
-        # Limitador de repetições da mesma dúzia
+        # Limitador de repetições
         max_rep = config.get('ml_max_repeticoes_mesma_duzia', 4)
         if pode_entrar and len(self.ultimas_previsoes) >= max_rep:
             ultimas_n = self.ultimas_previsoes[-max_rep:]
@@ -1586,15 +1675,14 @@ class DuziaAI:
                     motivo = f"🔄 Rotação forçada (>{max_rep}x D{d1}) | Score: {s1:.1f}"
                 else:
                     pode_entrar = False
-                    motivo = f"🚫 Bloqueio por repetição (>{max_rep}x mesma dúzia) e 2ª opção fraca"
+                    motivo = f"🚫 Bloqueio por repetição (>{max_rep}x mesma dúzia)"
 
-        # Filtro de confiança mínima
+        # Filtros de confiança
         confianca_min = config.get('confianca_minima_entrada', 1.3)
         if pode_entrar and confianca < confianca_min and not forcar_rotacao:
             pode_entrar = False
             motivo = f"Confiança muito baixa ({confianca:.2f} < {confianca_min})"
 
-        # Filtro anti-erro
         if pode_entrar and self.modo_anti_erro and confianca < (confianca_min + 0.5):
             pode_entrar = False
             motivo = f"🚫 Anti-Erro: Confiança insuficiente ({confianca:.2f})"
@@ -1606,22 +1694,21 @@ class DuziaAI:
             if pode_entrar and "Termômetro" not in motivo:
                 motivo += " | 🌡️ Zero"
 
-        # Bloqueio final
         if confianca < 0.8:
             pode_entrar = False
             motivo = f"Confiança crítica ({confianca:.2f})"
 
-        # Info do padrão 3 para UI
-        info_padrao3 = None
-        if self.padrao3_ativo is not None and self.padrao3_stats and self.padrao3_stats.get('total', 0) >= self.padrao3_min_ocorrencias:
-            info_padrao3 = {
-                'gatilho': f"D{self.padrao3_ativo[0]}→D{self.padrao3_ativo[1]}",
-                'total': self.padrao3_stats['total'],
-                'distribuicao': self.padrao3_stats['distribuicao'],
-                'scores': self.padrao3_stats['scores'],
-                'confianca': self.padrao3_stats['confianca'],
-                'melhor_duzia': self.padrao3_stats['melhor_duzia'],
-            }
+        # Info dos padrões para UI
+        info_padrao = {
+            'tam2': self.padrao_stats_ui.get('tam2'),
+            'tam3': self.padrao_stats_ui.get('tam3'),
+            'tam4': self.padrao_stats_ui.get('tam4'),
+            'resumo': []
+        }
+        for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
+            if info_padrao[t]:
+                info_padrao['resumo'].append(f"{nome}:{info_padrao[t]['gatilho']}")
+        info_padrao['resumo'] = " | ".join(info_padrao['resumo']) if info_padrao['resumo'] else "-"
 
         previsao = {
             "entrar": pode_entrar,
@@ -1636,7 +1723,7 @@ class DuziaAI:
             "numeros_completos": list(self.numeros_completos),
             "modo_previsao": modo,
             "rotacao_forcada": forcar_rotacao,
-            "padrao3_ativo": info_padrao3,
+            "padrao_ativo": info_padrao,
         }
 
         return previsao
@@ -1819,7 +1906,7 @@ class SistemaBot:
                 'incluir_zero': incluir_zero,
                 'table_id': table_id,
                 'table_name': table_name,
-                'padrao3_info': self.entrada_ativa.get('padrao3_ativo'),
+                'padrao_info': self.entrada_ativa.get('padrao_ativo'),
             })
 
             if len(self.historico_entradas) > 100:
@@ -1861,7 +1948,7 @@ class SistemaBot:
                     'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
                     'modo_anti_erro': previsao.get('modo_anti_erro', False),
                     'incluir_zero': previsao.get('incluir_zero', False),
-                    'padrao3_ativo': previsao.get('padrao3_ativo'),
+                    'padrao_ativo': previsao.get('padrao_ativo'),
                 }
 
                 self.duzia_ai.registrar_previsao(previsao['duzia'], previsao['confianca'])
@@ -1913,7 +2000,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     try:
         with open(caminho, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Cob','Conf','Gat','Z','🔄','Mesa','Duz','Num','Zer','St','Padrão3'])
+            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Cob','Conf','Gat','Z','🔄','Mesa','Duz','Num','Zer','St','Padrões'])
             for e in historico_entradas:
                 real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
                 prev = f"D{e.get('duzia_prevista','?')}"
@@ -1925,7 +2012,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
                 zer = '✅' if e.get('acerto_zero') else '-'
                 raio = f"⚡{e.get('multiplicador',0)}x" if e.get('eh_raio') else '-'
                 mesa = e.get('table_name', '?')[:15] if e.get('table_name') else '?'
-                padrao = str(e.get('padrao3_info', {}).get('gatilho', '-')) if e.get('padrao3_info') else '-'
+                padrao = str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-'
                 writer.writerow([e.get('rodada'), e.get('hora'), e.get('numero'), raio, real, prev, cob,
                                   f"{e.get('confianca',0):.1f}", e.get('gatilho','ML'), zero, anti, mesa,
                                   duz, num, zer, e.get('status','?'), padrao])
@@ -1938,8 +2025,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V12.0 - Padrões de 3 Dúzias na ML", layout="wide")
-st.title("🎰 DuziaAI V12.0 — Padrões de 3 Dúzias como Features da ML 🧩💾 (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V12.0 - Padrões Híbridos 2+3+4 na ML", layout="wide")
+st.title("🎰 DuziaAI V12.0 — Padrões Híbridos (2+3+4 Dúzias) na ML 🧩💾 (BRT)")
 
 config_global = carregar_config_global()
 
@@ -1997,7 +2084,7 @@ if st.session_state.api_selecionada != st.session_state.ultima_api:
             for k, v in dados['performance_por_horario'].items():
                 sis.performance_por_horario[k] = v
                 sis.duzia_ai.performance_por_horario[k] = v
-        sis.duzia_ai._carregar_padroes3()
+        sis.duzia_ai._carregar_padroes_hibridos()
         paths = get_session_paths(st.session_state.api_selecionada)
         if os.path.exists(paths['historico']):
             with open(paths['historico'], 'r') as f:
@@ -2040,7 +2127,7 @@ if "sistema" not in st.session_state:
             for k, v in dados['performance_por_horario'].items():
                 sis.performance_por_horario[k] = v
                 sis.duzia_ai.performance_por_horario[k] = v
-        sis.duzia_ai._carregar_padroes3()
+        sis.duzia_ai._carregar_padroes_hibridos()
         paths = get_session_paths(st.session_state.api_selecionada)
         if os.path.exists(paths['historico']):
             with open(paths['historico'], 'r') as f:
@@ -2059,7 +2146,7 @@ if "historico" not in st.session_state:
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V12.0 — Padrões de 3 Dúzias na ML")
+    st.markdown("## ⚙️ V12.0 — Padrões Híbridos 2+3+4")
     sis = st.session_state.sistema
 
     st.markdown("### 📊 Status da Sessão")
@@ -2108,7 +2195,6 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 💾 Download de Sessões")
     st.session_state.salvar_sessoes_auto = st.checkbox("💾 Salvar sessões automaticamente", value=st.session_state.salvar_sessoes_auto)
-
     with st.expander("📥 BAIXAR SESSÕES", expanded=False):
         api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
         gerenciador = GerenciadorSessoes(api_name)
@@ -2163,35 +2249,33 @@ with st.sidebar:
 
     if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
         if sis.duzia_ai.ultimo_treino_ml <= 1:
-            st.success("🧠 Ensemble ML CARREGADO DO DISCO 💾")
+            st.success("🧠 Ensemble ML CARREGADO 💾")
         else:
-            st.success(f"🧠 Ensemble ML ATIVO | Treino na R{sis.duzia_ai.ultimo_treino_ml}")
+            st.success(f"🧠 Ensemble ML ATIVO | R{sis.duzia_ai.ultimo_treino_ml}")
     else:
         rodadas_atual = len(sis.historico_numeros)
         if rodadas_atual >= 8:
-            st.warning(f"🟡 Fallback Freq ATIVO | ML treina em R40+ ({rodadas_atual}/40)")
+            st.warning(f"🟡 Fallback ({rodadas_atual}/40)")
         else:
-            st.info(f"🧠 Aguardando dados... ({rodadas_atual}/8 para fallback)")
+            st.info(f"🧠 Aguardando... ({rodadas_atual}/8)")
 
     st.markdown("---")
-    total_pares = len(sis.duzia_ai.padroes3)
-    st.caption("🧩 **Padrões de 3 Dúzias (Features da ML):**")
-    st.caption(f"• Pares de gatilho: {total_pares}")
-    if sis.duzia_ai.padrao3_ativo is not None:
-        d1, d2 = sis.duzia_ai.padrao3_ativo
-        st.caption(f"• Gatilho atual: D{d1} → D{d2} → ?")
-        if sis.duzia_ai.padrao3_stats and sis.duzia_ai.padrao3_stats.get('total', 0) >= sis.duzia_ai.padrao3_min_ocorrencias:
-            stats = sis.duzia_ai.padrao3_stats
-            st.success(f"🎯 Fechamento provável: D{stats['melhor_duzia']} ({stats['total']}x visto)")
-            st.caption(f"  D1: {stats['distribuicao'].get(1,0)}x | D2: {stats['distribuicao'].get(2,0)}x | D3: {stats['distribuicao'].get(3,0)}x")
-        else:
-            st.info(f"🔍 Dados insuficientes ({sis.duzia_ai.padrao3_stats.get('total', 0) if sis.duzia_ai.padrao3_stats else 0} ocorrências)")
+    st.caption("🧩 **Padrões Híbridos (Features ML):**")
+    st.caption(f"• P2 (1 dúzia): {len(sis.duzia_ai.padroes_tam2)} padrões")
+    st.caption(f"• P3 (2 dúzias): {len(sis.duzia_ai.padroes_tam3)} padrões")
+    st.caption(f"• P4 (3 dúzias): {len(sis.duzia_ai.padroes_tam4)} padrões")
+    st.caption(f"• Pesos: P2={sis.duzia_ai.peso_tam2}% P3={sis.duzia_ai.peso_tam3}% P4={sis.duzia_ai.peso_tam4}%")
+    
+    for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
+        if sis.duzia_ai.padrao_stats_ui.get(t):
+            s = sis.duzia_ai.padrao_stats_ui[t]
+            st.caption(f"• {nome}: {s['gatilho']} → ? ({s['total']}x)")
 
     st.markdown("---")
-    st.caption("🛡️ **V12.0:**")
-    st.caption("• 52 features (45 + 7 de padrões 3)")
-    st.caption("• Padrões D1→D2→D3 na ML")
-    st.caption("• Ensemble RF+GBT aprende fechamentos")
+    st.caption("🛡️ **V12.0 Híbrido:**")
+    st.caption("• 67 features (45 + 22 padrões)")
+    st.caption("• P2(20%) + P3(50%) + P4(30%)")
+    st.caption("• ML aprende pesos ideais")
 
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -2213,7 +2297,7 @@ with st.sidebar:
             paths = get_session_paths(st.session_state.api_selecionada)
             salvar_resultado_em_arquivo(st.session_state.historico, paths['historico'])
             salvar_sessao()
-            st.success("✅ Dados, ML e Padrões 3 salvos!")
+            st.success("✅ Dados, ML e Padrões Híbridos salvos!")
     with c2:
         if st.button("📥 Exportar CSV", use_container_width=True):
             if exportar_historico_csv(st.session_state.sistema.historico_entradas):
@@ -2231,12 +2315,9 @@ with c2:
         if validar_numero(entrada):
             nr = int(entrada)
             st.session_state.historico.append({
-                "number": nr,
-                "timestamp": timestamp_brasilia(),
-                "luckyNumbers": [],
-                "luckyMultipliers": {},
-                "table_id": "manual",
-                "table_name": "Entrada Manual"
+                "number": nr, "timestamp": timestamp_brasilia(),
+                "luckyNumbers": [], "luckyMultipliers": {},
+                "table_id": "manual", "table_name": "Entrada Manual"
             })
             st.session_state.sistema.processar_novo_numero(nr)
             paths = get_session_paths(st.session_state.api_selecionada)
@@ -2295,7 +2376,7 @@ st.markdown("---")
 cg, ce = st.columns([3, 2])
 
 with cg:
-    st.subheader("📈 Scores do ML (com Padrões de 3)")
+    st.subheader("📈 Scores do ML (Padrões Híbridos)")
     if len(sis.historico_numeros) >= 3:
         score, modo_atual = sis.duzia_ai.calcular_score()
 
@@ -2312,44 +2393,41 @@ with cg:
         )])
 
         if sis.duzia_ai.modelo_ml is not None:
-            if sis.duzia_ai.ultimo_treino_ml <= 1:
-                titulo = "🎯 Ensemble ML (💾) + Padrões 3"
-            else:
-                titulo = f"🎯 Ensemble RF+GBT (R{sis.duzia_ai.ultimo_treino_ml}) + Padrões 3"
+            titulo = f"🎯 ML Híbrido (R{sis.duzia_ai.ultimo_treino_ml})" if sis.duzia_ai.ultimo_treino_ml > 1 else "🎯 ML Híbrido (💾)"
         else:
-            titulo = f"🟡 Fallback Frequência ({len(sis.historico_numeros)} rodadas)"
+            titulo = f"🟡 Fallback ({len(sis.historico_numeros)} rodadas)"
 
         if sis.duzia_ai.alerta_zero_ativo:
-            titulo += " | 🟢 ALERTA ZERO!"
-
-        if sis.duzia_ai.padrao3_ativo is not None:
-            d1, d2 = sis.duzia_ai.padrao3_ativo
-            titulo += f" | 🧩 D{d1}→D{d2}→?"
+            titulo += " | 🟢 ZERO!"
+        
+        # Adiciona info dos padrões ativos
+        partes = []
+        for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
+            if sis.duzia_ai.padrao_stats_ui.get(t):
+                partes.append(f"{nome}:{sis.duzia_ai.padrao_stats_ui[t]['gatilho']}")
+        if partes:
+            titulo += " | 🧩 " + " ".join(partes)
 
         fig.update_layout(title=titulo, height=300, showlegend=False, yaxis_title="Score")
         st.plotly_chart(fig, use_container_width=True)
 
-        if sis.duzia_ai.padrao3_stats and sis.duzia_ai.padrao3_stats.get('total', 0) >= sis.duzia_ai.padrao3_min_ocorrencias:
-            stats = sis.duzia_ai.padrao3_stats
-            d1, d2 = stats['par']
-            dist = stats['distribuicao']
-            
-            fig_pad = plt.Figure(data=[plt.Bar(
-                x=['D1', 'D2', 'D3'],
-                y=[dist.get(1, 0), dist.get(2, 0), dist.get(3, 0)],
-                marker_color=[
-                    '#FFD700' if stats['melhor_duzia'] == 1 else '#888888',
-                    '#FFD700' if stats['melhor_duzia'] == 2 else '#888888',
-                    '#FFD700' if stats['melhor_duzia'] == 3 else '#888888',
-                ],
-                text=[str(dist.get(1, 0)), str(dist.get(2, 0)), str(dist.get(3, 0))],
-                textposition='auto'
-            )])
-            fig_pad.update_layout(
-                title=f"🧩 D{d1}→D{d2}→? | {stats['total']}x visto | Fecha: D{stats['melhor_duzia']}",
-                height=220, showlegend=False, yaxis_title="Vezes"
-            )
-            st.plotly_chart(fig_pad, use_container_width=True)
+        # Gráficos dos padrões individuais
+        for t, nome, cor in [('tam2', 'P2: 1 dúzia', '#4ECDC4'), ('tam3', 'P3: 2 dúzias', '#FFD700'), ('tam4', 'P4: 3 dúzias', '#FF6B6B')]:
+            if sis.duzia_ai.padrao_stats_ui.get(t):
+                s = sis.duzia_ai.padrao_stats_ui[t]
+                scores_p = s['scores']
+                fig_p = plt.Figure(data=[plt.Bar(
+                    x=['D1', 'D2', 'D3'],
+                    y=[scores_p.get(1,0)*100, scores_p.get(2,0)*100, scores_p.get(3,0)*100],
+                    marker_color=[cor if scores_p.get(k,0)==max(scores_p.values()) else '#555' for k in [1,2,3]],
+                    text=[f"{scores_p.get(1,0)*100:.0f}%", f"{scores_p.get(2,0)*100:.0f}%", f"{scores_p.get(3,0)*100:.0f}%"],
+                    textposition='auto'
+                )])
+                fig_p.update_layout(
+                    title=f"{nome} | {s['gatilho']} → ? | {s['total']}x visto | Conf: {s['conf']:.2f}",
+                    height=180, showlegend=False
+                )
+                st.plotly_chart(fig_p, use_container_width=True)
 
         if len(sis.historico_numeros) >= 8:
             ult = list(sis.historico_numeros)[-20:]
@@ -2365,13 +2443,12 @@ with cg:
                     if 0 <= pos < 20:
                         sx.append(pos); sy.append(dz)
                 if sx:
-                    fig2.add_trace(plt.Scatter(x=sx, y=sy, mode='markers', name='Sinal ML',
+                    fig2.add_trace(plt.Scatter(x=sx, y=sy, mode='markers', name='Sinal',
                                                 marker=dict(symbol='star', size=15, color='red')))
-            fig2.update_layout(title="📉 Histórico de Dúzias",
-                               yaxis=dict(tickvals=[0,1,2,3], ticktext=['0','D1','D2','D3'], range=[-0.5,3.5]), height=300)
+            fig2.update_layout(title="📉 Histórico", yaxis=dict(tickvals=[0,1,2,3], ticktext=['0','D1','D2','D3'], range=[-0.5,3.5]), height=300)
             st.plotly_chart(fig2, use_container_width=True)
     else:
-        st.info("Aguardando dados suficientes...")
+        st.info("Aguardando dados...")
 
 with ce:
     st.subheader("🎰 Entrada Atual")
@@ -2380,12 +2457,12 @@ with ce:
     if sis.duzia_ai.em_pausa_pos_raio:
         st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
     
-    if sis.duzia_ai.padrao3_ativo is not None:
-        d1, d2 = sis.duzia_ai.padrao3_ativo
-        if sis.duzia_ai.padrao3_stats and sis.duzia_ai.padrao3_stats.get('total', 0) >= sis.duzia_ai.padrao3_min_ocorrencias:
-            st.info(f"🧩 Gatilho: D{d1}→D{d2}→? | Fecha D{sis.duzia_ai.padrao3_stats['melhor_duzia']} ({sis.duzia_ai.padrao3_stats['total']}x)")
-        else:
-            st.caption(f"🔍 D{d1}→D{d2}→? (dados insuficientes)")
+    # Exibe padrões ativos
+    for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
+        if sis.duzia_ai.padrao_stats_ui.get(t):
+            s = sis.duzia_ai.padrao_stats_ui[t]
+            melhor = max(s['scores'], key=s['scores'].get)
+            st.caption(f"🧩 {nome}: {s['gatilho']} → D{melhor} ({s['total']}x)")
 
     if not sis.sessao_ativa:
         if sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
@@ -2400,7 +2477,7 @@ with ce:
         dz_princ = e.get('duzia_prevista', 0)
         dz_sec = e.get('duzia_sec_prevista')
         gatilho = e.get('gatilho_ativo', 'ML')
-        padrao3 = e.get('padrao3_ativo')
+        padrao_info = e.get('padrao_ativo', {})
 
         duzia_principal = dz_princ
         duzia_secundaria = dz_sec if dz_sec and dz_sec != dz_princ else None
@@ -2411,11 +2488,11 @@ with ce:
             melhores_secundaria = None
 
         cor = "#FF6347" if e.get('modo_anti_erro') else "#00CED1"
-        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 Ensemble ML 💾"
+        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML Híbrido 💾"
 
         padrao_html = ""
-        if padrao3:
-            padrao_html = f'<p style="text-align:center; color:#FFD700; font-size:0.85em;">🧩 {padrao3.get("gatilho","")}→D{padrao3.get("melhor_duzia","?")}</p>'
+        if padrao_info.get('resumo'):
+            padrao_html = f'<p style="text-align:center; color:#FFD700; font-size:0.8em;">🧩 {padrao_info["resumo"]}</p>'
 
         st.markdown(f"""
         <div style="background-color:{cor}15; border:2px solid {cor}; border-radius:15px; padding:15px;">
@@ -2455,7 +2532,7 @@ if sis.historico_entradas:
         if e.get('eh_raio'): nd = f"⚡{ns} ({e.get('multiplicador',0)}x)"
         elif ns == 0: nd = "0"
         else: nd = str(ns)
-        padrao = str(e.get('padrao3_info', {}).get('gatilho', '-')) if e.get('padrao3_info') else '-'
+        padrao = str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-'
         dados.append({"Rod":e.get('rodada'),"Hora":e.get('hora'),"🎲":nd,"Real":real,"Prev":prev,"Cob":cob,
                       "Conf":f"{e.get('confianca',0):.1f}","Gat":e.get('gatilho','ML'),"Z":zero,"🔄":anti,
                       "🧩":padrao,"Duz":duz,"Nº":num,"Zer":zer})
@@ -2473,9 +2550,9 @@ with col_t1:
 with col_t2:
     st.success("📢 Alt OK") if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt else st.warning("📢 Alt NÃO")
 
-st.caption(f"🤖 DuziaAI V12.0 | 52 Features | Padrões D1→D2→D3 na ML | {api_name} | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V12.0 Híbrido | 67 Features | P2+P3+P4 na ML | {api_name} | {formatar_hora_brasilia()}")
 modelo_path = get_modelo_ml_path(api_name)
 st.caption(f"💾 Modelo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)" if os.path.exists(modelo_path) else "⚠️ Modelo não salvo")
-st.caption(f"🧩 Pares de padrão 3: {len(sis.duzia_ai.padroes3)}")
+st.caption(f"🧩 Padrões: P2={len(sis.duzia_ai.padroes_tam2)} | P3={len(sis.duzia_ai.padroes_tam3)} | P4={len(sis.duzia_ai.padroes_tam4)}")
 
 salvar_sessao()
