@@ -53,7 +53,6 @@ def data_brasilia():
 # SETUPS INDEPENDENTES POR ROLETA (CALIBRADOS)
 # =============================
 
-# 🔵 BASE: Configurações comuns a todas as roletas
 SETUP_BASE = {
     'pagamento_numero': 20,
     'pagamento_zero': 20,
@@ -89,14 +88,17 @@ SETUP_BASE = {
     'padrao_conf_minima_tam2': 2,
     'padrao_conf_minima_tam4': 6,
     'padrao_consenso_min_conf': 0.15,
-    # 🆕 Anti-viés configurável por roleta
     'anti_vies_ativo': False,
     'anti_vies_duzia': None,
     'anti_vies_penalidade': 1.0,
     'anti_vies_gatilho_p2': False,
+    'anti_vies_p4_isolado_extra': 1.0,
+    'peso_adaptativo_ativo': False,
+    'peso_adaptativo_janela': 10,
+    'peso_adaptativo_boost': 1.0,
 }
 
-# 🟡 XXXTREME LIGHTNING: Setup otimizado (melhor desempenho geral)
+# 🟡 XXXTREME LIGHTNING: Setup otimizado (mantido)
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
@@ -123,25 +125,24 @@ SETUP_XXXTREME = {
     'ml_min_rodadas_fallback': 10,
     'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 20,
-    # Pesos dos padrões híbridos - XXXtreme
     'padrao_min_ocorrencias': 3,
-    'padrao_peso_tam2': 15,     # P2 leve - baseline rápida
-    'padrao_peso_tam3': 55,     # P3 carro-chefe - melhor equilíbrio
-    'padrao_peso_tam4': 30,     # P4 confirmação forte
+    'padrao_peso_tam2': 15,
+    'padrao_peso_tam3': 55,
+    'padrao_peso_tam4': 30,
     'padrao_conf_minima_tam2': 2,
     'padrao_conf_minima_tam4': 6,
-    'padrao_consenso_peso_extra': 15,    # Consenso triplo vale +15%
+    'padrao_consenso_peso_extra': 15,
     'padrao_consenso_min_conf': 0.15,
-    'ml_ignorar_consenso_conf_min': 3.0,  # ML precisa de conf 3.0+ para ignorar consenso
-    # Anti-viés: DESATIVADO para XXXtreme (funciona bem)
+    'ml_ignorar_consenso_conf_min': 3.0,
     'anti_vies_ativo': False,
+    'peso_adaptativo_ativo': False,
 }
 
-# 🟢 IMMERSIVE ROULETTE: Setup calibrado (anti-viés D3 ativo)
+# 🟢 IMMERSIVE ROULETTE: Setup recalibrado (V12.3)
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.9,       # 🆕 2.0→2.2 - Mais restritivo
+    'confianca_minima_entrada': 2.3,       # 🆕 2.2→2.3 - Mais restritivo
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.2, 'fadiga_duzia': 3,
@@ -159,30 +160,36 @@ SETUP_IMMERSIVE = {
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 32,         # 🆕 30→32 - Score mínimo mais alto
+    'ml_score_minimo_entrada': 34,         # 🆕 32→34
     'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 10,
-    'ml_max_repeticoes_mesma_duzia': 3,
+    'ml_max_repeticoes_mesma_duzia': 2,    # 🆕 3→2 - Rotacionar mais cedo
     'ml_score_minimo_pos_rotacao': 18,
-    # Pesos dos padrões híbridos - Immersive (calibrado anti-viés D3)
+    # Pesos dos padrões híbridos - Immersive V12.3
     'padrao_min_ocorrencias': 3,
-    'padrao_peso_tam2': 30,      # 🆕 25→30 - P2 mais importante (baseline)
-    'padrao_peso_tam3': 40,      # 🆕 45→40 - Reduzir P3 (sobre-prevê D3)
+    'padrao_peso_tam2': 32,      # 🆕 30→32 - P2 mais importante (baseline)
+    'padrao_peso_tam3': 38,      # 🆕 40→38 - Reduzir P3
     'padrao_peso_tam4': 30,      # Mantido
     'padrao_conf_minima_tam2': 2,
-    'padrao_conf_minima_tam4': 5,  # 🆕 6→5 - Mais fácil ativar P4
-    'padrao_consenso_peso_extra': 10,    # 🆕 12→10 - Menos peso ao consenso
+    'padrao_conf_minima_tam4': 8,  # 🆕 5→8 - P4 mais exigente
+    'padrao_consenso_peso_extra': 8,     # 🆕 10→8 - Menos peso ao consenso
     'padrao_consenso_min_conf': 0.12,
-    'ml_ignorar_consenso_conf_min': 3.2,  # 🆕 2.8→3.2 - ML precisa de MAIS confiança
+    'ml_ignorar_consenso_conf_min': 3.5,  # 🆕 3.2→3.5 - ML precisa de MAIS confiança
     
-    # 🆕 ANTI-VIÉS D3 - ESPECÍFICO PARA IMMERSIVE
+    # Anti-viés D3 reforçado
     'anti_vies_ativo': True,
-    'anti_vies_duzia': 3,              # Penalizar D3
-    'anti_vies_penalidade': 0.82,      # Reduz score D3 em 18%
-    'anti_vies_gatilho_p2': True,      # Só ativa se P2 discorda de D3
+    'anti_vies_duzia': 3,
+    'anti_vies_penalidade': 0.78,         # 🆕 0.82→0.78 (-22% em vez de -18%)
+    'anti_vies_gatilho_p2': True,
+    'anti_vies_p4_isolado_extra': 0.70,   # 🆕 -30% extra quando só P4=D3
+    
+    # 🆕 Peso adaptativo por sessão
+    'peso_adaptativo_ativo': True,
+    'peso_adaptativo_janela': 10,
+    'peso_adaptativo_boost': 1.3,         # +30% para dúzia quente na sessão
 }
 
-# 🔴 MEGA ROULETTE: Setup equilibrado
+# 🔴 MEGA ROULETTE: Setup equilibrado (mantido)
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
@@ -208,7 +215,6 @@ SETUP_MEGA = {
     'ml_min_rodadas_fallback': 10,
     'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 18,
-    # Pesos dos padrões híbridos - Mega (equilibrado)
     'padrao_min_ocorrencias': 3,
     'padrao_peso_tam2': 20,
     'padrao_peso_tam3': 50,
@@ -218,8 +224,8 @@ SETUP_MEGA = {
     'padrao_consenso_peso_extra': 15,
     'padrao_consenso_min_conf': 0.15,
     'ml_ignorar_consenso_conf_min': 3.0,
-    # Anti-viés: DESATIVADO para Mega
     'anti_vies_ativo': False,
+    'peso_adaptativo_ativo': False,
 }
 
 ROLETA_CONFIGS = {
@@ -791,7 +797,7 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
-# 🧠 DUZIA AI V12.2 — SETUPS INDEPENDENTES + ANTI-VIÉS
+# 🧠 DUZIA AI V12.3 — PESO ADAPTATIVO + ANTI-VIÉS REFORÇADO
 # =============================
 
 class DuziaAI:
@@ -859,11 +865,17 @@ class DuziaAI:
         self.consenso_min_conf = config.get('padrao_consenso_min_conf', 0.15)
         self.ml_ignorar_consenso_conf_min = config.get('ml_ignorar_consenso_conf_min', 3.0)
         
-        # 🆕 Anti-viés configurável
+        # Anti-viés configurável
         self.anti_vies_ativo = config.get('anti_vies_ativo', False)
         self.anti_vies_duzia = config.get('anti_vies_duzia', None)
         self.anti_vies_penalidade = config.get('anti_vies_penalidade', 1.0)
         self.anti_vies_gatilho_p2 = config.get('anti_vies_gatilho_p2', False)
+        self.anti_vies_p4_isolado_extra = config.get('anti_vies_p4_isolado_extra', 1.0)
+        
+        # 🆕 Peso adaptativo
+        self.peso_adaptativo_ativo = config.get('peso_adaptativo_ativo', False)
+        self.peso_adaptativo_janela = config.get('peso_adaptativo_janela', 10)
+        self.peso_adaptativo_boost = config.get('peso_adaptativo_boost', 1.0)
         
         # Para UI
         self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
@@ -895,7 +907,6 @@ class DuziaAI:
             }
             with open(caminho, 'w') as f:
                 json.dump(dados, f)
-            logging.info(f"🧩 Padrões híbridos salvos: tam2={len(self.padroes_tam2)}, tam3={len(self.padroes_tam3)}, tam4={len(self.padroes_tam4)}")
         except Exception as e:
             logging.error(f"❌ Erro ao salvar padrões híbridos: {e}")
 
@@ -922,7 +933,6 @@ class DuziaAI:
                         chave = tuple(ast.literal_eval(k))
                         self.padroes_tam4[chave] = Counter({int(dk): dv for dk, dv in v.items()})
                     except: pass
-                logging.info(f"🧩 Padrões híbridos carregados: tam2={len(self.padroes_tam2)}, tam3={len(self.padroes_tam3)}, tam4={len(self.padroes_tam4)}")
             except Exception as e:
                 logging.error(f"❌ Erro ao carregar padrões híbridos: {e}")
 
@@ -974,6 +984,40 @@ class DuziaAI:
             return 'duplo', mais_comum[0], sum(confs) / len(confs)
         
         return 'nenhum', None, 0.0
+
+    def _get_config(self):
+        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+        return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
+
+    def _aplicar_peso_adaptativo(self, scores):
+        """
+        🆕 Detecta qual dúzia está "quente" na sessão atual (últimas N rodadas)
+        e aplica um boost temporário.
+        """
+        if not self.peso_adaptativo_ativo:
+            return scores
+        
+        # Pega as últimas N dúzias (apenas as que saíram, não as previstas)
+        duzias_reais = [d for d in self.historico_completo[-self.peso_adaptativo_janela:] if d != 0]
+        
+        if len(duzias_reais) < 5:
+            return scores
+        
+        # Frequência de cada dúzia
+        freq = Counter(duzias_reais)
+        total = len(duzias_reais)
+        
+        # Se uma dúzia saiu mais de 40% das vezes, é considerada "quente"
+        scores_ajustados = scores.copy()
+        
+        for duzia in [1, 2, 3]:
+            freq_pct = freq.get(duzia, 0) / total
+            if freq_pct >= 0.40:  # 40%+ de presença
+                boost = 1.0 + (freq_pct - 0.40) * (self.peso_adaptativo_boost - 1.0) / 0.60
+                scores_ajustados[duzia] *= boost
+                logging.info(f"🔥 Peso adaptativo: D{duzia} ({freq_pct*100:.0f}%) boost x{boost:.2f}")
+        
+        return scores_ajustados
 
     def _extrair_features_padroes_hibridos(self, historico_duzias):
         duzias = [d for d in historico_duzias if d != 0]
@@ -1124,10 +1168,6 @@ class DuziaAI:
         }
         
         return features
-
-    def _get_config(self):
-        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-        return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
 
     def _extrair_features_core(self, historico_duzias, historico_numeros,
                                 erros_consec, rodadas_zero, repeticoes_duzia, janela=20):
@@ -1563,30 +1603,50 @@ class DuziaAI:
         return scores
 
     def _aplicar_anti_vies(self, scores):
-        """
-        🆕 Aplica penalidade anti-viés configurada por roleta.
-        Ex: Immersive penaliza D3 quando P2 discorda.
-        """
         if not self.anti_vies_ativo or self.anti_vies_duzia is None:
             return scores
         
         scores_ajustados = scores.copy()
         duzia_alvo = self.anti_vies_duzia
         
-        # Verifica gatilho P2 (se configurado)
+        # Verifica gatilho P2
+        p2_discorda = False
         if self.anti_vies_gatilho_p2:
             p2_stats = self.padrao_stats_ui.get('tam2')
             if p2_stats and p2_stats.get('scores'):
                 p2_melhor = max(p2_stats['scores'], key=p2_stats['scores'].get)
-                # Só aplica anti-viés se P2 NÃO favorece a dúzia alvo
-                if p2_melhor == duzia_alvo:
+                if p2_melhor != duzia_alvo:
+                    p2_discorda = True
+                else:
                     return scores  # P2 concorda, não penaliza
         
-        # Aplica penalidade
+        # 🆕 Verifica se P4 está isolado favorecendo a dúzia alvo
+        p4_isolado = False
+        if self.anti_vies_p4_isolado_extra < 1.0:
+            p3_stats = self.padrao_stats_ui.get('tam3')
+            p4_stats = self.padrao_stats_ui.get('tam4')
+            
+            if p4_stats and p4_stats.get('scores'):
+                p4_melhor = max(p4_stats['scores'], key=p4_stats['scores'].get)
+                p3_melhor = None
+                if p3_stats and p3_stats.get('scores'):
+                    p3_melhor = max(p3_stats['scores'], key=p3_stats['scores'].get)
+                
+                # P4 isolado = P4 favorece duzia_alvo mas P3 discorda (ou não existe)
+                if p4_melhor == duzia_alvo and p3_melhor is not None and p3_melhor != duzia_alvo:
+                    p4_isolado = True
+        
+        # Aplica penalidade base
         penalidade = self.anti_vies_penalidade
+        
+        # Penalidade extra se P4 está isolado
+        if p4_isolado:
+            penalidade *= self.anti_vies_p4_isolado_extra
+            logging.info(f"🛡️ Anti-viés P4 isolado: D{duzia_alvo} penalidade extra x{self.anti_vies_p4_isolado_extra}")
+        
         scores_ajustados[duzia_alvo] *= penalidade
         
-        # Redistribui o score removido para as outras dúzias proporcionalmente
+        # Redistribui o score removido
         score_removido = scores[duzia_alvo] - scores_ajustados[duzia_alvo]
         outras = [d for d in [1,2,3] if d != duzia_alvo]
         total_outras = sum(scores[d] for d in outras)
@@ -1595,7 +1655,6 @@ class DuziaAI:
             for d in outras:
                 scores_ajustados[d] += score_removido * (scores[d] / total_outras)
         else:
-            # Divide igualmente se as outras têm score zero
             for d in outras:
                 scores_ajustados[d] += score_removido / 2
         
@@ -1611,17 +1670,15 @@ class DuziaAI:
             else:
                 modo = 'ml'
             
-            # Aplicar reforço de consenso
             scores_ajustados = self._aplicar_reforco_consenso(ml_scores)
-            
-            # 🆕 Aplicar anti-viés (específico por roleta)
             scores_ajustados = self._aplicar_anti_vies(scores_ajustados)
+            scores_ajustados = self._aplicar_peso_adaptativo(scores_ajustados)  # 🆕
             
             return scores_ajustados, modo
         else:
             freq_scores = self._prever_fallback_frequencia()
-            # Também aplica anti-viés no fallback
             freq_scores = self._aplicar_anti_vies(freq_scores)
+            freq_scores = self._aplicar_peso_adaptativo(freq_scores)  # 🆕
             return freq_scores, 'fallback'
 
     def _aplicar_reforco_consenso(self, ml_scores):
@@ -1775,10 +1832,13 @@ class DuziaAI:
                     icone = "🔒" if self.consenso_info['tipo'] == 'triplo' else "🔗"
                     info_consenso = f" | {icone} D{self.consenso_info['duzia']}"
                 
-                # 🆕 Info anti-viés
                 info_anti_vies = ""
                 if self.anti_vies_ativo:
                     info_anti_vies = f" | 🛡️ AV-D{self.anti_vies_duzia}"
+                
+                info_adapt = ""
+                if self.peso_adaptativo_ativo:
+                    info_adapt = " | 🔥 Adapt"
                 
                 motivo = f"🟢 ML Híbrido ({treino_info}) | Score: {s1:.1f}"
                 if info_padroes:
@@ -1787,6 +1847,8 @@ class DuziaAI:
                     motivo += info_consenso
                 if info_anti_vies:
                     motivo += info_anti_vies
+                if info_adapt:
+                    motivo += info_adapt
             else:
                 motivo = f"Score ML baixo ({s1:.1f} < {score_minimo})"
         else:
@@ -1798,8 +1860,8 @@ class DuziaAI:
             else:
                 motivo = f"Aguardando ML ({len(self.historico_completo)}/40 rodadas)"
 
-        # Limitador de repetições
-        max_rep = config.get('ml_max_repeticoes_mesma_duzia', 4)
+        # Limitador de repetições (usa config específico da roleta)
+        max_rep = config.get('ml_max_repeticoes_mesma_duzia', 3)
         if pode_entrar and len(self.ultimas_previsoes) >= max_rep:
             ultimas_n = self.ultimas_previsoes[-max_rep:]
             if all(p == d1 for p in ultimas_n):
@@ -1813,7 +1875,7 @@ class DuziaAI:
                     pode_entrar = False
                     motivo = f"🚫 Bloqueio por repetição (>{max_rep}x mesma dúzia)"
 
-        # Filtros de confiança (usa config específico da roleta)
+        # Filtros de confiança
         confianca_min = config.get('confianca_minima_entrada', 2.0)
         if pode_entrar and confianca < confianca_min and not forcar_rotacao:
             if self.consenso_info['tipo'] == 'triplo' and confianca >= 1.5:
@@ -1844,6 +1906,7 @@ class DuziaAI:
             'tam4': self.padrao_stats_ui.get('tam4'),
             'consenso': self.consenso_info,
             'anti_vies': self.anti_vies_ativo,
+            'peso_adaptativo': self.peso_adaptativo_ativo,
             'resumo': []
         }
         for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
@@ -1854,6 +1917,8 @@ class DuziaAI:
             info_padrao['resumo'].append(f"{icone}D{self.consenso_info['duzia']}")
         if self.anti_vies_ativo:
             info_padrao['resumo'].append(f"🛡️AV-D{self.anti_vies_duzia}")
+        if self.peso_adaptativo_ativo:
+            info_padrao['resumo'].append("🔥Adapt")
         info_padrao['resumo'] = " | ".join(info_padrao['resumo']) if info_padrao['resumo'] else "-"
 
         previsao = {
@@ -2171,8 +2236,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V12.2 - Setups Independentes", layout="wide")
-st.title("🎰 DuziaAI V12.2 — Setups Independentes por Roleta 🎯🔧 (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V12.3 - Peso Adaptativo", layout="wide")
+st.title("🎰 DuziaAI V12.3 — Peso Adaptativo + Anti-Viés Reforçado 🔥🛡️ (BRT)")
 
 config_global = carregar_config_global()
 
@@ -2292,7 +2357,7 @@ if "historico" not in st.session_state:
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V12.2 — Setups Independentes")
+    st.markdown("## ⚙️ V12.3 — Peso Adaptativo")
     sis = st.session_state.sistema
 
     st.markdown("### 📊 Status da Sessão")
@@ -2393,7 +2458,6 @@ with st.sidebar:
     st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
     api_name = st.session_state.api_selecionada
 
-    # Status do modelo e configuração ativa
     config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
     
     if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
@@ -2415,6 +2479,9 @@ with st.sidebar:
     st.caption(f"• P2/P3/P4: {config_ativa.get('padrao_peso_tam2',20)}/{config_ativa.get('padrao_peso_tam3',50)}/{config_ativa.get('padrao_peso_tam4',30)}%")
     if config_ativa.get('anti_vies_ativo'):
         st.caption(f"• 🛡️ Anti-viés D{config_ativa.get('anti_vies_duzia')}: {config_ativa.get('anti_vies_penalidade',1.0)*100:.0f}%")
+        st.caption(f"• 🛡️ P4 isolado extra: {config_ativa.get('anti_vies_p4_isolado_extra',1.0)*100:.0f}%")
+    if config_ativa.get('peso_adaptativo_ativo'):
+        st.caption(f"• 🔥 Peso adaptativo: +{((config_ativa.get('peso_adaptativo_boost',1.0)-1)*100):.0f}%")
     
     st.caption(f"🧩 Padrões: P2={len(sis.duzia_ai.padroes_tam2)} | P3={len(sis.duzia_ai.padroes_tam3)} | P4={len(sis.duzia_ai.padroes_tam4)}")
     
@@ -2544,6 +2611,8 @@ with cg:
             titulo += " | 🟢 ZERO!"
         if sis.duzia_ai.anti_vies_ativo:
             titulo += f" | 🛡️ AV-D{sis.duzia_ai.anti_vies_duzia}"
+        if sis.duzia_ai.peso_adaptativo_ativo:
+            titulo += " | 🔥 Adapt"
 
         fig.update_layout(title=titulo, height=300, showlegend=False, yaxis_title="Score")
         st.plotly_chart(fig, use_container_width=True)
@@ -2577,6 +2646,8 @@ with ce:
         st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
     if sis.duzia_ai.anti_vies_ativo:
         st.info(f"🛡️ Anti-viés D{sis.duzia_ai.anti_vies_duzia} ativo ({sis.duzia_ai.anti_vies_penalidade*100:.0f}%)")
+    if sis.duzia_ai.peso_adaptativo_ativo:
+        st.info("🔥 Peso adaptativo ativo")
     
     consenso = sis.duzia_ai.consenso_info
     if consenso['tipo'] == 'triplo':
@@ -2677,7 +2748,7 @@ with col_t2:
     st.success("📢 Alt OK") if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt else st.warning("📢 Alt NÃO")
 
 config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
-st.caption(f"🤖 DuziaAI V12.2 | {api_name} | P2:{config_ativa['padrao_peso_tam2']}% P3:{config_ativa['padrao_peso_tam3']}% P4:{config_ativa['padrao_peso_tam4']}% | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V12.3 | {api_name} | P2:{config_ativa['padrao_peso_tam2']}% P3:{config_ativa['padrao_peso_tam3']}% P4:{config_ativa['padrao_peso_tam4']}% | {formatar_hora_brasilia()}")
 modelo_path = get_modelo_ml_path(api_name)
 st.caption(f"💾 Modelo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)" if os.path.exists(modelo_path) else "⚠️ Modelo não salvo")
 
