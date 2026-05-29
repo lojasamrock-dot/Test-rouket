@@ -205,7 +205,7 @@ SETUP_XXXTREME = {
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 30,
     'vies_dinamico_limiar': 0.15,
-    'vies_dinamico_penalidade': 0.82,
+    'vies_dinamico_penalidade': 0.82,        # Penalidade mais suave para XXXtreme
     'decaimento_padroes_ativo': True,
     'decaimento_fator': 0.97,
     'decaimento_a_cada': 5,
@@ -261,7 +261,7 @@ SETUP_IMMERSIVE = {
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 25,
     'vies_dinamico_limiar': 0.13,
-    'vies_dinamico_penalidade': 0.76,
+    'vies_dinamico_penalidade': 0.76,        # Penalidade mais forte para Immersive
     'decaimento_padroes_ativo': True,
     'decaimento_fator': 0.96,
     'decaimento_a_cada': 5,
