@@ -52,15 +52,9 @@ def data_brasilia():
     return hora_brasilia().strftime('%Y-%m-%d')
 
 # =============================
-# MELHORIA #5: DETECÇÃO DE VIÉS DINÂMICO
-# Detecta qual dúzia está superrepresentada nos últimos N resultados
-# comparando frequência real vs. esperada (33.3%)
+# DETECÇÃO DE VIÉS DINÂMICO
 # =============================
 def detectar_vies_dinamico(historico_completo, janela=30, limiar_excesso=0.15):
-    """
-    Retorna (duzia_viésada, intensidade) se uma dúzia aparecer
-    limiar_excesso acima do esperado (33.3%), senão (None, 0).
-    """
     duzias = [d for d in historico_completo[-janela:] if d != 0]
     if len(duzias) < 15:
         return None, 0.0
@@ -78,15 +72,9 @@ def detectar_vies_dinamico(historico_completo, janela=30, limiar_excesso=0.15):
 
 
 # =============================
-# MELHORIA #12: DECAIMENTO DE PADRÕES
-# Multiplica contagens por fator de decaimento a cada N rodadas
-# para que padrões antigos percam relevância
+# DECAIMENTO DE PADRÕES
 # =============================
 def aplicar_decaimento_padroes(tabela, fator=0.97):
-    """
-    Aplica decaimento exponencial às contagens de uma tabela de padrões.
-    Contagens < 0.5 são removidas para manter a tabela limpa.
-    """
     chaves_remover = []
     for chave, counter in tabela.items():
         novas_contagens = {}
@@ -103,7 +91,7 @@ def aplicar_decaimento_padroes(tabela, fator=0.97):
 
 
 # =============================
-# SETUPS INDEPENDENTES POR ROLETA (CALIBRADOS)
+# SETUPS INDEPENDENTES POR ROLETA
 # =============================
 
 SETUP_BASE = {
@@ -149,22 +137,24 @@ SETUP_BASE = {
     'peso_adaptativo_ativo': False,
     'peso_adaptativo_janela': 10,
     'peso_adaptativo_boost': 1.0,
-    # MELHORIA #5: viés dinâmico
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 30,
     'vies_dinamico_limiar': 0.15,
     'vies_dinamico_penalidade': 0.80,
-    # MELHORIA #12: decaimento de padrões
     'decaimento_padroes_ativo': True,
     'decaimento_fator': 0.97,
     'decaimento_a_cada': 5,
-    # MELHORIA #11: alerta de drift
     'drift_janela': 15,
     'drift_taxa_minima': 0.35,
     'drift_alertar_apos': 5,
+    # NOVO: Boost de sequência (reforça em vez de penalizar)
+    'sequencia_boost_ativo': True,
+    'sequencia_boost_p2': 0.15,
+    'sequencia_boost_p3': 0.20,
+    'sequencia_boost_p4': 0.25,
 }
 
-# 🟡 XXXTREME LIGHTNING - AJUSTADO COM NOVAS FEATURES DE SEQUÊNCIA
+# 🟡 XXXTREME LIGHTNING
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
@@ -212,6 +202,10 @@ SETUP_XXXTREME = {
     'drift_janela': 15,
     'drift_taxa_minima': 0.35,
     'drift_alertar_apos': 5,
+    'sequencia_boost_ativo': True,
+    'sequencia_boost_p2': 0.15,
+    'sequencia_boost_p3': 0.20,
+    'sequencia_boost_p4': 0.25,
 }
 
 # 🟢 IMMERSIVE ROULETTE
@@ -268,6 +262,10 @@ SETUP_IMMERSIVE = {
     'drift_janela': 12,
     'drift_taxa_minima': 0.38,
     'drift_alertar_apos': 4,
+    'sequencia_boost_ativo': True,
+    'sequencia_boost_p2': 0.12,
+    'sequencia_boost_p3': 0.18,
+    'sequencia_boost_p4': 0.22,
 }
 
 # 🔴 MEGA ROULETTE
@@ -317,6 +315,10 @@ SETUP_MEGA = {
     'drift_janela': 15,
     'drift_taxa_minima': 0.35,
     'drift_alertar_apos': 5,
+    'sequencia_boost_ativo': True,
+    'sequencia_boost_p2': 0.15,
+    'sequencia_boost_p3': 0.20,
+    'sequencia_boost_p4': 0.25,
 }
 
 ROLETA_CONFIGS = {
@@ -890,17 +892,7 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
-# 🧠 DUZIA AI V13.0
-# MELHORIAS IMPLEMENTADAS:
-# #1  Features temporais (hora, turno, tendência curto prazo)
-# #3  Decaimento exponencial de amostras no treino (amostras recentes pesam mais)
-# #4  Consenso min_conf 0.15 → 0.25 (menos ruído)
-# #5  Viés dinâmico automático por sessão
-# #8  Alinhamento de maxlen: historico_numeros e numeros_completos ambos 1000
-# #11 Alerta de drift (taxa cai abaixo do limiar)
-# #12 Decaimento de padrões P2/P3/P4 com janela deslizante
-# NOVO: Features de sequência para detectar padrões D1→D1→D1
-# NOVO: Penalização de padrões repetitivos nos scores
+# 🧠 DUZIA AI V13.0 - COM REFORÇO DE SEQUÊNCIAS
 # =============================
 
 class DuziaAI:
@@ -1001,10 +993,17 @@ class DuziaAI:
         self._drift_ativo = False
         self._drift_erros_consecutivos_entrada = 0
 
+        # NOVO: Boost de sequência
+        self.sequencia_boost_ativo = config.get('sequencia_boost_ativo', True)
+        self.sequencia_boost_p2 = config.get('sequencia_boost_p2', 0.15)
+        self.sequencia_boost_p3 = config.get('sequencia_boost_p3', 0.20)
+        self.sequencia_boost_p4 = config.get('sequencia_boost_p4', 0.25)
+
         # Para UI
         self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.padrao_stats_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.consenso_info = {'tipo': 'nenhum', 'duzia': None, 'conf': 0.0}
+        self.sequencia_info = {'ativa': False, 'duzia': None, 'tamanho': 0, 'boost': 0.0}
 
         self._carregar_modelo_salvo()
         self._carregar_padroes_hibridos()
@@ -1170,23 +1169,15 @@ class DuziaAI:
         ]
 
     # ===================================================
-    # NOVO: FEATURES DE SEQUÊNCIA
-    # Detecta sequências de mesma dúzia para a ML aprender
-    # padrões de continuidade ou quebra
+    # FEATURES DE SEQUÊNCIA (detecta e quantifica repetições)
     # ===================================================
     def _extrair_features_sequencia(self, historico_duzias, historico_numeros):
-        """
-        Features de detecção de sequências de mesma dúzia.
-        Permite que a ML identifique padrões de continuidade.
-        """
         features = {}
         
-        # Inicializa todas as features com 0
         for prefixo in ['seq_atual', 'seq_anterior', 'seq_tendencia']:
             for k in ['duzia', 'tamanho', 'forca', 'foi_quebrada', 'gap_ate_ultima']:
                 features[f'{prefixo}_{k}'] = 0.0
         
-        # Features de diversidade e dominância
         features['diversidade_ultimas_10'] = 0.0
         features['dominancia_maxima_ultimas_10'] = 0.0
         features['indice_continuidade'] = 0.0
@@ -1195,7 +1186,7 @@ class DuziaAI:
         if len(duzias) < 3:
             return features
         
-        # --- Detecção de sequência atual (últimas ocorrências) ---
+        # Detecção de sequência atual
         ultima_duzia = duzias[-1] if duzias else 0
         tamanho_seq_atual = 1
         for i in range(len(duzias) - 2, -1, -1):
@@ -1207,11 +1198,10 @@ class DuziaAI:
         features['seq_atual_duzia'] = float(ultima_duzia)
         features['seq_atual_tamanho'] = float(tamanho_seq_atual)
         
-        # Força da sequência atual (tamanho relativo à janela recente)
         janela_recente = min(15, len(duzias))
         features['seq_atual_forca'] = round(tamanho_seq_atual / janela_recente, 4) if janela_recente > 0 else 0.0
         
-        # --- Detecção de sequência anterior (antes da atual) ---
+        # Detecção de sequência anterior
         if tamanho_seq_atual < len(duzias):
             idx_inicio_seq_atual = len(duzias) - tamanho_seq_atual
             if idx_inicio_seq_atual > 0:
@@ -1226,11 +1216,9 @@ class DuziaAI:
                 features['seq_anterior_duzia'] = float(duzia_anterior)
                 features['seq_anterior_tamanho'] = float(tamanho_seq_anterior)
                 features['seq_anterior_forca'] = round(tamanho_seq_anterior / max(1, len(duzias[:idx_inicio_seq_atual])), 4)
-                
-                # A sequência anterior foi quebrada pela atual?
                 features['seq_anterior_foi_quebrada'] = 1.0 if duzia_anterior != ultima_duzia else 0.0
         
-        # --- Tendência de formação de sequências ---
+        # Tendência de formação de sequências
         sequencias_detectadas = 0
         total_sequencias = 0
         i = len(duzias) - 1
@@ -1250,7 +1238,7 @@ class DuziaAI:
         features['seq_tendencia_duzia'] = float(ultima_duzia)
         features['seq_tendencia_forca'] = round(tamanho_seq_atual / max(1, sequencias_detectadas + 1), 4)
         
-        # --- Gap até a última ocorrência de cada dúzia ---
+        # Gap até a última ocorrência
         gaps = {}
         for duzia in [1, 2, 3]:
             gap = 0
@@ -1262,14 +1250,14 @@ class DuziaAI:
         
         features['seq_atual_gap_ate_ultima'] = float(gaps.get(ultima_duzia, len(duzias)))
         
-        # --- Diversidade e dominância nas últimas 10 ---
+        # Diversidade e dominância
         ultimas_10 = duzias[-10:] if len(duzias) >= 10 else duzias
         if ultimas_10:
             freq = Counter(ultimas_10)
             features['diversidade_ultimas_10'] = float(len(set(ultimas_10)))
             features['dominancia_maxima_ultimas_10'] = round(max(freq.values()) / len(ultimas_10), 4)
         
-        # --- Índice de continuidade composto ---
+        # Índice de continuidade composto
         continuidade = 0.0
         if tamanho_seq_atual >= 2:
             continuidade += 0.4
@@ -1282,11 +1270,22 @@ class DuziaAI:
         
         features['indice_continuidade'] = round(continuidade, 4)
         
+        # Atualiza info da UI
+        if tamanho_seq_atual >= 2:
+            self.sequencia_info = {
+                'ativa': True,
+                'duzia': ultima_duzia,
+                'tamanho': tamanho_seq_atual,
+                'boost': 1.0 + (tamanho_seq_atual * self.sequencia_boost_p4)
+            }
+        else:
+            self.sequencia_info = {'ativa': False, 'duzia': None, 'tamanho': 0, 'boost': 0.0}
+        
         return features
 
     # ===================================================
-    # ATUALIZADO: _extrair_features_padroes_hibridos
-    # Agora penaliza padrões repetitivos D1→D1→D1, etc.
+    # CORRIGIDO: _extrair_features_padroes_hibridos
+    # Agora REFORÇA sequências em vez de penalizar
     # ===================================================
     def _extrair_features_padroes_hibridos(self, historico_duzias):
         duzias = [d for d in historico_duzias if d != 0]
@@ -1298,11 +1297,11 @@ class DuziaAI:
 
         features.update({
             'combo_d1': 0.0, 'combo_d2': 0.0, 'combo_d3': 0.0, 'combo_conf': 0.0,
-            # Novas features de penalidade para padrões problemáticos
-            'padrao_repetitivo_d1': 0.0,
-            'padrao_repetitivo_d2': 0.0,
-            'padrao_repetitivo_d3': 0.0,
-            'sequencia_problematica_ativa': 0.0,
+            'sequencia_ativa_d1': 0.0,
+            'sequencia_ativa_d2': 0.0,
+            'sequencia_ativa_d3': 0.0,
+            'sequencia_tamanho': 0.0,
+            'sequencia_forca': 0.0,
         })
 
         if len(duzias) < 1:
@@ -1315,20 +1314,28 @@ class DuziaAI:
         scores_p2, scores_p3, scores_p4 = None, None, None
         conf_p2, conf_p3, conf_p4 = 0.0, 0.0, 0.0
 
-        # --- Detecção de padrões repetitivos problemáticos ---
-        if len(duzias) >= 4:
-            ultimas_4 = duzias[-4:]
-            for duzia in [1, 2, 3]:
-                if ultimas_4[-3:] == [duzia, duzia, duzia]:
-                    features[f'padrao_repetitivo_d{duzia}'] = 1.0
-                    features['sequencia_problematica_ativa'] = 1.0
+        # ================================================
+        # DETECTAR E REFORÇAR SEQUÊNCIAS
+        # ================================================
+        tamanho_sequencia = 1
+        duzia_em_sequencia = None
         
-        if len(duzias) >= 3:
-            ultimas_3 = duzias[-3:]
-            for duzia in [1, 2, 3]:
-                if ultimas_3 == [duzia, duzia, duzia]:
-                    features[f'padrao_repetitivo_d{duzia}'] = 0.7
-                    features['sequencia_problematica_ativa'] = 0.7
+        if len(duzias) >= 2:
+            ultima = duzias[-1]
+            for i in range(len(duzias) - 2, -1, -1):
+                if duzias[i] == ultima:
+                    tamanho_sequencia += 1
+                else:
+                    break
+            
+            if tamanho_sequencia >= 2:
+                duzia_em_sequencia = ultima
+                features[f'sequencia_ativa_d{duzia_em_sequencia}'] = 1.0
+                features['sequencia_tamanho'] = float(tamanho_sequencia)
+                features['sequencia_forca'] = min(1.0, tamanho_sequencia / 5.0)
+                
+                if self.sequencia_boost_ativo:
+                    logging.info(f"🔗 Sequência detectada: D{duzia_em_sequencia} x{tamanho_sequencia} — REFORÇANDO score")
 
         # --- Padrão 2 ---
         if len(duzias) >= 1:
@@ -1341,12 +1348,12 @@ class DuziaAI:
                     max_s = max(scores.values())
                     seg_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
 
-                    # Penaliza se o padrão aponta para continuar sequência problemática
-                    if features['sequencia_problematica_ativa'] > 0 and max(scores, key=scores.get) == d1:
-                        penalidade = 1.0 - (features['sequencia_problematica_ativa'] * 0.3)
-                        for k in scores:
-                            if k == d1:
-                                scores[k] *= penalidade
+                    # REFORÇA se a sequência aponta para continuar
+                    if duzia_em_sequencia is not None and self.sequencia_boost_ativo:
+                        if max(scores, key=scores.get) == duzia_em_sequencia:
+                            boost = 1.0 + (tamanho_sequencia * self.sequencia_boost_p2)
+                            scores[duzia_em_sequencia] = min(1.0, scores[duzia_em_sequencia] * boost)
+                            logging.info(f"🔗 P2: Reforçando D{duzia_em_sequencia} (boost x{boost:.2f})")
 
                     features['p2_d1'] = scores.get(1, 0.0)
                     features['p2_d2'] = scores.get(2, 0.0)
@@ -1385,12 +1392,12 @@ class DuziaAI:
                     max_s = max(scores.values())
                     seg_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
 
-                    # Penaliza padrões D1→D1 que apontam para D1 (sequência problemática)
-                    if d1 == d2 and features['sequencia_problematica_ativa'] > 0 and max(scores, key=scores.get) == d1:
-                        penalidade = 1.0 - (features['sequencia_problematica_ativa'] * 0.4)
-                        for k in scores:
-                            if k == d1:
-                                scores[k] *= penalidade
+                    # REFORÇA se P3 aponta para continuar sequência
+                    if duzia_em_sequencia is not None and d1 == d2 == duzia_em_sequencia and self.sequencia_boost_ativo:
+                        if max(scores, key=scores.get) == duzia_em_sequencia:
+                            boost = 1.0 + (tamanho_sequencia * self.sequencia_boost_p3)
+                            scores[duzia_em_sequencia] = min(1.0, scores[duzia_em_sequencia] * boost)
+                            logging.info(f"🔗 P3: Reforçando D{duzia_em_sequencia} (boost x{boost:.2f})")
 
                     features['p3_d1'] = scores.get(1, 0.0)
                     features['p3_d2'] = scores.get(2, 0.0)
@@ -1429,14 +1436,16 @@ class DuziaAI:
                     max_s = max(scores.values())
                     seg_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
 
-                    # Penaliza fortemente padrão D1→D1→D1
-                    if d1 == d2 == d3:
-                        if max(scores, key=scores.get) == d1:
-                            penalidade = 0.5
-                            for k in scores:
-                                if k == d1:
-                                    scores[k] *= penalidade
-                            features['sequencia_problematica_ativa'] = max(features['sequencia_problematica_ativa'], 1.0)
+                    # REFORÇA se P4 é triplo repetitivo
+                    if d1 == d2 == d3 and self.sequencia_boost_ativo:
+                        boost = 1.0 + (tamanho_sequencia * self.sequencia_boost_p4)
+                        for k in scores:
+                            if k == d1:
+                                scores[k] = min(1.0, scores[k] * boost)
+                        features['sequencia_ativa_d1' if d1 == 1 else f'sequencia_ativa_d{d1}'] = 1.0
+                        features['sequencia_tamanho'] = float(tamanho_sequencia)
+                        features['sequencia_forca'] = min(1.0, tamanho_sequencia / 5.0)
+                        logging.info(f"🔗 P4: Sequência tripla D{d1}→D{d1}→D{d1} — REFORÇANDO (boost x{boost:.2f})")
 
                     features['p4_d1'] = scores.get(1, 0.0)
                     features['p4_d2'] = scores.get(2, 0.0)
@@ -1481,10 +1490,6 @@ class DuziaAI:
 
         return features
 
-    # ===================================================
-    # ATUALIZADO: _extrair_features_core
-    # Agora inclui features de sequência no vetor final
-    # ===================================================
     def _extrair_features_core(self, historico_duzias, historico_numeros,
                                 erros_consec, rodadas_zero, repeticoes_duzia, janela=20):
         numeros_janela = historico_numeros[-janela:] if len(historico_numeros) >= janela else historico_numeros
@@ -1629,16 +1634,15 @@ class DuziaAI:
             padroes_features['p4_conf'], padroes_features['p4_total'], padroes_features['p4_dom'],
             padroes_features['combo_d1'], padroes_features['combo_d2'], padroes_features['combo_d3'],
             padroes_features['combo_conf'],
-            # Novas features de sequência problemática
-            padroes_features['padrao_repetitivo_d1'],
-            padroes_features['padrao_repetitivo_d2'],
-            padroes_features['padrao_repetitivo_d3'],
-            padroes_features['sequencia_problematica_ativa'],
+            padroes_features['sequencia_ativa_d1'],
+            padroes_features['sequencia_ativa_d2'],
+            padroes_features['sequencia_ativa_d3'],
+            padroes_features['sequencia_tamanho'],
+            padroes_features['sequencia_forca'],
         ]
 
         features_temporais = self._extrair_features_temporais(historico_duzias)
         
-        # NOVAS FEATURES DE SEQUÊNCIA
         features_sequencia = self._extrair_features_sequencia(historico_duzias, historico_numeros)
         features_seq_list = [
             features_sequencia['seq_atual_duzia'],
@@ -2223,6 +2227,10 @@ class DuziaAI:
                     icone = "🔒" if self.consenso_info['tipo'] == 'triplo' else "🔗"
                     info_consenso = f" | {icone} D{self.consenso_info['duzia']}"
 
+                info_sequencia = ""
+                if self.sequencia_info['ativa']:
+                    info_sequencia = f" | 🔗 Seq D{self.sequencia_info['duzia']} x{self.sequencia_info['tamanho']}"
+
                 info_anti_vies = ""
                 if self.anti_vies_ativo:
                     info_anti_vies = f" | 🛡️ AV-D{self.anti_vies_duzia}"
@@ -2240,6 +2248,8 @@ class DuziaAI:
                     motivo += f" | 🧩 {info_padroes}"
                 if info_consenso:
                     motivo += info_consenso
+                if info_sequencia:
+                    motivo += info_sequencia
                 if info_anti_vies:
                     motivo += info_anti_vies
                 if info_vies_din:
@@ -2298,6 +2308,7 @@ class DuziaAI:
             'tam3': self.padrao_stats_ui.get('tam3'),
             'tam4': self.padrao_stats_ui.get('tam4'),
             'consenso': self.consenso_info,
+            'sequencia': self.sequencia_info,
             'anti_vies': self.anti_vies_ativo,
             'peso_adaptativo': self.peso_adaptativo_ativo,
             'vies_dinamico': self._vies_dinamico_atual,
@@ -2310,6 +2321,8 @@ class DuziaAI:
         if self.consenso_info['tipo'] in ('duplo', 'triplo'):
             icone = "🔒" if self.consenso_info['tipo'] == 'triplo' else "🔗"
             info_padrao['resumo'].append(f"{icone}D{self.consenso_info['duzia']}")
+        if self.sequencia_info['ativa']:
+            info_padrao['resumo'].append(f"🔗D{self.sequencia_info['duzia']}x{self.sequencia_info['tamanho']}")
         if self.anti_vies_ativo:
             info_padrao['resumo'].append(f"🛡️AV-D{self.anti_vies_duzia}")
         if self.vies_dinamico_ativo and self._vies_dinamico_atual:
@@ -2338,13 +2351,9 @@ class DuziaAI:
 
 
 # ===================================================
-# Ensemble Manual com suporte a sample_weight
+# Ensemble Manual
 # ===================================================
 class _EnsembleManual:
-    """
-    Ensemble soft-voting entre RandomForest e GradientBoosting
-    já treinados. Mantém interface predict_proba compatível.
-    """
     def __init__(self, rf, gbt):
         self.rf = rf
         self.gbt = gbt
@@ -2675,8 +2684,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V13.0 - Features de Sequência", layout="wide")
-st.title("🎰 DuziaAI V13.0 — Features de Sequência 🔗 + Penalização D1→D1→D1 (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V13.0 - Reforço de Sequências", layout="wide")
+st.title("🎰 DuziaAI V13.0 — Reforço de Sequências 🔗 (BRT)")
 
 config_global = carregar_config_global()
 
@@ -2800,7 +2809,7 @@ if "historico" not in st.session_state:
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V13.0 — Features de Sequência")
+    st.markdown("## ⚙️ V13.0 — Reforço de Sequências")
     sis = st.session_state.sistema
 
     st.markdown("### 📊 Status da Sessão")
@@ -2855,41 +2864,6 @@ with st.sidebar:
         sessoes = gerenciador.listar_sessoes()
         if sessoes:
             st.caption(f"📂 {len(sessoes)} sessões disponíveis")
-            st.markdown("#### 📥 Sessão Específica")
-            sessao_opcoes = [f"Sessão #{s.get('numero_sessao', '?')} - {s.get('data', '?')} {s.get('hora_encerramento', '?')}" for s in sessoes[:20]]
-            if sessao_opcoes:
-                sessao_selecionada = st.selectbox("Selecionar sessão:", sessao_opcoes, key="select_sessao")
-                if sessao_selecionada:
-                    idx = sessao_opcoes.index(sessao_selecionada)
-                    if idx < len(sessoes):
-                        sessao = sessoes[idx]
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            conteudo_json = json.dumps(sessao, indent=2, ensure_ascii=False)
-                            st.markdown(gerenciador.get_download_link(conteudo_json, f"sessao_{sessao.get('numero_sessao', '?')}.json", 'json'), unsafe_allow_html=True)
-                        with col2:
-                            conteudo_csv = gerenciador.gerar_csv_sessao(sessao)
-                            st.markdown(gerenciador.get_download_link(conteudo_csv, f"sessao_{sessao.get('numero_sessao', '?')}.csv", 'csv'), unsafe_allow_html=True)
-                        stats = sessao.get('estatisticas', {})
-                        st.caption(f"✅ {stats.get('acertos', 0)} | ❌ {stats.get('erros', 0)} | 📊 {stats.get('taxa_acerto', 0)}%")
-            st.markdown("---")
-            st.markdown("#### 📊 Consolidado do Dia")
-            data_hoje = data_brasilia()
-            sessoes_hoje = gerenciador.listar_sessoes_do_dia(data_hoje)
-            if sessoes_hoje:
-                st.caption(f"📅 {data_hoje}: {len(sessoes_hoje)} sessões")
-                if st.button("📊 Gerar Consolidado Hoje", use_container_width=True):
-                    caminho = gerenciador.consolidar_sessoes_dia(data_hoje)
-                    if caminho:
-                        with open(caminho, 'r') as f:
-                            conteudo = f.read()
-                        st.markdown(gerenciador.get_download_link(conteudo, f"consolidado_{data_hoje}.json", 'json'), unsafe_allow_html=True)
-                        st.success("✅ Consolidado gerado!")
-            if st.button("📦 Baixar Todas as Sessões (JSON)", use_container_width=True):
-                todas_sessoes = gerenciador.listar_sessoes()
-                if todas_sessoes:
-                    conteudo = json.dumps({'total_sessoes': len(todas_sessoes), 'sessoes': todas_sessoes}, indent=2, ensure_ascii=False)
-                    st.markdown(gerenciador.get_download_link(conteudo, f"todas_sessoes_{api_name.lower().replace(' ', '_')}.json", 'json'), unsafe_allow_html=True)
         else:
             st.info("Nenhuma sessão salva ainda.")
 
@@ -2918,20 +2892,17 @@ with st.sidebar:
     if sis.duzia_ai._drift_ativo:
         st.error("⚠️ DRIFT DETECTADO — Entradas suspensas!")
 
+    if sis.duzia_ai.sequencia_info['ativa']:
+        seq = sis.duzia_ai.sequencia_info
+        st.success(f"🔗 Sequência: D{seq['duzia']} x{seq['tamanho']} (Boost: x{seq['boost']:.2f})")
+
     if sis.duzia_ai._vies_dinamico_atual:
-        st.warning(f"🔍 Viés dinâmico: D{sis.duzia_ai._vies_dinamico_atual} ({sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% acima do esperado)")
+        st.warning(f"🔍 Viés dinâmico: D{sis.duzia_ai._vies_dinamico_atual} ({sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% acima)")
 
     st.markdown("---")
     st.caption(f"🔧 **Setup: {api_name}**")
     st.caption(f"• Conf mín: {config_ativa.get('confianca_minima_entrada', 2.0)}")
     st.caption(f"• Score mín: {config_ativa.get('ml_score_minimo_entrada', 30)}")
-    st.caption(f"• P2/P3/P4: {config_ativa.get('padrao_peso_tam2',20)}/{config_ativa.get('padrao_peso_tam3',50)}/{config_ativa.get('padrao_peso_tam4',30)}%")
-    if config_ativa.get('anti_vies_ativo'):
-        st.caption(f"• 🛡️ Anti-viés D{config_ativa.get('anti_vies_duzia')}: {config_ativa.get('anti_vies_penalidade',1.0)*100:.0f}%")
-    if config_ativa.get('peso_adaptativo_ativo'):
-        st.caption(f"• 🔥 Peso adaptativo: +{((config_ativa.get('peso_adaptativo_boost',1.0)-1)*100):.0f}%")
-    if config_ativa.get('vies_dinamico_ativo'):
-        st.caption(f"• 🔍 Viés dinâmico: jan={config_ativa.get('vies_dinamico_janela',30)} lim={config_ativa.get('vies_dinamico_limiar',0.15)*100:.0f}% pen={config_ativa.get('vies_dinamico_penalidade',0.80)*100:.0f}%")
     st.caption(f"🧩 Padrões: P2={len(sis.duzia_ai.padroes_tam2)} | P3={len(sis.duzia_ai.padroes_tam3)} | P4={len(sis.duzia_ai.padroes_tam4)}")
 
     consenso = sis.duzia_ai.consenso_info
@@ -3011,10 +2982,14 @@ sis = st.session_state.sistema
 api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
 
 if sis.duzia_ai._drift_ativo:
-    st.error("⚠️ **DRIFT DETECTADO** — Taxa de acerto abaixo do limiar nas últimas rodadas. Entradas suspensas automaticamente até recuperação.")
+    st.error("⚠️ **DRIFT DETECTADO** — Taxa de acerto abaixo do limiar. Entradas suspensas.")
+
+if sis.duzia_ai.sequencia_info['ativa']:
+    seq = sis.duzia_ai.sequencia_info
+    st.success(f"🔗 **Sequência ativa:** D{seq['duzia']} repetiu {seq['tamanho']}x consecutivas — Boost aplicado: x{seq['boost']:.2f}")
 
 if sis.duzia_ai._vies_dinamico_atual:
-    st.warning(f"🔍 **Viés dinâmico ativo:** D{sis.duzia_ai._vies_dinamico_atual} está {sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% acima do esperado — penalidade aplicada automaticamente.")
+    st.warning(f"🔍 **Viés dinâmico:** D{sis.duzia_ai._vies_dinamico_atual} ({sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% acima)")
 
 st.subheader(f"📊 ESTATÍSTICAS — {api_name}")
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
@@ -3065,14 +3040,8 @@ with cg:
         titulo = f"🎯 ML Híbrido ({api_name})"
         if sis.duzia_ai.alerta_zero_ativo:
             titulo += " | 🟢 ZERO!"
-        if sis.duzia_ai.anti_vies_ativo:
-            titulo += f" | 🛡️ AV-D{sis.duzia_ai.anti_vies_duzia}"
-        if sis.duzia_ai._vies_dinamico_atual:
-            titulo += f" | 🔍 VD-D{sis.duzia_ai._vies_dinamico_atual}"
-        if sis.duzia_ai.peso_adaptativo_ativo:
-            titulo += " | 🔥 Adapt"
-        if sis.duzia_ai._drift_ativo:
-            titulo += " | ⚠️ DRIFT"
+        if sis.duzia_ai.sequencia_info['ativa']:
+            titulo += f" | 🔗 D{sis.duzia_ai.sequencia_info['duzia']}x{sis.duzia_ai.sequencia_info['tamanho']}"
 
         fig.update_layout(title=titulo, height=300, showlegend=False, yaxis_title="Score")
         st.plotly_chart(fig, use_container_width=True)
@@ -3104,26 +3073,9 @@ with ce:
         st.error("⚠️ DRIFT — Entradas suspensas")
     if sis.duzia_ai.alerta_zero_ativo:
         st.warning("⚠️ ALERTA ZERO! 🟢")
-    if sis.duzia_ai.em_pausa_pos_raio:
-        st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
-    if sis.duzia_ai.anti_vies_ativo:
-        st.info(f"🛡️ Anti-viés D{sis.duzia_ai.anti_vies_duzia} ativo ({sis.duzia_ai.anti_vies_penalidade*100:.0f}%)")
-    if sis.duzia_ai._vies_dinamico_atual:
-        st.info(f"🔍 Viés dinâmico: D{sis.duzia_ai._vies_dinamico_atual} ({sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% excesso)")
-    if sis.duzia_ai.peso_adaptativo_ativo:
-        st.info("🔥 Peso adaptativo ativo")
-
-    consenso = sis.duzia_ai.consenso_info
-    if consenso['tipo'] == 'triplo':
-        st.success(f"🔒 CONSENSO TRIPLO: D{consenso['duzia']}")
-    elif consenso['tipo'] == 'duplo':
-        st.info(f"🔗 CONSENSO DUPLO: D{consenso['duzia']}")
-
-    for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
-        if sis.duzia_ai.padrao_stats_ui.get(t):
-            s = sis.duzia_ai.padrao_stats_ui[t]
-            melhor = max(s['scores'], key=s['scores'].get)
-            st.caption(f"🧩 {nome}: {s['gatilho']} → D{melhor} ({s['total']:.0f}x)")
+    if sis.duzia_ai.sequencia_info['ativa']:
+        seq = sis.duzia_ai.sequencia_info
+        st.success(f"🔗 Sequência D{seq['duzia']} x{seq['tamanho']} (Boost x{seq['boost']:.2f})")
 
     if not sis.sessao_ativa:
         if sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
@@ -3200,8 +3152,6 @@ if sis.historico_entradas:
                       "Conf":f"{e.get('confianca',0):.1f}","Gat":e.get('gatilho','ML'),"Z":zero,"🔄":anti,
                       "🧩":padrao,"Duz":duz,"P1":p1,"P2s":p2s,"Nº":num,"Zer":zer})
     st.dataframe(dados, use_container_width=True, height=300)
-    if st.button("📥 Exportar CSV", use_container_width=True):
-        if exportar_historico_csv(sis.historico_entradas): st.success("✅ CSV exportado!")
 else:
     st.info("Nenhuma entrada ainda.")
 
@@ -3214,8 +3164,6 @@ with col_t2:
     st.success("📢 Alt OK") if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt else st.warning("📢 Alt NÃO")
 
 config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
-st.caption(f"🤖 DuziaAI V13.0 | {api_name} | P2:{config_ativa['padrao_peso_tam2']}% P3:{config_ativa['padrao_peso_tam3']}% P4:{config_ativa['padrao_peso_tam4']}% | {formatar_hora_brasilia()}")
-modelo_path = get_modelo_ml_path(api_name)
-st.caption(f"💾 Modelo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)" if os.path.exists(modelo_path) else "⚠️ Modelo não salvo")
+st.caption(f"🤖 DuziaAI V13.0 | {api_name} | Seq Boost: P2={config_ativa['sequencia_boost_p2']} P3={config_ativa['sequencia_boost_p3']} P4={config_ativa['sequencia_boost_p4']} | {formatar_hora_brasilia()}")
 
 salvar_sessao()
