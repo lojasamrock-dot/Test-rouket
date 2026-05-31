@@ -1286,11 +1286,21 @@ class DuziaAI:
                 aplicar_decaimento_padroes(self.padroes_tam3, self.decaimento_fator)
                 aplicar_decaimento_padroes(self.padroes_tam4, self.decaimento_fator)
 
+    #def _verificar_qualidade_padroes(self):
     def _verificar_qualidade_padroes(self):
         """✅ NOVO: Verifica se os padrões têm amostras suficientes para serem confiáveis"""
-        p2_ok = self.padrao_stats_ui.get('tam2', {}).get('total', 0) > self.padrao_qualidade_min_p2
-        p3_ok = self.padrao_stats_ui.get('tam3', {}).get('total', 0) > self.padrao_qualidade_min_p3
-        p4_ok = self.padrao_stats_ui.get('tam4', {}).get('total', 0) > self.padrao_qualidade_min_p4
+        # Corrigido: verifica se o valor é None antes de chamar .get()
+        p2_stats = self.padrao_stats_ui.get('tam2')
+        p3_stats = self.padrao_stats_ui.get('tam3')
+        p4_stats = self.padrao_stats_ui.get('tam4')
+        
+        p2_total = p2_stats.get('total', 0) if p2_stats else 0
+        p3_total = p3_stats.get('total', 0) if p3_stats else 0
+        p4_total = p4_stats.get('total', 0) if p4_stats else 0
+        
+        p2_ok = p2_total > self.padrao_qualidade_min_p2
+        p3_ok = p3_total > self.padrao_qualidade_min_p3
+        p4_ok = p4_total > self.padrao_qualidade_min_p4
         
         padroes_validos = sum([p2_ok, p3_ok, p4_ok])
         return padroes_validos, {'p2': p2_ok, 'p3': p3_ok, 'p4': p4_ok}
