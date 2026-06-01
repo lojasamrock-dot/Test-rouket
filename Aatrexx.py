@@ -375,6 +375,7 @@ SETUP_XXXTREME = {
 }
 
 # 🟢 IMMERSIVE ROULETTE
+#SETUP_IMMERSIVE = {
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
@@ -394,48 +395,77 @@ SETUP_IMMERSIVE = {
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
-    'horario_bloqueio_inicio': 5, 'horario_bloqueio_fim': 7,
+    
+    # ============================================
+    # MACHINE LEARNING
+    # ============================================
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
     'ml_score_minimo_entrada': 34,
     'ml_score_minimo_fallback': 42,
-    'ml_min_rodadas_fallback': 15,  # ✅ Aumentado de 10 para 15
+    'ml_min_rodadas_fallback': 10,
     'ml_max_repeticoes_mesma_duzia': 2,
     'ml_score_minimo_pos_rotacao': 18,
-    'padrao_min_ocorrencias': 3,
-    'padrao_peso_tam2': 32,
-    'padrao_peso_tam3': 38,
-    'padrao_peso_tam4': 30,
+    
+    # ============================================
+    # PADRÕES HÍBRIDOS - CORRIGIDO
+    # P2: MAIS CONFIÁVEL (acertou em 2/3 erros quando era ignorado)
+    # P3: REDUZIDO (superestima D3 no padrão D1→D2)
+    # P4: MANTIDO COM LEVE AJUSTE
+    # ============================================
+    'padrao_min_ocorrencias': 5,
+    'padrao_peso_tam2': 42,
+    'padrao_peso_tam3': 25,
+    'padrao_peso_tam4': 33,
     'padrao_conf_minima_tam2': 2,
     'padrao_conf_minima_tam4': 8,
-    'padrao_consenso_peso_extra': 8,
-    'padrao_consenso_min_conf': 0.25,
+    'padrao_consenso_peso_extra': 10,
+    'padrao_consenso_min_conf': 0.30,
     'ml_ignorar_consenso_conf_min': 3.5,
+    
+    # ============================================
+    # ANTI-VIÉS - DESLIGADO
+    # ============================================
     'anti_vies_ativo': False,
-   # 'anti_vies_duzia': 3,
-   # 'anti_vies_penalidade': 0.78,
-    'anti_vies_gatilho_p2': True,
-    'anti_vies_p4_isolado_extra': 0.70,
+    'anti_vies_duzia': None,
+    'anti_vies_penalidade': 1.0,
+    'anti_vies_gatilho_p2': False,
+    'anti_vies_p4_isolado_extra': 1.0,
+    
+    # ============================================
+    # PESO ADAPTATIVO - MANTIDO
+    # ============================================
     'peso_adaptativo_ativo': True,
     'peso_adaptativo_janela': 10,
     'peso_adaptativo_boost': 1.3,
+    
+    # ============================================
+    # VIÉS DINÂMICO - MANTIDO
+    # ============================================
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 25,
     'vies_dinamico_limiar': 0.13,
     'vies_dinamico_penalidade': 0.76,
+    
+    # ============================================
+    # DECAIMENTO DE PADRÕES
+    # ============================================
     'decaimento_padroes_ativo': True,
     'decaimento_fator': 0.96,
     'decaimento_a_cada': 5,
+    
+    # ============================================
+    # DRIFT DETECTION
+    # ============================================
     'drift_janela': 12,
     'drift_taxa_minima': 0.38,
     'drift_alertar_apos': 4,
-    # MELHORIA #14
+    
+    # ============================================
+    # STREAK - CORRIGIDO
+    # ============================================
     'streak_ativo': True,
     'streak_min_len': 2,
-    'streak_peso_feature': 1.0,
-    # ✅ MELHORIA #3: qualidade mínima para padrões
-    'padrao_qualidade_min_p2': 50,
-    'padrao_qualidade_min_p3': 30,
-    'padrao_qualidade_min_p4': 20,
+    'streak_peso_feature': 1.2,
 }
 
 # 🔴 MEGA ROULETTE
