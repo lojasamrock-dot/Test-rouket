@@ -3509,9 +3509,16 @@ st.markdown("---")
 st.caption("📡 **Telegram:**")
 col_t1, col_t2 = st.columns(2)
 with col_t1:
-    st.success("🔔 Principal OK") if st.session_state.telegram_token and st.session_state.telegram_chat_id else st.warning("🔔 Principal NÃO")
+    if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+        st.success("🔔 Principal OK")
+    else:
+        st.warning("🔔 Principal NÃO")
 with col_t2:
-    st.success("📢 Alt OK") if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt else st.warning("📢 Alt NÃO")
+    if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt:
+        st.success("📢 Alt OK")
+    else:
+        st.warning("📢 Alt NÃO")
+
 
 config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
 st.caption(f"🤖 DuziaAI V13.2 | {api_name} | P2:{config_ativa['padrao_peso_tam2']}% P3:{config_ativa['padrao_peso_tam3']}% P4:{config_ativa['padrao_peso_tam4']}% | STK-Contextual✅ | Qualidade✅ | {formatar_hora_brasilia()}")
