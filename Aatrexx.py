@@ -2296,253 +2296,256 @@ class DuziaAI:
     def _get_outras_duzias(self, duzia):
         return [d for d in [1, 2, 3] if d != duzia]
 
-  #  def prever(self):
     def prever(self):
-    if self.pausa_ate and hora_brasilia() < self.pausa_ate:
-        return {"entrar": False, "motivo": "⏸️ Pausa"}
+    def prever(self):
+        if self.pausa_ate and hora_brasilia() < self.pausa_ate:
+            return {"entrar": False, "motivo": "⏸️ Pausa"}
 
-    config = self._get_config()
+        config = self._get_config()
 
-    hora_atual = datetime.now().hour
-    if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
-        inicio = config['horario_bloqueio_inicio']
-        fim = config['horario_bloqueio_fim']
-        if inicio <= hora_atual < fim:
-            return {"entrar": False, "motivo": f"⏸️ Horário bloqueado ({inicio:02d}:00-{fim:02d}:00)"}
+        hora_atual = datetime.now().hour
+        if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
+            inicio = config['horario_bloqueio_inicio']
+            fim = config['horario_bloqueio_fim']
+            if inicio <= hora_atual < fim:
+                return {"entrar": False, "motivo": f"⏸️ Horário bloqueado ({inicio:02d}:00-{fim:02d}:00)"}
 
-    if self.em_pausa_pos_raio:
-        return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
+        if self.em_pausa_pos_raio:
+            return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
 
-    # Drift detection - ÚNICO bloqueio automático mantido
-    if self._drift_ativo:
-        return {"entrar": False, "motivo": f"⚠️ DRIFT detectado — taxa baixa. Aguardando recuperação."}
+        # Drift detection - ÚNICO bloqueio automático mantido
+        if self._drift_ativo:
+            return {"entrar": False, "motivo": f"⚠️ DRIFT detectado — taxa baixa. Aguardando recuperação."}
 
-    scores, modo = self.calcular_score()
+        scores, modo = self.calcular_score()
 
-    ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    d1, s1 = ranking[0]
-    d2, s2 = ranking[1] if len(ranking) > 1 else (self._get_outras_duzias(d1)[0], 0)
-    d3, s3 = ranking[2] if len(ranking) > 2 else (self._get_outras_duzias(d1)[-1], 0)
+        ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        d1, s1 = ranking[0]
+        d2, s2 = ranking[1] if len(ranking) > 1 else (self._get_outras_duzias(d1)[0], 0)
+        d3, s3 = ranking[2] if len(ranking) > 2 else (self._get_outras_duzias(d1)[-1], 0)
 
-    self.detectar_alerta_zero()
+        self.detectar_alerta_zero()
 
-    confianca = min(3.5, max(0.5, (s1 - s2) / 20))
+        confianca = min(3.5, max(0.5, (s1 - s2) / 20))
 
-    if self.alerta_zero_ativo and confianca >= 3.0:
-        confianca = min(2.8, confianca)
+        if self.alerta_zero_ativo and confianca >= 3.0:
+            confianca = min(2.8, confianca)
 
-    pode_entrar = False
-    motivo = ""
-    forcar_rotacao = False
+        pode_entrar = False
+        motivo = ""
+        forcar_rotacao = False
 
-    modo_base = 'ml' if 'ml' in modo else 'fallback'
+        modo_base = 'ml' if 'ml' in modo else 'fallback'
 
-    # =====================================================
-    # STREAK INFO - Apenas informativo, NUNCA bloqueia
-    # =====================================================
-    streak_info = self._streak_info_atual
-    streak_len = streak_info.get('streak_atual_len', 0)
-    streak_duzia = streak_info.get('streak_atual_duzia', 0)
-    streak_cobertura = streak_info.get('cobertura_streak_duzia', 0)
-    streak_quebra_iminente = streak_info.get('streak_quebra_iminente', 0)
+        # =====================================================
+        # STREAK INFO - Apenas informativo, NUNCA bloqueia
+        # =====================================================
+        streak_info = self._streak_info_atual
+        streak_len = streak_info.get('streak_atual_len', 0)
+        streak_duzia = streak_info.get('streak_atual_duzia', 0)
+        streak_cobertura = streak_info.get('cobertura_streak_duzia', 0)
+        streak_quebra_iminente = streak_info.get('streak_quebra_iminente', 0)
 
-    streak_sinal = ""
-    if self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
-        if streak_len >= 4:
-            streak_sinal = f"🔥 STK D{streak_duzia}({streak_len}x)"
-        elif streak_len == 3:
-            streak_sinal = f"🔥 STK D{streak_duzia}(3x)"
+        streak_sinal = ""
+        if self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
+            if streak_len >= 4:
+                streak_sinal = f"🔥 STK D{streak_duzia}({streak_len}x)"
+            elif streak_len == 3:
+                streak_sinal = f"🔥 STK D{streak_duzia}(3x)"
+            else:
+                streak_sinal = f"🔥 STK D{streak_duzia}(2x)"
+
+        # =====================================================
+        # DECISÃO DE ENTRADA (ML ou Fallback)
+        # =====================================================
+        if modo_base == 'ml':
+            score_minimo = config.get('ml_score_minimo_entrada', 30)
+            pode_entrar = s1 > score_minimo
+            if pode_entrar:
+                treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
+
+                partes_padrao = []
+                if self.padrao_stats_ui.get('tam2'):
+                    partes_padrao.append(f"P2:{self.padrao_stats_ui['tam2']['gatilho']}")
+                if self.padrao_stats_ui.get('tam3'):
+                    partes_padrao.append(f"P3:{self.padrao_stats_ui['tam3']['gatilho']}")
+                if self.padrao_stats_ui.get('tam4'):
+                    partes_padrao.append(f"P4:{self.padrao_stats_ui['tam4']['gatilho']}")
+
+                info_padroes = " | ".join(partes_padrao) if partes_padrao else ""
+
+                info_consenso = ""
+                if self.consenso_info['tipo'] in ('duplo', 'triplo'):
+                    icone = "🔒" if self.consenso_info['tipo'] == 'triplo' else "🔗"
+                    info_consenso = f" | {icone} D{self.consenso_info['duzia']}"
+
+                info_anti_vies = ""
+                if self.anti_vies_ativo:
+                    info_anti_vies = f" | 🛡️ AV-D{self.anti_vies_duzia}"
+
+                info_vies_din = ""
+                if self.vies_dinamico_ativo and self._vies_dinamico_atual:
+                    info_vies_din = f" | 🔍 VD-D{self._vies_dinamico_atual}({self._vies_dinamico_intensidade*100:.0f}%)"
+
+                info_adapt = ""
+                if self.peso_adaptativo_ativo:
+                    info_adapt = " | 🔥 Adapt"
+
+                info_streak = f" | {streak_sinal}" if streak_sinal else ""
+
+                motivo = f"🟢 ML Híbrido ({treino_info}) | Score: {s1:.1f}"
+                if info_padroes:
+                    motivo += f" | 🧩 {info_padroes}"
+                if info_consenso:
+                    motivo += info_consenso
+                if info_anti_vies:
+                    motivo += info_anti_vies
+                if info_vies_din:
+                    motivo += info_vies_din
+                if info_adapt:
+                    motivo += info_adapt
+                if info_streak:
+                    motivo += info_streak
+            else:
+                motivo = f"Score ML baixo ({s1:.1f} < {score_minimo})"
         else:
-            streak_sinal = f"🔥 STK D{streak_duzia}(2x)"
+            score_min_fb = config.get('ml_score_minimo_fallback', 42)
+            min_rodadas_fb = config.get('ml_min_rodadas_fallback', 8)
+            if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
+                pode_entrar = True
+                motivo = f"🟡 Fallback Freq | Score: {s1:.1f}"
+                if streak_sinal:
+                    motivo += f" | {streak_sinal}"
+            else:
+                motivo = f"Aguardando ML ({len(self.historico_completo)}/40 rodadas)"
 
-    # =====================================================
-    # DECISÃO DE ENTRADA (ML ou Fallback)
-    # =====================================================
-    if modo_base == 'ml':
-        score_minimo = config.get('ml_score_minimo_entrada', 30)
-        pode_entrar = s1 > score_minimo
-        if pode_entrar:
-            treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
+        # =====================================================
+        # LIMITADOR DE REPETIÇÕES (mesma dúzia muitas vezes)
+        # =====================================================
+        max_rep = config.get('ml_max_repeticoes_mesma_duzia', 3)
+        if pode_entrar and len(self.ultimas_previsoes) >= max_rep:
+            ultimas_n = self.ultimas_previsoes[-max_rep:]
+            if all(p == d1 for p in ultimas_n):
+                score_min_pos_rot = config.get('ml_score_minimo_pos_rotacao', 20)
+                if s2 > score_min_pos_rot:
+                    d1, s1 = d2, s2
+                    d2, s2 = d3, s3
+                    forcar_rotacao = True
+                    motivo = f"🔄 Rotação forçada (>{max_rep}x D{d1}) | Score: {s1:.1f}"
+                else:
+                    pode_entrar = False
+                    motivo = f"🚫 Bloqueio por repetição (>{max_rep}x mesma dúzia)"
 
-            partes_padrao = []
-            if self.padrao_stats_ui.get('tam2'):
-                partes_padrao.append(f"P2:{self.padrao_stats_ui['tam2']['gatilho']}")
-            if self.padrao_stats_ui.get('tam3'):
-                partes_padrao.append(f"P3:{self.padrao_stats_ui['tam3']['gatilho']}")
-            if self.padrao_stats_ui.get('tam4'):
-                partes_padrao.append(f"P4:{self.padrao_stats_ui['tam4']['gatilho']}")
-
-            info_padroes = " | ".join(partes_padrao) if partes_padrao else ""
-
-            info_consenso = ""
-            if self.consenso_info['tipo'] in ('duplo', 'triplo'):
-                icone = "🔒" if self.consenso_info['tipo'] == 'triplo' else "🔗"
-                info_consenso = f" | {icone} D{self.consenso_info['duzia']}"
-
-            info_anti_vies = ""
-            if self.anti_vies_ativo:
-                info_anti_vies = f" | 🛡️ AV-D{self.anti_vies_duzia}"
-
-            info_vies_din = ""
-            if self.vies_dinamico_ativo and self._vies_dinamico_atual:
-                info_vies_din = f" | 🔍 VD-D{self._vies_dinamico_atual}({self._vies_dinamico_intensidade*100:.0f}%)"
-
-            info_adapt = ""
-            if self.peso_adaptativo_ativo:
-                info_adapt = " | 🔥 Adapt"
-
-            info_streak = f" | {streak_sinal}" if streak_sinal else ""
-
-            motivo = f"🟢 ML Híbrido ({treino_info}) | Score: {s1:.1f}"
-            if info_padroes:
-                motivo += f" | 🧩 {info_padroes}"
-            if info_consenso:
-                motivo += info_consenso
-            if info_anti_vies:
-                motivo += info_anti_vies
-            if info_vies_din:
-                motivo += info_vies_din
-            if info_adapt:
-                motivo += info_adapt
-            if info_streak:
-                motivo += info_streak
-        else:
-            motivo = f"Score ML baixo ({s1:.1f} < {score_minimo})"
-    else:
-        score_min_fb = config.get('ml_score_minimo_fallback', 42)
-        min_rodadas_fb = config.get('ml_min_rodadas_fallback', 8)
-        if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
-            pode_entrar = True
-            motivo = f"🟡 Fallback Freq | Score: {s1:.1f}"
-            if streak_sinal:
-                motivo += f" | {streak_sinal}"
-        else:
-            motivo = f"Aguardando ML ({len(self.historico_completo)}/40 rodadas)"
-
-    # =====================================================
-    # LIMITADOR DE REPETIÇÕES (mesma dúzia muitas vezes)
-    # =====================================================
-    max_rep = config.get('ml_max_repeticoes_mesma_duzia', 3)
-    if pode_entrar and len(self.ultimas_previsoes) >= max_rep:
-        ultimas_n = self.ultimas_previsoes[-max_rep:]
-        if all(p == d1 for p in ultimas_n):
-            score_min_pos_rot = config.get('ml_score_minimo_pos_rotacao', 20)
-            if s2 > score_min_pos_rot:
-                d1, s1 = d2, s2
-                d2, s2 = d3, s3
-                forcar_rotacao = True
-                motivo = f"🔄 Rotação forçada (>{max_rep}x D{d1}) | Score: {s1:.1f}"
+        # =====================================================
+        # FILTROS DE CONFIANÇA
+        # =====================================================
+        confianca_min = config.get('confianca_minima_entrada', 2.0)
+        if pode_entrar and confianca < confianca_min and not forcar_rotacao:
+            if self.consenso_info['tipo'] == 'triplo' and confianca >= 1.5:
+                motivo += " | 🔒 Exceção tripla"
             else:
                 pode_entrar = False
-                motivo = f"🚫 Bloqueio por repetição (>{max_rep}x mesma dúzia)"
+                motivo = f"Confiança muito baixa ({confianca:.2f} < {confianca_min})"
 
-    # =====================================================
-    # FILTROS DE CONFIANÇA
-    # =====================================================
-    confianca_min = config.get('confianca_minima_entrada', 2.0)
-    if pode_entrar and confianca < confianca_min and not forcar_rotacao:
-        if self.consenso_info['tipo'] == 'triplo' and confianca >= 1.5:
-            motivo += " | 🔒 Exceção tripla"
-        else:
+        if pode_entrar and self.modo_anti_erro and confianca < (confianca_min + 0.5):
             pode_entrar = False
-            motivo = f"Confiança muito baixa ({confianca:.2f} < {confianca_min})"
+            motivo = f"🚫 Anti-Erro: Confiança insuficiente ({confianca:.2f})"
 
-    if pode_entrar and self.modo_anti_erro and confianca < (confianca_min + 0.5):
-        pode_entrar = False
-        motivo = f"🚫 Anti-Erro: Confiança insuficiente ({confianca:.2f})"
+        # =====================================================
+        # TERMÔMETRO ZERO
+        # =====================================================
+        incluir_zero = self.alerta_zero_ativo
+        if self.rodadas_desde_zero >= config['zero_termometro_max']:
+            incluir_zero = True
+            if pode_entrar and "Termômetro" not in motivo:
+                motivo += " | 🌡️ Zero"
 
-    # =====================================================
-    # TERMÔMETRO ZERO
-    # =====================================================
-    incluir_zero = self.alerta_zero_ativo
-    if self.rodadas_desde_zero >= config['zero_termometro_max']:
-        incluir_zero = True
-        if pode_entrar and "Termômetro" not in motivo:
-            motivo += " | 🌡️ Zero"
+        # =====================================================
+        # CONFIANÇA CRÍTICA (muito baixa)
+        # =====================================================
+        if confianca < 0.8:
+            pode_entrar = False
+            motivo = f"Confiança crítica ({confianca:.2f})"
 
-    # =====================================================
-    # CONFIANÇA CRÍTICA (muito baixa)
-    # =====================================================
-    if confianca < 0.8:
-        pode_entrar = False
-        motivo = f"Confiança crítica ({confianca:.2f})"
+        # =====================================================
+        # ✅ NOVO: STREAK REFORÇA A ENTRADA (NUNCA BLOQUEIA)
+        # Se há streak ativo, usar como aliado:
+        # - Principal: manter dúzia do streak (cavalgando)
+        # - Cobertura: dúzia alternativa (protege se quebrar)
+        # =====================================================
+        duzia_secundaria_final = d2
+        streak_aplicado = False
 
-    # =====================================================
-    # ✅ NOVO: STREAK REFORÇA A ENTRADA (NUNCA BLOQUEIA)
-    # Se há streak ativo, usar como aliado:
-    # - Principal: manter dúzia do streak (cavalgando)
-    # - Cobertura: dúzia alternativa (protege se quebrar)
-    # =====================================================
-    duzia_secundaria_final = d2
-    streak_aplicado = False
+        if pode_entrar and self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
+            streak_aplicado = True
+            
+            if streak_duzia == d1:
+                # ML e streak concordam → cavalgar o streak
+                duzia_secundaria_final = streak_cobertura if streak_cobertura != 0 else d2
+                logging.info(f"🔥 STREAK: Principal D{streak_duzia} + Cob D{duzia_secundaria_final} (cavalgando)")
+            elif streak_duzia == d2:
+                # Streak é a segunda opção do ML → manter como cobertura
+                duzia_secundaria_final = streak_duzia
+                logging.info(f"🔥 STREAK: Cobrindo com streak D{streak_duzia}")
+            else:
+                # Streak é a terceira opção → adicionar como cobertura alternativa
+                duzia_secundaria_final = streak_duzia if streak_duzia != 0 else d2
+                logging.info(f"🔥 STREAK: Streak D{streak_duzia} como cobertura")
 
-    if pode_entrar and self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
-        streak_aplicado = True
-        
-        if streak_duzia == d1:
-            # ML e streak concordam → cavalgar o streak
-            duzia_secundaria_final = streak_cobertura if streak_cobertura != 0 else d2
-            logging.info(f"🔥 STREAK: Principal D{streak_duzia} + Cob D{duzia_secundaria_final} (cavalgando)")
-        elif streak_duzia == d2:
-            # Streak é a segunda opção do ML → manter como cobertura
-            duzia_secundaria_final = streak_duzia
-            logging.info(f"🔥 STREAK: Cobrindo com streak D{streak_duzia}")
-        else:
-            # Streak é a terceira opção → adicionar como cobertura alternativa
-            duzia_secundaria_final = streak_duzia if streak_duzia != 0 else d2
-            logging.info(f"🔥 STREAK: Streak D{streak_duzia} como cobertura")
+        # =====================================================
+        # INFO DOS PADRÕES PARA UI
+        # =====================================================
+        info_padrao = {
+            'tam2': self.padrao_stats_ui.get('tam2'),
+            'tam3': self.padrao_stats_ui.get('tam3'),
+            'tam4': self.padrao_stats_ui.get('tam4'),
+            'consenso': self.consenso_info,
+            'anti_vies': self.anti_vies_ativo,
+            'peso_adaptativo': self.peso_adaptativo_ativo,
+            'vies_dinamico': self._vies_dinamico_atual,
+            'drift_ativo': self._drift_ativo,
+            'streak': streak_info,
+            'streak_sinal': streak_sinal,
+            'streak_aplicado': streak_aplicado,
+            'resumo': []
+        }
+        for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
+            if info_padrao[t]:
+                info_padrao['resumo'].append(f"{nome}:{info_padrao[t]['gatilho']}")
+        if self.consenso_info['tipo'] in ('duplo', 'triplo'):
+            icone = "🔒" if self.consenso_info['tipo'] == 'triplo' else "🔗"
+            info_padrao['resumo'].append(f"{icone}D{self.consenso_info['duzia']}")
+        if self.anti_vies_ativo:
+            info_padrao['resumo'].append(f"🛡️AV-D{self.anti_vies_duzia}")
+        if self.vies_dinamico_ativo and self._vies_dinamico_atual:
+            info_padrao['resumo'].append(f"🔍VD-D{self._vies_dinamico_atual}")
+        if self.peso_adaptativo_ativo:
+            info_padrao['resumo'].append("🔥Adapt")
+        if streak_sinal:
+            info_padrao['resumo'].append(streak_sinal)
+        info_padrao['resumo'] = " | ".join(info_padrao['resumo']) if info_padrao['resumo'] else "-"
 
-    # =====================================================
-    # INFO DOS PADRÕES PARA UI
-    # =====================================================
-    info_padrao = {
-        'tam2': self.padrao_stats_ui.get('tam2'),
-        'tam3': self.padrao_stats_ui.get('tam3'),
-        'tam4': self.padrao_stats_ui.get('tam4'),
-        'consenso': self.consenso_info,
-        'anti_vies': self.anti_vies_ativo,
-        'peso_adaptativo': self.peso_adaptativo_ativo,
-        'vies_dinamico': self._vies_dinamico_atual,
-        'drift_ativo': self._drift_ativo,
-        'streak': streak_info,
-        'streak_sinal': streak_sinal,
-        'streak_aplicado': streak_aplicado,
-        'resumo': []
-    }
-    for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
-        if info_padrao[t]:
-            info_padrao['resumo'].append(f"{nome}:{info_padrao[t]['gatilho']}")
-    if self.consenso_info['tipo'] in ('duplo', 'triplo'):
-        icone = "🔒" if self.consenso_info['tipo'] == 'triplo' else "🔗"
-        info_padrao['resumo'].append(f"{icone}D{self.consenso_info['duzia']}")
-    if self.anti_vies_ativo:
-        info_padrao['resumo'].append(f"🛡️AV-D{self.anti_vies_duzia}")
-    if self.vies_dinamico_ativo and self._vies_dinamico_atual:
-        info_padrao['resumo'].append(f"🔍VD-D{self._vies_dinamico_atual}")
-    if self.peso_adaptativo_ativo:
-        info_padrao['resumo'].append("🔥Adapt")
-    if streak_sinal:
-        info_padrao['resumo'].append(streak_sinal)
-    info_padrao['resumo'] = " | ".join(info_padrao['resumo']) if info_padrao['resumo'] else "-"
+        previsao = {
+            "entrar": pode_entrar,
+            "motivo": motivo,
+            "score": scores,
+            "confianca": round(confianca, 2),
+            "duzia": d1,
+            "duzia_secundaria": duzia_secundaria_final,
+            "gatilho_ativo": "ML" if modo_base == 'ml' else "Fallback",
+            "incluir_zero": incluir_zero,
+            "modo_anti_erro": self.modo_anti_erro,
+            "numeros_completos": list(self.numeros_completos),
+            "modo_previsao": modo,
+            "rotacao_forcada": forcar_rotacao,
+            "padrao_ativo": info_padrao,
+            "streak_info": streak_sinal if streak_sinal else None,
+        }
 
-    previsao = {
-        "entrar": pode_entrar,
-        "motivo": motivo,
-        "score": scores,
-        "confianca": round(confianca, 2),
-        "duzia": d1,
-        "duzia_secundaria": duzia_secundaria_final,
-        "gatilho_ativo": "ML" if modo_base == 'ml' else "Fallback",
-        "incluir_zero": incluir_zero,
-        "modo_anti_erro": self.modo_anti_erro,
-        "numeros_completos": list(self.numeros_completos),
-        "modo_previsao": modo,
-        "rotacao_forcada": forcar_rotacao,
-        "padrao_ativo": info_padrao,
-        "streak_info": streak_sinal if streak_sinal else None,
-    }
+        return previsao
+         
 
-    return previsao
+    
         
         
 
