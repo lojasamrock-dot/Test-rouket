@@ -52,7 +52,7 @@ def data_brasilia():
     return hora_brasilia().strftime('%Y-%m-%d')
 
 # =============================
-# DETECÇÃO DE VIÉS DINÂMICO
+# MELHORIA #5: DETECÇÃO DE VIÉS DINÂMICO
 # =============================
 def detectar_vies_dinamico(historico_completo, janela=30, limiar_excesso=0.15):
     duzias = [d for d in historico_completo[-janela:] if d != 0]
@@ -72,7 +72,7 @@ def detectar_vies_dinamico(historico_completo, janela=30, limiar_excesso=0.15):
 
 
 # =============================
-# DECAIMENTO DE PADRÕES
+# MELHORIA #12: DECAIMENTO DE PADRÕES
 # =============================
 def aplicar_decaimento_padroes(tabela, fator=0.97):
     chaves_remover = []
@@ -91,9 +91,23 @@ def aplicar_decaimento_padroes(tabela, fator=0.97):
 
 
 # =============================
-# FEATURES DE STREAK
+# MELHORIA #14: FEATURES DE STREAK
+# Detecta sequências de 1, 2 ou 3+ na mesma dúzia e
+# extrai estatísticas para uso como features do ML
 # =============================
 def extrair_features_streak(historico_duzias):
+    """
+    Extrai features de streak (sequência) de qualquer dúzia.
+    Retorna dict com:
+      - streak_atual_duzia: qual dúzia está em streak agora (1/2/3, 0=nenhuma)
+      - streak_atual_len: tamanho do streak atual (1=isolado, 2=duplo, 3+=longo)
+      - streak_duzia1_len, _2, _3: comprimento do streak mais recente por dúzia
+      - prob_continua: proporção histórica de "mesma dúzia depois de streak N"
+      - prob_quebra: proporção histórica de "dúzia diferente depois de streak N"
+      - streak_max_recente: maior streak visto nas últimas 30 rodadas
+      - entrada_streak_duzia: dúzia recomendada pela lógica de streak (0=não entra)
+      - cobertura_streak_duzia: dúzia de cobertura (a mais frequente excluindo a streak)
+    """
     duzias = [d for d in historico_duzias if d != 0]
 
     resultado = {
@@ -111,13 +125,14 @@ def extrair_features_streak(historico_duzias):
         'cobertura_streak_duzia': 0,
         'streak_quebra_iminente': 0,
         'streak_forca': 0.0,
-        'streak_saturado': 0,
-        'streak_taxa_quebra_real': 0.0,
+        'streak_saturado': 0,  # ✅ NOVO: indica saturação do streak
+        'streak_taxa_quebra_real': 0.0,  # ✅ NOVO: taxa real de quebra
     }
 
     if len(duzias) < 3:
         return resultado
 
+    # --- Streak atual ---
     streak_atual_len = 1
     streak_atual_duzia = duzias[-1]
     for d in reversed(duzias[:-1]):
@@ -129,6 +144,7 @@ def extrair_features_streak(historico_duzias):
     resultado['streak_atual_duzia'] = streak_atual_duzia
     resultado['streak_atual_len'] = streak_atual_len
 
+    # Streak por dúzia (comprimento do streak mais recente de cada dúzia)
     for alvo in [1, 2, 3]:
         comprimento = 0
         for d in reversed(duzias):
@@ -138,6 +154,7 @@ def extrair_features_streak(historico_duzias):
                 break
         resultado[f'streak_duzia{alvo}_len'] = comprimento
 
+    # --- Maior streak nas últimas 30 rodadas ---
     recentes = duzias[-30:]
     max_streak = 1
     cur_streak = 1
@@ -149,17 +166,20 @@ def extrair_features_streak(historico_duzias):
             cur_streak = 1
     resultado['streak_max_recente'] = max_streak
 
+    # --- Probabilidade histórica de continuar ou quebrar streak ---
     continua2 = 0
     quebra2 = 0
     continua3 = 0
     quebra3 = 0
 
     for i in range(len(duzias) - 3):
+        # Streak de 2: duzias[i] == duzias[i+1]
         if duzias[i] == duzias[i+1]:
             if duzias[i+2] == duzias[i]:
                 continua2 += 1
             else:
                 quebra2 += 1
+        # Streak de 3: duzias[i] == duzias[i+1] == duzias[i+2]
         if i + 3 < len(duzias) and duzias[i] == duzias[i+1] == duzias[i+2]:
             if duzias[i+3] == duzias[i]:
                 continua3 += 1
@@ -175,15 +195,37 @@ def extrair_features_streak(historico_duzias):
     if total3 > 0:
         resultado['prob_continua_streak3'] = round(continua3 / total3, 4)
         resultado['prob_quebra_streak3'] = round(quebra3 / total3, 4)
-        resultado['streak_taxa_quebra_real'] = resultado['prob_quebra_streak3']
 
+    # --- Força do streak atual ---
     forca = min(1.0, streak_atual_len / 5.0)
     resultado['streak_forca'] = round(forca, 4)
 
-    if streak_atual_len >= 3 and resultado['prob_quebra_streak3'] > 0.60:
-        resultado['streak_quebra_iminente'] = 1
-        resultado['streak_saturado'] = 1
+    # ✅ MELHORIA #2: Verificar saturação real do streak
+    if streak_atual_len >= 3:
+        streaks_longos_hist = 0
+        quebras_hist = 0
+        for i in range(len(duzias) - 4):
+            if duzias[i] == duzias[i+1] == duzias[i+2]:
+                streaks_longos_hist += 1
+                if duzias[i+3] != duzias[i]:
+                    quebras_hist += 1
+        
+        if streaks_longos_hist > 0:
+            taxa_quebra_real = quebras_hist / streaks_longos_hist
+            resultado['streak_taxa_quebra_real'] = round(taxa_quebra_real, 4)
+            
+            # Se >65% de quebra histórica, força quebra iminente
+            if taxa_quebra_real > 0.65:
+                resultado['streak_quebra_iminente'] = 1
+                resultado['streak_forca'] = 0.2  # Reduz força
+                resultado['streak_saturado'] = 1
 
+    # --- Quebra iminente (lógica original) ---
+    if streak_atual_len >= 3 and resultado['prob_quebra_streak3'] > 0.60:
+        if resultado['streak_quebra_iminente'] == 0:  # Não sobrescreve saturação
+            resultado['streak_quebra_iminente'] = 1
+
+    # --- Recomendação de entrada/cobertura ---
     if streak_atual_len >= 2:
         outras = [d for d in [1, 2, 3] if d != streak_atual_duzia]
         freq_outras = Counter(duzias[-10:])
@@ -195,7 +237,9 @@ def extrair_features_streak(historico_duzias):
             else:
                 resultado['entrada_streak_duzia'] = cobertura
         elif streak_atual_len >= 3:
-            if resultado['prob_quebra_streak3'] > 0.55:
+            # ✅ MELHORIA: Usar taxa de quebra real se disponível
+            taxa_quebra = resultado.get('streak_taxa_quebra_real', resultado['prob_quebra_streak3'])
+            if taxa_quebra > 0.55:
                 resultado['entrada_streak_duzia'] = cobertura
                 resultado['streak_quebra_iminente'] = 1
             else:
@@ -206,7 +250,7 @@ def extrair_features_streak(historico_duzias):
 
 
 # =============================
-# SETUPS INDEPENDENTES POR ROLETA
+# SETUPS INDEPENDENTES POR ROLETA (CALIBRADOS)
 # =============================
 
 SETUP_BASE = {
@@ -262,9 +306,14 @@ SETUP_BASE = {
     'drift_janela': 15,
     'drift_taxa_minima': 0.35,
     'drift_alertar_apos': 5,
+    # MELHORIA #14: streak settings
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 1.0,
+    # ✅ MELHORIA #3: qualidade mínima para padrões
+    'padrao_qualidade_min_p2': 50,
+    'padrao_qualidade_min_p3': 30,
+    'padrao_qualidade_min_p4': 20,
 }
 
 # 🟡 XXXTREME LIGHTNING
@@ -315,19 +364,25 @@ SETUP_XXXTREME = {
     'drift_janela': 15,
     'drift_taxa_minima': 0.35,
     'drift_alertar_apos': 5,
+    # MELHORIA #14
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 1.2,
+    # ✅ MELHORIA #3: qualidade mínima para padrões
+    'padrao_qualidade_min_p2': 50,
+    'padrao_qualidade_min_p3': 30,
+    'padrao_qualidade_min_p4': 25,
 }
 
-# 🟢 IMMERSIVE ROULETTE - CORRIGIDO
+# 🟢 IMMERSIVE ROULETTE
+#SETUP_IMMERSIVE = {
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
     'confianca_minima_entrada': 1.9,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.2, 'fadiga_duzia': 3,
+    'filtro_conf_baixa': 2.0, 'fadiga_duzia': 3,
     'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
     'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
     'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 0, 'raio_alto_minimo': 0,
@@ -340,12 +395,23 @@ SETUP_IMMERSIVE = {
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
+    
+    # ============================================
+    # MACHINE LEARNING
+    # ============================================
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
     'ml_score_minimo_entrada': 34,
     'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 10,
     'ml_max_repeticoes_mesma_duzia': 2,
     'ml_score_minimo_pos_rotacao': 18,
+    
+    # ============================================
+    # PADRÕES HÍBRIDOS - CORRIGIDO
+    # P2: MAIS CONFIÁVEL (acertou em 2/3 erros quando era ignorado)
+    # P3: REDUZIDO (superestima D3 no padrão D1→D2)
+    # P4: MANTIDO COM LEVE AJUSTE
+    # ============================================
     'padrao_min_ocorrencias': 5,
     'padrao_peso_tam2': 42,
     'padrao_peso_tam3': 25,
@@ -355,24 +421,48 @@ SETUP_IMMERSIVE = {
     'padrao_consenso_peso_extra': 10,
     'padrao_consenso_min_conf': 0.30,
     'ml_ignorar_consenso_conf_min': 3.5,
+    
+    # ============================================
+    # ANTI-VIÉS - DESLIGADO
+    # ============================================
     'anti_vies_ativo': False,
     'anti_vies_duzia': None,
     'anti_vies_penalidade': 1.0,
     'anti_vies_gatilho_p2': False,
     'anti_vies_p4_isolado_extra': 1.0,
+    
+    # ============================================
+    # PESO ADAPTATIVO - MANTIDO
+    # ============================================
     'peso_adaptativo_ativo': True,
     'peso_adaptativo_janela': 10,
     'peso_adaptativo_boost': 1.3,
+    
+    # ============================================
+    # VIÉS DINÂMICO - MANTIDO
+    # ============================================
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 25,
     'vies_dinamico_limiar': 0.13,
     'vies_dinamico_penalidade': 0.76,
+    
+    # ============================================
+    # DECAIMENTO DE PADRÕES
+    # ============================================
     'decaimento_padroes_ativo': True,
     'decaimento_fator': 0.96,
     'decaimento_a_cada': 5,
+    
+    # ============================================
+    # DRIFT DETECTION
+    # ============================================
     'drift_janela': 12,
     'drift_taxa_minima': 0.38,
     'drift_alertar_apos': 4,
+    
+    # ============================================
+    # STREAK - CORRIGIDO
+    # ============================================
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 1.2,
@@ -382,7 +472,7 @@ SETUP_IMMERSIVE = {
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.5,
+    'confianca_minima_entrada': 2.0,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.5, 'fadiga_duzia': 3,
@@ -399,35 +489,46 @@ SETUP_MEGA = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 35, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 35,
-    'ml_score_minimo_fallback': 42,
-    'ml_min_rodadas_fallback': 10,
-    'ml_max_repeticoes_mesma_duzia': 2,
+    'ml_score_minimo_entrada': 28,
+    'ml_score_minimo_fallback': 45,  # ✅ Aumentado de 42 para 45
+    'ml_min_rodadas_fallback': 15,  # ✅ Aumentado de 10 para 15
+    'ml_max_repeticoes_mesma_duzia': 3,
     'ml_score_minimo_pos_rotacao': 18,
     'padrao_min_ocorrencias': 3,
-    'padrao_peso_tam2': 35,
-    'padrao_peso_tam3': 40,
-    'padrao_peso_tam4': 25,
-    'padrao_conf_minima_tam2': 4,
-    'padrao_conf_minima_tam4': 10,
+    'padrao_peso_tam2': 20,
+    'padrao_peso_tam3': 50,
+    'padrao_peso_tam4': 30,
+    'padrao_conf_minima_tam2': 2,
+    'padrao_conf_minima_tam4': 6,
     'padrao_consenso_peso_extra': 15,
-    'padrao_consenso_min_conf': 0.35,
+    'padrao_consenso_min_conf': 0.25,
     'ml_ignorar_consenso_conf_min': 3.0,
-    'anti_vies_ativo': False,
-    'peso_adaptativo_ativo': False,
+    'anti_vies_ativo': True,  # ✅ ATIVADO
+    'anti_vies_duzia': None,  # ✅ Usar viés dinâmico
+    'anti_vies_penalidade': 0.82,
+    'anti_vies_gatilho_p2': True,
+    'anti_vies_p4_isolado_extra': 0.75,
+    'peso_adaptativo_ativo': True,  # ✅ ATIVADO
+    'peso_adaptativo_janela': 10,
+    'peso_adaptativo_boost': 1.2,
     'vies_dinamico_ativo': True,
-    'vies_dinamico_janela': 20,
-    'vies_dinamico_limiar': 0.12,
-    'vies_dinamico_penalidade': 0.70,
+    'vies_dinamico_janela': 20,  # ✅ Reduzido de 30 para 20
+    'vies_dinamico_limiar': 0.12,  # ✅ Reduzido de 0.15 para 0.12
+    'vies_dinamico_penalidade': 0.70,  # ✅ Aumentado de 0.80 para 0.70
     'decaimento_padroes_ativo': True,
-    'decaimento_fator': 0.97,
-    'decaimento_a_cada': 5,
+    'decaimento_fator': 0.94,  # ✅ Reduzido de 0.97 para 0.94
+    'decaimento_a_cada': 3,  # ✅ Reduzido de 5 para 3
     'drift_janela': 15,
-    'drift_taxa_minima': 0.40,
-    'drift_alertar_apos': 3,
+    'drift_taxa_minima': 0.35,
+    'drift_alertar_apos': 5,
+    # MELHORIA #14
     'streak_ativo': True,
     'streak_min_len': 2,
-    'streak_peso_feature': 0.8,
+    'streak_peso_feature': 1.0,
+    # ✅ MELHORIA #3: qualidade mínima para padrões
+    'padrao_qualidade_min_p2': 40,  # Mais rigoroso no Mega
+    'padrao_qualidade_min_p3': 25,
+    'padrao_qualidade_min_p4': 20,
 }
 
 ROLETA_CONFIGS = {
@@ -1005,7 +1106,18 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
-# 🧠 DUZIA AI - COM STREAK REFORÇO (NUNCA BLOQUEIA)
+# 🧠 DUZIA AI V13.2 - COM MELHORIAS IMPLEMENTADAS
+# MELHORIAS:
+# #1  Features temporais (hora, turno, tendência curto prazo)
+# #2  Streak com análise de contexto e saturação real
+# #3  Decaimento exponencial de amostras no treino
+# #4  Consenso com verificação de qualidade mínima de amostras
+# #5  Viés dinâmico automático por sessão
+# #6  Métricas separadas primária/secundária
+# #7  Anti-viés usando viés dinâmico quando configurado como None
+# #8  Alinhamento de maxlen: historico_numeros e numeros_completos ambos 1000
+# #9  Decaimento seletivo por roleta (mais agressivo no Mega)
+# #10 Fallback mais conservador (score mínimo e rodadas mínimas maiores)
 # =============================
 
 class DuziaAI:
@@ -1057,11 +1169,13 @@ class DuziaAI:
         self.scaler_treinado = False
         self.contagem_repeticoes_mesma_duzia = 0
 
+        # Tabelas de padrões híbridos
         self.padroes_tam2 = defaultdict(Counter)
         self.padroes_tam3 = defaultdict(Counter)
         self.padroes_tam4 = defaultdict(Counter)
         self._rodadas_desde_decaimento = 0
 
+        # MELHORIA #14: cache streak para UI
         self._streak_info_atual = {}
 
         config = self._get_config()
@@ -1074,17 +1188,25 @@ class DuziaAI:
         self.consenso_peso_extra = config.get('padrao_consenso_peso_extra', 15)
         self.consenso_min_conf = config.get('padrao_consenso_min_conf', 0.25)
         self.ml_ignorar_consenso_conf_min = config.get('ml_ignorar_consenso_conf_min', 3.0)
+        
+        # ✅ NOVO: qualidade mínima para padrões
+        self.padrao_qualidade_min_p2 = config.get('padrao_qualidade_min_p2', 50)
+        self.padrao_qualidade_min_p3 = config.get('padrao_qualidade_min_p3', 30)
+        self.padrao_qualidade_min_p4 = config.get('padrao_qualidade_min_p4', 20)
 
+        # Anti-viés fixo configurável
         self.anti_vies_ativo = config.get('anti_vies_ativo', False)
         self.anti_vies_duzia = config.get('anti_vies_duzia', None)
         self.anti_vies_penalidade = config.get('anti_vies_penalidade', 1.0)
         self.anti_vies_gatilho_p2 = config.get('anti_vies_gatilho_p2', False)
         self.anti_vies_p4_isolado_extra = config.get('anti_vies_p4_isolado_extra', 1.0)
 
+        # Peso adaptativo
         self.peso_adaptativo_ativo = config.get('peso_adaptativo_ativo', False)
         self.peso_adaptativo_janela = config.get('peso_adaptativo_janela', 10)
         self.peso_adaptativo_boost = config.get('peso_adaptativo_boost', 1.0)
 
+        # MELHORIA #5: Viés dinâmico automático
         self.vies_dinamico_ativo = config.get('vies_dinamico_ativo', True)
         self.vies_dinamico_janela = config.get('vies_dinamico_janela', 30)
         self.vies_dinamico_limiar = config.get('vies_dinamico_limiar', 0.15)
@@ -1092,20 +1214,24 @@ class DuziaAI:
         self._vies_dinamico_atual = None
         self._vies_dinamico_intensidade = 0.0
 
+        # MELHORIA #12: Decaimento de padrões
         self.decaimento_padroes_ativo = config.get('decaimento_padroes_ativo', True)
         self.decaimento_fator = config.get('decaimento_fator', 0.97)
         self.decaimento_a_cada = config.get('decaimento_a_cada', 5)
 
+        # MELHORIA #11: Alerta de drift
         self.drift_janela = config.get('drift_janela', 15)
         self.drift_taxa_minima = config.get('drift_taxa_minima', 0.35)
         self.drift_alertar_apos = config.get('drift_alertar_apos', 5)
         self._drift_ativo = False
         self._drift_erros_consecutivos_entrada = 0
 
+        # MELHORIA #14: Streak config
         self.streak_config_ativo = config.get('streak_ativo', True)
         self.streak_min_len = config.get('streak_min_len', 2)
         self.streak_peso_feature = config.get('streak_peso_feature', 1.0)
 
+        # Para UI
         self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.padrao_stats_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.consenso_info = {'tipo': 'nenhum', 'duzia': None, 'conf': 0.0}
@@ -1166,17 +1292,22 @@ class DuziaAI:
 
     def _atualizar_padroes_hibridos(self, historico_duzias):
         duzias = [d for d in historico_duzias if d != 0]
+
         if len(duzias) >= 2:
             for i in range(len(duzias) - 1):
                 self.padroes_tam2[duzias[i]][duzias[i+1]] += 1
+
         if len(duzias) >= 3:
             for i in range(len(duzias) - 2):
                 par = (duzias[i], duzias[i+1])
                 self.padroes_tam3[par][duzias[i+2]] += 1
+
         if len(duzias) >= 4:
             for i in range(len(duzias) - 3):
                 trio = (duzias[i], duzias[i+1], duzias[i+2])
                 self.padroes_tam4[trio][duzias[i+3]] += 1
+
+        # MELHORIA #12: Decaimento periódico
         if self.decaimento_padroes_ativo:
             self._rodadas_desde_decaimento += 1
             if self._rodadas_desde_decaimento >= self.decaimento_a_cada:
@@ -1185,29 +1316,62 @@ class DuziaAI:
                 aplicar_decaimento_padroes(self.padroes_tam3, self.decaimento_fator)
                 aplicar_decaimento_padroes(self.padroes_tam4, self.decaimento_fator)
 
+    #def _verificar_qualidade_padroes(self):
+    def _verificar_qualidade_padroes(self):
+        """✅ NOVO: Verifica se os padrões têm amostras suficientes para serem confiáveis"""
+        # Corrigido: verifica se o valor é None antes de chamar .get()
+        p2_stats = self.padrao_stats_ui.get('tam2')
+        p3_stats = self.padrao_stats_ui.get('tam3')
+        p4_stats = self.padrao_stats_ui.get('tam4')
+        
+        p2_total = p2_stats.get('total', 0) if p2_stats else 0
+        p3_total = p3_stats.get('total', 0) if p3_stats else 0
+        p4_total = p4_stats.get('total', 0) if p4_stats else 0
+        
+        p2_ok = p2_total > self.padrao_qualidade_min_p2
+        p3_ok = p3_total > self.padrao_qualidade_min_p3
+        p4_ok = p4_total > self.padrao_qualidade_min_p4
+        
+        padroes_validos = sum([p2_ok, p3_ok, p4_ok])
+        return padroes_validos, {'p2': p2_ok, 'p3': p3_ok, 'p4': p4_ok}
+
     def _detectar_consenso(self, scores_p2, scores_p3, scores_p4, conf_p2, conf_p3, conf_p4):
+        # ✅ MELHORIA #4: Verificar qualidade antes de formar consenso
+        padroes_validos, qualidade = self._verificar_qualidade_padroes()
+        
+        if padroes_validos < 2:
+            logging.info(f"⚠️ Consenso ignorado: apenas {padroes_validos} padrões com amostras suficientes (P2:{qualidade['p2']} P3:{qualidade['p3']} P4:{qualidade['p4']})")
+            return 'nenhum', None, 0.0
+        
         preferencias = []
         confs = []
-        if scores_p2 and conf_p2 >= self.consenso_min_conf:
+
+        if scores_p2 and conf_p2 >= self.consenso_min_conf and qualidade['p2']:
             melhor = max(scores_p2, key=scores_p2.get)
             preferencias.append(melhor)
             confs.append(conf_p2)
-        if scores_p3 and conf_p3 >= self.consenso_min_conf:
+
+        if scores_p3 and conf_p3 >= self.consenso_min_conf and qualidade['p3']:
             melhor = max(scores_p3, key=scores_p3.get)
             preferencias.append(melhor)
             confs.append(conf_p3)
-        if scores_p4 and conf_p4 >= self.consenso_min_conf:
+
+        if scores_p4 and conf_p4 >= self.consenso_min_conf and qualidade['p4']:
             melhor = max(scores_p4, key=scores_p4.get)
             preferencias.append(melhor)
             confs.append(conf_p4)
+
         if len(preferencias) < 2:
             return 'nenhum', None, 0.0
+
         contagem = Counter(preferencias)
         mais_comum = contagem.most_common(1)[0]
+
         if mais_comum[1] >= 3:
             return 'triplo', mais_comum[0], sum(confs) / len(confs)
         elif mais_comum[1] >= 2:
             return 'duplo', mais_comum[0], sum(confs) / len(confs)
+
         return 'nenhum', None, 0.0
 
     def _get_config(self):
@@ -1217,19 +1381,29 @@ class DuziaAI:
     def _aplicar_peso_adaptativo(self, scores):
         if not self.peso_adaptativo_ativo:
             return scores
+
         duzias_reais = [d for d in self.historico_completo[-self.peso_adaptativo_janela:] if d != 0]
+
         if len(duzias_reais) < 5:
             return scores
+
         freq = Counter(duzias_reais)
         total = len(duzias_reais)
+
         scores_ajustados = scores.copy()
+
         for duzia in [1, 2, 3]:
             freq_pct = freq.get(duzia, 0) / total
             if freq_pct >= 0.40:
                 boost = 1.0 + (freq_pct - 0.40) * (self.peso_adaptativo_boost - 1.0) / 0.60
                 scores_ajustados[duzia] *= boost
+                logging.info(f"🔥 Peso adaptativo: D{duzia} ({freq_pct*100:.0f}%) boost x{boost:.2f}")
+
         return scores_ajustados
 
+    # ===================================================
+    # MELHORIA #1: Features temporais
+    # ===================================================
     def _extrair_features_temporais(self, historico_duzias):
         agora = hora_brasilia()
         hora = agora.hour
@@ -1237,6 +1411,7 @@ class DuziaAI:
         turno = 0 if 6 <= hora < 12 else (1 if 12 <= hora < 18 else 2)
         hora_norm = hora / 23.0
         minuto_norm = minuto / 59.0
+
         duzias = [d for d in historico_duzias if d != 0]
         tendencia = {1: 0.0, 2: 0.0, 3: 0.0}
         if len(duzias) >= 15:
@@ -1244,24 +1419,39 @@ class DuziaAI:
             rec15 = Counter(duzias[-15:])
             for d in [1, 2, 3]:
                 tendencia[d] = round((rec5.get(d, 0) / 5.0) - (rec15.get(d, 0) / 15.0), 4)
-        return [hora_norm, minuto_norm, float(turno) / 2.0, tendencia[1], tendencia[2], tendencia[3]]
+
+        return [
+            hora_norm,
+            minuto_norm,
+            float(turno) / 2.0,
+            tendencia[1],
+            tendencia[2],
+            tendencia[3],
+        ]
 
     def _extrair_features_padroes_hibridos(self, historico_duzias):
         duzias = [d for d in historico_duzias if d != 0]
+
         features = {}
         for prefixo in ['p2', 'p3', 'p4']:
             for k in ['d1', 'd2', 'd3', 'conf', 'total', 'dom']:
                 features[f'{prefixo}_{k}'] = 0.0
-        features.update({'combo_d1': 0.0, 'combo_d2': 0.0, 'combo_d3': 0.0, 'combo_conf': 0.0})
+
+        features.update({
+            'combo_d1': 0.0, 'combo_d2': 0.0, 'combo_d3': 0.0, 'combo_conf': 0.0,
+        })
+
         if len(duzias) < 1:
             return features
+
         combo_scores = {1: 0.0, 2: 0.0, 3: 0.0}
         combo_conf_total = 0.0
         soma_pesos = 0.0
+
         scores_p2, scores_p3, scores_p4 = None, None, None
         conf_p2, conf_p3, conf_p4 = 0.0, 0.0, 0.0
 
-        # P2
+        # --- Padrão 2 ---
         if len(duzias) >= 1:
             d1 = duzias[-1]
             if d1 in self.padroes_tam2:
@@ -1271,26 +1461,35 @@ class DuziaAI:
                     scores = {k: dist.get(k, 0)/total for k in [1,2,3]}
                     max_s = max(scores.values())
                     seg_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+
                     features['p2_d1'] = scores.get(1, 0.0)
                     features['p2_d2'] = scores.get(2, 0.0)
                     features['p2_d3'] = scores.get(3, 0.0)
                     features['p2_conf'] = round((max_s - seg_s) * min(1.0, total/20), 4)
                     features['p2_total'] = float(total)
                     features['p2_dom'] = round(max_s - seg_s, 4)
-                    peso = self.peso_tam2 / 100.0
-                    for k in [1,2,3]:
-                        combo_scores[k] += scores[k] * features['p2_conf'] * peso
-                    combo_conf_total += features['p2_conf'] * peso
-                    soma_pesos += peso
+
+                    # ✅ Verificar qualidade antes de usar
+                    if total > self.padrao_qualidade_min_p2:
+                        peso = self.peso_tam2 / 100.0
+                        for k in [1,2,3]:
+                            combo_scores[k] += scores[k] * features['p2_conf'] * peso
+                        combo_conf_total += features['p2_conf'] * peso
+                        soma_pesos += peso
+
                     scores_p2 = scores
                     conf_p2 = features['p2_conf']
-                    self.padrao_stats_ui['tam2'] = {'gatilho': f"D{d1}", 'total': total, 'scores': scores, 'conf': features['p2_conf']}
+
+                    self.padrao_stats_ui['tam2'] = {
+                        'gatilho': f"D{d1}", 'total': total,
+                        'scores': scores, 'conf': features['p2_conf']
+                    }
                     self.padrao_ativo_ui['tam2'] = d1
                 else:
                     self.padrao_stats_ui['tam2'] = None
                     self.padrao_ativo_ui['tam2'] = None
 
-        # P3
+        # --- Padrão 3 ---
         if len(duzias) >= 2:
             d1, d2 = duzias[-2], duzias[-1]
             par = (d1, d2)
@@ -1301,26 +1500,35 @@ class DuziaAI:
                     scores = {k: dist.get(k, 0)/total for k in [1,2,3]}
                     max_s = max(scores.values())
                     seg_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+
                     features['p3_d1'] = scores.get(1, 0.0)
                     features['p3_d2'] = scores.get(2, 0.0)
                     features['p3_d3'] = scores.get(3, 0.0)
                     features['p3_conf'] = round((max_s - seg_s) * (1 + np.log1p(total)/5), 4)
                     features['p3_total'] = float(total)
                     features['p3_dom'] = round(max_s - seg_s, 4)
-                    peso = self.peso_tam3 / 100.0
-                    for k in [1,2,3]:
-                        combo_scores[k] += scores[k] * features['p3_conf'] * peso
-                    combo_conf_total += features['p3_conf'] * peso
-                    soma_pesos += peso
+
+                    # ✅ Verificar qualidade antes de usar
+                    if total > self.padrao_qualidade_min_p3:
+                        peso = self.peso_tam3 / 100.0
+                        for k in [1,2,3]:
+                            combo_scores[k] += scores[k] * features['p3_conf'] * peso
+                        combo_conf_total += features['p3_conf'] * peso
+                        soma_pesos += peso
+
                     scores_p3 = scores
                     conf_p3 = features['p3_conf']
-                    self.padrao_stats_ui['tam3'] = {'gatilho': f"D{d1}→D{d2}", 'total': total, 'scores': scores, 'conf': features['p3_conf']}
+
+                    self.padrao_stats_ui['tam3'] = {
+                        'gatilho': f"D{d1}→D{d2}", 'total': total,
+                        'scores': scores, 'conf': features['p3_conf']
+                    }
                     self.padrao_ativo_ui['tam3'] = par
                 else:
                     self.padrao_stats_ui['tam3'] = None
                     self.padrao_ativo_ui['tam3'] = None
 
-        # P4
+        # --- Padrão 4 ---
         if len(duzias) >= 3:
             d1, d2, d3 = duzias[-3], duzias[-2], duzias[-1]
             trio = (d1, d2, d3)
@@ -1331,59 +1539,91 @@ class DuziaAI:
                     scores = {k: dist.get(k, 0)/total for k in [1,2,3]}
                     max_s = max(scores.values())
                     seg_s = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+
                     features['p4_d1'] = scores.get(1, 0.0)
                     features['p4_d2'] = scores.get(2, 0.0)
                     features['p4_d3'] = scores.get(3, 0.0)
                     features['p4_conf'] = round((max_s - seg_s) * (1 + np.log1p(total)/3), 4)
                     features['p4_total'] = float(total)
                     features['p4_dom'] = round(max_s - seg_s, 4)
-                    peso = self.peso_tam4 / 100.0
-                    for k in [1,2,3]:
-                        combo_scores[k] += scores[k] * features['p4_conf'] * peso
-                    combo_conf_total += features['p4_conf'] * peso
-                    soma_pesos += peso
+
+                    # ✅ Verificar qualidade antes de usar
+                    if total > self.padrao_qualidade_min_p4:
+                        peso = self.peso_tam4 / 100.0
+                        for k in [1,2,3]:
+                            combo_scores[k] += scores[k] * features['p4_conf'] * peso
+                        combo_conf_total += features['p4_conf'] * peso
+                        soma_pesos += peso
+
                     scores_p4 = scores
                     conf_p4 = features['p4_conf']
-                    self.padrao_stats_ui['tam4'] = {'gatilho': f"D{d1}→D{d2}→D{d3}", 'total': total, 'scores': scores, 'conf': features['p4_conf']}
+
+                    self.padrao_stats_ui['tam4'] = {
+                        'gatilho': f"D{d1}→D{d2}→D{d3}", 'total': total,
+                        'scores': scores, 'conf': features['p4_conf']
+                    }
                     self.padrao_ativo_ui['tam4'] = trio
                 else:
                     self.padrao_stats_ui['tam4'] = None
                     self.padrao_ativo_ui['tam4'] = None
 
+        # --- Scores combinados ---
         if soma_pesos > 0:
             for k in [1,2,3]:
                 features[f'combo_d{k}'] = round(combo_scores[k] / soma_pesos, 4)
             features['combo_conf'] = round(combo_conf_total / soma_pesos, 4)
 
-        tipo_consenso, duzia_consenso, conf_consenso = self._detectar_consenso(scores_p2, scores_p3, scores_p4, conf_p2, conf_p3, conf_p4)
-        self.consenso_info = {'tipo': tipo_consenso, 'duzia': duzia_consenso, 'conf': conf_consenso}
+        # Detectar consenso
+        tipo_consenso, duzia_consenso, conf_consenso = self._detectar_consenso(
+            scores_p2, scores_p3, scores_p4, conf_p2, conf_p3, conf_p4
+        )
+        self.consenso_info = {
+            'tipo': tipo_consenso,
+            'duzia': duzia_consenso,
+            'conf': conf_consenso
+        }
+
         return features
 
+    # ===================================================
+    # MELHORIA #14: Extrair features de streak para o ML
+    # Retorna lista de floats compatível com o vetor de features
+    # ===================================================
     def _extrair_features_streak_ml(self, historico_duzias):
+        """
+        Converte o dict de extrair_features_streak em vetor de floats
+        para inclusão no conjunto de features do ML.
+        Ordem fixa de 16 features de streak (aumentado para incluir saturação).
+        """
         st_info = extrair_features_streak(historico_duzias)
+
+        # Atualiza cache para uso na UI e no prever()
         self._streak_info_atual = st_info
+
         return [
-            float(st_info['streak_atual_duzia']),
-            float(st_info['streak_atual_len']),
-            float(st_info['streak_duzia1_len']),
-            float(st_info['streak_duzia2_len']),
-            float(st_info['streak_duzia3_len']),
-            float(st_info['prob_continua_streak2']),
-            float(st_info['prob_continua_streak3']),
-            float(st_info['prob_quebra_streak2']),
-            float(st_info['prob_quebra_streak3']),
-            float(st_info['streak_max_recente']),
-            float(st_info['entrada_streak_duzia']),
-            float(st_info['cobertura_streak_duzia']),
-            float(st_info['streak_quebra_iminente']),
-            float(st_info['streak_forca']),
-            float(st_info['streak_saturado']),
-            float(st_info['streak_taxa_quebra_real']),
+            float(st_info['streak_atual_duzia']),       # 1: dúzia em streak (1/2/3/0)
+            float(st_info['streak_atual_len']),          # 2: comprimento do streak atual
+            float(st_info['streak_duzia1_len']),         # 3: len streak D1
+            float(st_info['streak_duzia2_len']),         # 4: len streak D2
+            float(st_info['streak_duzia3_len']),         # 5: len streak D3
+            float(st_info['prob_continua_streak2']),     # 6: P(continua | streak=2)
+            float(st_info['prob_continua_streak3']),     # 7: P(continua | streak=3)
+            float(st_info['prob_quebra_streak2']),       # 8: P(quebra | streak=2)
+            float(st_info['prob_quebra_streak3']),       # 9: P(quebra | streak=3)
+            float(st_info['streak_max_recente']),        # 10: maior streak últimas 30
+            float(st_info['entrada_streak_duzia']),      # 11: dúzia recomendada pelo streak
+            float(st_info['cobertura_streak_duzia']),    # 12: dúzia de cobertura
+            float(st_info['streak_quebra_iminente']),    # 13: flag quebra iminente
+            float(st_info['streak_forca']),              # 14: força do streak (0-1)
+            float(st_info.get('streak_saturado', 0)),    # 15: ✅ NOVO - saturação
+            float(st_info.get('streak_taxa_quebra_real', 0.0)),  # 16: ✅ NOVO - taxa real
         ]
 
-    def _extrair_features_core(self, historico_duzias, historico_numeros, erros_consec, rodadas_zero, repeticoes_duzia, janela=20):
+    def _extrair_features_core(self, historico_duzias, historico_numeros,
+                                erros_consec, rodadas_zero, repeticoes_duzia, janela=20):
         numeros_janela = historico_numeros[-janela:] if len(historico_numeros) >= janela else historico_numeros
         duzias_janela = [d for d in historico_duzias[-janela:] if d != 0]
+
         if not duzias_janela or len(historico_duzias) < 5:
             return None
 
@@ -1451,7 +1691,9 @@ class DuziaAI:
 
         nums_nao_zero = [n for n in numeros_janela if n != 0]
         paridade = sum(1 for n in nums_nao_zero if n % 2 == 0) / max(1, len(nums_nao_zero))
+
         entropia = _calcular_entropia(duzias_janela)
+
         gaps = {1: gap_d1, 2: gap_d2, 3: gap_d3}
         duzia_mais_ausente = max(gaps, key=gaps.get)
 
@@ -1469,11 +1711,14 @@ class DuziaAI:
 
         abab_pattern = 0
         if len(duzias_janela) >= 4:
-            if (duzias_janela[-1] == duzias_janela[-3] and duzias_janela[-2] == duzias_janela[-4] and duzias_janela[-1] != duzias_janela[-2]):
+            if (duzias_janela[-1] == duzias_janela[-3] and
+                duzias_janela[-2] == duzias_janela[-4] and
+                duzias_janela[-1] != duzias_janela[-2]):
                 abab_pattern = 1
 
         ultimas3 = [d for d in historico_duzias[-3:] if d != 0]
         duzia_dom_3 = Counter(ultimas3).most_common(1)[0][0] if ultimas3 else 0
+
         ultimas6 = [d for d in historico_duzias[-6:] if d != 0]
         diversidade_6 = len(set(ultimas6)) if ultimas6 else 0
 
@@ -1520,7 +1765,10 @@ class DuziaAI:
             padroes_features['combo_conf'],
         ]
 
+        # MELHORIA #1: features temporais
         features_temporais = self._extrair_features_temporais(historico_duzias)
+
+        # MELHORIA #14: features de streak (agora com 16 features)
         features_streak = self._extrair_features_streak_ml(historico_duzias)
 
         return features_base + features_padroes + features_temporais + features_streak
@@ -1542,6 +1790,7 @@ class DuziaAI:
             if n == 0:
                 break
             rodadas_zero += 1
+
         repeticoes = 0
         duzias_hist = [d for d in historico_duzias if d != 0]
         if duzias_hist:
@@ -1551,6 +1800,7 @@ class DuziaAI:
                     repeticoes += 1
                 else:
                     break
+
         return self._extrair_features_core(
             historico_duzias=historico_duzias,
             historico_numeros=historico_numeros,
@@ -1560,6 +1810,9 @@ class DuziaAI:
             janela=janela
         )
 
+    # ===================================================
+    # MELHORIA #3: Decaimento exponencial de amostras no treino
+    # ===================================================
     def _calcular_pesos_treino(self, n_amostras, fator_decaimento=0.985):
         indices = np.arange(n_amostras)
         pesos = fator_decaimento ** (n_amostras - 1 - indices)
@@ -1569,9 +1822,11 @@ class DuziaAI:
     def _treinar_ml_online(self):
         if not ML_DISPONIVEL:
             return False
+
         config = self._get_config()
         janela_treino = config.get('ml_janela_treino', 120)
         atualizar_a_cada = config.get('ml_atualizar_a_cada', 8)
+
         rodada_atual = len(self.historico_completo)
 
         if self.modelo_ml is not None and self.ultimo_treino_ml > 0:
@@ -1584,14 +1839,18 @@ class DuziaAI:
         try:
             X, y = [], []
             inicio = max(0, len(self.historico_completo) - janela_treino - 4)
+
             for i in range(inicio + 10, len(self.historico_completo)):
                 hist_duzias = self.historico_completo[:i]
                 hist_nums = self.numeros_completos[:i]
+
                 if len(hist_duzias) < 10 or len(hist_nums) < 10:
                     continue
+
                 features = self._extrair_features_historico(hist_duzias, hist_nums, janela_treino)
                 if features is None:
                     continue
+
                 target = self.historico_completo[i]
                 if target in [1, 2, 3]:
                     X.append(features)
@@ -1601,19 +1860,35 @@ class DuziaAI:
                 return False
 
             X_arr = np.array(X)
+
+            # MELHORIA #3: pesos de decaimento exponencial
             sample_weights = self._calcular_pesos_treino(len(X), fator_decaimento=0.985)
 
-            rf = RandomForestClassifier(n_estimators=200, max_depth=14, random_state=42, n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
-            gbt = GradientBoostingClassifier(n_estimators=100, max_depth=6, learning_rate=0.08, random_state=42)
+            rf = RandomForestClassifier(
+                n_estimators=200,
+                max_depth=14,
+                random_state=42,
+                n_jobs=-1,
+                class_weight='balanced',
+                min_samples_leaf=2,
+            )
+            gbt = GradientBoostingClassifier(
+                n_estimators=100,
+                max_depth=6,
+                learning_rate=0.08,
+                random_state=42,
+            )
 
             rf.fit(X_arr, y, sample_weight=sample_weights)
             gbt.fit(X_arr, y, sample_weight=sample_weights)
 
             self.modelo_ml = _EnsembleManual(rf, gbt)
             self.ultimo_treino_ml = rodada_atual
+
             salvar_modelo_ml(self.modelo_ml, self.api_name)
-            logging.info(f"🧠 Ensemble ML Treinado! Amostras: {len(X)} | Rodada: {rodada_atual} | Features: {X_arr.shape[1]}")
+            logging.info(f"🧠 Ensemble ML V13.2 Treinado! Amostras: {len(X)} | Rodada: {rodada_atual} | Features: {X_arr.shape[1]}")
             return True
+
         except Exception as e:
             logging.error(f"❌ Erro no treinamento ML: {e}")
             return False
@@ -1643,6 +1918,7 @@ class DuziaAI:
 
         self._atualizar_padroes_hibridos(self.historico_completo)
 
+        # MELHORIA #8: alinhamento de maxlen — ambos truncam em 1000
         if len(self.historico_completo) > 1000:
             self.historico_completo = self.historico_completo[-1000:]
         if len(self.numeros_completos) > 1000:
@@ -1654,6 +1930,7 @@ class DuziaAI:
             if self.rodadas_pos_raio >= config['pausa_pos_raio']:
                 self.em_pausa_pos_raio = False
 
+        # MELHORIA #5: atualizar viés dinâmico a cada adição
         if self.vies_dinamico_ativo:
             self._vies_dinamico_atual, self._vies_dinamico_intensidade = detectar_vies_dinamico(
                 self.historico_completo,
@@ -1661,6 +1938,7 @@ class DuziaAI:
                 limiar_excesso=self.vies_dinamico_limiar
             )
 
+        # MELHORIA #14: atualizar streak cache
         if self.streak_config_ativo and len(self.historico_completo) >= 3:
             self._streak_info_atual = extrair_features_streak(self.historico_completo)
 
@@ -1670,6 +1948,7 @@ class DuziaAI:
         self.ultimas_previsoes.append(duzia)
         self.ultima_previsao_duzia = duzia
         self.ultima_confianca = confianca
+
         if len(self.ultimas_previsoes) >= 2:
             if self.ultimas_previsoes[-1] == self.ultimas_previsoes[-2]:
                 self.contagem_repeticoes_mesma_duzia += 1
@@ -1677,13 +1956,16 @@ class DuziaAI:
                 self.contagem_repeticoes_mesma_duzia = 1
         else:
             self.contagem_repeticoes_mesma_duzia = 1
+
         if len(self.ultimas_previsoes) > 10:
             self.ultimas_previsoes = self.ultimas_previsoes[-10:]
 
     def registrar_resultado(self, duzia_real, acertou_duzia, acertou_numero, acertou_zero, mesa_id=None, eh_raio=False, multiplicador=0):
         self.ultimos_resultados.append({
-            'duzia': duzia_real, 'acertou_duzia': acertou_duzia,
-            'acertou_numero': acertou_numero, 'acertou_zero': acertou_zero
+            'duzia': duzia_real,
+            'acertou_duzia': acertou_duzia,
+            'acertou_numero': acertou_numero,
+            'acertou_zero': acertou_zero
         })
         self.ultimo_resultado_duzia = acertou_duzia
         self.ultimo_resultado_numero = acertou_numero
@@ -1735,11 +2017,15 @@ class DuziaAI:
             self.pausa_ate = None
             self._drift_erros_consecutivos_entrada = 0
 
+        # MELHORIA #11: detectar drift
         if len(self.ultimos_resultados) >= self.drift_alertar_apos:
             recentes = self.ultimos_resultados[-self.drift_janela:]
             acertos_rec = sum(1 for r in recentes if r['acertou_duzia'] or r['acertou_zero'])
             taxa_rec = acertos_rec / len(recentes)
-            self._drift_ativo = (taxa_rec < self.drift_taxa_minima and len(recentes) >= self.drift_alertar_apos)
+            self._drift_ativo = (
+                taxa_rec < self.drift_taxa_minima and
+                len(recentes) >= self.drift_alertar_apos
+            )
         else:
             self._drift_ativo = False
 
@@ -1749,27 +2035,35 @@ class DuziaAI:
     def _prever_ml(self):
         if not ML_DISPONIVEL or self.modelo_ml is None:
             return {1: 0.0, 2: 0.0, 3: 0.0}
+
         if len(self.historico_completo) < 10:
             return {1: 0.0, 2: 0.0, 3: 0.0}
+
         try:
             features = self.extrair_features_estado(janela=20)
             if features is None:
                 return {1: 0.0, 2: 0.0, 3: 0.0}
+
             try:
                 n_features_modelo = self.modelo_ml.n_features_in_
             except:
                 n_features_modelo = None
+
             if n_features_modelo is not None and len(features) != n_features_modelo:
-                logging.warning(f"⚠️ Dimensão incompatível. Retreinando...")
+                logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Retreinando...")
                 self.modelo_ml = None
                 self.ultimo_treino_ml = 0
                 return {1: 0.0, 2: 0.0, 3: 0.0}
+
             probabilidades, classes = self.modelo_ml.predict_proba([features])
+
             ml_scores = {1: 0.0, 2: 0.0, 3: 0.0}
             for classe, prob in zip(classes, probabilidades[0]):
                 if classe in ml_scores:
                     ml_scores[classe] = float(prob) * 100
+
             return ml_scores
+
         except Exception as e:
             logging.error(f"❌ Erro na inferência ML: {e}")
             if "feature" in str(e).lower() or "shape" in str(e).lower():
@@ -1780,14 +2074,20 @@ class DuziaAI:
     def _prever_fallback_frequencia(self):
         if len(self.historico_completo) < 5:
             return {1: 33.3, 2: 33.3, 3: 33.3}
+
         janela = min(20, len(self.historico_completo))
         duzias_rec = [d for d in self.historico_completo[-janela:] if d != 0]
         total = max(1, len(duzias_rec))
-        freq = {1: duzias_rec.count(1) / total, 2: duzias_rec.count(2) / total, 3: duzias_rec.count(3) / total}
+
+        freq = {1: duzias_rec.count(1) / total,
+                2: duzias_rec.count(2) / total,
+                3: duzias_rec.count(3) / total}
+
         gap_d1 = _calcular_gap_duzia(self.numeros_completos, 1)
         gap_d2 = _calcular_gap_duzia(self.numeros_completos, 2)
         gap_d3 = _calcular_gap_duzia(self.numeros_completos, 3)
         gap_max = max(gap_d1, gap_d2, gap_d3, 1)
+
         scores = {
             1: freq[1] * 60 + (gap_d1 / gap_max) * 40,
             2: freq[2] * 60 + (gap_d2 / gap_max) * 40,
@@ -1796,17 +2096,26 @@ class DuziaAI:
         return scores
 
     def _aplicar_anti_vies(self, scores):
-        if not self.anti_vies_ativo or self.anti_vies_duzia is None:
+        if not self.anti_vies_ativo:
             return scores
-        scores_ajustados = scores.copy()
+        
+        # ✅ MELHORIA #7: Se anti_vies_duzia for None, usar viés dinâmico
         duzia_alvo = self.anti_vies_duzia
+        if duzia_alvo is None and self.vies_dinamico_ativo:
+            duzia_alvo = self._vies_dinamico_atual
+        
+        if duzia_alvo is None:
+            return scores
 
+        scores_ajustados = scores.copy()
+
+        p2_discorda = False
         if self.anti_vies_gatilho_p2:
             p2_stats = self.padrao_stats_ui.get('tam2')
             if p2_stats and p2_stats.get('scores'):
                 p2_melhor = max(p2_stats['scores'], key=p2_stats['scores'].get)
                 if p2_melhor != duzia_alvo:
-                    pass
+                    p2_discorda = True
                 else:
                     return scores
 
@@ -1814,57 +2123,77 @@ class DuziaAI:
         if self.anti_vies_p4_isolado_extra < 1.0:
             p3_stats = self.padrao_stats_ui.get('tam3')
             p4_stats = self.padrao_stats_ui.get('tam4')
+
             if p4_stats and p4_stats.get('scores'):
                 p4_melhor = max(p4_stats['scores'], key=p4_stats['scores'].get)
                 p3_melhor = None
                 if p3_stats and p3_stats.get('scores'):
                     p3_melhor = max(p3_stats['scores'], key=p3_stats['scores'].get)
+
                 if p4_melhor == duzia_alvo and p3_melhor is not None and p3_melhor != duzia_alvo:
                     p4_isolado = True
 
         penalidade = self.anti_vies_penalidade
+
         if p4_isolado:
             penalidade *= self.anti_vies_p4_isolado_extra
+            logging.info(f"🛡️ Anti-viés P4 isolado: D{duzia_alvo} penalidade extra x{self.anti_vies_p4_isolado_extra}")
 
         scores_ajustados[duzia_alvo] *= penalidade
+
         score_removido = scores[duzia_alvo] - scores_ajustados[duzia_alvo]
         outras = [d for d in [1,2,3] if d != duzia_alvo]
         total_outras = sum(scores[d] for d in outras)
+
         if total_outras > 0:
             for d in outras:
                 scores_ajustados[d] += score_removido * (scores[d] / total_outras)
         else:
             for d in outras:
                 scores_ajustados[d] += score_removido / 2
+
         return scores_ajustados
 
     def _aplicar_vies_dinamico(self, scores):
         if not self.vies_dinamico_ativo or self._vies_dinamico_atual is None:
             return scores
+
         if self.anti_vies_ativo and self.anti_vies_duzia == self._vies_dinamico_atual:
             return scores
+
         scores_ajustados = scores.copy()
         duzia_viesada = self._vies_dinamico_atual
+
         intensidade = min(1.0, self._vies_dinamico_intensidade / 0.30)
         penalidade_efetiva = 1.0 - (1.0 - self.vies_dinamico_penalidade) * intensidade
+
         scores_ajustados[duzia_viesada] *= penalidade_efetiva
+
         score_removido = scores[duzia_viesada] - scores_ajustados[duzia_viesada]
         outras = [d for d in [1, 2, 3] if d != duzia_viesada]
         total_outras = sum(scores[d] for d in outras)
         if total_outras > 0:
             for d in outras:
                 scores_ajustados[d] += score_removido * (scores[d] / total_outras)
+
+        logging.info(f"🔍 Viés dinâmico: D{duzia_viesada} intensidade={self._vies_dinamico_intensidade:.2f} pen={penalidade_efetiva:.2f}")
         return scores_ajustados
 
     def calcular_score(self):
         ml_scores = self._prever_ml()
         ml_ativo = not all(v == 0.0 for v in ml_scores.values())
+
         if ml_ativo:
-            modo = 'ml_disco' if self.ultimo_treino_ml <= 1 else 'ml'
+            if self.ultimo_treino_ml <= 1:
+                modo = 'ml_disco'
+            else:
+                modo = 'ml'
+
             scores_ajustados = self._aplicar_reforco_consenso(ml_scores)
             scores_ajustados = self._aplicar_anti_vies(scores_ajustados)
             scores_ajustados = self._aplicar_vies_dinamico(scores_ajustados)
             scores_ajustados = self._aplicar_peso_adaptativo(scores_ajustados)
+
             return scores_ajustados, modo
         else:
             freq_scores = self._prever_fallback_frequencia()
@@ -1875,84 +2204,98 @@ class DuziaAI:
 
     def _aplicar_reforco_consenso(self, ml_scores):
         scores = ml_scores.copy()
+
         if self.consenso_info['tipo'] in ('duplo', 'triplo'):
             duzia_consenso = self.consenso_info['duzia']
             conf_consenso = self.consenso_info['conf']
+
             melhor_ml = max(scores, key=scores.get)
+
             if melhor_ml == duzia_consenso:
                 peso_extra = self.consenso_peso_extra / 100.0
                 if self.consenso_info['tipo'] == 'triplo':
                     peso_extra *= 1.5
+
                 boost = scores[duzia_consenso] * peso_extra * conf_consenso
                 scores[duzia_consenso] = min(100, scores[duzia_consenso] + boost)
             else:
                 ml_conf = (max(scores.values()) - sorted(scores.values(), reverse=True)[1]) / 20
+
                 if ml_conf < self.ml_ignorar_consenso_conf_min:
                     fator_correcao = 0.3 * conf_consenso
                     scores[duzia_consenso] += (100 - scores[duzia_consenso]) * fator_correcao
                     scores[melhor_ml] *= (1 - fator_correcao * 0.5)
+
         return scores
 
     def detectar_alerta_zero(self):
         if len(self.historico) < 2:
             self.alerta_zero_ativo = False
             return False
+
         u = list(self.historico)[-10:]
         nums = self.numeros_completos[-8:] if len(self.numeros_completos) >= 8 else self.numeros_completos
+
         if len(nums) >= 2 and nums[-1] == 0:
             self.alerta_zero_ativo = True
             self.alertas_zero_disparados += 1
             return True
+
         if len(u) >= 3:
             ultimas_3 = u[-3:]
             if len(set(ultimas_3)) == 1 and ultimas_3[0] != 0:
                 self.alerta_zero_ativo = True
                 self.alertas_zero_disparados += 1
                 return True
+
         if len(u) >= 5:
             ultimas_5 = u[-5:]
-            trocas = sum(1 for i in range(1, len(ultimas_5)) if ultimas_5[i] != ultimas_5[i - 1] and ultimas_5[i] != 0 and ultimas_5[i - 1] != 0)
+            trocas = sum(1 for i in range(1, len(ultimas_5))
+                         if ultimas_5[i] != ultimas_5[i - 1] and ultimas_5[i] != 0 and ultimas_5[i - 1] != 0)
             if trocas >= 4:
                 self.alerta_zero_ativo = True
                 self.alertas_zero_disparados += 1
                 return True
+
         config = self._get_config()
         limiar_gap = max(8, config.get('zero_termometro_max', 15) - 3)
         if self.rodadas_desde_zero >= limiar_gap:
             self.alerta_zero_ativo = True
             self.alertas_zero_disparados += 1
             return True
+
         duzias_rec = [d for d in list(self.historico)[-5:] if d != 0]
         if len(duzias_rec) >= 3:
             if duzias_rec[-1] == duzias_rec[-3] and duzias_rec[-1] != duzias_rec[-2]:
                 self.alerta_zero_ativo = True
                 self.alertas_zero_disparados += 1
                 return True
+
         terminais_recentes = [n % 10 for n in nums if n != 0]
         if terminais_recentes.count(0) >= 2:
             self.alerta_zero_ativo = True
             self.alertas_zero_disparados += 1
             return True
+
         bordas = [n for n in nums if n in (1, 3, 12, 13, 24, 25, 36)]
         if len(bordas) >= 3:
             self.alerta_zero_ativo = True
             self.alertas_zero_disparados += 1
             return True
+
         if len(duzias_rec) >= 4:
             apenas_extremos = [d for d in duzias_rec[-4:] if d in (1, 3)]
             if len(apenas_extremos) == 4:
                 self.alerta_zero_ativo = True
                 self.alertas_zero_disparados += 1
                 return True
+
         self.alerta_zero_ativo = False
         return False
 
     def _get_outras_duzias(self, duzia):
         return [d for d in [1, 2, 3] if d != duzia]
 
-    # =====================================================
-    # ✅ MÉTODO PREVER CORRIGIDO - STREAK NUNCA BLOQUEIA
-    # =====================================================
     def prever(self):
         if self.pausa_ate and hora_brasilia() < self.pausa_ate:
             return {"entrar": False, "motivo": "⏸️ Pausa"}
@@ -1969,6 +2312,7 @@ class DuziaAI:
         if self.em_pausa_pos_raio:
             return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
 
+        # MELHORIA #11: bloquear entrada durante drift
         if self._drift_ativo:
             return {"entrar": False, "motivo": f"⚠️ DRIFT detectado — taxa baixa. Aguardando recuperação."}
 
@@ -1993,27 +2337,39 @@ class DuziaAI:
         modo_base = 'ml' if 'ml' in modo else 'fallback'
 
         # =====================================================
-        # STREAK INFO - Apenas informativo, NUNCA bloqueia
+        # MELHORIA #14: lógica de streak na decisão de entrada
         # =====================================================
         streak_info = self._streak_info_atual
         streak_len = streak_info.get('streak_atual_len', 0)
         streak_duzia = streak_info.get('streak_atual_duzia', 0)
+        streak_entrada_recomendada = streak_info.get('entrada_streak_duzia', 0)
         streak_cobertura = streak_info.get('cobertura_streak_duzia', 0)
+        streak_quebra_iminente = streak_info.get('streak_quebra_iminente', 0)
+        streak_forca = streak_info.get('streak_forca', 0.0)
+        streak_saturado = streak_info.get('streak_saturado', 0)  # ✅ NOVO
 
+        # Flag de alerta streak para UI/Telegram
         streak_sinal = ""
         if self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
-            if streak_len >= 4:
-                streak_sinal = f"🔥 STK D{streak_duzia}({streak_len}x)"
-            elif streak_len == 3:
-                streak_sinal = f"🔥 STK D{streak_duzia}(3x)"
+            if streak_saturado:
+                streak_sinal = f"⚠️ STK-SATURADO D{streak_duzia}({streak_len}x)"
+            elif streak_quebra_iminente:
+                streak_sinal = f"⚡ STK-QUEBRA D{streak_duzia}({streak_len}x)"
             else:
-                streak_sinal = f"🔥 STK D{streak_duzia}(2x)"
+                streak_sinal = f"🔥 STK D{streak_duzia}({streak_len}x)"
 
-        # =====================================================
-        # DECISÃO DE ENTRADA (ML ou Fallback)
-        # =====================================================
         if modo_base == 'ml':
             score_minimo = config.get('ml_score_minimo_entrada', 30)
+            
+            # ✅ MELHORIA #4: Aumentar score mínimo se P4 tem baixa qualidade
+            p4_stats = self.padrao_stats_ui.get('tam4')
+            if p4_stats:
+                total_p4 = p4_stats.get('total', 0)
+                conf_p4 = p4_stats.get('conf', 0)
+                if total_p4 < 25 and conf_p4 < 0.5:
+                    score_minimo += 5  # Aumenta exigência
+                    logging.info(f"⚠️ P4 baixa qualidade (total={total_p4:.0f}, conf={conf_p4:.2f}) → score mín aumentado para {score_minimo}")
+            
             pode_entrar = s1 > score_minimo
             if pode_entrar:
                 treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
@@ -2035,7 +2391,9 @@ class DuziaAI:
 
                 info_anti_vies = ""
                 if self.anti_vies_ativo:
-                    info_anti_vies = f" | 🛡️ AV-D{self.anti_vies_duzia}"
+                    duzia_av = self.anti_vies_duzia if self.anti_vies_duzia else self._vies_dinamico_atual
+                    if duzia_av:
+                        info_anti_vies = f" | 🛡️ AV-D{duzia_av}"
 
                 info_vies_din = ""
                 if self.vies_dinamico_ativo and self._vies_dinamico_atual:
@@ -2071,7 +2429,7 @@ class DuziaAI:
                 if streak_sinal:
                     motivo += f" | {streak_sinal}"
             else:
-                motivo = f"Aguardando ML ({len(self.historico_completo)}/40 rodadas)"
+                motivo = f"Aguardando ML ({len(self.historico_completo)}/{min_rodadas_fb} rodadas)"
 
         # Limitador de repetições
         max_rep = config.get('ml_max_repeticoes_mesma_duzia', 3)
@@ -2113,26 +2471,30 @@ class DuziaAI:
             motivo = f"Confiança crítica ({confianca:.2f})"
 
         # =====================================================
-        # ✅ STREAK REFORÇA A ENTRADA (NUNCA BLOQUEIA)
+        # MELHORIA #14: definir dúzia secundária com base no streak
         # =====================================================
         duzia_secundaria_final = d2
         streak_aplicado = False
 
-        if pode_entrar and self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
-            streak_aplicado = True
-            
-            if streak_duzia == d1:
-                # ML e streak concordam → cavalgar o streak
-                duzia_secundaria_final = streak_cobertura if streak_cobertura != 0 else d2
-                logging.info(f"🔥 STREAK: Principal D{streak_duzia} + Cob D{duzia_secundaria_final} (cavalgando)")
-            elif streak_duzia == d2:
-                # Streak é a segunda opção do ML → manter como cobertura
-                duzia_secundaria_final = streak_duzia
-                logging.info(f"🔥 STREAK: Cobrindo com streak D{streak_duzia}")
+        if (pode_entrar and self.streak_config_ativo and
+                streak_len >= self.streak_min_len and streak_duzia != 0):
+
+            if streak_quebra_iminente or streak_saturado:
+                # ML entra na dúzia de quebra; cobre com streak duzia
+                if d1 != streak_duzia and streak_duzia != 0:
+                    duzia_secundaria_final = streak_duzia
+                    streak_aplicado = True
+                    logging.info(f"🔥 Streak cobertura quebra: D{d1} principal, D{streak_duzia} cobre")
             else:
-                # Streak é a terceira opção → adicionar como cobertura alternativa
-                duzia_secundaria_final = streak_duzia if streak_duzia != 0 else d2
-                logging.info(f"🔥 STREAK: Streak D{streak_duzia} como cobertura")
+                # Streak ativo: principal=streak, secundária=cobertura
+                if d1 == streak_duzia:
+                    duzia_secundaria_final = streak_cobertura if streak_cobertura != 0 else d2
+                    streak_aplicado = True
+                    logging.info(f"🔥 Streak ativo: D{d1} principal, D{duzia_secundaria_final} cobertura")
+                elif streak_entrada_recomendada == d1:
+                    # ML e streak concordam
+                    duzia_secundaria_final = streak_cobertura if streak_cobertura != 0 else d2
+                    streak_aplicado = True
 
         # Info dos padrões para UI
         info_padrao = {
@@ -2147,6 +2509,7 @@ class DuziaAI:
             'streak': streak_info,
             'streak_sinal': streak_sinal,
             'streak_aplicado': streak_aplicado,
+            'streak_saturado': streak_saturado,  # ✅ NOVO
             'resumo': []
         }
         for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
@@ -2156,7 +2519,9 @@ class DuziaAI:
             icone = "🔒" if self.consenso_info['tipo'] == 'triplo' else "🔗"
             info_padrao['resumo'].append(f"{icone}D{self.consenso_info['duzia']}")
         if self.anti_vies_ativo:
-            info_padrao['resumo'].append(f"🛡️AV-D{self.anti_vies_duzia}")
+            duzia_av = self.anti_vies_duzia if self.anti_vies_duzia else self._vies_dinamico_atual
+            if duzia_av:
+                info_padrao['resumo'].append(f"🛡️AV-D{duzia_av}")
         if self.vies_dinamico_ativo and self._vies_dinamico_atual:
             info_padrao['resumo'].append(f"🔍VD-D{self._vies_dinamico_atual}")
         if self.peso_adaptativo_ativo:
@@ -2186,7 +2551,7 @@ class DuziaAI:
 
 
 # ===================================================
-# Ensemble Manual
+# Ensemble Manual (MELHORIA #3)
 # ===================================================
 class _EnsembleManual:
     def __init__(self, rf, gbt):
@@ -2260,10 +2625,12 @@ class SistemaBot:
         self.sessao_ativa = False
         self.sessao_pausa_ate = hora_brasilia() + timedelta(minutes=self.pausa_entre_sessoes)
         taxa = (self.acertos_sessao / max(1, self.acertos_sessao + self.erros_sessao)) * 100
+
         if st.session_state.get('salvar_sessoes_auto', True):
             inicio = len(self.historico_entradas) - self.rodadas_na_sessao
             if inicio < 0: inicio = 0
             entradas_sessao = self.historico_entradas[inicio:]
+
             dados_sessao = {
                 'acertos': self.acertos_sessao,
                 'erros': self.erros_sessao,
@@ -2271,7 +2638,10 @@ class SistemaBot:
                 'total_rodadas': self.rodadas_na_sessao,
                 'rodadas_por_sessao': self.rodadas_por_sessao
             }
-            self.gerenciador_sessoes.salvar_sessao_encerrada(self.total_sessoes, dados_sessao, entradas_sessao)
+            self.gerenciador_sessoes.salvar_sessao_encerrada(
+                self.total_sessoes, dados_sessao, entradas_sessao
+            )
+
         self.entrada_ativa = None
         salvar_sessao()
 
@@ -2282,9 +2652,11 @@ class SistemaBot:
                 self.sessao_ativa = False
                 salvar_sessao()
             return False
+
         if self.rodadas_na_sessao >= self.rodadas_por_sessao:
             self._encerrar_sessao()
             return False
+
         return True
 
     def processar_novo_numero(self, numero_data):
@@ -2409,7 +2781,12 @@ class SistemaBot:
             previsao = self.duzia_ai.prever()
 
             if previsao['entrar']:
-                duzia_map = {1: list(range(1, 13)), 2: list(range(13, 25)), 3: list(range(25, 37))}
+                duzia_map = {
+                    1: list(range(1, 13)),
+                    2: list(range(13, 25)),
+                    3: list(range(25, 37))
+                }
+
                 numeros_principais = duzia_map.get(previsao['duzia'], [])
                 numeros_secundarios = duzia_map.get(previsao.get('duzia_secundaria', previsao['duzia']), [])
 
@@ -2516,8 +2893,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI - Streak Reforço (Nunca Bloqueia)", layout="wide")
-st.title("🎰 DuziaAI — Streak é Aliado 🔥 (Nunca Bloqueia)")
+st.set_page_config(page_title="🎰 DuziaAI V13.2 - Streak Contextual + Qualidade Padrões + Decaimento Seletivo", layout="wide")
+st.title("🎰 DuziaAI V13.2 — Streak Contextual 🔥 + Qualidade Padrões ✅ + Decaimento Seletivo ♻️ (BRT)")
 
 config_global = carregar_config_global()
 
@@ -2540,7 +2917,6 @@ if "pausa_entre_sessoes" not in st.session_state:
 if "salvar_sessoes_auto" not in st.session_state:
     st.session_state.salvar_sessoes_auto = config_global.get('salvar_sessoes_auto', True)
 
-# Inicialização do sistema
 if st.session_state.api_selecionada != st.session_state.ultima_api:
     st.session_state.ultima_api = st.session_state.api_selecionada
     st.session_state.sistema = SistemaBot()
@@ -2642,7 +3018,7 @@ if "historico" not in st.session_state:
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ Streak é Aliado 🔥")
+    st.markdown("## ⚙️ V13.2 — Streak Contextual + Qualidade Padrões")
     sis = st.session_state.sistema
 
     st.markdown("### 📊 Status da Sessão")
@@ -2676,12 +3052,74 @@ with st.sidebar:
             st.rerun()
 
     st.markdown("---")
+    st.markdown("### ⏱️ Configurações da Sessão")
+    rodadas = st.number_input("Rodadas por sessão:", min_value=5, max_value=30, value=st.session_state.rodadas_por_sessao, step=5)
+    pausa = st.number_input("Pausa entre sessões (min):", min_value=1, max_value=30, value=st.session_state.pausa_entre_sessoes, step=1)
+    if rodadas != st.session_state.rodadas_por_sessao:
+        st.session_state.rodadas_por_sessao = rodadas
+        sis.rodadas_por_sessao = rodadas
+        salvar_sessao()
+    if pausa != st.session_state.pausa_entre_sessoes:
+        st.session_state.pausa_entre_sessoes = pausa
+        sis.pausa_entre_sessoes = pausa
+        salvar_sessao()
+
+    st.markdown("---")
+    st.markdown("### 💾 Download de Sessões")
+    st.session_state.salvar_sessoes_auto = st.checkbox("💾 Salvar sessões automaticamente", value=st.session_state.salvar_sessoes_auto)
+    with st.expander("📥 BAIXAR SESSÕES", expanded=False):
+        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+        gerenciador = GerenciadorSessoes(api_name)
+        sessoes = gerenciador.listar_sessoes()
+        if sessoes:
+            st.caption(f"📂 {len(sessoes)} sessões disponíveis")
+            st.markdown("#### 📥 Sessão Específica")
+            sessao_opcoes = [f"Sessão #{s.get('numero_sessao', '?')} - {s.get('data', '?')} {s.get('hora_encerramento', '?')}" for s in sessoes[:20]]
+            if sessao_opcoes:
+                sessao_selecionada = st.selectbox("Selecionar sessão:", sessao_opcoes, key="select_sessao")
+                if sessao_selecionada:
+                    idx = sessao_opcoes.index(sessao_selecionada)
+                    if idx < len(sessoes):
+                        sessao = sessoes[idx]
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            conteudo_json = json.dumps(sessao, indent=2, ensure_ascii=False)
+                            st.markdown(gerenciador.get_download_link(conteudo_json, f"sessao_{sessao.get('numero_sessao', '?')}.json", 'json'), unsafe_allow_html=True)
+                        with col2:
+                            conteudo_csv = gerenciador.gerar_csv_sessao(sessao)
+                            st.markdown(gerenciador.get_download_link(conteudo_csv, f"sessao_{sessao.get('numero_sessao', '?')}.csv", 'csv'), unsafe_allow_html=True)
+                        stats = sessao.get('estatisticas', {})
+                        st.caption(f"✅ {stats.get('acertos', 0)} | ❌ {stats.get('erros', 0)} | 📊 {stats.get('taxa_acerto', 0)}%")
+            st.markdown("---")
+            st.markdown("#### 📊 Consolidado do Dia")
+            data_hoje = data_brasilia()
+            sessoes_hoje = gerenciador.listar_sessoes_do_dia(data_hoje)
+            if sessoes_hoje:
+                st.caption(f"📅 {data_hoje}: {len(sessoes_hoje)} sessões")
+                if st.button("📊 Gerar Consolidado Hoje", use_container_width=True):
+                    caminho = gerenciador.consolidar_sessoes_dia(data_hoje)
+                    if caminho:
+                        with open(caminho, 'r') as f:
+                            conteudo = f.read()
+                        st.markdown(gerenciador.get_download_link(conteudo, f"consolidado_{data_hoje}.json", 'json'), unsafe_allow_html=True)
+                        st.success("✅ Consolidado gerado!")
+            if st.button("📦 Baixar Todas as Sessões (JSON)", use_container_width=True):
+                todas_sessoes = gerenciador.listar_sessoes()
+                if todas_sessoes:
+                    conteudo = json.dumps({'total_sessoes': len(todas_sessoes), 'sessoes': todas_sessoes}, indent=2, ensure_ascii=False)
+                    st.markdown(gerenciador.get_download_link(conteudo, f"todas_sessoes_{api_name.lower().replace(' ', '_')}.json", 'json'), unsafe_allow_html=True)
+        else:
+            st.info("Nenhuma sessão salva ainda.")
+
+    st.markdown("---")
     st.markdown("### 🎰 Selecione a Roleta")
     api_opcoes = list(API_URLS.keys())
     api_atual = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
     api_index = api_opcoes.index(api_atual) if api_atual in api_opcoes else 0
     st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
     api_name = st.session_state.api_selecionada
+
+    config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
 
     if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
         if sis.duzia_ai.ultimo_treino_ml <= 1:
@@ -2690,17 +3128,64 @@ with st.sidebar:
             st.success(f"🧠 Ensemble ML ATIVO | R{sis.duzia_ai.ultimo_treino_ml}")
     else:
         rodadas_atual = len(sis.historico_numeros)
-        if rodadas_atual >= 8:
+        min_rodadas = config_ativa.get('ml_min_rodadas_fallback', 8)
+        if rodadas_atual >= min_rodadas:
             st.warning(f"🟡 Fallback ({rodadas_atual}/40)")
         else:
-            st.info(f"🧠 Aguardando... ({rodadas_atual}/8)")
+            st.info(f"🧠 Aguardando... ({rodadas_atual}/{min_rodadas})")
 
-    # Streak info na sidebar
+    if sis.duzia_ai._drift_ativo:
+        st.error("⚠️ DRIFT DETECTADO — Entradas suspensas!")
+
+    if sis.duzia_ai._vies_dinamico_atual:
+        st.warning(f"🔍 Viés dinâmico: D{sis.duzia_ai._vies_dinamico_atual} ({sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% acima do esperado)")
+
+    # MELHORIA #14: streak info na sidebar
     stk = sis.duzia_ai._streak_info_atual
     if stk and stk.get('streak_atual_len', 0) >= 2:
         stk_len = stk['streak_atual_len']
         stk_duzia = stk['streak_atual_duzia']
-        st.success(f"🔥 Streak: D{stk_duzia} × {stk_len} — CAVALGANDO!")
+        stk_cont = stk.get('prob_continua_streak2' if stk_len == 2 else 'prob_continua_streak3', 0.5)
+        stk_saturado = stk.get('streak_saturado', 0)
+        
+        if stk_saturado:
+            st.error(f"⚠️ Streak SATURADO: D{stk_duzia} × {stk_len} | Taxa quebra real: {stk.get('streak_taxa_quebra_real', 0)*100:.0f}%")
+        elif stk.get('streak_quebra_iminente'):
+            st.warning(f"⚡ Quebra iminente D{stk_duzia}! Cob: D{stk.get('cobertura_streak_duzia','?')}")
+        else:
+            stk_col = "🔥" if stk_len >= 3 else "⚡"
+            st.info(f"{stk_col} Streak: D{stk_duzia} × {stk_len} | P(cont)={stk_cont*100:.0f}%")
+
+    # ✅ NOVO: Qualidade dos padrões
+    padroes_validos, qualidade = sis.duzia_ai._verificar_qualidade_padroes()
+    if padroes_validos < 2:
+        st.warning(f"⚠️ Qualidade padrões: P2:{'✅' if qualidade['p2'] else '❌'} P3:{'✅' if qualidade['p3'] else '❌'} P4:{'✅' if qualidade['p4'] else '❌'}")
+
+    st.markdown("---")
+    st.caption(f"🔧 **Setup: {api_name}**")
+    st.caption(f"• Conf mín: {config_ativa.get('confianca_minima_entrada', 2.0)}")
+    st.caption(f"• Score mín: {config_ativa.get('ml_score_minimo_entrada', 30)}")
+    st.caption(f"• P2/P3/P4: {config_ativa.get('padrao_peso_tam2',20)}/{config_ativa.get('padrao_peso_tam3',50)}/{config_ativa.get('padrao_peso_tam4',30)}%")
+    if config_ativa.get('anti_vies_ativo'):
+        av_duzia = config_ativa.get('anti_vies_duzia', 'dinâmico')
+        st.caption(f"• 🛡️ Anti-viés D{av_duzia}: {config_ativa.get('anti_vies_penalidade',1.0)*100:.0f}%")
+    if config_ativa.get('peso_adaptativo_ativo'):
+        st.caption(f"• 🔥 Peso adaptativo: +{((config_ativa.get('peso_adaptativo_boost',1.0)-1)*100):.0f}%")
+    if config_ativa.get('vies_dinamico_ativo'):
+        st.caption(f"• 🔍 Viés dinâmico: jan={config_ativa.get('vies_dinamico_janela',30)} lim={config_ativa.get('vies_dinamico_limiar',0.15)*100:.0f}%")
+    if config_ativa.get('decaimento_padroes_ativo'):
+        st.caption(f"• ♻️ Decaimento: x{config_ativa.get('decaimento_fator',0.97)} a cada {config_ativa.get('decaimento_a_cada',5)} rod.")
+    if config_ativa.get('streak_ativo'):
+        st.caption(f"• 🔥 Streak ML: min={config_ativa.get('streak_min_len',2)}x | peso={config_ativa.get('streak_peso_feature',1.0)}")
+    st.caption(f"• ✅ Qualidade mín: P2>{config_ativa.get('padrao_qualidade_min_p2',50)} P3>{config_ativa.get('padrao_qualidade_min_p3',30)} P4>{config_ativa.get('padrao_qualidade_min_p4',20)}")
+
+    st.caption(f"🧩 Padrões: P2={len(sis.duzia_ai.padroes_tam2)} | P3={len(sis.duzia_ai.padroes_tam3)} | P4={len(sis.duzia_ai.padroes_tam4)}")
+
+    consenso = sis.duzia_ai.consenso_info
+    if consenso['tipo'] == 'triplo':
+        st.success(f"🔒 CONSENSO TRIPLO: D{consenso['duzia']}")
+    elif consenso['tipo'] == 'duplo':
+        st.info(f"🔗 CONSENSO DUPLO: D{consenso['duzia']}")
 
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -2709,10 +3194,24 @@ with st.sidebar:
 
     st.markdown("---")
     with st.expander("🔔 Configurações Telegram", expanded=False):
+        st.markdown("#### Telegram PRINCIPAL")
         st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
         st.session_state.telegram_chat_id = st.text_input("Chat ID Principal", value=st.session_state.telegram_chat_id)
+        st.markdown("#### Telegram ALTERNATIVO")
         st.session_state.telegram_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password")
         st.session_state.telegram_chat_id_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("💾 Salvar", use_container_width=True):
+            paths = get_session_paths(st.session_state.api_selecionada)
+            salvar_resultado_em_arquivo(st.session_state.historico, paths['historico'])
+            salvar_sessao()
+            st.success("✅ Dados salvos!")
+    with c2:
+        if st.button("📥 Exportar CSV", use_container_width=True):
+            if exportar_historico_csv(st.session_state.sistema.historico_entradas):
+                st.success("✅ CSV exportado!")
 
 # =============================
 # CONTEÚDO PRINCIPAL
@@ -2758,24 +3257,223 @@ st.markdown("---")
 sis = st.session_state.sistema
 api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
 
-# Banner de streak (aliado)
+# Banners de status
+if sis.duzia_ai._drift_ativo:
+    st.error("⚠️ **DRIFT DETECTADO** — Taxa de acerto abaixo do limiar. Entradas suspensas automaticamente.")
+
+if sis.duzia_ai._vies_dinamico_atual:
+    st.warning(f"🔍 **Viés dinâmico ativo:** D{sis.duzia_ai._vies_dinamico_atual} está {sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% acima do esperado — penalidade aplicada.")
+
+# MELHORIA #14: banner de streak
 stk = sis.duzia_ai._streak_info_atual
 if stk and stk.get('streak_atual_len', 0) >= 2:
     stk_len = stk['streak_atual_len']
     stk_duzia = stk['streak_atual_duzia']
-    st.success(f"🔥 **Streak D{stk_duzia} × {stk_len}** — Sistema cavalgando o streak! Cobertura protege na quebra.")
+    if stk.get('streak_saturado'):
+        st.error(f"⚠️ **Streak D{stk_duzia} × {stk_len} SATURADO** — Taxa de quebra real: {stk.get('streak_taxa_quebra_real', 0)*100:.0f}%")
+    elif stk.get('streak_quebra_iminente'):
+        st.error(f"⚡ **Streak D{stk_duzia} × {stk_len}** — Quebra iminente! ML cobrindo dúzia de saída.")
+    else:
+        st.info(f"🔥 **Streak ativo: D{stk_duzia} × {stk_len}** — ML usando streak como feature (P.cont={stk.get('prob_continua_streak'+str(min(stk_len,3)),0.5)*100:.0f}%)")
+
+# ✅ NOVO: Banner de qualidade dos padrões
+padroes_validos, qualidade = sis.duzia_ai._verificar_qualidade_padroes()
+if padroes_validos < 2:
+    st.warning(f"⚠️ **Qualidade dos padrões insuficiente:** P2:{'✅' if qualidade['p2'] else '❌'} P3:{'✅' if qualidade['p3'] else '❌'} P4:{'✅' if qualidade['p4'] else '❌'} — Consensos exigem ≥2 padrões válidos")
 
 st.subheader(f"📊 ESTATÍSTICAS — {api_name}")
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 total_duzias = int(sis.acertos_duzia + sis.erros_duzia)
 tx_duzias = (sis.acertos_duzia / total_duzias * 100) if total_duzias > 0 else 0
-c1.metric("🎯 Nº Exato", sis.acertos_numero)
-c2.metric("✅ Acertos", int(sis.acertos_duzia), f"{tx_duzias:.0f}%")
+total_numeros = sis.acertos_numero + sis.erros_numero
+tx_numeros = (sis.acertos_numero / total_numeros * 100) if total_numeros > 0 else 0
+c1.metric("🎯 Nº Exato", sis.acertos_numero, f"{tx_numeros:.0f}%")
+c2.metric("✅ Acertos Total", int(sis.acertos_duzia), f"{tx_duzias:.0f}%")
 c3.metric("🎯 Primária", sis.acertos_primaria)
 c4.metric("🟡 Secundária", sis.acertos_secundaria)
 c5.metric("❌ Erros", sis.erros_duzia)
 c6.metric("🟢 Zeros", f"{sis.acertos_zero}/{sis.acertos_zero + sis.erros_zero}")
 c7.metric("📦 Total", total_duzias)
+
+if sis.total_sessoes > 0:
+    st.markdown("---")
+    st.subheader(f"📈 Sessão #{sis.total_sessoes}")
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    sc1.metric("🔄 Rodadas", f"{sis.rodadas_na_sessao}/{sis.rodadas_por_sessao}")
+    sc2.metric("✅ Acertos", sis.acertos_sessao)
+    sc3.metric("❌ Erros", sis.erros_sessao)
+    taxa_sessao = (sis.acertos_sessao / max(1, sis.acertos_sessao + sis.erros_sessao)) * 100
+    sc4.metric("📊 Taxa", f"{taxa_sessao:.0f}%")
+    if sis.sessao_ativa:
+        st.progress(sis.rodadas_na_sessao / sis.rodadas_por_sessao)
+
+st.markdown("---")
+cg, ce = st.columns([3, 2])
+
+with cg:
+    st.subheader("📈 Scores do ML")
+    if len(sis.historico_numeros) >= 3:
+        score, modo_atual = sis.duzia_ai.calcular_score()
+
+        fig = plt.Figure(data=[plt.Bar(
+            x=['D1 (1-12)', 'D2 (13-24)', 'D3 (25-36)'],
+            y=[score[1], score[2], score[3]],
+            marker_color=[
+                '#FF6B6B' if score[1]==max(score.values()) else '#4ECDC4',
+                '#FF6B6B' if score[2]==max(score.values()) else '#4ECDC4',
+                '#FF6B6B' if score[3]==max(score.values()) else '#4ECDC4'
+            ],
+            text=[f'{score[1]:.1f}', f'{score[2]:.1f}', f'{score[3]:.1f}'],
+            textposition='auto'
+        )])
+
+        titulo = f"🎯 ML V13.2 — Streak Contextual ({api_name})"
+        if sis.duzia_ai.alerta_zero_ativo:
+            titulo += " | 🟢 ZERO!"
+        if sis.duzia_ai.anti_vies_ativo:
+            duzia_av = sis.duzia_ai.anti_vies_duzia if sis.duzia_ai.anti_vies_duzia else sis.duzia_ai._vies_dinamico_atual
+            if duzia_av:
+                titulo += f" | 🛡️ AV-D{duzia_av}"
+        if sis.duzia_ai._vies_dinamico_atual:
+            titulo += f" | 🔍 VD-D{sis.duzia_ai._vies_dinamico_atual}"
+        stk = sis.duzia_ai._streak_info_atual
+        if stk and stk.get('streak_atual_len', 0) >= 2:
+            if stk.get('streak_saturado'):
+                titulo += f" | ⚠️STK-SAT D{stk['streak_atual_duzia']}×{stk['streak_atual_len']}"
+            else:
+                titulo += f" | 🔥STK D{stk['streak_atual_duzia']}×{stk['streak_atual_len']}"
+        if sis.duzia_ai._drift_ativo:
+            titulo += " | ⚠️ DRIFT"
+        if padroes_validos < 2:
+            titulo += " | ⚠️ Q.Padrões"
+
+        fig.update_layout(title=titulo, height=300, showlegend=False, yaxis_title="Score")
+        st.plotly_chart(fig, use_container_width=True)
+
+        if len(sis.historico_numeros) >= 8:
+            ult = list(sis.historico_numeros)[-20:]
+            dz_hist = [get_duzia(n) for n in ult]
+            fig2 = plt.Figure()
+            fig2.add_trace(plt.Scatter(x=list(range(len(dz_hist))), y=dz_hist,
+                                        mode='lines+markers', line=dict(color='#FFD700', width=2), marker=dict(size=10)))
+            if sis.sinais_grafico:
+                sx, sy = [], []
+                off = len(dz_hist) - 20
+                for idx, dz in sis.sinais_grafico:
+                    pos = idx - off
+                    if 0 <= pos < 20:
+                        sx.append(pos); sy.append(dz)
+                if sx:
+                    fig2.add_trace(plt.Scatter(x=sx, y=sy, mode='markers', name='Sinal',
+                                                marker=dict(symbol='star', size=15, color='red')))
+            fig2.update_layout(title="📉 Histórico", yaxis=dict(tickvals=[0,1,2,3], ticktext=['0','D1','D2','D3'], range=[-0.5,3.5]), height=300)
+            st.plotly_chart(fig2, use_container_width=True)
+    else:
+        st.info("Aguardando dados...")
+
+with ce:
+    st.subheader("🎰 Entrada Atual")
+    if sis.duzia_ai._drift_ativo:
+        st.error("⚠️ DRIFT — Entradas suspensas")
+    if sis.duzia_ai.alerta_zero_ativo:
+        st.warning("⚠️ ALERTA ZERO! 🟢")
+    if sis.duzia_ai.em_pausa_pos_raio:
+        st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
+    if sis.duzia_ai.anti_vies_ativo:
+        duzia_av = sis.duzia_ai.anti_vies_duzia if sis.duzia_ai.anti_vies_duzia else sis.duzia_ai._vies_dinamico_atual
+        if duzia_av:
+            st.info(f"🛡️ Anti-viés D{duzia_av} ativo ({sis.duzia_ai.anti_vies_penalidade*100:.0f}%)")
+    if sis.duzia_ai._vies_dinamico_atual:
+        st.info(f"🔍 Viés dinâmico: D{sis.duzia_ai._vies_dinamico_atual} ({sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% excesso)")
+    if sis.duzia_ai.peso_adaptativo_ativo:
+        st.info("🔥 Peso adaptativo ativo")
+    if padroes_validos < 2:
+        st.warning(f"⚠️ Qualidade padrões: P2:{'✅' if qualidade['p2'] else '❌'} P3:{'✅' if qualidade['p3'] else '❌'} P4:{'✅' if qualidade['p4'] else '❌'}")
+
+    # Streak status na entrada
+    stk = sis.duzia_ai._streak_info_atual
+    if stk and stk.get('streak_atual_len', 0) >= 2:
+        stk_len = stk['streak_atual_len']
+        stk_duzia = stk['streak_atual_duzia']
+        stk_cob = stk.get('cobertura_streak_duzia', '?')
+        if stk.get('streak_saturado'):
+            st.error(f"⚠️ Streak SATURADO D{stk_duzia}×{stk_len} | Quebra real: {stk.get('streak_taxa_quebra_real', 0)*100:.0f}%")
+        elif stk.get('streak_quebra_iminente'):
+            st.error(f"⚡ Streak D{stk_duzia}×{stk_len} → QUEBRA | Cob: D{stk_cob}")
+        else:
+            st.success(f"🔥 Streak D{stk_duzia}×{stk_len} ativo | Cob: D{stk_cob}")
+
+    consenso = sis.duzia_ai.consenso_info
+    if consenso['tipo'] == 'triplo':
+        st.success(f"🔒 CONSENSO TRIPLO: D{consenso['duzia']}")
+    elif consenso['tipo'] == 'duplo':
+        st.info(f"🔗 CONSENSO DUPLO: D{consenso['duzia']}")
+
+    for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
+        if sis.duzia_ai.padrao_stats_ui.get(t):
+            s = sis.duzia_ai.padrao_stats_ui[t]
+            melhor = max(s['scores'], key=s['scores'].get)
+            qual_ok = qualidade.get(t, False)
+            icone_qual = "✅" if qual_ok else "⚠️"
+            st.caption(f"{icone_qual} 🧩 {nome}: {s['gatilho']} → D{melhor} ({s['total']:.0f}x)")
+
+    if not sis.sessao_ativa:
+        if sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
+            tempo_restante = (sis.sessao_pausa_ate - hora_brasilia()).seconds
+            st.info(f"⏸️ Pausa: {tempo_restante//60:02d}:{tempo_restante%60:02d}")
+        else:
+            st.info("🔴 Clique 'INICIAR SESSÃO'")
+
+    if sis.entrada_ativa and sis.sessao_ativa:
+        e = sis.entrada_ativa
+        conf = e.get('confianca', 0)
+        dz_princ = e.get('duzia_prevista', 0)
+        dz_sec = e.get('duzia_sec_prevista')
+        gatilho = e.get('gatilho_ativo', 'ML')
+        padrao_info = e.get('padrao_ativo', {})
+        streak_ent = e.get('streak_info', None)
+
+        duzia_principal = dz_princ
+        duzia_secundaria = dz_sec if dz_sec and dz_sec != dz_princ else None
+        melhores_principal = _selecionar_melhores_numeros(duzia_principal, list(sis.historico_numeros), 6)
+        if duzia_secundaria:
+            melhores_secundaria = _selecionar_melhores_numeros(duzia_secundaria, list(sis.historico_numeros), 6)
+        else:
+            melhores_secundaria = None
+
+        cor = "#FF6347" if e.get('modo_anti_erro') else "#00CED1"
+        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V13.2 🔥"
+
+        padrao_html = ""
+        if padrao_info.get('resumo'):
+            padrao_html = f'<p style="text-align:center; color:#FFD700; font-size:0.8em;">🧩 {padrao_info["resumo"]}</p>'
+
+        streak_html = ""
+        if streak_ent:
+            cor_streak = "#FF4444" if "SATURADO" in str(streak_ent) or "QUEBRA" in str(streak_ent) else "#FF8C00"
+            streak_html = f'<p style="text-align:center; color:{cor_streak}; font-size:0.85em;">{streak_ent}</p>'
+
+        st.markdown(f"""
+        <div style="background-color:{cor}15; border:2px solid {cor}; border-radius:15px; padding:15px;">
+            <h2 style="color:{cor}; text-align:center;">🎯 Dúzia {dz_princ}</h2>
+            <p style="text-align:center;">Confiança: {conf:.2f}</p>
+            <p style="text-align:center;">{icone_modo}</p>
+            {f'<p style="text-align:center; color:#FFA500;">🛡️ Cob: D{dz_sec}</p>' if duzia_secundaria else ''}
+            {padrao_html}
+            {streak_html}
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.write(f"**🎲 D{duzia_principal}:** {', '.join(map(str, melhores_principal))}")
+        if melhores_secundaria:
+            st.write(f"**🛡️ D{duzia_secundaria}:** {', '.join(map(str, melhores_secundaria))}")
+        st.progress(min(1.0, max(0.0, conf / 5.0)))
+    else:
+        st.info("🔍 Aguardando sinal...")
+
+    if sis.ultimo_numero is not None:
+        st.markdown("---")
+        st.write(f"**🔄 Último:** {'🟢 ZERO' if sis.ultimo_numero==0 else f'#{sis.ultimo_numero} (D{get_duzia(sis.ultimo_numero)})'}")
 
 st.markdown("---")
 st.subheader("📝 Histórico")
@@ -2785,17 +3483,25 @@ if sis.historico_entradas:
         real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
         prev = f"D{e.get('duzia_prevista','?')}"
         cob = f"D{e.get('duzia_sec_prevista','?')}" if e.get('duzia_sec_prevista') and e.get('duzia_sec_prevista') != e.get('duzia_prevista') else "-"
+        zero = '🟢' if e.get('incluir_zero') else '-'
+        anti = '🔄' if e.get('modo_anti_erro') else '-'
         duz = '✅' if e.get('acerto_duzia') else '❌'
         p1 = '✅' if e.get('acerto_primaria') else '-'
         p2s = '🟡' if e.get('acerto_secundaria') else '-'
+        num = '🎯' if e.get('acerto_numero') else '-'
+        zer = '🟢' if e.get('acerto_zero') else '-'
         ns = e.get('numero', 0)
         if e.get('eh_raio'): nd = f"⚡{ns} ({e.get('multiplicador',0)}x)"
         elif ns == 0: nd = "0"
         else: nd = str(ns)
-        stk_col = str(e.get('streak_info', '-')) if e.get('streak_info') else '-'
+        padrao = str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-'
+        streak_col = str(e.get('streak_info', '-')) if e.get('streak_info') else '-'
         dados.append({"Rod":e.get('rodada'),"Hora":e.get('hora'),"🎲":nd,"Real":real,"Prev":prev,"Cob":cob,
-                      "Conf":f"{e.get('confianca',0):.1f}","Duz":duz,"P1":p1,"P2s":p2s,"STK":stk_col})
+                      "Conf":f"{e.get('confianca',0):.1f}","Gat":e.get('gatilho','ML'),"Z":zero,"🔄":anti,
+                      "🧩":padrao,"STK":streak_col,"Duz":duz,"P1":p1,"P2s":p2s,"Nº":num,"Zer":zer})
     st.dataframe(dados, use_container_width=True, height=300)
+    if st.button("📥 Exportar CSV", use_container_width=True):
+        if exportar_historico_csv(sis.historico_entradas): st.success("✅ CSV exportado!")
 else:
     st.info("Nenhuma entrada ainda.")
 
@@ -2813,6 +3519,10 @@ with col_t2:
     else:
         st.warning("📢 Alt NÃO")
 
-st.caption(f"🤖 DuziaAI | Streak = Aliado 🔥 | {api_name} | {formatar_hora_brasilia()}")
+
+config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
+st.caption(f"🤖 DuziaAI V13.2 | {api_name} | P2:{config_ativa['padrao_peso_tam2']}% P3:{config_ativa['padrao_peso_tam3']}% P4:{config_ativa['padrao_peso_tam4']}% | STK-Contextual✅ | Qualidade✅ | {formatar_hora_brasilia()}")
+modelo_path = get_modelo_ml_path(api_name)
+st.caption(f"💾 Modelo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)" if os.path.exists(modelo_path) else "⚠️ Modelo não salvo")
 
 salvar_sessao()
