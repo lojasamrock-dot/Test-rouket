@@ -3736,7 +3736,7 @@ with cg:
     else:
         st.info("Aguardando dados...")
 
-with ce:
+#with ce:
 with ce:
     st.subheader("🎰 Entrada Atual")
     if sis.duzia_ai._drift_ativo:
