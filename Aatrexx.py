@@ -3737,6 +3737,7 @@ with cg:
         st.info("Aguardando dados...")
 
 with ce:
+with ce:
     st.subheader("🎰 Entrada Atual")
     if sis.duzia_ai._drift_ativo:
         st.error("⚠️ DRIFT — Entradas suspensas")
@@ -3757,27 +3758,52 @@ with ce:
     elif consenso['tipo'] == 'duplo':
         st.info(f"🔗 CONSENSO DUPLO: D{consenso['duzia']}")
 
-    # NOVAS FEATURES UI na área principal
+    # NOVAS FEATURES UI com tratamento seguro
     col_info1, col_info2 = st.columns(2)
     with col_info1:
-        ciclo = sis.duzia_ai.ciclo_info
-        if ciclo.get('proxima', 0) > 0:
-            st.caption(f"⏰ **Due:** D{ciclo['proxima']} (D1:{ciclo.get('due_d1',0):.1f} D2:{ciclo.get('due_d2',0):.1f} D3:{ciclo.get('due_d3',0):.1f})")
+        ciclo = sis.duzia_ai.ciclo_info or {}
+        proxima = ciclo.get('proxima')
+        due_d1 = ciclo.get('due_d1', 0)
+        due_d2 = ciclo.get('due_d2', 0)
+        due_d3 = ciclo.get('due_d3', 0)
         
-        temp = sis.duzia_ai.temperatura_info
-        st.caption(f"🌡️ **Temperatura:** D1:{temp['d1']:.2f} D2:{temp['d2']:.2f} D3:{temp['d3']:.2f}")
-        if temp.get('aquecendo', 0) > 0:
-            st.caption(f"🔥 **Aquecendo:** D{temp['aquecendo']} | 📉 **Esfriando:** D{temp['esfriando']}")
+        if proxima and isinstance(proxima, (int, float)) and proxima > 0:
+            st.caption(f"⏰ **Due:** D{int(proxima)} (D1:{due_d1:.1f} D2:{due_d2:.1f} D3:{due_d3:.1f})")
+        
+        temp = sis.duzia_ai.temperatura_info or {}
+        temp_d1 = temp.get('d1', 0)
+        temp_d2 = temp.get('d2', 0)
+        temp_d3 = temp.get('d3', 0)
+        aquecendo = temp.get('aquecendo', 0)
+        esfriando = temp.get('esfriando', 0)
+        
+        st.caption(f"🌡️ **Temperatura:** D1:{temp_d1:.2f} D2:{temp_d2:.2f} D3:{temp_d3:.2f}")
+        if aquecendo and isinstance(aquecendo, (int, float)) and aquecendo > 0:
+            if esfriando and isinstance(esfriando, (int, float)) and esfriando > 0:
+                st.caption(f"🔥 **Aquecendo:** D{int(aquecendo)} | 📉 **Esfriando:** D{int(esfriando)}")
+            else:
+                st.caption(f"🔥 **Aquecendo:** D{int(aquecendo)}")
     
     with col_info2:
-        markov = sis.duzia_ai.markov_info
-        if markov.get('conf2', 0) > 0.3:
-            st.caption(f"📊 **Markov2:** D{markov['ordem2']} (conf:{markov['conf2']:.2f})")
-        if markov.get('conf3', 0) > 0.3:
-            st.caption(f"📈 **Markov3:** D{markov['ordem3']} (conf:{markov['conf3']:.2f})")
+        markov = sis.duzia_ai.markov_info or {}
+        markov2_pred = markov.get('ordem2', 0)
+        markov3_pred = markov.get('ordem3', 0)
+        markov_conf2 = markov.get('conf2', 0)
+        markov_conf3 = markov.get('conf3', 0)
         
-        regime = sis.duzia_ai.regime_info
-        st.caption(f"⚙️ **Regime:** {regime['atual']} | Taxa: {regime['taxa_acerto']*100:.0f}%")
+        if markov_conf2 and markov_conf2 > 0.3:
+            st.caption(f"📊 **Markov2:** D{int(markov2_pred)} (conf:{markov_conf2:.2f})")
+        if markov_conf3 and markov_conf3 > 0.3:
+            st.caption(f"📈 **Markov3:** D{int(markov3_pred)} (conf:{markov_conf3:.2f})")
+        
+        regime = sis.duzia_ai.regime_info or {}
+        regime_atual = regime.get('atual', 'estável')
+        taxa_acerto = regime.get('taxa_acerto_recente', 0)
+        
+        if regime_atual != 'estável':
+            st.warning(f"⚠️ **Regime:** {regime_atual} | Taxa: {taxa_acerto*100:.0f}%")
+        else:
+            st.caption(f"⚙️ **Regime:** {regime_atual} | Taxa: {taxa_acerto*100:.0f}%")
 
     for t, nome in [('tam2', 'P2'), ('tam3', 'P3'), ('tam4', 'P4')]:
         if sis.duzia_ai.padrao_stats_ui.get(t):
@@ -3803,6 +3829,7 @@ with ce:
         duzia_principal = dz_princ
         duzia_secundaria = dz_sec if dz_sec and dz_sec != dz_princ else None
         melhores_principal = _selecionar_melhores_numeros(duzia_principal, list(sis.historico_numeros), 6)
+        
         if duzia_secundaria:
             melhores_secundaria = _selecionar_melhores_numeros(duzia_secundaria, list(sis.historico_numeros), 6)
         else:
@@ -3832,14 +3859,13 @@ with ce:
     else:
         st.info("🔍 Aguardando sinal...")
 
-    # =============================
-# CONTEÚDO PRINCIPAL (PARTE CORRIGIDA)
+    if sis.ultimo_numero is not None:
+        st.markdown("---")
+        st.write(f"**🔄 Último:** {'🟢 ZERO' if sis.ultimo_numero==0 else f'#{sis.ultimo_numero} (D{get_duzia(sis.ultimo_numero)})'}")
+
 # =============================
-
-if sis.ultimo_numero is not None:
-    st.markdown("---")
-    st.write(f"**🔄 Último:** {'🟢 ZERO' if sis.ultimo_numero==0 else f'#{sis.ultimo_numero} (D{get_duzia(sis.ultimo_numero)})'}")
-
+# HISTÓRICO
+# =============================
 st.markdown("---")
 st.subheader("📝 Histórico")
 
@@ -3867,7 +3893,7 @@ if sis.historico_entradas:
         
         padrao = str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-'
         
-        # CORREÇÃO: tratamento seguro para valores None
+        # Tratamento seguro para valores None
         ciclo_info = e.get('ciclo_info', {})
         due_val = ciclo_info.get('proxima', 0)
         due_display = due_val if due_val and due_val > 0 else '-'
@@ -3905,6 +3931,9 @@ if sis.historico_entradas:
 else:
     st.info("Nenhuma entrada ainda.")
 
+# =============================
+# RODAPÉ
+# =============================
 st.markdown("---")
 st.caption("📡 **Telegram:**")
 
