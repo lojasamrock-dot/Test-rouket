@@ -3832,17 +3832,21 @@ with ce:
     else:
         st.info("🔍 Aguardando sinal...")
 
-   # if sis.ultimo_numero is not None:
-    if sis.ultimo_numero is not None:
+    # =============================
+# CONTEÚDO PRINCIPAL (PARTE CORRIGIDA)
+# =============================
+
+if sis.ultimo_numero is not None:
     st.markdown("---")
     st.write(f"**🔄 Último:** {'🟢 ZERO' if sis.ultimo_numero==0 else f'#{sis.ultimo_numero} (D{get_duzia(sis.ultimo_numero)})'}")
 
 st.markdown("---")
 st.subheader("📝 Histórico")
+
 if sis.historico_entradas:
     dados = []
     for e in reversed(sis.historico_entradas[-15:]):
-        real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0)!=0 else "0"
+        real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0) != 0 else "0"
         prev = f"D{e.get('duzia_prevista','?')}"
         cob = f"D{e.get('duzia_sec_prevista','?')}" if e.get('duzia_sec_prevista') and e.get('duzia_sec_prevista') != e.get('duzia_prevista') else "-"
         zero = '🟢' if e.get('incluir_zero') else '-'
@@ -3853,9 +3857,14 @@ if sis.historico_entradas:
         num = '🎯' if e.get('acerto_numero') else '-'
         zer = '🟢' if e.get('acerto_zero') else '-'
         ns = e.get('numero', 0)
-        if e.get('eh_raio'): nd = f"⚡{ns} ({e.get('multiplicador',0)}x)"
-        elif ns == 0: nd = "0"
-        else: nd = str(ns)
+        
+        if e.get('eh_raio'):
+            nd = f"⚡{ns} ({e.get('multiplicador',0)}x)"
+        elif ns == 0:
+            nd = "0"
+        else:
+            nd = str(ns)
+        
         padrao = str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-'
         
         # CORREÇÃO: tratamento seguro para valores None
@@ -3867,28 +3876,63 @@ if sis.historico_entradas:
         aquec_val = temp_info.get('aquecendo', 0)
         aquec_display = aquec_val if aquec_val and aquec_val > 0 else '-'
         
-        dados.append({"Rod":e.get('rodada'),"Hora":e.get('hora'),"🎲":nd,"Real":real,"Prev":prev,"Cob":cob,
-                      "Conf":f"{e.get('confianca',0):.1f}","Gat":e.get('gatilho','ML'),"Z":zero,"🔄":anti,
-                      "🧩":padrao,"Duz":duz,"P1":p1,"P2s":p2s,"Nº":num,"Zer":zer,"Due":due_display,"🔥":aquec_display})
+        dados.append({
+            "Rod": e.get('rodada'),
+            "Hora": e.get('hora'),
+            "🎲": nd,
+            "Real": real,
+            "Prev": prev,
+            "Cob": cob,
+            "Conf": f"{e.get('confianca',0):.1f}",
+            "Gat": e.get('gatilho', 'ML'),
+            "Z": zero,
+            "🔄": anti,
+            "🧩": padrao,
+            "Duz": duz,
+            "P1": p1,
+            "P2s": p2s,
+            "Nº": num,
+            "Zer": zer,
+            "Due": due_display,
+            "🔥": aquec_display
+        })
+    
     st.dataframe(dados, use_container_width=True, height=350)
+    
     if st.button("📥 Exportar CSV", use_container_width=True):
-        if exportar_historico_csv(sis.historico_entradas): st.success("✅ CSV exportado!")
+        if exportar_historico_csv(sis.historico_entradas):
+            st.success("✅ CSV exportado!")
 else:
     st.info("Nenhuma entrada ainda.")
 
 st.markdown("---")
 st.caption("📡 **Telegram:**")
+
 col_t1, col_t2 = st.columns(2)
+
 with col_t1:
-    st.success("🔔 Principal OK") if st.session_state.telegram_token and st.session_state.telegram_chat_id else st.warning("🔔 Principal NÃO")
+    if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+        st.success("🔔 Principal OK")
+    else:
+        st.warning("🔔 Principal NÃO")
+
 with col_t2:
-    st.success("📢 Alt OK") if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt else st.warning("📢 Alt NÃO")
+    if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt:
+        st.success("📢 Alt OK")
+    else:
+        st.warning("📢 Alt NÃO")
 
 config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
+
 st.caption(f"🤖 DuziaAI V14.0 | {api_name} | P2:{config_ativa['padrao_peso_tam2']}% P3:{config_ativa['padrao_peso_tam3']}% P4:{config_ativa['padrao_peso_tam4']}% | {formatar_hora_brasilia()}")
 st.caption(f"📊 Features totais: ~88 base + 50 novas = ~138 features | Ciclos | Markov | Temperatura | Regime")
+
 modelo_path = get_modelo_ml_path(api_name)
-st.caption(f"💾 Modelo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)" if os.path.exists(modelo_path) else "⚠️ Modelo não salvo")
+
+if os.path.exists(modelo_path):
+    st.caption(f"💾 Modelo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)")
+else:
+    st.caption("⚠️ Modelo não salvo")
 
 salvar_sessao()
-        
+    
