@@ -3832,9 +3832,10 @@ with ce:
     else:
         st.info("🔍 Aguardando sinal...")
 
+   # if sis.ultimo_numero is not None:
     if sis.ultimo_numero is not None:
-        st.markdown("---")
-        st.write(f"**🔄 Último:** {'🟢 ZERO' if sis.ultimo_numero==0 else f'#{sis.ultimo_numero} (D{get_duzia(sis.ultimo_numero)})'}")
+    st.markdown("---")
+    st.write(f"**🔄 Último:** {'🟢 ZERO' if sis.ultimo_numero==0 else f'#{sis.ultimo_numero} (D{get_duzia(sis.ultimo_numero)})'}")
 
 st.markdown("---")
 st.subheader("📝 Histórico")
@@ -3856,11 +3857,19 @@ if sis.historico_entradas:
         elif ns == 0: nd = "0"
         else: nd = str(ns)
         padrao = str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-'
-        due = e.get('ciclo_info', {}).get('proxima', '-')
-        aquec = e.get('temperatura_info', {}).get('aquecendo', '-')
+        
+        # CORREÇÃO: tratamento seguro para valores None
+        ciclo_info = e.get('ciclo_info', {})
+        due_val = ciclo_info.get('proxima', 0)
+        due_display = due_val if due_val and due_val > 0 else '-'
+        
+        temp_info = e.get('temperatura_info', {})
+        aquec_val = temp_info.get('aquecendo', 0)
+        aquec_display = aquec_val if aquec_val and aquec_val > 0 else '-'
+        
         dados.append({"Rod":e.get('rodada'),"Hora":e.get('hora'),"🎲":nd,"Real":real,"Prev":prev,"Cob":cob,
                       "Conf":f"{e.get('confianca',0):.1f}","Gat":e.get('gatilho','ML'),"Z":zero,"🔄":anti,
-                      "🧩":padrao,"Duz":duz,"P1":p1,"P2s":p2s,"Nº":num,"Zer":zer,"Due":due,"🔥":aquec})
+                      "🧩":padrao,"Duz":duz,"P1":p1,"P2s":p2s,"Nº":num,"Zer":zer,"Due":due_display,"🔥":aquec_display})
     st.dataframe(dados, use_container_width=True, height=350)
     if st.button("📥 Exportar CSV", use_container_width=True):
         if exportar_historico_csv(sis.historico_entradas): st.success("✅ CSV exportado!")
@@ -3882,3 +3891,4 @@ modelo_path = get_modelo_ml_path(api_name)
 st.caption(f"💾 Modelo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)" if os.path.exists(modelo_path) else "⚠️ Modelo não salvo")
 
 salvar_sessao()
+        
