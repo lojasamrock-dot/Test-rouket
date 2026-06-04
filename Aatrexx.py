@@ -350,17 +350,21 @@ def _selecionar_melhores_numeros_v14(duzia, numeros_completos, quantidade=6):
 # =============================
 # SETUPS INDEPENDENTES POR ROLETA (CALIBRADOS V14)
 # =============================
+# =============================
+# SETUPS INDEPENDENTES POR ROLETA (CALIBRADOS V15 - MAIS AGRESSIVOS)
+# =============================
 
 SETUP_BASE = {
     'pagamento_numero': 20,
     'pagamento_zero': 20,
     'pagamento_duzia': 3,
-    'confianca_minima_entrada': 2.0,
+    # 🔧 CORREÇÃO: Reduzir confiança mínima para mais entradas
+    'confianca_minima_entrada': 1.2,  # ANTES: 2.0
     'embalo_peso': 9,
     'embalo_reforco': 5,
     'bloquear_alerta_zero_conf_alta': True,
     'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.0,
+    'filtro_conf_baixa': 1.5,  # ANTES: 2.0
     'fadiga_duzia': 4,
     'ritmo_alternado_peso': 10,
     'ritmo_alternado_forca': 10,
@@ -377,15 +381,16 @@ SETUP_BASE = {
     'ml_janela_treino': 120,
     'ml_atualizar_a_cada': 10,
     'score_ml_peso': 45,
-    'ml_score_minimo_entrada': 30,
-    'ml_score_minimo_fallback': 42,
-    'ml_min_rodadas_fallback': 8,
-    'ml_max_repeticoes_mesma_duzia': 3,
-    'ml_score_minimo_pos_rotacao': 20,
-    'padrao_min_ocorrencias': 3,
-    'padrao_conf_minima_tam2': 2,
-    'padrao_conf_minima_tam4': 6,
-    'padrao_consenso_min_conf': 0.25,
+    # 🔧 CORREÇÃO: Reduzir scores mínimos para mais entradas
+    'ml_score_minimo_entrada': 22,  # ANTES: 30
+    'ml_score_minimo_fallback': 30,  # ANTES: 42
+    'ml_min_rodadas_fallback': 5,  # ANTES: 8
+    'ml_max_repeticoes_mesma_duzia': 4,  # ANTES: 3
+    'ml_score_minimo_pos_rotacao': 15,  # ANTES: 20
+    'padrao_min_ocorrencias': 2,  # ANTES: 3
+    'padrao_conf_minima_tam2': 1.5,  # ANTES: 2
+    'padrao_conf_minima_tam4': 4,  # ANTES: 6
+    'padrao_consenso_min_conf': 0.20,  # ANTES: 0.25
     'anti_vies_ativo': False,
     'anti_vies_duzia': None,
     'anti_vies_penalidade': 1.0,
@@ -396,44 +401,49 @@ SETUP_BASE = {
     'peso_adaptativo_boost': 1.0,
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 30,
-    'vies_dinamico_limiar': 0.15,
-    'vies_dinamico_penalidade': 0.80,
+    'vies_dinamico_limiar': 0.20,  # ANTES: 0.15 (mais tolerante)
+    'vies_dinamico_penalidade': 0.85,  # ANTES: 0.80 (menos penalidade)
     'decaimento_padroes_ativo': True,
     'decaimento_fator': 0.97,
     'decaimento_a_cada': 5,
     'drift_janela': 15,
-    'drift_taxa_minima': 0.35,
-    'drift_alertar_apos': 5,
+    'drift_taxa_minima': 0.28,  # ANTES: 0.35 (mais tolerante)
+    'drift_alertar_apos': 8,  # ANTES: 5
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 1.0,
-    'padrao_qualidade_min_p2': 50,
-    'padrao_qualidade_min_p3': 30,
-    'padrao_qualidade_min_p4': 20,
+    'padrao_qualidade_min_p2': 30,  # ANTES: 50
+    'padrao_qualidade_min_p3': 20,  # ANTES: 30
+    'padrao_qualidade_min_p4': 15,  # ANTES: 20
     # =====================================================
-    # V14: NOVAS CONFIGURAÇÕES DE QUALIDADE
+    # V15: CONFIGURAÇÕES MAIS AGRESSIVAS
     # =====================================================
-    'score_momento_ativo': True,           # Usar score de momento
-    'score_momento_janela': 6,             # Últimas N entradas para momento
-    'score_momento_boost_quente': 0.25,    # Boost de confiança se quente
-    'score_momento_penalidade_frio': 0.40, # Penalidade de confiança se frio
-    'discordancia_max_permitida': 2,       # Nível máximo de discordância ML vs padrões
-    'cooling_off_erros_consec': 2,         # Após N erros consecutivos, pausa N+1 rodadas
-    'cooling_off_rodadas': 2,              # Quantidade de rodadas de cooling off
-    'confianca_minima_momento_frio': 2.8,  # Confiança mínima extra se momento frio
-    'ml_score_minimo_discordancia1': 38,   # Score mínimo com discordância leve
-    'ml_score_minimo_discordancia2': 46,   # Score mínimo com discordância moderada
-    'usar_selecao_numeros_v14': True,      # Usar seleção de números melhorada
+    'score_momento_ativo': True,
+    'score_momento_janela': 4,  # ANTES: 6 (janela menor)
+    'score_momento_boost_quente': 0.15,  # ANTES: 0.25
+    'score_momento_penalidade_frio': 0.20,  # ANTES: 0.40 (menos penalidade)
+    'discordancia_max_permitida': 3,  # ANTES: 2 (mais permissivo)
+    'cooling_off_erros_consec': 4,  # ANTES: 2 (mais erros antes de pausar)
+    'cooling_off_rodadas': 1,  # ANTES: 2 (pausa menor)
+    'confianca_minima_momento_frio': 2.0,  # ANTES: 2.8
+    'ml_score_minimo_discordancia1': 28,  # ANTES: 38
+    'ml_score_minimo_discordancia2': 35,  # ANTES: 46
+    'usar_selecao_numeros_v14': True,
+    # 🔧 NOVAS CONFIGURAÇÕES PARA MAIS ENTRADAS
+    'entrada_rapida_ativa': True,  # Ativar modo entrada rápida
+    'min_rodadas_para_entrada': 3,  # ANTES: implicitamente 8-20
+    'ignorar_consenso_em_duvida': True,  # Ignorar consenso quando ML confiante
 }
 
-# 🟡 XXXTREME LIGHTNING
+# 🟡 XXXTREME LIGHTNING - VERSÃO OTIMIZADA
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'confianca_minima_entrada': 2.2,
+    'confianca_minima_entrada': 1.3,  # ANTES: 2.2
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.0, 'fadiga_duzia': 4,
+    'filtro_conf_baixa': 1.5,  # ANTES: 2.0
+    'fadiga_duzia': 4,
     'ritmo_alternado_peso': 10, 'ritmo_alternado_forca': 10,
     'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
     'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 1, 'raio_alto_minimo': 100,
@@ -448,62 +458,63 @@ SETUP_XXXTREME = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 30,       # V14: era 35, aumentado
-    'ml_score_minimo_fallback': 48,      # V14: era 42, aumentado
-    'ml_min_rodadas_fallback': 20,       # V14: era 10, aumentado
-    'ml_max_repeticoes_mesma_duzia': 3,
-    'ml_score_minimo_pos_rotacao': 22,   # V14: era 20
-    'padrao_min_ocorrencias': 3,
+    'ml_score_minimo_entrada': 24,  # ANTES: 38
+    'ml_score_minimo_fallback': 32,  # ANTES: 48
+    'ml_min_rodadas_fallback': 6,  # ANTES: 20
+    'ml_max_repeticoes_mesma_duzia': 4,  # ANTES: 3
+    'ml_score_minimo_pos_rotacao': 16,  # ANTES: 22
+    'padrao_min_ocorrencias': 2,  # ANTES: 3
     'padrao_peso_tam2': 15,
     'padrao_peso_tam3': 55,
     'padrao_peso_tam4': 30,
-    'padrao_conf_minima_tam2': 2,
-    'padrao_conf_minima_tam4': 8,
+    'padrao_conf_minima_tam2': 1.5,  # ANTES: 2
+    'padrao_conf_minima_tam4': 5,  # ANTES: 8
     'padrao_consenso_peso_extra': 15,
-    'padrao_consenso_min_conf': 0.30,
-    'ml_ignorar_consenso_conf_min': 3.0,
+    'padrao_consenso_min_conf': 0.25,  # ANTES: 0.30
+    'ml_ignorar_consenso_conf_min': 2.5,  # ANTES: 3.0
     'anti_vies_ativo': False,
     'peso_adaptativo_ativo': False,
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 20,
-    'vies_dinamico_limiar': 0.12,
-    'vies_dinamico_penalidade': 0.75,
+    'vies_dinamico_limiar': 0.18,  # ANTES: 0.12
+    'vies_dinamico_penalidade': 0.82,  # ANTES: 0.75
     'decaimento_padroes_ativo': True,
     'decaimento_fator': 0.97,
     'decaimento_a_cada': 5,
     'drift_janela': 15,
-    'drift_taxa_minima': 0.35,
-    'drift_alertar_apos': 5,
+    'drift_taxa_minima': 0.30,  # ANTES: 0.35
+    'drift_alertar_apos': 8,  # ANTES: 5
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 1.2,
-    'padrao_qualidade_min_p2': 50,
-    'padrao_qualidade_min_p3': 30,
-    'padrao_qualidade_min_p4': 25,
-    # V14
+    'padrao_qualidade_min_p2': 35,  # ANTES: 50
+    'padrao_qualidade_min_p3': 20,  # ANTES: 30
+    'padrao_qualidade_min_p4': 15,  # ANTES: 25
     'score_momento_ativo': True,
-    'score_momento_janela': 6,
-    'score_momento_boost_quente': 0.20,
-    'score_momento_penalidade_frio': 0.35,
-    'discordancia_max_permitida': 2,
-    'cooling_off_erros_consec': 2,
-    'cooling_off_rodadas': 2,
-    'confianca_minima_momento_frio': 2.8,
-    'ml_score_minimo_discordancia1': 42,
-    'ml_score_minimo_discordancia2': 50,
+    'score_momento_janela': 4,  # ANTES: 6
+    'score_momento_boost_quente': 0.15,  # ANTES: 0.20
+    'score_momento_penalidade_frio': 0.25,  # ANTES: 0.35
+    'discordancia_max_permitida': 3,  # ANTES: 2
+    'cooling_off_erros_consec': 4,  # ANTES: 2
+    'cooling_off_rodadas': 1,  # ANTES: 2
+    'confianca_minima_momento_frio': 1.8,  # ANTES: 2.8
+    'ml_score_minimo_discordancia1': 28,  # ANTES: 42
+    'ml_score_minimo_discordancia2': 36,  # ANTES: 50
     'usar_selecao_numeros_v14': True,
+    'min_rodadas_para_entrada': 3,  # NOVO
 }
 
-# 🟢 IMMERSIVE ROULETTE
+# 🟢 IMMERSIVE ROULETTE - VERSÃO OTIMIZADA
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.9,
+    'confianca_minima_entrada': 1.2,  # ANTES: 1.9
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.0, 'fadiga_duzia': 3,
+    'filtro_conf_baixa': 1.3,  # ANTES: 2.0
+    'fadiga_duzia': 3,
     'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
-    'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
+    'max_repeticoes_embalo': 4, 'confianca_maxima_segura': 3.1,
     'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 0, 'raio_alto_minimo': 0,
     'zero_termometro_max': 12, 'anti_erro_skip_discordancia': True,
     'ritmo_v_peso': 8, 'ritmo_v_forca': 8, 'ritmo_v_confirmacoes': 2,
@@ -515,20 +526,20 @@ SETUP_IMMERSIVE = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 36,       # V14: era 34
-    'ml_score_minimo_fallback': 48,      # V14: era 42
-    'ml_min_rodadas_fallback': 20,       # V14: era 10
-    'ml_max_repeticoes_mesma_duzia': 2,
-    'ml_score_minimo_pos_rotacao': 20,   # V14: era 18
-    'padrao_min_ocorrencias': 5,
+    'ml_score_minimo_entrada': 22,  # ANTES: 36
+    'ml_score_minimo_fallback': 30,  # ANTES: 48
+    'ml_min_rodadas_fallback': 5,  # ANTES: 20
+    'ml_max_repeticoes_mesma_duzia': 4,  # ANTES: 2
+    'ml_score_minimo_pos_rotacao': 14,  # ANTES: 20
+    'padrao_min_ocorrencias': 3,  # ANTES: 5
     'padrao_peso_tam2': 42,
     'padrao_peso_tam3': 25,
     'padrao_peso_tam4': 33,
-    'padrao_conf_minima_tam2': 2,
-    'padrao_conf_minima_tam4': 8,
+    'padrao_conf_minima_tam2': 1.5,  # ANTES: 2
+    'padrao_conf_minima_tam4': 5,  # ANTES: 8
     'padrao_consenso_peso_extra': 10,
-    'padrao_consenso_min_conf': 0.30,
-    'ml_ignorar_consenso_conf_min': 3.5,
+    'padrao_consenso_min_conf': 0.25,  # ANTES: 0.30
+    'ml_ignorar_consenso_conf_min': 2.8,  # ANTES: 3.5
     'anti_vies_ativo': False,
     'anti_vies_duzia': None,
     'anti_vies_penalidade': 1.0,
@@ -536,44 +547,45 @@ SETUP_IMMERSIVE = {
     'anti_vies_p4_isolado_extra': 1.0,
     'peso_adaptativo_ativo': True,
     'peso_adaptativo_janela': 10,
-    'peso_adaptativo_boost': 1.3,
+    'peso_adaptativo_boost': 1.2,  # ANTES: 1.3
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 25,
-    'vies_dinamico_limiar': 0.13,
-    'vies_dinamico_penalidade': 0.76,
+    'vies_dinamico_limiar': 0.18,  # ANTES: 0.13
+    'vies_dinamico_penalidade': 0.84,  # ANTES: 0.76
     'decaimento_padroes_ativo': True,
-    'decaimento_fator': 0.96,
+    'decaimento_fator': 0.97,  # ANTES: 0.96
     'decaimento_a_cada': 5,
     'drift_janela': 12,
-    'drift_taxa_minima': 0.38,
-    'drift_alertar_apos': 4,
+    'drift_taxa_minima': 0.32,  # ANTES: 0.38
+    'drift_alertar_apos': 7,  # ANTES: 4
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 1.2,
-    # V14
     'score_momento_ativo': True,
-    'score_momento_janela': 6,
-    'score_momento_boost_quente': 0.25,
-    'score_momento_penalidade_frio': 0.40,
-    'discordancia_max_permitida': 2,
-    'cooling_off_erros_consec': 2,
-    'cooling_off_rodadas': 2,
-    'confianca_minima_momento_frio': 2.7,
-    'ml_score_minimo_discordancia1': 40,
-    'ml_score_minimo_discordancia2': 48,
+    'score_momento_janela': 4,  # ANTES: 6
+    'score_momento_boost_quente': 0.15,  # ANTES: 0.25
+    'score_momento_penalidade_frio': 0.25,  # ANTES: 0.40
+    'discordancia_max_permitida': 3,  # ANTES: 2
+    'cooling_off_erros_consec': 4,  # ANTES: 2
+    'cooling_off_rodadas': 1,  # ANTES: 2
+    'confianca_minima_momento_frio': 1.7,  # ANTES: 2.7
+    'ml_score_minimo_discordancia1': 26,  # ANTES: 40
+    'ml_score_minimo_discordancia2': 34,  # ANTES: 48
     'usar_selecao_numeros_v14': True,
+    'min_rodadas_para_entrada': 3,  # NOVO
 }
 
-# 🔴 MEGA ROULETTE
+# 🔴 MEGA ROULETTE - VERSÃO OTIMIZADA
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.0,
+    'confianca_minima_entrada': 1.4,  # ANTES: 2.0
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.5, 'fadiga_duzia': 3,
+    'filtro_conf_baixa': 1.6,  # ANTES: 2.5
+    'fadiga_duzia': 3,
     'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
-    'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
+    'max_repeticoes_embalo': 4, 'confianca_maxima_segura': 3.1,
     'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 2, 'raio_alto_minimo': 150,
     'zero_termometro_max': 12, 'anti_erro_skip_discordancia': True,
     'ritmo_v_peso': 7, 'ritmo_v_forca': 7, 'ritmo_v_confirmacoes': 2,
@@ -585,57 +597,59 @@ SETUP_MEGA = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 35, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 32,       # V14: era 28
-    'ml_score_minimo_fallback': 52,      # V14: era 45
-    'ml_min_rodadas_fallback': 25,       # V14: era 15
-    'ml_max_repeticoes_mesma_duzia': 3,
-    'ml_score_minimo_pos_rotacao': 20,   # V14: era 18
-    'padrao_min_ocorrencias': 3,
+    'ml_score_minimo_entrada': 26,  # ANTES: 32
+    'ml_score_minimo_fallback': 34,  # ANTES: 52
+    'ml_min_rodadas_fallback': 8,  # ANTES: 25
+    'ml_max_repeticoes_mesma_duzia': 4,  # ANTES: 3
+    'ml_score_minimo_pos_rotacao': 16,  # ANTES: 20
+    'padrao_min_ocorrencias': 2,  # ANTES: 3
     'padrao_peso_tam2': 20,
     'padrao_peso_tam3': 50,
     'padrao_peso_tam4': 30,
-    'padrao_conf_minima_tam2': 2,
-    'padrao_conf_minima_tam4': 6,
+    'padrao_conf_minima_tam2': 1.5,  # ANTES: 2
+    'padrao_conf_minima_tam4': 4,  # ANTES: 6
     'padrao_consenso_peso_extra': 15,
-    'padrao_consenso_min_conf': 0.25,
-    'ml_ignorar_consenso_conf_min': 3.0,
+    'padrao_consenso_min_conf': 0.20,  # ANTES: 0.25
+    'ml_ignorar_consenso_conf_min': 2.5,  # ANTES: 3.0
     'anti_vies_ativo': True,
     'anti_vies_duzia': None,
-    'anti_vies_penalidade': 0.82,
+    'anti_vies_penalidade': 0.88,  # ANTES: 0.82 (menos penalidade)
     'anti_vies_gatilho_p2': True,
-    'anti_vies_p4_isolado_extra': 0.75,
+    'anti_vies_p4_isolado_extra': 0.85,  # ANTES: 0.75
     'peso_adaptativo_ativo': True,
     'peso_adaptativo_janela': 10,
-    'peso_adaptativo_boost': 1.2,
+    'peso_adaptativo_boost': 1.15,  # ANTES: 1.2
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 20,
-    'vies_dinamico_limiar': 0.12,
-    'vies_dinamico_penalidade': 0.70,
+    'vies_dinamico_limiar': 0.18,  # ANTES: 0.12
+    'vies_dinamico_penalidade': 0.82,  # ANTES: 0.70
     'decaimento_padroes_ativo': True,
-    'decaimento_fator': 0.94,
-    'decaimento_a_cada': 3,
+    'decaimento_fator': 0.95,  # ANTES: 0.94
+    'decaimento_a_cada': 4,  # ANTES: 3
     'drift_janela': 15,
-    'drift_taxa_minima': 0.35,
-    'drift_alertar_apos': 5,
+    'drift_taxa_minima': 0.28,  # ANTES: 0.35
+    'drift_alertar_apos': 8,  # ANTES: 5
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 1.0,
-    'padrao_qualidade_min_p2': 40,
-    'padrao_qualidade_min_p3': 25,
-    'padrao_qualidade_min_p4': 20,
-    # V14
+    'padrao_qualidade_min_p2': 25,  # ANTES: 40
+    'padrao_qualidade_min_p3': 15,  # ANTES: 25
+    'padrao_qualidade_min_p4': 12,  # ANTES: 20
     'score_momento_ativo': True,
-    'score_momento_janela': 5,
-    'score_momento_boost_quente': 0.20,
-    'score_momento_penalidade_frio': 0.45,
-    'discordancia_max_permitida': 1,     # Mega: mais restritivo
-    'cooling_off_erros_consec': 2,
-    'cooling_off_rodadas': 3,            # Mega: pausa maior
-    'confianca_minima_momento_frio': 3.0,
-    'ml_score_minimo_discordancia1': 44,
-    'ml_score_minimo_discordancia2': 54,
+    'score_momento_janela': 4,  # ANTES: 5
+    'score_momento_boost_quente': 0.15,  # ANTES: 0.20
+    'score_momento_penalidade_frio': 0.30,  # ANTES: 0.45
+    'discordancia_max_permitida': 2,  # Mega continua mais restritivo
+    'cooling_off_erros_consec': 3,  # ANTES: 2
+    'cooling_off_rodadas': 2,  # ANTES: 3
+    'confianca_minima_momento_frio': 2.2,  # ANTES: 3.0
+    'ml_score_minimo_discordancia1': 30,  # ANTES: 44
+    'ml_score_minimo_discordancia2': 38,  # ANTES: 54
     'usar_selecao_numeros_v14': True,
+    'min_rodadas_para_entrada': 4,  # NOVO
 }
+
+
 
 ROLETA_CONFIGS = {
     'XXXtreme Lightning': SETUP_XXXTREME,
