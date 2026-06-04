@@ -377,7 +377,7 @@ SETUP_BASE = {
     'ml_janela_treino': 120,
     'ml_atualizar_a_cada': 10,
     'score_ml_peso': 45,
-    'ml_score_minimo_entrada': 30,
+    'ml_score_minimo_entrada': 25,
     'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 8,
     'ml_max_repeticoes_mesma_duzia': 3,
@@ -430,7 +430,7 @@ SETUP_BASE = {
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'confianca_minima_entrada': 2.2,
+    'confianca_minima_entrada': 2.0,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 2.0, 'fadiga_duzia': 4,
@@ -447,8 +447,8 @@ SETUP_XXXTREME = {
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 38,       # V14: era 35, aumentado
+    'ml_janela_treino': 60, 'ml_atualizar_a_cada': 8,
+    'ml_score_minimo_entrada': 30,       # V14: era 35, aumentado
     'ml_score_minimo_fallback': 48,      # V14: era 42, aumentado
     'ml_min_rodadas_fallback': 20,       # V14: era 10, aumentado
     'ml_max_repeticoes_mesma_duzia': 3,
