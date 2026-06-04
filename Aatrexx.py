@@ -399,8 +399,8 @@ SETUP_IMMERSIVE = {
     # ============================================
     # MACHINE LEARNING
     # ============================================
-    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 34,
+    'ml_janela_treino': 80, 'ml_atualizar_a_cada': 15,
+    'ml_score_minimo_entrada': 30,
     'ml_score_minimo_fallback': 42,
     'ml_min_rodadas_fallback': 10,
     'ml_max_repeticoes_mesma_duzia': 2,
@@ -442,7 +442,7 @@ SETUP_IMMERSIVE = {
     # VIÉS DINÂMICO - MANTIDO
     # ============================================
     'vies_dinamico_ativo': True,
-    'vies_dinamico_janela': 25,
+    'vies_dinamico_janela': 15,
     'vies_dinamico_limiar': 0.13,
     'vies_dinamico_penalidade': 0.76,
     
