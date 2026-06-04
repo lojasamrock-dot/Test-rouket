@@ -1788,6 +1788,11 @@ class DuziaAI:
         self._momentum_cache = {1: 0.0, 2: 0.0, 3: 0.0}
         self._regime_cache = 0.0
         self._historico_entradas_ref = []  # referência externa para features J e I
+        
+        # 🔧 FIX V15: Cache para evitar recursão infinita
+        self._ml_scores_cache = {1: 33.3, 2: 33.3, 3: 33.3}
+        self._cache_valid = False
+        self._cache_rodada = -1
 
         config = self._get_config()
         self.padrao_min_ocorrencias = config.get('padrao_min_ocorrencias', 3)
@@ -2206,13 +2211,30 @@ class DuziaAI:
             float(st_info.get('streak_taxa_quebra_real', 0.0)),
         ]
 
+    # 🔧 FIX V15: Versão corrigida sem recursão
     def _extrair_features_v15(self, historico_duzias, historico_numeros, ml_scores_atuais=None):
         """
         V15: 61 novas features agrupadas por domínio.
         Retorna lista de 61 floats para concatenar ao vetor principal.
         """
+        # 🔧 CORREÇÃO: Se ml_scores_atuais for None, usar cache ou fallback SEM recursão
         if ml_scores_atuais is None:
-            ml_scores_atuais = {1: 33.3, 2: 33.3, 3: 33.3}
+            # Tentar usar cache
+            if hasattr(self, '_ml_scores_cache') and self._cache_valid:
+                ml_scores_atuais = self._ml_scores_cache
+            else:
+                # Fallback baseado em frequência para evitar recursão
+                if len(historico_duzias) >= 5:
+                    janela = min(20, len(historico_duzias))
+                    duzias_rec = [d for d in historico_duzias[-janela:] if d != 0]
+                    total = max(1, len(duzias_rec))
+                    ml_scores_atuais = {
+                        1: (duzias_rec.count(1) / total) * 100,
+                        2: (duzias_rec.count(2) / total) * 100,
+                        3: (duzias_rec.count(3) / total) * 100,
+                    }
+                else:
+                    ml_scores_atuais = {1: 33.3, 2: 33.3, 3: 33.3}
 
         try:
             feat_A = _calcular_features_ciclo(historico_duzias, historico_numeros, janela=40)
@@ -2441,8 +2463,8 @@ class DuziaAI:
         features_temporais = self._extrair_features_temporais(historico_duzias)
         features_streak = self._extrair_features_streak_ml(historico_duzias)
 
-        # V15: Calcular scores ML atuais para meta-features (grupo H)
-        ml_scores_atual = self._prever_ml() if self.modelo_ml is not None else {1: 33.3, 2: 33.3, 3: 33.3}
+        # 🔧 FIX V15: Usar cache de scores ML para evitar recursão
+        ml_scores_atual = self._ml_scores_cache if (hasattr(self, '_ml_scores_cache') and self._cache_valid) else {1: 33.3, 2: 33.3, 3: 33.3}
 
         # V15: 64 novas features
         features_v15 = self._extrair_features_v15(historico_duzias, historico_numeros, ml_scores_atual)
@@ -2492,6 +2514,7 @@ class DuziaAI:
         pesos = pesos / pesos.mean()
         return pesos
 
+    # 🔧 FIX V15: Versão corrigida do treinamento ML sem vazamento de dados
     def _treinar_ml_online(self):
         if not ML_DISPONIVEL:
             return False
@@ -2513,9 +2536,11 @@ class DuziaAI:
             X, y = [], []
             inicio = max(0, len(self.historico_completo) - janela_treino - 4)
 
+            # 🔧 CORREÇÃO CRÍTICA: Usar features até i-1, target = i (próxima rodada)
             for i in range(inicio + 10, len(self.historico_completo)):
-                hist_duzias = self.historico_completo[:i]
-                hist_nums = self.numeros_completos[:i]
+                # Features usando dados ATÉ a rodada i-1 (exclui a rodada i)
+                hist_duzias = self.historico_completo[:i-1]
+                hist_nums = self.numeros_completos[:i-1]
 
                 if len(hist_duzias) < 10 or len(hist_nums) < 10:
                     continue
@@ -2524,6 +2549,7 @@ class DuziaAI:
                 if features is None:
                     continue
 
+                # Target é a rodada atual i
                 target = self.historico_completo[i]
                 if target in [1, 2, 3]:
                     X.append(features)
@@ -2555,9 +2581,13 @@ class DuziaAI:
 
             self.modelo_ml = _EnsembleManual(rf, gbt)
             self.ultimo_treino_ml = rodada_atual
+            
+            # 🔧 FIX: Atualizar cache após treinamento bem-sucedido
+            self._cache_valid = False
+            self._cache_rodada = -1
 
             salvar_modelo_ml(self.modelo_ml, self.api_name)
-            logging.info(f"🧠 Ensemble ML V14.0 Treinado! Amostras: {len(X)} | Rodada: {rodada_atual} | Features: {X_arr.shape[1]}")
+            logging.info(f"🧠 Ensemble ML V15.0 Treinado! Amostras: {len(X)} | Rodada: {rodada_atual} | Features: {X_arr.shape[1]}")
             return True
 
         except Exception as e:
@@ -2569,6 +2599,9 @@ class DuziaAI:
         self.historico.append(d)
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
+        
+        # 🔧 FIX: Invalida cache após adicionar novo número
+        self._cache_valid = False
 
         if numero == 0:
             self.rodadas_desde_zero = 0
@@ -2710,12 +2743,18 @@ class DuziaAI:
         if acertou_duzia or acertou_zero:
             self.entradas_consecutivas += 1
 
-    def _prever_ml(self):
+    # 🔧 FIX V15: Versão corrigida com cache para evitar recursão
+    def _prever_ml(self, use_cache=True):
         if not ML_DISPONIVEL or self.modelo_ml is None:
             return {1: 0.0, 2: 0.0, 3: 0.0}
 
         if len(self.historico_completo) < 10:
             return {1: 0.0, 2: 0.0, 3: 0.0}
+
+        # 🔧 USAR CACHE se disponível e válido
+        rodada_atual = len(self.historico_completo)
+        if use_cache and hasattr(self, '_cache_valid') and self._cache_valid and rodada_atual == self._cache_rodada:
+            return self._ml_scores_cache
 
         try:
             features = self.extrair_features_estado(janela=20)
@@ -2740,6 +2779,11 @@ class DuziaAI:
                 if classe in ml_scores:
                     ml_scores[classe] = float(prob) * 100
 
+            # Atualizar cache
+            self._ml_scores_cache = ml_scores
+            self._cache_valid = True
+            self._cache_rodada = rodada_atual
+
             return ml_scores
 
         except Exception as e:
@@ -2747,6 +2791,7 @@ class DuziaAI:
             if "feature" in str(e).lower() or "shape" in str(e).lower():
                 self.modelo_ml = None
                 self.ultimo_treino_ml = 0
+                self._cache_valid = False
             return {1: 0.0, 2: 0.0, 3: 0.0}
 
     def _prever_fallback_frequencia(self):
@@ -2856,7 +2901,7 @@ class DuziaAI:
         return scores_ajustados
 
     def calcular_score(self):
-        ml_scores = self._prever_ml()
+        ml_scores = self._prever_ml(use_cache=True)  # 🔧 Usar cache
         ml_ativo = not all(v == 0.0 for v in ml_scores.values())
 
         if ml_ativo:
@@ -3088,7 +3133,7 @@ class DuziaAI:
                 info_streak = f" | {streak_sinal}" if streak_sinal else ""
                 info_momento = f" | ⚡{momento_desc.upper()}" if momento_desc != "neutro" else ""
 
-                motivo = f"🟢 ML V14 ({treino_info}) | Score: {s1:.1f}"
+                motivo = f"🟢 ML V15 ({treino_info}) | Score: {s1:.1f}"
                 if info_padroes:
                     motivo += f" | 🧩 {info_padroes}"
                 if info_consenso:
@@ -4156,7 +4201,7 @@ with cg:
             textposition='auto'
         )])
 
-        titulo = f"🎯 ML V14.0 — Assertividade Máxima ({api_name})"
+        titulo = f"🎯 ML V15.0 — Assertividade Máxima ({api_name})"
         if sis.duzia_ai.alerta_zero_ativo:
             titulo += " | 🟢 ZERO!"
         if sis.duzia_ai._cooling_off_rodadas_restantes > 0:
@@ -4283,7 +4328,7 @@ with ce:
             melhores_secundaria = None
 
         cor = "#FF6347" if e.get('modo_anti_erro') else "#00CED1"
-        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V14.0 🎯"
+        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V15.0 🎯"
 
         padrao_html = ""
         if padrao_info.get('resumo'):
