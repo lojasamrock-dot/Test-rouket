@@ -317,6 +317,7 @@ SETUP_BASE = {
 }
 
 # 🟡 XXXTREME LIGHTNING
+#SETUP_XXXTREME = {
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
@@ -326,7 +327,14 @@ SETUP_XXXTREME = {
     'filtro_conf_baixa': 2.0, 'fadiga_duzia': 4,
     'ritmo_alternado_peso': 10, 'ritmo_alternado_forca': 10,
     'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
-    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 1, 'raio_alto_minimo': 100,
+    'rodadas_verificacao_conf_alta': 5, 
+    
+    # ✅ MELHORIA #3: Pós-raio (aumentado de 1)
+    'pausa_pos_raio': 2,
+    'pausa_pos_raio_alto': 3,  # NOVO
+    'raio_alto_minimo': 100,
+    'raio_ignorar_proxima': True,  # NOVO
+    
     'zero_termometro_max': 15, 'anti_erro_skip_discordancia': True,
     'ritmo_v_peso': 9, 'ritmo_v_forca': 9, 'ritmo_v_confirmacoes': 2,
     'usar_embalo': True, 'embalo_consecutivas_min': 2, 'embalo_janela': 4,
@@ -335,23 +343,37 @@ SETUP_XXXTREME = {
     'usar_quebra_pos_zero': False,
     'usar_exaustao_dominancia': True,
     'usar_mudanca_velocidade': False,
+    
+    # ✅ MELHORIA #2: Momentos (NOVO)
+    'momento_ativo': True,
+    'momento_peso_quente': 1.15,
+    'momento_peso_frio': 0.85,
+    'momento_peso_muito_frio': 0.70,
+    'momento_ignorar_conf_abaixo': 2.4,
+    
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
+    
+    # ✅ MELHORIA #5: Scores ajustados
     'ml_score_minimo_entrada': 35,
-    'ml_score_minimo_fallback': 42,
+    'ml_score_minimo_fallback': 40,  # reduzido de 42
     'ml_min_rodadas_fallback': 10,
-    'ml_max_repeticoes_mesma_duzia': 3,
+    'ml_max_repeticoes_mesma_duzia': 2,  # reduzido de 3
     'ml_score_minimo_pos_rotacao': 20,
+    
     'padrao_min_ocorrencias': 3,
     'padrao_peso_tam2': 15,
     'padrao_peso_tam3': 55,
     'padrao_peso_tam4': 30,
     'padrao_conf_minima_tam2': 2,
     'padrao_conf_minima_tam4': 8,
-    'padrao_consenso_peso_extra': 15,
-    'padrao_consenso_min_conf': 0.30,
-    'ml_ignorar_consenso_conf_min': 3.0,
+    
+    # ✅ MELHORIA #6: Consenso ajustado
+    'padrao_consenso_peso_extra': 18,  # aumentado de 15
+    'padrao_consenso_min_conf': 0.35,  # aumentado de 0.30
+    'ml_ignorar_consenso_conf_min': 3.5,  # aumentado de 3.0
+    
     'anti_vies_ativo': False,
     'peso_adaptativo_ativo': False,
     'vies_dinamico_ativo': True,
@@ -364,15 +386,23 @@ SETUP_XXXTREME = {
     'drift_janela': 15,
     'drift_taxa_minima': 0.35,
     'drift_alertar_apos': 5,
-    # MELHORIA #14
+    
+    # ✅ MELHORIA #1 e #4: Streak adaptativo (REFORMULADO)
     'streak_ativo': True,
     'streak_min_len': 2,
+    'streak_max_seguro': 3,  # NOVO: limite antes de penalizar
+    'streak_quebra_apos': 3,  # NOVO: sugerir quebra
     'streak_peso_feature': 1.2,
-    # ✅ MELHORIA #3: qualidade mínima para padrões
+    'streak_penalidade_saturado': 0.3,  # NOVO
+    'streak_bloquear_entrada_saturado': True,  # NOVO
+    'streak_saturado_min_len': 3,  # NOVO
+    'streak_penalidade_entrada': 0.5,  # NOVO
+    
     'padrao_qualidade_min_p2': 50,
     'padrao_qualidade_min_p3': 30,
     'padrao_qualidade_min_p4': 25,
 }
+    
 
 # 🟢 IMMERSIVE ROULETTE
 #SETUP_IMMERSIVE = {
