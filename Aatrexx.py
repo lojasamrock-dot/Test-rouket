@@ -416,13 +416,13 @@ SETUP_IMMERSIVE = {
     'bloquear_anti_erro_zero_conf_baixa': True,
     'anti_erro_skip_discordancia': True,
     'anti_erro_consenso_nenhum_auto': True,      # NOVO!
-    'confianca_min_anti_erro_auto': 2.5,         # NOVO!
+    'confianca_min_anti_erro_auto': 2.8,         # NOVO!
     
     # ============================================
     # PROTEÇÃO CONTRA ZERO (NOVO)
     # ============================================
     'zero_protecao_apos_conf_alta': True,        # NOVO!
-    'zero_prob_min_para_bloqueio': 0.06,         # NOVO!
+    'zero_prob_min_para_bloqueio': 0.04,         # NOVO!
     'zero_termometro_max': 12,
     
     # ============================================
@@ -472,7 +472,7 @@ SETUP_IMMERSIVE = {
     'padrao_conf_minima_tam2': 1.8,           # era 2.0
     'padrao_conf_minima_tam4': 6,             # era 8
     'padrao_consenso_peso_extra': 15,         # era 10
-    'padrao_consenso_min_conf': 0.20,         # era 0.30
+    'padrao_consenso_min_conf': 0.25,         # era 0.30
     
     # ============================================
     # ANTI-VIÉS - DESLIGADO
@@ -518,7 +518,7 @@ SETUP_IMMERSIVE = {
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 0.9,               # era 1.2
-    'streak_quebra_forcar_troca_apos': 2,     # NOVO!
+    'streak_quebra_forcar_troca_apos': 1,     # NOVO!
 }
 
 # 🔴 MEGA ROULETTE
