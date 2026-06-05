@@ -453,14 +453,14 @@ SETUP_IMMERSIVE = {
     # ============================================
     # MACHINE LEARNING (OTIMIZADO)
     # ============================================
-    'ml_janela_treino': 60,                   # era 80
-    'ml_atualizar_a_cada': 15,
-    'ml_score_minimo_entrada': 38,            # era 30
+    'ml_janela_treino': 30,                   # era 80
+    'ml_atualizar_a_cada': 6,
+    'ml_score_minimo_entrada': 30,            # era 30
     'ml_score_minimo_fallback': 45,           # era 42
     'ml_min_rodadas_fallback': 10,
     'ml_max_repeticoes_mesma_duzia': 1,       # era 2
     'ml_score_minimo_pos_rotacao': 18,
-    'ml_ignorar_consenso_conf_min': 3.5,
+    'ml_ignorar_consenso_conf_min': 3.0,
     
     # ============================================
     # PADRÕES HÍBRIDOS (REBALANCEADOS)
