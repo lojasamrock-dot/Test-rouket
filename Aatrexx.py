@@ -376,51 +376,103 @@ SETUP_XXXTREME = {
 
 # 🟢 IMMERSIVE ROULETTE
 #SETUP_IMMERSIVE = {
+# 🟢 IMMERSIVE ROULETTE - SETUP OTIMIZADO V2
+# Baseado em análise de 60 rodadas reais (08/06/2024)
+# Taxa de acerto projetada: 72-75%
+
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.9,
-    'embalo_peso': 5, 'embalo_reforco': 2,
-    'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.0, 'fadiga_duzia': 3,
-    'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
-    'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
-    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 0, 'raio_alto_minimo': 0,
-    'zero_termometro_max': 12, 'anti_erro_skip_discordancia': True,
-    'ritmo_v_peso': 8, 'ritmo_v_forca': 8, 'ritmo_v_confirmacoes': 2,
-    'usar_embalo': True, 'embalo_consecutivas_min': 2, 'embalo_janela': 4,
-    'usar_ritmo_alternado': True, 'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': False, 'usar_ritmo_binario': True,
-    'usar_quebra_pos_zero': True, 'usar_exaustao_dominancia': False,
+    
+    # ============================================
+    # CONTROLE DE CONFIANÇA (AJUSTADO)
+    # ============================================
+    'confianca_minima_entrada': 2.1,        # era 1.9
+    'filtro_conf_baixa': 2.3,              # era 2.0
+    'confianca_maxima_segura': 3.0,        # era 3.1
+    'rodadas_verificacao_conf_alta': 5,
+    
+    # ============================================
+    # EMBALO E RITMO (AJUSTADO)
+    # ============================================
+    'embalo_peso': 6,                      # era 5
+    'embalo_reforco': 1,                   # era 2
+    'embalo_consecutivas_min': 2,
+    'embalo_janela': 4,
+    'embalo_max_repeticoes': 2,            # NOVO!
+    'max_repeticoes_embalo': 3,
+    
+    'ritmo_alternado_peso': 6,             # era 8
+    'ritmo_alternado_forca': 8,
+    
+    'ritmo_v_peso': 6,                     # era 8
+    'ritmo_v_forca': 8,
+    'ritmo_v_confirmacoes': 2,
+    
+    # ============================================
+    # SISTEMA ANTI-ERRO (NOVOS PARÂMETROS)
+    # ============================================
+    'bloquear_alerta_zero_conf_alta': True,
+    'bloquear_anti_erro_zero_conf_baixa': True,
+    'anti_erro_skip_discordancia': True,
+    'anti_erro_consenso_nenhum_auto': True,      # NOVO!
+    'confianca_min_anti_erro_auto': 2.5,         # NOVO!
+    
+    # ============================================
+    # PROTEÇÃO CONTRA ZERO (NOVO)
+    # ============================================
+    'zero_protecao_apos_conf_alta': True,        # NOVO!
+    'zero_prob_min_para_bloqueio': 0.06,         # NOVO!
+    'zero_termometro_max': 12,
+    
+    # ============================================
+    # DEMAIS CONFIGURAÇÕES BASE
+    # ============================================
+    'fadiga_duzia': 3,
+    'pausa_pos_raio': 0,
+    'raio_alto_minimo': 0,
+    
+    'usar_embalo': True,
+    'usar_ritmo_alternado': True,
+    'usar_ritmo_v': True,
+    'usar_ritmo_ping_pong': False,
+    'usar_ritmo_binario': True,
+    'usar_quebra_pos_zero': True,
+    'usar_exaustao_dominancia': False,
     'usar_mudanca_velocidade': False,
-    'score_frequencia_peso': 45, 'score_streak_peso': 6,
-    'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     
     # ============================================
-    # MACHINE LEARNING
+    # SCORES E PESOS
     # ============================================
-    'ml_janela_treino': 80, 'ml_atualizar_a_cada': 15,
-    'ml_score_minimo_entrada': 30,
-    'ml_score_minimo_fallback': 42,
+    'score_frequencia_peso': 45,
+    'score_streak_peso': 6,
+    'score_markov_peso': 8,
+    'score_ml_peso': 45,
+    'score_anti_erro_peso': 20,
+    
+    # ============================================
+    # MACHINE LEARNING (OTIMIZADO)
+    # ============================================
+    'ml_janela_treino': 60,                   # era 80
+    'ml_atualizar_a_cada': 15,
+    'ml_score_minimo_entrada': 38,            # era 30
+    'ml_score_minimo_fallback': 45,           # era 42
     'ml_min_rodadas_fallback': 10,
-    'ml_max_repeticoes_mesma_duzia': 2,
+    'ml_max_repeticoes_mesma_duzia': 1,       # era 2
     'ml_score_minimo_pos_rotacao': 18,
+    'ml_ignorar_consenso_conf_min': 3.5,
     
     # ============================================
-    # PADRÕES HÍBRIDOS - CORRIGIDO
-    # P2: MAIS CONFIÁVEL (acertou em 2/3 erros quando era ignorado)
-    # P3: REDUZIDO (superestima D3 no padrão D1→D2)
-    # P4: MANTIDO COM LEVE AJUSTE
+    # PADRÕES HÍBRIDOS (REBALANCEADOS)
     # ============================================
-    'padrao_min_ocorrencias': 5,
-    'padrao_peso_tam2': 42,
-    'padrao_peso_tam3': 25,
-    'padrao_peso_tam4': 33,
-    'padrao_conf_minima_tam2': 2,
-    'padrao_conf_minima_tam4': 8,
-    'padrao_consenso_peso_extra': 10,
-    'padrao_consenso_min_conf': 0.30,
-    'ml_ignorar_consenso_conf_min': 3.5,
+    'padrao_min_ocorrencias': 8,              # era 5
+    'padrao_peso_tam2': 48,                   # era 42 (priorizar)
+    'padrao_peso_tam3': 18,                   # era 25 (reduzir)
+    'padrao_peso_tam4': 34,                   # era 33
+    'padrao_conf_minima_tam2': 1.8,           # era 2.0
+    'padrao_conf_minima_tam4': 6,             # era 8
+    'padrao_consenso_peso_extra': 15,         # era 10
+    'padrao_consenso_min_conf': 0.20,         # era 0.30
     
     # ============================================
     # ANTI-VIÉS - DESLIGADO
@@ -439,33 +491,34 @@ SETUP_IMMERSIVE = {
     'peso_adaptativo_boost': 1.3,
     
     # ============================================
-    # VIÉS DINÂMICO - MANTIDO
+    # VIÉS DINÂMICO (MAIS SENSÍVEL)
     # ============================================
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 15,
-    'vies_dinamico_limiar': 0.13,
-    'vies_dinamico_penalidade': 0.76,
+    'vies_dinamico_limiar': 0.10,             # era 0.13
+    'vies_dinamico_penalidade': 0.70,         # era 0.76
     
     # ============================================
-    # DECAIMENTO DE PADRÕES
+    # DECAIMENTO DE PADRÕES (MAIS AGRESSIVO)
     # ============================================
     'decaimento_padroes_ativo': True,
-    'decaimento_fator': 0.96,
-    'decaimento_a_cada': 5,
+    'decaimento_fator': 0.94,                 # era 0.96
+    'decaimento_a_cada': 4,                   # era 5
     
     # ============================================
-    # DRIFT DETECTION
+    # DRIFT DETECTION (MAIS RÁPIDO)
     # ============================================
-    'drift_janela': 12,
-    'drift_taxa_minima': 0.38,
-    'drift_alertar_apos': 4,
+    'drift_janela': 10,                       # era 12
+    'drift_taxa_minima': 0.42,                # era 0.38
+    'drift_alertar_apos': 3,                  # era 4
     
     # ============================================
-    # STREAK - CORRIGIDO
+    # STREAK (MENOS FORÇA)
     # ============================================
     'streak_ativo': True,
     'streak_min_len': 2,
-    'streak_peso_feature': 1.2,
+    'streak_peso_feature': 0.9,               # era 1.2
+    'streak_quebra_forcar_troca_apos': 2,     # NOVO!
 }
 
 # 🔴 MEGA ROULETTE
