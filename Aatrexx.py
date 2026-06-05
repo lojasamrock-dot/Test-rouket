@@ -329,11 +329,12 @@ SETUP_XXXTREME = {
     'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
     'rodadas_verificacao_conf_alta': 5, 
     
-    # ✅ MELHORIA #3: Pós-raio (aumentado de 1)
+    # ✅ Pós-raio (ajuste fino)
     'pausa_pos_raio': 2,
-    'pausa_pos_raio_alto': 3,  # NOVO
+    'pausa_pos_raio_alto': 3,
+    'pausa_pos_raio_qualquer': 1,  # NOVO
     'raio_alto_minimo': 100,
-    'raio_ignorar_proxima': True,  # NOVO
+    'raio_ignorar_proxima': True,
     
     'zero_termometro_max': 15, 'anti_erro_skip_discordancia': True,
     'ritmo_v_peso': 9, 'ritmo_v_forca': 9, 'ritmo_v_confirmacoes': 2,
@@ -344,7 +345,7 @@ SETUP_XXXTREME = {
     'usar_exaustao_dominancia': True,
     'usar_mudanca_velocidade': False,
     
-    # ✅ MELHORIA #2: Momentos (NOVO)
+    # ✅ Momentos
     'momento_ativo': True,
     'momento_peso_quente': 1.15,
     'momento_peso_frio': 0.85,
@@ -355,11 +356,10 @@ SETUP_XXXTREME = {
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
     
-    # ✅ MELHORIA #5: Scores ajustados
     'ml_score_minimo_entrada': 35,
-    'ml_score_minimo_fallback': 40,  # reduzido de 42
+    'ml_score_minimo_fallback': 40,
     'ml_min_rodadas_fallback': 10,
-    'ml_max_repeticoes_mesma_duzia': 2,  # reduzido de 3
+    'ml_max_repeticoes_mesma_duzia': 2,
     'ml_score_minimo_pos_rotacao': 20,
     
     'padrao_min_ocorrencias': 3,
@@ -369,10 +369,11 @@ SETUP_XXXTREME = {
     'padrao_conf_minima_tam2': 2,
     'padrao_conf_minima_tam4': 8,
     
-    # ✅ MELHORIA #6: Consenso ajustado
-    'padrao_consenso_peso_extra': 18,  # aumentado de 15
-    'padrao_consenso_min_conf': 0.35,  # aumentado de 0.30
-    'ml_ignorar_consenso_conf_min': 3.5,  # aumentado de 3.0
+    # ✅ Consenso ajustado
+    'padrao_consenso_peso_extra': 18,
+    'padrao_consenso_min_conf': 0.40,  # aumentado
+    'ml_ignorar_consenso_conf_min': 3.5,
+    'vies_dinamico_penalidade_consenso': 0.85,  # NOVO
     
     'anti_vies_ativo': False,
     'peso_adaptativo_ativo': False,
@@ -387,16 +388,17 @@ SETUP_XXXTREME = {
     'drift_taxa_minima': 0.35,
     'drift_alertar_apos': 5,
     
-    # ✅ MELHORIA #1 e #4: Streak adaptativo (REFORMULADO)
+    # ✅ Streak final
     'streak_ativo': True,
     'streak_min_len': 2,
-    'streak_max_seguro': 3,  # NOVO: limite antes de penalizar
-    'streak_quebra_apos': 3,  # NOVO: sugerir quebra
+    'streak_max_seguro': 3,
+    'streak_bloquear_acima_de': 5,  # NOVO
+    'streak_quebra_apos': 3,
     'streak_peso_feature': 1.2,
-    'streak_penalidade_saturado': 0.3,  # NOVO
-    'streak_bloquear_entrada_saturado': True,  # NOVO
-    'streak_saturado_min_len': 3,  # NOVO
-    'streak_penalidade_entrada': 0.5,  # NOVO
+    'streak_penalidade_saturado': 0.3,
+    'streak_bloquear_entrada_saturado': True,
+    'streak_saturado_min_len': 3,
+    'streak_penalidade_entrada': 0.5,
     
     'padrao_qualidade_min_p2': 50,
     'padrao_qualidade_min_p3': 30,
