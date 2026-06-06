@@ -354,12 +354,12 @@ SETUP_XXXTREME = {
     
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 120, 'ml_atualizar_a_cada': 8,
+    'ml_janela_treino': 60, 'ml_atualizar_a_cada': 3,
     
-    'ml_score_minimo_entrada': 35,
+    'ml_score_minimo_entrada': 25,
     'ml_score_minimo_fallback': 40,
     'ml_min_rodadas_fallback': 10,
-    'ml_max_repeticoes_mesma_duzia': 2,
+    'ml_max_repeticoes_mesma_duzia': 1,
     'ml_score_minimo_pos_rotacao': 20,
     
     'padrao_min_ocorrencias': 3,
