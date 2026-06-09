@@ -48,6 +48,7 @@ input, textarea { border-radius: 12px !important; }
 .img-analysis-highlight { background: linear-gradient(135deg, #ffd70020 0%, #ff8c0020 100%); border: 2px solid #ffd700; padding: 15px; border-radius: 12px; margin: 10px 0; }
 .elite-master-highlight { background: linear-gradient(135deg, #ff880030 0%, #ff440030 100%); border: 2px solid #ff8800; padding: 15px; border-radius: 12px; margin: 10px 0; }
 .regras-especiais-highlight { background: linear-gradient(135deg, #4cc9f030 0%, #f9731630 100%); border: 2px solid #4cc9f0; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.abc-highlight { background: linear-gradient(135deg, #4cc9f030 0%, #f9731630 50%, #00ff8830 100%); border: 2px solid #4cc9f0; padding: 15px; border-radius: 12px; margin: 10px 0; }
 .download-section { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 20px; border-radius: 15px; margin: 20px 0; border: 2px solid #00ffaa; text-align: center; }
 .download-btn { background: linear-gradient(90deg, #00ffaa, #00cc88); color: #000; padding: 12px 30px; border-radius: 25px; font-weight: bold; border: none; cursor: pointer; }
 </style>
@@ -644,54 +645,39 @@ class GeradorRegrasEspeciais:
     - Sequência de Fibonacci
     """
     
-    # Grupos definidos
     PRIMOS = {2, 3, 5, 7, 11, 13, 17, 19, 23}
     MULTIPLOS_3 = {3, 6, 9, 12, 15, 18, 21, 24}
     FIBONACCI = {1, 2, 3, 5, 8, 13, 21}
     
-    # União e complemento
     DENTRO_REGRAS = PRIMOS | MULTIPLOS_3 | FIBONACCI
-    FORA_REGRAS = set(range(1, 26)) - DENTRO_REGRAS  # {4, 10, 14, 16, 20, 22, 25}
+    FORA_REGRAS = set(range(1, 26)) - DENTRO_REGRAS
     
     def __init__(self, concursos_historico):
-        """Inicializa com histórico de concursos"""
         self.concursos = concursos_historico
         self.ultimos_10 = concursos_historico[:10] if len(concursos_historico) >= 10 else concursos_historico
         self.frequencias = self._calcular_frequencias()
     
     def _calcular_frequencias(self):
-        """Calcula frequência de cada número nos últimos concursos"""
         freq = Counter()
         for concurso in self.ultimos_10:
             freq.update(concurso)
         return freq
     
     def numeros_mais_frequentes(self, n=10):
-        """Retorna os n números mais frequentes"""
         return [num for num, _ in self.frequencias.most_common(n)]
     
     def numeros_menos_frequentes(self, n=10):
-        """Retorna os n números menos frequentes"""
         return [num for num, _ in self.frequencias.most_common()[-n:]]
     
     def gerar_jogo_consistente(self, qtde_fora_regras=3):
-        """
-        Gera jogo CONSISTENTE (baseado em tendências)
-        - Números fora das regras: mais frequentes
-        - Soma entre 200-215, pares 5-8
-        """
         fora_lista = list(self.FORA_REGRAS)
         dentro_lista = list(self.DENTRO_REGRAS)
         
-        # Ordenar por frequência
         fora_ordenados = sorted(fora_lista, key=lambda x: self.frequencias.get(x, 0), reverse=True)
         dentro_ordenados = sorted(dentro_lista, key=lambda x: self.frequencias.get(x, 0), reverse=True)
         
         for _ in range(100):
-            # Escolher números fora das regras (priorizar mais frequentes)
             fora_escolhidos = set(random.sample(fora_ordenados[:5], min(qtde_fora_regras, len(fora_ordenados[:5]))))
-            
-            # Completar com dentro das regras
             dentro_disponiveis = [n for n in dentro_ordenados if n not in fora_escolhidos]
             dentro_escolhidos = set(random.sample(dentro_disponiveis, 15 - len(fora_escolhidos)))
             
@@ -703,14 +689,9 @@ class GeradorRegrasEspeciais:
             if (5 <= pares <= 8) and (200 <= soma <= 215) and len(jogo) == 15:
                 return jogo
         
-        # Fallback
         return sorted(random.sample(range(1, 26), 15))
     
     def gerar_jogo_equilibrado(self, qtde_fora_regras=3):
-        """
-        Gera jogo EQUILIBRADO (par/ímpar balanceado)
-        - Soma 205-215, pares 6-8
-        """
         fora_lista = list(self.FORA_REGRAS)
         dentro_lista = list(self.DENTRO_REGRAS)
         
@@ -730,14 +711,9 @@ class GeradorRegrasEspeciais:
         return self.gerar_jogo_consistente(qtde_fora_regras)
     
     def gerar_jogo_ousado(self, qtde_fora_regras=3):
-        """
-        Gera jogo OUSADO (aposta em números frios)
-        - Números fora das regras: menos frequentes
-        """
         fora_lista = list(self.FORA_REGRAS)
         dentro_lista = list(self.DENTRO_REGRAS)
         
-        # Ordenar por menor frequência
         fora_ordenados = sorted(fora_lista, key=lambda x: self.frequencias.get(x, 0))
         dentro_ordenados = sorted(dentro_lista, key=lambda x: self.frequencias.get(x, 0))
         
@@ -757,7 +733,6 @@ class GeradorRegrasEspeciais:
         return self.gerar_jogo_consistente(qtde_fora_regras)
     
     def simular_jogo(self, jogo, num_concursos=10):
-        """Simula quantos pontos um jogo faria nos concursos anteriores"""
         resultados = []
         for concurso in self.concursos[:num_concursos]:
             acertos = len(set(jogo) & set(concurso))
@@ -765,16 +740,13 @@ class GeradorRegrasEspeciais:
         return resultados
     
     def get_estatisticas_jogo(self, jogo):
-        """Retorna estatísticas detalhadas de um jogo"""
         pares = len([n for n in jogo if n % 2 == 0])
         impares = 15 - pares
         soma = sum(jogo)
         
         fora = [n for n in jogo if n in self.FORA_REGRAS]
-        dentro = [n for n in jogo if n in self.DENTRO_REGRAS]
         temperatura = sum(self.frequencias.get(n, 0) for n in jogo)
         
-        # Verifica quais grupos estão representados
         primos_count = len([n for n in jogo if n in self.PRIMOS])
         mult3_count = len([n for n in jogo if n in self.MULTIPLOS_3])
         fib_count = len([n for n in jogo if n in self.FIBONACCI])
@@ -790,6 +762,211 @@ class GeradorRegrasEspeciais:
             "primos": primos_count,
             "multiplos_3": mult3_count,
             "fibonacci": fib_count
+        }
+
+# =====================================================
+# 🎯 GERADOR ESTRATÉGICO ABC - REGRAS MATEMÁTICAS
+# =====================================================
+class GeradorEstrategicoRegras:
+    """
+    Gerador baseado em regras matemáticas com 3 variações:
+    - Estratégia A: 3 números fora da regra (Conservadora)
+    - Estratégia B: 4 números fora da regra (Equilibrada)
+    - Estratégia C: 5 números fora da regra (Ousada)
+    """
+    
+    PRIMOS = {2, 3, 5, 7, 11, 13, 17, 19, 23}
+    MULTIPLOS_3 = {3, 6, 9, 12, 15, 18, 21, 24}
+    FIBONACCI = {1, 2, 3, 5, 8, 13, 21}
+    
+    DENTRO_REGRAS = sorted(PRIMOS | MULTIPLOS_3 | FIBONACCI)
+    FORA_REGRAS = sorted(set(range(1, 26)) - set(DENTRO_REGRAS))
+    
+    def __init__(self, concursos_historico):
+        self.concursos = concursos_historico
+        self.ultimos_11 = concursos_historico[:11] if len(concursos_historico) >= 11 else concursos_historico
+        
+        self.frequencia_geral = self._calcular_frequencia_geral()
+        self.frequencia_por_grupo = self._calcular_frequencia_por_grupo()
+        
+        self.top_dentro_regras = self._obter_top_dentro_regras(10)
+        self.top_fora_regras = self._obter_top_fora_regras(7)
+    
+    def _calcular_frequencia_geral(self):
+        freq = {num: 0 for num in range(1, 26)}
+        for concurso in self.ultimos_11:
+            for dezena in concurso:
+                freq[dezena] += 1
+        return freq
+    
+    def _calcular_frequencia_por_grupo(self):
+        resultado = {
+            'primos': {p: 0 for p in self.PRIMOS},
+            'multiplos_3': {m: 0 for m in self.MULTIPLOS_3},
+            'fibonacci': {f: 0 for f in self.FIBONACCI},
+            'fora_regra': {f: 0 for f in self.FORA_REGRAS},
+            'dentro_regras': {d: 0 for d in self.DENTRO_REGRAS}
+        }
+        
+        for concurso in self.ultimos_11:
+            for dezena in concurso:
+                if dezena in self.PRIMOS:
+                    resultado['primos'][dezena] += 1
+                if dezena in self.MULTIPLOS_3:
+                    resultado['multiplos_3'][dezena] += 1
+                if dezena in self.FIBONACCI:
+                    resultado['fibonacci'][dezena] += 1
+                if dezena in self.FORA_REGRAS:
+                    resultado['fora_regra'][dezena] += 1
+                if dezena in self.DENTRO_REGRAS:
+                    resultado['dentro_regras'][dezena] += 1
+        
+        return resultado
+    
+    def _obter_top_dentro_regras(self, n=10):
+        freq_dentro = {num: self.frequencia_geral[num] for num in self.DENTRO_REGRAS}
+        ordenados = sorted(freq_dentro.items(), key=lambda x: x[1], reverse=True)
+        return [num for num, _ in ordenados[:n]]
+    
+    def _obter_top_fora_regras(self, n=7):
+        freq_fora = {num: self.frequencia_geral[num] for num in self.FORA_REGRAS}
+        ordenados = sorted(freq_fora.items(), key=lambda x: x[1], reverse=True)
+        return [num for num, _ in ordenados[:n]]
+    
+    def _selecionar_dentro_regras(self, quantidade, usar_top=True):
+        if usar_top and len(self.top_dentro_regras) >= quantidade:
+            selecionados = self.top_dentro_regras[:quantidade]
+            if len(selecionados) < quantidade:
+                restantes = [n for n in self.DENTRO_REGRAS if n not in selecionados]
+                selecionados.extend(random.sample(restantes, quantidade - len(selecionados)))
+            return sorted(selecionados)
+        else:
+            return sorted(random.sample(self.DENTRO_REGRAS, min(quantidade, len(self.DENTRO_REGRAS))))
+    
+    def _selecionar_fora_regras(self, quantidade, usar_top=True):
+        if usar_top and len(self.top_fora_regras) >= quantidade:
+            return sorted(self.top_fora_regras[:quantidade])
+        else:
+            return sorted(random.sample(self.FORA_REGRAS, min(quantidade, len(self.FORA_REGRAS))))
+    
+    def gerar_estrategia_a(self, usar_top=True):
+        fora = self._selecionar_fora_regras(3, usar_top)
+        dentro = self._selecionar_dentro_regras(12, usar_top)
+        jogo = sorted(dentro + fora)
+        
+        return {
+            'jogo': jogo,
+            'estrategia': 'A - Conservadora',
+            'qtd_fora': 3,
+            'qtd_dentro': 12,
+            'pares': contar_pares(jogo),
+            'impares': 15 - contar_pares(jogo),
+            'soma': sum(jogo),
+            'primos': len([n for n in jogo if n in self.PRIMOS]),
+            'multiplos_3': len([n for n in jogo if n in self.MULTIPLOS_3]),
+            'fibonacci': len([n for n in jogo if n in self.FIBONACCI]),
+            'fora_regras_lista': [n for n in jogo if n in self.FORA_REGRAS]
+        }
+    
+    def gerar_estrategia_b(self, usar_top=True):
+        fora = self._selecionar_fora_regras(4, usar_top)
+        dentro = self._selecionar_dentro_regras(11, usar_top)
+        jogo = sorted(dentro + fora)
+        
+        return {
+            'jogo': jogo,
+            'estrategia': 'B - Equilibrada',
+            'qtd_fora': 4,
+            'qtd_dentro': 11,
+            'pares': contar_pares(jogo),
+            'impares': 15 - contar_pares(jogo),
+            'soma': sum(jogo),
+            'primos': len([n for n in jogo if n in self.PRIMOS]),
+            'multiplos_3': len([n for n in jogo if n in self.MULTIPLOS_3]),
+            'fibonacci': len([n for n in jogo if n in self.FIBONACCI]),
+            'fora_regras_lista': [n for n in jogo if n in self.FORA_REGRAS]
+        }
+    
+    def gerar_estrategia_c(self, usar_top=True):
+        fora = self._selecionar_fora_regras(5, usar_top)
+        dentro = self._selecionar_dentro_regras(10, usar_top)
+        jogo = sorted(dentro + fora)
+        
+        return {
+            'jogo': jogo,
+            'estrategia': 'C - Ousada',
+            'qtd_fora': 5,
+            'qtd_dentro': 10,
+            'pares': contar_pares(jogo),
+            'impares': 15 - contar_pares(jogo),
+            'soma': sum(jogo),
+            'primos': len([n for n in jogo if n in self.PRIMOS]),
+            'multiplos_3': len([n for n in jogo if n in self.MULTIPLOS_3]),
+            'fibonacci': len([n for n in jogo if n in self.FIBONACCI]),
+            'fora_regras_lista': [n for n in jogo if n in self.FORA_REGRAS]
+        }
+    
+    def gerar_multiplos_jogos(self, qtd_por_estrategia=1, usar_top_primeiro=True):
+        jogos = []
+        
+        for _ in range(qtd_por_estrategia):
+            if usar_top_primeiro:
+                jogos.append(self.gerar_estrategia_a(usar_top=True))
+                jogos.append(self.gerar_estrategia_b(usar_top=True))
+                jogos.append(self.gerar_estrategia_c(usar_top=True))
+                usar_top_primeiro = False
+            else:
+                jogos.append(self.gerar_estrategia_a(usar_top=False))
+                jogos.append(self.gerar_estrategia_b(usar_top=False))
+                jogos.append(self.gerar_estrategia_c(usar_top=False))
+        
+        return jogos
+    
+    def simular_jogo(self, jogo, num_concursos=11):
+        resultados = []
+        for concurso in self.ultimos_11[:num_concursos]:
+            acertos = len(set(jogo) & set(concurso))
+            resultados.append(acertos)
+        return resultados
+    
+    def analisar_jogo(self, jogo):
+        resultados = self.simular_jogo(jogo, len(self.ultimos_11))
+        
+        if not resultados:
+            return None
+        
+        pontos = resultados
+        return {
+            'jogo': jogo,
+            'resultados': resultados,
+            'media': round(sum(pontos) / len(pontos), 2),
+            'maximo': max(pontos),
+            'minimo': min(pontos),
+            'premios_11': len([p for p in pontos if p >= 11]),
+            'premios_12': len([p for p in pontos if p >= 12]),
+            'premios_13': len([p for p in pontos if p >= 13]),
+            'premios_14': len([p for p in pontos if p >= 14]),
+            'premios_15': len([p for p in pontos if p == 15]),
+            'taxa_11': f"{(len([p for p in pontos if p >= 11]) / len(pontos)) * 100:.1f}%"
+        }
+    
+    def gerar_teimosia(self, estrategia='B', qtd_concursos=10):
+        if estrategia == 'A':
+            jogo_dict = self.gerar_estrategia_a(usar_top=True)
+        elif estrategia == 'C':
+            jogo_dict = self.gerar_estrategia_c(usar_top=True)
+        else:
+            jogo_dict = self.gerar_estrategia_b(usar_top=True)
+        
+        return {
+            'jogo': jogo_dict['jogo'],
+            'estrategia': jogo_dict['estrategia'],
+            'qtd_concursos': qtd_concursos,
+            'custo_total': qtd_concursos * 3.00,
+            'pares': jogo_dict['pares'],
+            'impares': jogo_dict['impares'],
+            'soma': jogo_dict['soma'],
+            'qtd_fora': jogo_dict['qtd_fora']
         }
 
 # =====================================================
@@ -1585,7 +1762,6 @@ def backtest_estrategia(historico, config_filtros, num_testes=30):
 # FUNÇÃO DE DOWNLOAD UNIFICADA
 # =====================================================
 def gerar_csv_download(jogos, scores=None, estrategia="Padrão"):
-    """Gera DataFrame para download CSV com informações dos jogos"""
     dados_export = []
     for i, jogo in enumerate(jogos):
         linha = {
@@ -1603,7 +1779,6 @@ def gerar_csv_download(jogos, scores=None, estrategia="Padrão"):
             else:
                 linha["Score"] = scores[i]
         
-        # Adiciona repetidas se tiver gerador_principal
         if hasattr(st.session_state, 'gerador_principal') and st.session_state.gerador_principal:
             linha["Repetidas"] = len(set(jogo) & st.session_state.gerador_principal.ultimo)
         
@@ -1612,7 +1787,6 @@ def gerar_csv_download(jogos, scores=None, estrategia="Padrão"):
     return pd.DataFrame(dados_export)
 
 def detectar_estrategia_ativa():
-    """Detecta qual estratégia está ativa baseado nos dados em session_state"""
     if "elite_scores" in st.session_state and st.session_state.elite_scores:
         return "Elite Master 8.0"
     elif "multi_pool_results" in st.session_state and st.session_state.multi_pool_results:
@@ -1621,10 +1795,11 @@ def detectar_estrategia_ativa():
         return "EMS 5.0 - Fechamento"
     elif "ev_detalhes" in st.session_state and st.session_state.ev_detalhes:
         return "Nash (EV)"
+    elif "abc_estrategia" in st.session_state and st.session_state.abc_estrategia:
+        return f"Estratégia ABC - {st.session_state.abc_estrategia}"
     elif "regras_estilo" in st.session_state and st.session_state.regras_estilo:
         return f"Regras Especiais - {st.session_state.regras_estilo}"
     else:
-        # Verifica padrão dos jogos para identificar estratégia
         if st.session_state.jogos_gerados:
             primeiro_jogo = st.session_state.jogos_gerados[0]
             if primeiro_jogo[0] in [1, 2, 3, 4] and primeiro_jogo[14] in [22, 23, 24, 25]:
@@ -1654,6 +1829,9 @@ def main():
     if "motor_pesos_dinamicos" not in st.session_state: st.session_state.motor_pesos_dinamicos = None
     if "elite_scores" not in st.session_state: st.session_state.elite_scores = []
     if "regras_estilo" not in st.session_state: st.session_state.regras_estilo = None
+    if "abc_estrategia" not in st.session_state: st.session_state.abc_estrategia = None
+    if "abc_detalhes" not in st.session_state: st.session_state.abc_detalhes = None
+    if "teimosia_abc" not in st.session_state: st.session_state.teimosia_abc = None
     if "config_filtros" not in st.session_state:
         st.session_state.config_filtros = {
             'pares_min': 6, 'pares_max': 9,
@@ -1693,7 +1871,7 @@ def main():
 
     st.subheader("🎯 Análise e Geração de Jogos")
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
         "📊 Análise do Último",
         "🎲 Gerador",
         "🚀 EMS 5.0",
@@ -1707,7 +1885,8 @@ def main():
         "👑 Regras Ouro",
         "📋 Padrão 3124",
         "🧠 ELITE MASTER 8.0",
-        "🧩 Regras Especiais"
+        "🧩 Regras Especiais",
+        "🎯 Estratégia ABC"
     ])
 
     # ================= TAB 1: ANÁLISE DO ÚLTIMO CONCURSO =================
@@ -1783,6 +1962,7 @@ def main():
                         st.session_state.scores = []
                         st.session_state.elite_scores = []
                         st.session_state.regras_estilo = None
+                        st.session_state.abc_estrategia = None
                         st.success(f"✅ {len(jogos)} jogos gerados!")
         with col3:
             if st.button("🔥 EMS 3.0", use_container_width=True):
@@ -1796,6 +1976,7 @@ def main():
                     st.session_state.scores = [r[1] for r in resultados]
                     st.session_state.elite_scores = []
                     st.session_state.regras_estilo = None
+                    st.session_state.abc_estrategia = None
                     st.success(f"✅ {len(resultados)} jogos gerados com EMS 3.0!")
 
         if "jogos_gerados" in st.session_state and st.session_state.jogos_gerados:
@@ -1875,6 +2056,7 @@ def main():
                         st.session_state.scores = []
                         st.session_state.elite_scores = []
                         st.session_state.regras_estilo = None
+                        st.session_state.abc_estrategia = None
                         st.success(f"✅ {len(jogos)} jogos gerados!")
                         st.markdown("### 📊 Estatísticas de Cobertura")
                         col_a, col_b, col_c = st.columns(3)
@@ -1894,6 +2076,7 @@ def main():
                     st.session_state.scores = []
                     st.session_state.elite_scores = []
                     st.session_state.regras_estilo = None
+                    st.session_state.abc_estrategia = None
                     st.success(f"✅ {len(todos_jogos)} jogos únicos gerados com {num_pools} pools!")
         with col2:
             if st.button("📊 Probabilidade Real", use_container_width=True):
@@ -1965,6 +2148,7 @@ def main():
                         st.session_state.jogos_gerados = [jogo]
                         st.session_state.elite_scores = []
                         st.session_state.regras_estilo = None
+                        st.session_state.abc_estrategia = None
                         mc = monte_carlo_jogo(tuple(jogo), 2000)
                         st.session_state.scores = [mc['P>=13'] * 100]
                         st.success("✅ Jogo ótimo encontrado!")
@@ -1979,6 +2163,7 @@ def main():
                     st.session_state.jogos_gerados = jogos
                     st.session_state.elite_scores = []
                     st.session_state.regras_estilo = None
+                    st.session_state.abc_estrategia = None
                     st.session_state.scores = [monte_carlo_jogo(tuple(j), 2000)['P>=13'] * 100 for j in jogos]
                     st.success(f"✅ {len(jogos)} jogos gerados via ILP!")
 
@@ -1998,6 +2183,7 @@ def main():
                     st.session_state.jogos_gerados = jogos
                     st.session_state.elite_scores = []
                     st.session_state.regras_estilo = None
+                    st.session_state.abc_estrategia = None
                     scores_calculados = []
                     for jogo in jogos:
                         pares = contar_pares(jogo)
@@ -2039,6 +2225,7 @@ def main():
                     st.session_state.scores = [item['score'] for item in top_jogos]
                     st.session_state.elite_scores = []
                     st.session_state.regras_estilo = None
+                    st.session_state.abc_estrategia = None
                     st.session_state.ev_detalhes = [analisar_ev_detalhado(item['jogo'], st.session_state.apostas_simuladas) for item in top_jogos]
                     st.success(f"✅ {len(top_jogos)} jogos otimizados por Valor Esperado!")
                     st.markdown(f"### 📋 TOP {len(top_jogos)} Jogos por Valor Esperado")
@@ -2235,6 +2422,7 @@ def main():
                         st.session_state.scores = []
                         st.session_state.elite_scores = []
                         st.session_state.regras_estilo = None
+                        st.session_state.abc_estrategia = None
                         st.success(f"✅ {len(jogos_gerados_ouro)} jogos gerados!")
         if "jogos_gerados" in st.session_state and st.session_state.jogos_gerados:
             is_ouro_style = (st.session_state.jogos_gerados[0][0] in [1,2,3,4] and st.session_state.jogos_gerados[0][14] in [22,23,24,25])
@@ -2299,6 +2487,7 @@ def main():
                         st.session_state.jogos_gerados = candidatos
                         st.session_state.elite_scores = []
                         st.session_state.regras_estilo = None
+                        st.session_state.abc_estrategia = None
                         scores_img = []
                         for jogo in candidatos:
                             score = 0
@@ -2354,6 +2543,7 @@ def main():
                         st.session_state.elite_scores = scores_info
                         st.session_state.scores = [s["score_ajustado"] for s in scores_info]
                         st.session_state.regras_estilo = None
+                        st.session_state.abc_estrategia = None
                         st.success(f"✅ {len(jogos)} jogos de elite gerados em {tentativas} simulações!")
                         col_a, col_b, col_c = st.columns(3)
                         with col_a:
@@ -2412,11 +2602,9 @@ def main():
         st.markdown("### 🧩 Regras Especiais - Primos, Múltiplos, Fibonacci")
         st.markdown("""<div class="regras-especiais-highlight"><strong>🎯 GRUPOS MATEMÁTICOS:</strong><br>🔢 <strong>Primos:</strong> 2, 3, 5, 7, 11, 13, 17, 19, 23 (9 números)<br>🔢 <strong>Múltiplos de 3:</strong> 3, 6, 9, 12, 15, 18, 21, 24 (8 números)<br>🔢 <strong>Fibonacci:</strong> 1, 2, 3, 5, 8, 13, 21 (7 números)<br>⚪ <strong>Fora das regras:</strong> 4, 10, 14, 16, 20, 22, 25 (7 números)</div>""", unsafe_allow_html=True)
         
-        # Inicializa o gerador de regras especiais
         if st.session_state.gerador_principal and st.session_state.gerador_principal.historico:
             gerador_regras = GeradorRegrasEspeciais(st.session_state.gerador_principal.historico)
             
-            # Análise de Frequência
             with st.expander("📊 Análise de Frequência dos Últimos 10 Concursos", expanded=True):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -2443,7 +2631,6 @@ def main():
                 st.markdown(f"📌 **Dentro das regras:** {sorted(GeradorRegrasEspeciais.DENTRO_REGRAS)} ({len(GeradorRegrasEspeciais.DENTRO_REGRAS)} números)")
                 st.markdown(f"📌 **Fora das regras:** {sorted(GeradorRegrasEspeciais.FORA_REGRAS)} ({len(GeradorRegrasEspeciais.FORA_REGRAS)} números)")
             
-            # Configurações de geração
             with st.expander("⚙️ Configurações de Geração", expanded=True):
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -2456,7 +2643,6 @@ def main():
                                                  ["consistente", "equilibrado", "ousado"],
                                                  index=1)
             
-            # Botões de geração
             col1, col2, col3 = st.columns(3)
             
             with col1:
@@ -2474,6 +2660,7 @@ def main():
                         st.session_state.regras_estilo = "Consistente"
                         st.session_state.elite_scores = []
                         st.session_state.scores = []
+                        st.session_state.abc_estrategia = None
                         st.success(f"✅ {len(jogos_regras)} jogos consistentes gerados!")
             
             with col2:
@@ -2491,6 +2678,7 @@ def main():
                         st.session_state.regras_estilo = "Equilibrado"
                         st.session_state.elite_scores = []
                         st.session_state.scores = []
+                        st.session_state.abc_estrategia = None
                         st.success(f"✅ {len(jogos_regras)} jogos equilibrados gerados!")
             
             with col3:
@@ -2508,21 +2696,19 @@ def main():
                         st.session_state.regras_estilo = "Ousado"
                         st.session_state.elite_scores = []
                         st.session_state.scores = []
+                        st.session_state.abc_estrategia = None
                         st.success(f"✅ {len(jogos_regras)} jogos ousados gerados!")
             
-            # Exibir jogos gerados
             if "jogos_gerados" in st.session_state and st.session_state.jogos_gerados:
                 jogos = st.session_state.jogos_gerados
                 estilo = st.session_state.get("regras_estilo", estilo_padrao.capitalize())
                 
-                # Verifica se os jogos atuais são do estilo Regras Especiais
                 if estilo in ["Consistente", "Equilibrado", "Ousado"]:
                     st.markdown(f"### 📋 Jogos Gerados - Estilo {estilo} ({len(jogos)})")
                     
                     for i, jogo in enumerate(jogos[:20]):
                         stats = gerador_regras.get_estatisticas_jogo(jogo)
                         
-                        # Cor da borda baseada no estilo
                         if estilo == "Consistente":
                             cor_borda = "#4cc9f0"
                             emoji = "🎯"
@@ -2533,7 +2719,6 @@ def main():
                             cor_borda = "#f97316"
                             emoji = "🚀"
                         
-                        # Formatar jogo com destaques nos grupos
                         nums_html = ""
                         for num in jogo:
                             if num in GeradorRegrasEspeciais.PRIMOS:
@@ -2545,7 +2730,6 @@ def main():
                             else:
                                 nums_html += f"<span style='background:#f9731640; border:2px solid #f97316; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block; font-weight:bold;'>{num:02d}</span>"
                         
-                        # Legenda de grupos
                         grupos_info = f"🔢 P:{stats['primos']} | 3x:{stats['multiplos_3']} | F:{stats['fibonacci']} | ⚪:{stats['qtde_fora']}"
                         
                         st.markdown(f"""
@@ -2556,7 +2740,6 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
                     
-                    # Simulação contra últimos concursos
                     st.markdown("### 📊 Simulação nos Últimos 10 Concursos")
                     
                     simulacao_resultados = []
@@ -2577,7 +2760,6 @@ def main():
                     df_simulacao = pd.DataFrame(simulacao_resultados)
                     st.dataframe(df_simulacao, use_container_width=True, hide_index=True)
                     
-                    # Estatísticas agregadas
                     media_geral = np.mean([s["Média"] for s in simulacao_resultados])
                     max_geral = max([s["Máximo"] for s in simulacao_resultados])
                     
@@ -2589,7 +2771,6 @@ def main():
                     with col3:
                         st.metric("Jogos Únicos Gerados", len(jogos))
                     
-                    # Botões de ação
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.button("💾 Salvar Jogos", key="salvar_regras", use_container_width=True):
@@ -2613,7 +2794,6 @@ def main():
                             use_container_width=True
                         )
                     
-                    # Dicas
                     st.markdown("""
                     <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 15px; border-radius: 12px; margin: 10px 0; border: 1px solid #4cc9f0;">
                     <strong>💡 Dicas:</strong><br>
@@ -2627,6 +2807,270 @@ def main():
         else:
             st.warning("⚠️ Carregue os concursos primeiro na barra lateral!")
 
+    # ================= TAB 15: ESTRATÉGIA ABC =================
+    with tab15:
+        st.markdown("### 🎯 Estratégia ABC - Regras Matemáticas")
+        st.markdown("""<div class="abc-highlight"><strong>🧩 GRUPOS MATEMÁTICOS:</strong><br>🔢 <strong>Primos:</strong> 2, 3, 5, 7, 11, 13, 17, 19, 23 (9 números)<br>🔢 <strong>Múltiplos de 3:</strong> 3, 6, 9, 12, 15, 18, 21, 24 (8 números)<br>🔢 <strong>Fibonacci:</strong> 1, 2, 3, 5, 8, 13, 21 (7 números)<br>⚪ <strong>Fora das regras:</strong> 4, 10, 14, 16, 20, 22, 25 (7 números)</div>""", unsafe_allow_html=True)
+        
+        if st.session_state.gerador_principal and st.session_state.gerador_principal.historico:
+            gerador_abc = GeradorEstrategicoRegras(st.session_state.gerador_principal.historico)
+            
+            with st.expander("📊 Análise de Frequência por Grupo (Últimos 11 Concursos)", expanded=True):
+                freq_grupo = gerador_abc.frequencia_por_grupo
+                
+                tab_grupo1, tab_grupo2, tab_grupo3, tab_grupo4 = st.tabs([
+                    "🔢 Primos", "3️⃣ Múltiplos de 3", "🌀 Fibonacci", "⚪ Fora das Regras"
+                ])
+                
+                with tab_grupo1:
+                    st.markdown("**Frequência dos Números Primos:**")
+                    primos_freq = freq_grupo['primos']
+                    cols = st.columns(len(primos_freq))
+                    for i, (num, freq) in enumerate(sorted(primos_freq.items())):
+                        with cols[i]:
+                            st.metric(f"{num:02d}", f"{freq}x")
+                
+                with tab_grupo2:
+                    st.markdown("**Frequência dos Múltiplos de 3:**")
+                    mult3_freq = freq_grupo['multiplos_3']
+                    cols = st.columns(len(mult3_freq))
+                    for i, (num, freq) in enumerate(sorted(mult3_freq.items())):
+                        with cols[i]:
+                            st.metric(f"{num:02d}", f"{freq}x")
+                
+                with tab_grupo3:
+                    st.markdown("**Frequência dos Números de Fibonacci:**")
+                    fib_freq = freq_grupo['fibonacci']
+                    cols = st.columns(len(fib_freq))
+                    for i, (num, freq) in enumerate(sorted(fib_freq.items())):
+                        with cols[i]:
+                            st.metric(f"{num:02d}", f"{freq}x")
+                
+                with tab_grupo4:
+                    st.markdown("**Frequência dos Números Fora das Regras:**")
+                    fora_freq = freq_grupo['fora_regra']
+                    cols = st.columns(len(fora_freq))
+                    for i, (num, freq) in enumerate(sorted(fora_freq.items())):
+                        with cols[i]:
+                            st.metric(f"{num:02d}", f"{freq}x")
+                
+                st.markdown("---")
+                st.markdown(f"📌 **Top 10 Dentro das Regras:** {gerador_abc.top_dentro_regras}")
+                st.markdown(f"📌 **Top Fora das Regras:** {gerador_abc.top_fora_regras}")
+            
+            with st.expander("⚙️ Configurações de Geração", expanded=True):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    qtd_abc = st.slider("Jogos por estratégia", 1, 10, 2, key="qtd_abc",
+                                       help="Quantos jogos gerar para cada estratégia (A, B, C)")
+                with col2:
+                    estrategia_teimosia = st.selectbox("Estratégia para Teimosia", 
+                                                       ['A - Conservadora', 'B - Equilibrada', 'C - Ousada'],
+                                                       index=1)
+                with col3:
+                    concursos_teimosia = st.number_input("Concursos (Teimosia)", 5, 50, 10)
+            
+            st.markdown("### 🎲 Gerar Jogos")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                if st.button("🅰️ Estratégia A\n(3 fora)", use_container_width=True,
+                            help="Conservadora: 12 dentro + 3 fora das regras"):
+                    with st.spinner("Gerando Estratégia A..."):
+                        jogos_abc = []
+                        for _ in range(qtd_abc):
+                            jogo_dict = gerador_abc.gerar_estrategia_a(usar_top=True)
+                            jogos_abc.append(jogo_dict)
+                        st.session_state.jogos_gerados = [j['jogo'] for j in jogos_abc]
+                        st.session_state.abc_detalhes = jogos_abc
+                        st.session_state.abc_estrategia = "A - Conservadora"
+                        st.session_state.elite_scores = []
+                        st.session_state.scores = []
+                        st.session_state.regras_estilo = None
+                        st.success(f"✅ {len(jogos_abc)} jogos gerados!")
+            
+            with col2:
+                if st.button("🅱️ Estratégia B\n(4 fora)", use_container_width=True,
+                            help="Equilibrada: 11 dentro + 4 fora das regras"):
+                    with st.spinner("Gerando Estratégia B..."):
+                        jogos_abc = []
+                        for _ in range(qtd_abc):
+                            jogo_dict = gerador_abc.gerar_estrategia_b(usar_top=True)
+                            jogos_abc.append(jogo_dict)
+                        st.session_state.jogos_gerados = [j['jogo'] for j in jogos_abc]
+                        st.session_state.abc_detalhes = jogos_abc
+                        st.session_state.abc_estrategia = "B - Equilibrada"
+                        st.session_state.elite_scores = []
+                        st.session_state.scores = []
+                        st.session_state.regras_estilo = None
+                        st.success(f"✅ {len(jogos_abc)} jogos gerados!")
+            
+            with col3:
+                if st.button("🅲 Estratégia C\n(5 fora)", use_container_width=True,
+                            help="Ousada: 10 dentro + 5 fora das regras"):
+                    with st.spinner("Gerando Estratégia C..."):
+                        jogos_abc = []
+                        for _ in range(qtd_abc):
+                            jogo_dict = gerador_abc.gerar_estrategia_c(usar_top=True)
+                            jogos_abc.append(jogo_dict)
+                        st.session_state.jogos_gerados = [j['jogo'] for j in jogos_abc]
+                        st.session_state.abc_detalhes = jogos_abc
+                        st.session_state.abc_estrategia = "C - Ousada"
+                        st.session_state.elite_scores = []
+                        st.session_state.scores = []
+                        st.session_state.regras_estilo = None
+                        st.success(f"✅ {len(jogos_abc)} jogos gerados!")
+            
+            with col4:
+                if st.button("🎯 TODAS\n(A+B+C)", use_container_width=True,
+                            help="Gera jogos das 3 estratégias"):
+                    with st.spinner(f"Gerando {qtd_abc * 3} jogos (A+B+C)..."):
+                        jogos_abc = gerador_abc.gerar_multiplos_jogos(qtd_por_estrategia=qtd_abc)
+                        st.session_state.jogos_gerados = [j['jogo'] for j in jogos_abc]
+                        st.session_state.abc_detalhes = jogos_abc
+                        st.session_state.abc_estrategia = "Todas (A+B+C)"
+                        st.session_state.elite_scores = []
+                        st.session_state.scores = []
+                        st.session_state.regras_estilo = None
+                        st.success(f"✅ {len(jogos_abc)} jogos gerados!")
+            
+            if "jogos_gerados" in st.session_state and st.session_state.jogos_gerados and "abc_detalhes" in st.session_state:
+                jogos = st.session_state.jogos_gerados
+                detalhes = st.session_state.abc_detalhes
+                estrategia_ativa = st.session_state.abc_estrategia
+                
+                st.markdown(f"### 📋 Jogos Gerados - {estrategia_ativa} ({len(jogos)})")
+                
+                for i, (jogo, det) in enumerate(zip(jogos[:20], detalhes[:20])):
+                    if 'A' in det.get('estrategia', ''):
+                        cor_borda = "#4cc9f0"
+                        emoji = "🅰️"
+                    elif 'B' in det.get('estrategia', ''):
+                        cor_borda = "#4ade80"
+                        emoji = "🅱️"
+                    else:
+                        cor_borda = "#f97316"
+                        emoji = "🅲"
+                    
+                    nums_html = ""
+                    for num in jogo:
+                        if num in GeradorEstrategicoRegras.PRIMOS and num in GeradorEstrategicoRegras.FIBONACCI:
+                            nums_html += f"<span style='background:#ffd70040; border:2px solid #ffd700; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block; font-weight:bold;'>{num:02d}</span>"
+                        elif num in GeradorEstrategicoRegras.PRIMOS:
+                            nums_html += f"<span style='background:#4cc9f040; border:1px solid #4cc9f0; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block;'>{num:02d}</span>"
+                        elif num in GeradorEstrategicoRegras.MULTIPLOS_3:
+                            nums_html += f"<span style='background:#00ff8840; border:1px solid #00ff88; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block;'>{num:02d}</span>"
+                        elif num in GeradorEstrategicoRegras.FIBONACCI:
+                            nums_html += f"<span style='background:#ffd70040; border:1px solid #ffd700; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block;'>{num:02d}</span>"
+                        else:
+                            nums_html += f"<span style='background:#f9731640; border:2px solid #f97316; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block; font-weight:bold;'>{num:02d}</span>"
+                    
+                    grupos_info = f"🔢 P:{det['primos']} | 3x:{det['multiplos_3']} | F:{det['fibonacci']} | ⚪:{det['qtd_fora']}"
+                    stats_info = f"⚖️ {det['pares']}p/{det['impares']}i | ➕ {det['soma']}"
+                    
+                    st.markdown(f"""
+                    <div style='border-left: 5px solid {cor_borda}; background:#0e1117; border-radius:10px; padding:15px; margin-bottom:10px;'>
+                        {emoji} <strong>Jogo {i+1:2d}</strong> — {det['estrategia']}<br>
+                        {nums_html}<br>
+                        <small style='color:#aaa;'>{grupos_info} | {stats_info}</small><br>
+                        <small style='color:#f97316;'>Fora: {det['fora_regras_lista']}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("### 📊 Simulação nos Últimos Concursos")
+                
+                simulacao_resultados = []
+                for i, det in enumerate(detalhes[:10]):
+                    jogo = det['jogo']
+                    analise = gerador_abc.analisar_jogo(jogo)
+                    if analise:
+                        simulacao_resultados.append({
+                            "Jogo": i + 1,
+                            "Estratégia": det['estrategia'],
+                            "Média": analise['media'],
+                            "Máximo": analise['maximo'],
+                            "Mínimo": analise['minimo'],
+                            "11+": analise['premios_11'],
+                            "12+": analise['premios_12'],
+                            "13+": analise['premios_13'],
+                            "Taxa 11+": analise['taxa_11']
+                        })
+                
+                if simulacao_resultados:
+                    df_sim = pd.DataFrame(simulacao_resultados)
+                    st.dataframe(df_sim, use_container_width=True, hide_index=True)
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Média Geral", f"{np.mean([s['Média'] for s in simulacao_resultados]):.1f}")
+                    with col2:
+                        st.metric("Melhor Acerto", max([s['Máximo'] for s in simulacao_resultados]))
+                    with col3:
+                        st.metric("Total 11+", sum([s['11+'] for s in simulacao_resultados]))
+                    with col4:
+                        st.metric("Jogos Gerados", len(jogos))
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("💾 Salvar Jogos ABC", key="salvar_abc", use_container_width=True):
+                        ultimo = st.session_state.dados_api[0]
+                        arquivo, jogo_id = salvar_jogos_gerados(
+                            jogos, [], 
+                            {"estrategia": estrategia_ativa, "versao": "Estratégia ABC"},
+                            ultimo['concurso'], ultimo['data']
+                        )
+                        if arquivo:
+                            st.success(f"✅ Jogos salvos! ID: {jogo_id}")
+                            st.session_state.jogos_salvos = carregar_jogos_salvos()
+                
+                with col2:
+                    df_export = gerar_csv_download(jogos, [], f"Estratégia ABC - {estrategia_ativa}")
+                    st.download_button(
+                        label="📥 Exportar CSV",
+                        data=df_export.to_csv(index=False),
+                        file_name=f"estrategia_abc_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                
+                with col3:
+                    if st.button("🎯 Gerar Teimosia", key="teimosia_abc", use_container_width=True):
+                        letra = estrategia_teimosia.split(' ')[0]
+                        teimosia = gerador_abc.gerar_teimosia(letra, concursos_teimosia)
+                        st.session_state.teimosia_abc = teimosia
+                
+                if "teimosia_abc" in st.session_state:
+                    teimosia = st.session_state.teimosia_abc
+                    st.markdown("---")
+                    st.markdown("### 🎯 Sugestão de Teimosia")
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 20px; border-radius: 12px; border: 2px solid gold; margin: 10px 0;">
+                        <strong>📋 Estratégia:</strong> {teimosia['estrategia']}<br>
+                        <strong>🎲 Jogo Fixo:</strong> {teimosia['jogo']}<br>
+                        <strong>📅 Concursos:</strong> {teimosia['qtd_concursos']}<br>
+                        <strong>💰 Investimento Total:</strong> R$ {teimosia['custo_total']:.2f}<br>
+                        <strong>📊 Pares/Ímpares:</strong> {teimosia['pares']}/{teimosia['impares']} | 
+                        <strong>Soma:</strong> {teimosia['soma']} | 
+                        <strong>Fora regra:</strong> {teimosia['qtd_fora']}
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("""
+                <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 15px; border-radius: 12px; margin: 10px 0; border: 1px solid #4cc9f0;">
+                <strong>💡 Guia das Estratégias:</strong><br>
+                🅰️ <strong>Conservadora (3 fora):</strong> Mais previsível, segue padrões históricos<br>
+                🅱️ <strong>Equilibrada (4 fora):</strong> Melhor relação risco/retorno ⭐ Recomendada<br>
+                🅲 <strong>Ousada (5 fora):</strong> Maior potencial de premiação, mais volátil<br><br>
+                <strong>📌 Observações:</strong><br>
+                • Números fora das regras (4,10,14,16,20,22,25) aparecem 3-4 por sorteio<br>
+                • 10 e 20 são os fora da regra mais frequentes historicamente<br>
+                • A Estratégia B costuma ter o melhor desempenho nas simulações
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.warning("⚠️ Carregue os concursos primeiro na barra lateral!")
+
     # ================= SEÇÃO DE DOWNLOAD UNIFICADA =================
     st.markdown("---")
     st.markdown("### 📥 Download dos Jogos Gerados")
@@ -2635,7 +3079,6 @@ def main():
         estrategia = detectar_estrategia_ativa()
         jogos_para_download = st.session_state.jogos_gerados
         
-        # Prepara scores específicos conforme a estratégia
         scores_download = None
         if estrategia.startswith("Elite Master"):
             if "elite_scores" in st.session_state:
@@ -2643,7 +3086,7 @@ def main():
         elif estrategia.startswith("Nash"):
             if "ev_detalhes" in st.session_state:
                 scores_download = [{"score_ajustado": d["ev_ajustado"]} for d in st.session_state.ev_detalhes]
-        elif estrategia.startswith("Regras Especiais"):
+        elif estrategia.startswith("Regras Especiais") or estrategia.startswith("Estratégia ABC"):
             scores_download = []
         elif st.session_state.scores:
             scores_download = st.session_state.scores
