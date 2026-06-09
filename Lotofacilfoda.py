@@ -2808,6 +2808,7 @@ def main():
             st.warning("⚠️ Carregue os concursos primeiro na barra lateral!")
 
     # ================= TAB 15: ESTRATÉGIA ABC =================
+    # ================= TAB 15: ESTRATÉGIA ABC =================
     with tab15:
         st.markdown("### 🎯 Estratégia ABC - Regras Matemáticas")
         st.markdown("""<div class="abc-highlight"><strong>🧩 GRUPOS MATEMÁTICOS:</strong><br>🔢 <strong>Primos:</strong> 2, 3, 5, 7, 11, 13, 17, 19, 23 (9 números)<br>🔢 <strong>Múltiplos de 3:</strong> 3, 6, 9, 12, 15, 18, 21, 24 (8 números)<br>🔢 <strong>Fibonacci:</strong> 1, 2, 3, 5, 8, 13, 21 (7 números)<br>⚪ <strong>Fora das regras:</strong> 4, 10, 14, 16, 20, 22, 25 (7 números)</div>""", unsafe_allow_html=True)
@@ -2935,10 +2936,15 @@ def main():
                         st.session_state.regras_estilo = None
                         st.success(f"✅ {len(jogos_abc)} jogos gerados!")
             
-            if "jogos_gerados" in st.session_state and st.session_state.jogos_gerados and "abc_detalhes" in st.session_state:
+            # Exibição dos jogos gerados
+            if ("jogos_gerados" in st.session_state and 
+                st.session_state.jogos_gerados and 
+                "abc_detalhes" in st.session_state and
+                st.session_state.abc_detalhes):
+                
                 jogos = st.session_state.jogos_gerados
                 detalhes = st.session_state.abc_detalhes
-                estrategia_ativa = st.session_state.abc_estrategia
+                estrategia_ativa = st.session_state.get("abc_estrategia", "ABC")
                 
                 st.markdown(f"### 📋 Jogos Gerados - {estrategia_ativa} ({len(jogos)})")
                 
@@ -2966,36 +2972,38 @@ def main():
                         else:
                             nums_html += f"<span style='background:#f9731640; border:2px solid #f97316; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block; font-weight:bold;'>{num:02d}</span>"
                     
-                    grupos_info = f"🔢 P:{det['primos']} | 3x:{det['multiplos_3']} | F:{det['fibonacci']} | ⚪:{det['qtd_fora']}"
-                    stats_info = f"⚖️ {det['pares']}p/{det['impares']}i | ➕ {det['soma']}"
+                    grupos_info = f"🔢 P:{det.get('primos', 0)} | 3x:{det.get('multiplos_3', 0)} | F:{det.get('fibonacci', 0)} | ⚪:{det.get('qtd_fora', 0)}"
+                    stats_info = f"⚖️ {det.get('pares', 0)}p/{det.get('impares', 0)}i | ➕ {det.get('soma', 0)}"
                     
                     st.markdown(f"""
                     <div style='border-left: 5px solid {cor_borda}; background:#0e1117; border-radius:10px; padding:15px; margin-bottom:10px;'>
-                        {emoji} <strong>Jogo {i+1:2d}</strong> — {det['estrategia']}<br>
+                        {emoji} <strong>Jogo {i+1:2d}</strong> — {det.get('estrategia', '')}<br>
                         {nums_html}<br>
                         <small style='color:#aaa;'>{grupos_info} | {stats_info}</small><br>
-                        <small style='color:#f97316;'>Fora: {det['fora_regras_lista']}</small>
+                        <small style='color:#f97316;'>Fora: {det.get('fora_regras_lista', [])}</small>
                     </div>
                     """, unsafe_allow_html=True)
                 
+                # Simulação
                 st.markdown("### 📊 Simulação nos Últimos Concursos")
                 
                 simulacao_resultados = []
                 for i, det in enumerate(detalhes[:10]):
-                    jogo = det['jogo']
-                    analise = gerador_abc.analisar_jogo(jogo)
-                    if analise:
-                        simulacao_resultados.append({
-                            "Jogo": i + 1,
-                            "Estratégia": det['estrategia'],
-                            "Média": analise['media'],
-                            "Máximo": analise['maximo'],
-                            "Mínimo": analise['minimo'],
-                            "11+": analise['premios_11'],
-                            "12+": analise['premios_12'],
-                            "13+": analise['premios_13'],
-                            "Taxa 11+": analise['taxa_11']
-                        })
+                    jogo = det.get('jogo', [])
+                    if jogo:
+                        analise = gerador_abc.analisar_jogo(jogo)
+                        if analise:
+                            simulacao_resultados.append({
+                                "Jogo": i + 1,
+                                "Estratégia": det.get('estrategia', ''),
+                                "Média": analise.get('media', 0),
+                                "Máximo": analise.get('maximo', 0),
+                                "Mínimo": analise.get('minimo', 0),
+                                "11+": analise.get('premios_11', 0),
+                                "12+": analise.get('premios_12', 0),
+                                "13+": analise.get('premios_13', 0),
+                                "Taxa 11+": analise.get('taxa_11', '0%')
+                            })
                 
                 if simulacao_resultados:
                     df_sim = pd.DataFrame(simulacao_resultados)
@@ -3011,6 +3019,7 @@ def main():
                     with col4:
                         st.metric("Jogos Gerados", len(jogos))
                 
+                # Botões de ação
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     if st.button("💾 Salvar Jogos ABC", key="salvar_abc", use_container_width=True):
@@ -3035,27 +3044,32 @@ def main():
                     )
                 
                 with col3:
-                    if st.button("🎯 Gerar Teimosia", key="teimosia_abc", use_container_width=True):
+                    if st.button("🎯 Gerar Teimosia", key="btn_teimosia_abc", use_container_width=True):
                         letra = estrategia_teimosia.split(' ')[0]
                         teimosia = gerador_abc.gerar_teimosia(letra, concursos_teimosia)
-                        st.session_state.teimosia_abc = teimosia
+                        if teimosia:
+                            st.session_state.teimosia_abc = teimosia
+                            st.rerun()
                 
-                if "teimosia_abc" in st.session_state:
+                # Exibir teimosia se existir
+                if "teimosia_abc" in st.session_state and st.session_state.teimosia_abc:
                     teimosia = st.session_state.teimosia_abc
-                    st.markdown("---")
-                    st.markdown("### 🎯 Sugestão de Teimosia")
-                    st.markdown(f"""
-                    <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 20px; border-radius: 12px; border: 2px solid gold; margin: 10px 0;">
-                        <strong>📋 Estratégia:</strong> {teimosia['estrategia']}<br>
-                        <strong>🎲 Jogo Fixo:</strong> {teimosia['jogo']}<br>
-                        <strong>📅 Concursos:</strong> {teimosia['qtd_concursos']}<br>
-                        <strong>💰 Investimento Total:</strong> R$ {teimosia['custo_total']:.2f}<br>
-                        <strong>📊 Pares/Ímpares:</strong> {teimosia['pares']}/{teimosia['impares']} | 
-                        <strong>Soma:</strong> {teimosia['soma']} | 
-                        <strong>Fora regra:</strong> {teimosia['qtd_fora']}
-                    </div>
-                    """, unsafe_allow_html=True)
+                    if isinstance(teimosia, dict) and 'estrategia' in teimosia:
+                        st.markdown("---")
+                        st.markdown("### 🎯 Sugestão de Teimosia")
+                        st.markdown(f"""
+                        <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 20px; border-radius: 12px; border: 2px solid gold; margin: 10px 0;">
+                            <strong>📋 Estratégia:</strong> {teimosia.get('estrategia', 'N/A')}<br>
+                            <strong>🎲 Jogo Fixo:</strong> {teimosia.get('jogo', [])}<br>
+                            <strong>📅 Concursos:</strong> {teimosia.get('qtd_concursos', 0)}<br>
+                            <strong>💰 Investimento Total:</strong> R$ {teimosia.get('custo_total', 0):.2f}<br>
+                            <strong>📊 Pares/Ímpares:</strong> {teimosia.get('pares', 0)}/{teimosia.get('impares', 0)} | 
+                            <strong>Soma:</strong> {teimosia.get('soma', 0)} | 
+                            <strong>Fora regra:</strong> {teimosia.get('qtd_fora', 0)}
+                        </div>
+                        """, unsafe_allow_html=True)
                 
+                # Dicas
                 st.markdown("""
                 <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 15px; border-radius: 12px; margin: 10px 0; border: 1px solid #4cc9f0;">
                 <strong>💡 Guia das Estratégias:</strong><br>
@@ -3070,6 +3084,7 @@ def main():
                 """, unsafe_allow_html=True)
         else:
             st.warning("⚠️ Carregue os concursos primeiro na barra lateral!")
+  
 
     # ================= SEÇÃO DE DOWNLOAD UNIFICADA =================
     st.markdown("---")
