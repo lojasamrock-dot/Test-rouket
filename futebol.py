@@ -5746,14 +5746,17 @@ def render_tab_multiplas_individuais(sistema):
             key="todas_ligas_ind_unicas"
         )
     
+    # [FIX] Limpar o estado antigo do multiselect se necessário
+    if "ligas_ind_unicas_select" in st.session_state and not isinstance(st.session_state["ligas_ind_unicas_select"], list):
+        del st.session_state["ligas_ind_unicas_select"]
+    
     ligas_selecionadas = []
     if not todas_ligas:
-        # [FIX] Usar uma chave única para o multiselect
         ligas_selecionadas = st.multiselect(
             "📌 Selecionar ligas",
             options=list(ConfigManager.LIGA_DICT.keys()),
-            default=["Premier League (Inglaterra)", "Bundesliga", "La Liga"],
-            key="ligas_ind_unicas_select"  # Chave diferente
+            default=["Premier League (Inglaterra)", "Bundesliga"],
+            key="ligas_ind_unicas_select"
         )
     
     with col2:
@@ -5848,7 +5851,6 @@ def render_tab_multiplas_individuais(sistema):
         
         for idx, jogo_dict in enumerate(jogos):
             jogo_id = jogo_dict.get('id', idx)
-            expander_key = f"exp_ind_{jogo_id}_{idx}"
             
             with st.expander(f"⚽ {jogo_dict.get('home', '')} vs {jogo_dict.get('away', '')} - {jogo_dict.get('liga', '')}", expanded=False):
                 
@@ -6056,6 +6058,7 @@ def render_tab_multiplas_individuais(sistema):
                 st.write("---")
     else:
         st.info("ℹ️ Nenhuma múltipla individual gerada ainda.")
+
     
 
 
