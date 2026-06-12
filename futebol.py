@@ -5717,6 +5717,7 @@ def gerar_poster_resultado_individual(multipla: dict, data_br: str, api_client=N
     return buffer
 
 
+#def render_tab_multiplas_individuais(sistema):
 def render_tab_multiplas_individuais(sistema):
     """Aba para Múltiplas Individuais - 3 mercados por partida com Filtro Premium"""
     
@@ -5747,11 +5748,12 @@ def render_tab_multiplas_individuais(sistema):
     
     ligas_selecionadas = []
     if not todas_ligas:
+        # [FIX] Usar uma chave única para o multiselect
         ligas_selecionadas = st.multiselect(
             "📌 Selecionar ligas",
             options=list(ConfigManager.LIGA_DICT.keys()),
             default=["Premier League (Inglaterra)", "Bundesliga", "La Liga"],
-            key="ligas_ind_unicas"
+            key="ligas_ind_unicas_select"  # Chave diferente
         )
     
     with col2:
@@ -5893,7 +5895,6 @@ def render_tab_multiplas_individuais(sistema):
                     st.caption(f"Conf: {confianca_am:.0f}% | Odd: {odd_am:.2f}")
                 
                 btn_key = f"btn_ind_{jogo_id}_{idx}"
-                # [FIX BUG #3] - Reestruturação do fluxo do botão
                 if st.button(f"🎯 GERAR MÚLTIPLA INDIVIDUAL", key=btn_key, use_container_width=True):
                     mercados = {}
                     
@@ -6055,6 +6056,7 @@ def render_tab_multiplas_individuais(sistema):
                 st.write("---")
     else:
         st.info("ℹ️ Nenhuma múltipla individual gerada ainda.")
+    
 
 
 class GerenciadorMultiplasPro:
