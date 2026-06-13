@@ -263,7 +263,7 @@ SETUP_XXXTREME = {
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.7,       # FIX #6: era 2.1 — impossível com fallback
+    'confianca_minima_entrada': 1.5,       # FIX #6: era 2.1 — impossível com fallback
     'filtro_conf_baixa': 1.4,
     'confianca_maxima_segura': 3.0,
     'rodadas_verificacao_conf_alta': 5,
@@ -283,8 +283,8 @@ SETUP_IMMERSIVE = {
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 60,                # FIX #1: era 30 (muito curto) → 60
-    'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 28,         # FIX: era 30
+    'ml_atualizar_a_cada': 5,
+    'ml_score_minimo_entrada': 25,         # FIX: era 30
     'ml_score_minimo_fallback': 36,        # FIX #5: era 45 — impossível!
     'ml_min_rodadas_fallback': 8,          # FIX: era 10
     'ml_max_repeticoes_mesma_duzia': 2,    # FIX #3: era 1 — causava bloqueio total!
