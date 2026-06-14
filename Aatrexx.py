@@ -217,47 +217,98 @@ SETUP_BASE = {
 }
 
 # 🟡 XXXTREME LIGHTNING — V13.3
+#SETUP_XXXTREME = {
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'confianca_minima_entrada': 1.8,       # FIX #6: era 2.2
-    'embalo_peso': 5, 'embalo_reforco': 2,
-    'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 1.5, 'fadiga_duzia': 4,
-    'ritmo_alternado_peso': 10, 'ritmo_alternado_forca': 10,
-    'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
-    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 1, 'raio_alto_minimo': 100,
-    'zero_termometro_max': 15, 'anti_erro_skip_discordancia': True,
-    'ritmo_v_peso': 9, 'ritmo_v_forca': 9, 'ritmo_v_confirmacoes': 2,
-    'usar_embalo': True, 'embalo_consecutivas_min': 2, 'embalo_janela': 4,
-    'usar_ritmo_alternado': True, 'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': True, 'usar_ritmo_binario': True,
-    'usar_quebra_pos_zero': False, 'usar_exaustao_dominancia': True,
+    
+    # 🔥 CRÍTICO: Ativar aprendizado adaptativo (estava desligado!)
+    'peso_adaptativo_ativo': True,           # ← MUDANÇA CRÍTICA
+    'peso_adaptativo_janela': 12,            # janela menor para adaptação rápida
+    'peso_adaptativo_boost': 1.4,            # boost mais agressivo
+    
+    # Confiança mais alta devido à volatilidade
+    'confianca_minima_entrada': 2.2,         # ↑ era 1.8 (muito baixo)
+    'filtro_conf_baixa': 1.8,                # ↑ ajustado
+    'confianca_maxima_segura': 3.2,          # ↑ ligeiramente maior
+    
+    # Streaks são perigosas aqui
+    'streak_ativo': True,
+    'streak_min_len': 2,                     # só ativa streak com len≥2
+    'streak_peso_feature': 0.7,              # ↓ reduzir peso de streaks
+    'ml_max_repeticoes_mesma_duzia': 2,      # mantém
+    
+    # Consenso "nenhum" = não apostar (exceto confiança excepcional)
+    'padrao_consenso_min_conf': 0.30,        # ↑ mais exigente
+    'ml_ignorar_consenso_conf_min': 2.8,     # ↑ só ignora consenso se conf > 2.8
+    
+    # Parâmetros de entrada mais conservadores
+    'ml_score_minimo_entrada': 25,           # ↑ era 20
+    'ml_score_minimo_fallback': 42,          # ↑ era 38
+    'ml_min_rodadas_fallback': 10,           # ↑ era 8
+    
+    # Padrões precisam de mais ocorrências (mesmo com janela 80)
+    'padrao_min_ocorrencias': 4,             # ↑ era 3
+    'padrao_conf_minima_tam2': 2.5,          # ↑ era 2
+    'padrao_conf_minima_tam4': 5,            # ↑ era 4
+    
+    # Reduzir exposição máxima
+    'max_repeticoes_embalo': 2,              # ↓ era 3
+    'embalo_consecutivas_min': 2,            # mantém
+    
+    # Após erro, pausa maior
+    'pausa_pos_raio': 2,                     # ↑ era 1
+    
+    # Viés dinâmico NÃO é blocker (funcionou bem na sessão 90%)
+    'vies_dinamico_ativo': True,
+    'vies_dinamico_janela': 12,              # ↓ janela menor
+    'vies_dinamico_limiar': 0.14,            # ↑ limiar mais alto
+    'vies_dinamico_penalidade': 0.80,        # penalidade suave
+    
+    # ML com janela adequada
+    'ml_janela_treino': 80,                  # mantém
+    'ml_atualizar_a_cada': 8,                # ↓ era 10
+    
+    # Detectar quando adaptativo está OFF (alerta)
+    'alerta_peso_adaptativo_off': True,      # ← NOVO
+    
+    # Drift mais sensível
+    'drift_janela': 12,
+    'drift_taxa_minima': 0.25,               # ↓ era 0.30
+    'drift_alertar_apos': 3,                 # ↓ era 5
+    'drift_rodadas_auto_reset': 15,          # mantém
+    
+    # Decaimento mais rápido
+    'decaimento_fator': 0.95,                # ↓ era 0.97
+    'decaimento_a_cada': 4,                  # ↓ era 5
+    
+    # Scores ajustados
+    'score_frequencia_peso': 40,             # ↓ era 45
+    'score_ml_peso': 50,                     # ↑ era 45 (ML mais importante)
+    
+    # Qualidade mínima de padrões
+    'padrao_qualidade_min_p2': 18,           # ↑ era 15
+    'padrao_qualidade_min_p3': 12,           # ↑ era 10
+    'padrao_qualidade_min_p4': 8,            # mantém
+    
+    # Anti-erro com confiança baixa
+    'bloquear_anti_erro_zero_conf_baixa': True,
+    'anti_erro_skip_discordancia': True,
+    
+    # Zero não é prioridade
+    'zero_termometro_max': 18,               # ↑ era 15
+    
+    # Ritmos mantidos
+    'usar_embalo': True,
+    'usar_ritmo_alternado': True,
+    'usar_ritmo_v': True,
+    'usar_ritmo_ping_pong': True,
+    'usar_ritmo_binario': True,
+    'usar_quebra_pos_zero': False,
+    'usar_exaustao_dominancia': True,
     'usar_mudanca_velocidade': False,
-    'score_frequencia_peso': 45, 'score_streak_peso': 6,
-    'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 80,                # FIX #1: era 120, reduzido para evitar trava
-    'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 20,         # FIX: era 35
-    'ml_score_minimo_fallback': 38,        # FIX #5: era 40
-    'ml_min_rodadas_fallback': 8,          # FIX: era 10
-    'ml_max_repeticoes_mesma_duzia': 2,    # FIX #3: era 3→2
-    'ml_score_minimo_pos_rotacao': 18,
-    'padrao_min_ocorrencias': 3,           # FIX #2: compatível com janela 80
-    'padrao_peso_tam2': 15, 'padrao_peso_tam3': 55, 'padrao_peso_tam4': 30,
-    'padrao_conf_minima_tam2': 2, 'padrao_conf_minima_tam4': 4,
-    'padrao_consenso_peso_extra': 15, 'padrao_consenso_min_conf': 0.20,
-    'ml_ignorar_consenso_conf_min': 2.0,
-    'anti_vies_ativo': False,
-    'peso_adaptativo_ativo': False,
-    'vies_dinamico_ativo': True, 'vies_dinamico_janela': 15,
-    'vies_dinamico_limiar': 0.12, 'vies_dinamico_penalidade': 0.75,
-    'decaimento_padroes_ativo': True, 'decaimento_fator': 0.97, 'decaimento_a_cada': 5,
-    'drift_janela': 15, 'drift_taxa_minima': 0.30, 'drift_alertar_apos': 5,
-    'drift_rodadas_auto_reset': 20,
-    'streak_ativo': True, 'streak_min_len': 1, 'streak_peso_feature': 1.2,
-    'padrao_qualidade_min_p2': 15, 'padrao_qualidade_min_p3': 10, 'padrao_qualidade_min_p4': 8,
 }
+    
 
 # 🟢 IMMERSIVE ROULETTE — V13.3 (era o mais travado)
 SETUP_IMMERSIVE = {
