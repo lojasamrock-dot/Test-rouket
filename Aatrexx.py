@@ -311,57 +311,93 @@ SETUP_XXXTREME = {
     
 
 # 🟢 IMMERSIVE ROULETTE — V13.3 (era o mais travado)
+#SETUP_IMMERSIVE = {
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.0,       # FIX #6: era 2.1 — impossível com fallback
-    'filtro_conf_baixa': 1.4,
-    'confianca_maxima_segura': 3.0,
-    'rodadas_verificacao_conf_alta': 5,
-    'embalo_peso': 6, 'embalo_reforco': 1,
-    'embalo_consecutivas_min': 2, 'embalo_janela': 4,
-    'max_repeticoes_embalo': 3,
-    'ritmo_alternado_peso': 6, 'ritmo_alternado_forca': 8,
-    'ritmo_v_peso': 6, 'ritmo_v_forca': 8, 'ritmo_v_confirmacoes': 2,
-    'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'anti_erro_skip_discordancia': True,
-    'zero_termometro_max': 12, 'fadiga_duzia': 3,
-    'pausa_pos_raio': 0, 'raio_alto_minimo': 0,
-    'usar_embalo': True, 'usar_ritmo_alternado': True, 'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': False, 'usar_ritmo_binario': True,
-    'usar_quebra_pos_zero': True, 'usar_exaustao_dominancia': False,
-    'usar_mudanca_velocidade': False,
-    'score_frequencia_peso': 45, 'score_streak_peso': 6,
-    'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
-    'ml_janela_treino': 60,                # FIX #1: era 30 (muito curto) → 60
+    
+    # Adaptativo já está ON (bom)
+    'peso_adaptativo_ativo': True,
+    'peso_adaptativo_janela': 10,
+    'peso_adaptativo_boost': 1.3,
+    
+    # Confiança ajustada (mais tolerante que XXXtreme)
+    'confianca_minima_entrada': 1.9,         # ↓ era 2.0 (permitir mais entradas)
+    'filtro_conf_baixa': 1.3,               # ↓ era 1.4
+    'confianca_maxima_segura': 2.9,          # ↓ era 3.0
+    
+    # Streaks são menos perigosas (mas ainda cuidar)
+    'streak_ativo': True,
+    'streak_min_len': 2,
+    'streak_peso_feature': 1.0,              # ↑ era 0.9
+    'ml_max_repeticoes_mesma_duzia': 2,      # mantém (já corrigido)
+    
+    # Consenso "nenhum" = evitar
+    'padrao_consenso_min_conf': 0.20,        # mantém
+    'ml_ignorar_consenso_conf_min': 2.4,     # ↓ era 2.5
+    
+    # Parâmetros ML mais acessíveis
+    'ml_score_minimo_entrada': 22,           # ↓ era 25
+    'ml_score_minimo_fallback': 32,          # ↓ era 36
+    'ml_min_rodadas_fallback': 6,            # ↓ era 8
+    
+    # Padrões: janela 60, ocorrências 3 (factível)
+    'ml_janela_treino': 60,
     'ml_atualizar_a_cada': 5,
-    'ml_score_minimo_entrada': 25,         # FIX: era 30
-    'ml_score_minimo_fallback': 36,        # FIX #5: era 45 — impossível!
-    'ml_min_rodadas_fallback': 8,          # FIX: era 10
-    'ml_max_repeticoes_mesma_duzia': 2,    # FIX #3: era 1 — causava bloqueio total!
-    'ml_score_minimo_pos_rotacao': 16,
-    'ml_ignorar_consenso_conf_min': 2.5,
-    'padrao_min_ocorrencias': 4,           # FIX #2: era 8 — impossível com janela 60!
-    'padrao_peso_tam2': 42, 'padrao_peso_tam3': 25, 'padrao_peso_tam4': 33,
-    'padrao_conf_minima_tam2': 2,
-    'padrao_conf_minima_tam4': 4,          # FIX: era 6
-    'padrao_consenso_peso_extra': 12,
-    'padrao_consenso_min_conf': 0.18,      # FIX: era 0.25 — muito restritivo
-    'anti_vies_ativo': False, 'anti_vies_duzia': None,
-    'anti_vies_penalidade': 1.0, 'anti_vies_gatilho_p2': False, 'anti_vies_p4_isolado_extra': 1.0,
-    'peso_adaptativo_ativo': True, 'peso_adaptativo_janela': 10, 'peso_adaptativo_boost': 1.3,
-    'vies_dinamico_ativo': True, 'vies_dinamico_janela': 15,
-    'vies_dinamico_limiar': 0.10, 'vies_dinamico_penalidade': 0.70,
-    'decaimento_padroes_ativo': True, 'decaimento_fator': 0.94, 'decaimento_a_cada': 4,
-    'drift_janela': 10, 'drift_taxa_minima': 0.28,  # FIX #9: era 0.42 — bloqueava tudo
-    'drift_alertar_apos': 4,
-    'drift_rodadas_auto_reset': 15,
-    'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 0.9,
-    'padrao_qualidade_min_p2': 12,         # FIX #10: era 50 — impossível!
-    'padrao_qualidade_min_p3': 8,          # FIX #10: era 30
-    'padrao_qualidade_min_p4': 6,          # FIX #10: era 20
+    'padrao_min_ocorrencias': 3,             # ↓ era 4
+    'padrao_conf_minima_tam2': 1.8,          # ↓ era 2
+    'padrao_conf_minima_tam4': 3.5,          # ↓ era 4
+    
+    # Exposição máxima
+    'max_repeticoes_embalo': 3,              # mantém
+    'embalo_consecutivas_min': 2,            # mantém
+    
+    # Pós-erro
+    'pausa_pos_raio': 0,                     # mantém (sem pausa)
+    
+    # Viés dinâmico (funciona bem)
+    'vies_dinamico_ativo': True,
+    'vies_dinamico_janela': 12,              # ↓ era 15
+    'vies_dinamico_limiar': 0.09,            # ↓ era 0.10
+    'vies_dinamico_penalidade': 0.65,        # ↓ era 0.70
+    
+    # Drift mais tolerante (era muito restritivo)
+    'drift_janela': 12,                      # ↑ era 10
+    'drift_taxa_minima': 0.22,               # ↓ era 0.28 (FIX #9)
+    'drift_alertar_apos': 5,                 # ↑ era 4
+    'drift_rodadas_auto_reset': 18,          # ↑ era 15
+    
+    # Decaimento suave
+    'decaimento_fator': 0.93,                # ↓ era 0.94
+    'decaimento_a_cada': 5,                  # ↑ era 4
+    
+    # Scores
+    'score_frequencia_peso': 45,
+    'score_ml_peso': 45,
+    
+    # Qualidade mínima de padrões (FIX #10)
+    'padrao_qualidade_min_p2': 10,           # ↓ era 12
+    'padrao_qualidade_min_p3': 6,            # ↓ era 8
+    'padrao_qualidade_min_p4': 4,            # ↓ era 6
+    
+    # Zero e anti-erro
+    'zero_termometro_max': 10,               # ↓ era 12
+    'bloquear_alerta_zero_conf_alta': True,
+    'bloquear_anti_erro_zero_conf_baixa': True,
+    'anti_erro_skip_discordancia': True,
+    
+    # Ritmos
+    'usar_embalo': True,
+    'usar_ritmo_alternado': True,
+    'usar_ritmo_v': True,
+    'usar_ritmo_ping_pong': False,
+    'usar_ritmo_binario': True,
+    'usar_quebra_pos_zero': True,
+    'usar_exaustao_dominancia': False,
+    'usar_mudanca_velocidade': False,
 }
-
+    
+    
 # 🔴 MEGA ROULETTE — V13.3
 SETUP_MEGA = {
     **SETUP_BASE,
