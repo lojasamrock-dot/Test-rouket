@@ -250,13 +250,13 @@ SETUP_XXXTREME = {
     'ml_ignorar_consenso_conf_min': 2.0,
     'anti_vies_ativo': False,
     'peso_adaptativo_ativo': False,
-    'vies_dinamico_ativo': True, 'vies_dinamico_janela': 20,
+    'vies_dinamico_ativo': True, 'vies_dinamico_janela': 15,
     'vies_dinamico_limiar': 0.12, 'vies_dinamico_penalidade': 0.75,
     'decaimento_padroes_ativo': True, 'decaimento_fator': 0.97, 'decaimento_a_cada': 5,
     'drift_janela': 15, 'drift_taxa_minima': 0.30, 'drift_alertar_apos': 5,
     'drift_rodadas_auto_reset': 20,
     'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 1.2,
-    'padrao_qualidade_min_p2': 15, 'padrao_qualidade_min_p3': 10, 'padrao_qualidade_min_p4': 8,
+  #  'padrao_qualidade_min_p2': 15, 'padrao_qualidade_min_p3': 10, 'padrao_qualidade_min_p4': 8,
 }
 
 # 🟢 IMMERSIVE ROULETTE — V13.3 (era o mais travado)
