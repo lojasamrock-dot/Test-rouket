@@ -238,7 +238,7 @@ SETUP_XXXTREME = {
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 80,                # FIX #1: era 120, reduzido para evitar trava
     'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 25,         # FIX: era 35
+    'ml_score_minimo_entrada': 20,         # FIX: era 35
     'ml_score_minimo_fallback': 38,        # FIX #5: era 40
     'ml_min_rodadas_fallback': 8,          # FIX: era 10
     'ml_max_repeticoes_mesma_duzia': 2,    # FIX #3: era 3→2
