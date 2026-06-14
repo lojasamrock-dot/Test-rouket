@@ -263,7 +263,7 @@ SETUP_XXXTREME = {
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.5,       # FIX #6: era 2.1 — impossível com fallback
+    'confianca_minima_entrada': 2.0,       # FIX #6: era 2.1 — impossível com fallback
     'filtro_conf_baixa': 1.4,
     'confianca_maxima_segura': 3.0,
     'rodadas_verificacao_conf_alta': 5,
