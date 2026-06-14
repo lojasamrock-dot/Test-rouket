@@ -256,7 +256,7 @@ SETUP_XXXTREME = {
     'drift_janela': 15, 'drift_taxa_minima': 0.30, 'drift_alertar_apos': 5,
     'drift_rodadas_auto_reset': 20,
     'streak_ativo': True, 'streak_min_len': 1, 'streak_peso_feature': 1.2,
-  #  'padrao_qualidade_min_p2': 15, 'padrao_qualidade_min_p3': 10, 'padrao_qualidade_min_p4': 8,
+    'padrao_qualidade_min_p2': 15, 'padrao_qualidade_min_p3': 10, 'padrao_qualidade_min_p4': 8,
 }
 
 # 🟢 IMMERSIVE ROULETTE — V13.3 (era o mais travado)
