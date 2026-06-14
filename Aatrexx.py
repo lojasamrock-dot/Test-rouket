@@ -220,7 +220,7 @@ SETUP_BASE = {
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'confianca_minima_entrada': 2.0,       # FIX #6: era 2.2
+    'confianca_minima_entrada': 1.8,       # FIX #6: era 2.2
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 1.5, 'fadiga_duzia': 4,
@@ -238,7 +238,7 @@ SETUP_XXXTREME = {
     'score_markov_peso': 8, 'score_ml_peso': 45, 'score_anti_erro_peso': 20,
     'ml_janela_treino': 80,                # FIX #1: era 120, reduzido para evitar trava
     'ml_atualizar_a_cada': 10,
-    'ml_score_minimo_entrada': 32,         # FIX: era 35
+    'ml_score_minimo_entrada': 25,         # FIX: era 35
     'ml_score_minimo_fallback': 38,        # FIX #5: era 40
     'ml_min_rodadas_fallback': 8,          # FIX: era 10
     'ml_max_repeticoes_mesma_duzia': 2,    # FIX #3: era 3→2
@@ -247,7 +247,7 @@ SETUP_XXXTREME = {
     'padrao_peso_tam2': 15, 'padrao_peso_tam3': 55, 'padrao_peso_tam4': 30,
     'padrao_conf_minima_tam2': 2, 'padrao_conf_minima_tam4': 4,
     'padrao_consenso_peso_extra': 15, 'padrao_consenso_min_conf': 0.20,
-    'ml_ignorar_consenso_conf_min': 2.5,
+    'ml_ignorar_consenso_conf_min': 2.0,
     'anti_vies_ativo': False,
     'peso_adaptativo_ativo': False,
     'vies_dinamico_ativo': True, 'vies_dinamico_janela': 20,
