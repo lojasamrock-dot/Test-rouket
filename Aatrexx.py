@@ -168,6 +168,299 @@ def extrair_features_streak(historico_duzias):
 
     return resultado
 
+# =============================
+# ===== MELHORIA 1: FILTRO DE CONFIANÇA POR HORÁRIO =====
+# =============================
+class ConfiancaFiltro:
+    def __init__(self):
+        self.conf_minima_base = 2.8
+        self.conf_minima_horario = {
+            'nobre': 2.5,     # 18h-22h
+            'normal': 2.8,    # outros horários
+            'critico': 3.2    # madrugada 00h-06h
+        }
+    
+    def get_conf_minima(self, hora_atual):
+        if 18 <= hora_atual <= 22:
+            return self.conf_minima_horario['nobre']
+        elif 0 <= hora_atual <= 6:
+            return self.conf_minima_horario['critico']
+        else:
+            return self.conf_minima_horario['normal']
+    
+    def pode_apostar(self, confianca, hora_atual):
+        conf_min = self.get_conf_minima(hora_atual)
+        return confianca >= conf_min
+
+# =============================
+# ===== MELHORIA 2: GREEN LIGHT SYSTEM =====
+# =============================
+class GreenLightSystem:
+    def __init__(self):
+        self.condicoes = {
+            'confianca': 2.8,
+            'streak_valido': False,
+            'horario_nobre': False,
+            'anti_erro_aprovado': False
+        }
+    
+    def verificar(self, entrada, hora_atual, streak_info=None):
+        # Condição 1: Confiança mínima
+        confianca = entrada.get('confianca', 0) if isinstance(entrada, dict) else entrada
+        if confianca < 2.8:
+            return False, "Confiança baixa"
+        
+        # Condição 2: Horário nobre OU streak forte
+        hora_nobre = 18 <= hora_atual <= 22
+        streak_forte = False
+        if streak_info:
+            streak_len = streak_info.get('streak_atual_len', 0)
+            streak_forte = streak_len >= 3
+        
+        if not hora_nobre and not streak_forte:
+            return False, "Sem horário nobre ou streak forte"
+        
+        # Condição 3: Modo anti-erro só com confiança alta
+        if entrada.get('modo_anti_erro', False) and confianca < 3.2:
+            return False, "Anti-erro precisa de confiança > 3.2"
+        
+        return True, "✅ GREEN LIGHT - Apostar"
+
+# =============================
+# ===== MELHORIA 3: STREAK INTELIGENTE =====
+# =============================
+class StreakInteligente:
+    def __init__(self):
+        self.historico_streaks = {}
+    
+    def decidir_acao(self, streak_info, confianca, duzia_prevista=None, duzia_secundaria=None):
+        if not streak_info:
+            return {'acao': 'SEGUIR_PADRAO'}
+        
+        duzia_atual = streak_info.get('streak_atual_duzia', 0)
+        tamanho = streak_info.get('streak_atual_len', 0)
+        prob_quebra = streak_info.get('prob_quebra_streak3', 0.5)
+        taxa_quebra_real = streak_info.get('streak_taxa_quebra_real', 0.5)
+        saturado = streak_info.get('streak_saturado', 0)
+        
+        # Regra 1: Streak forte (3+) com confiança alta = apostar na streak
+        if tamanho >= 3 and confianca >= 2.8 and not saturado:
+            # Verificar se a streak está alinhada com a previsão
+            if duzia_prevista == duzia_atual:
+                return {
+                    'acao': 'APOSTAR_NA_STREAK',
+                    'duzia': duzia_atual,
+                    'duzia_secundaria': duzia_secundaria or streak_info.get('cobertura_streak_duzia', 0),
+                    'motivo': f'Streak de {tamanho}x com confiança {confianca:.2f}'
+                }
+        
+        # Regra 2: Streak muito longa (5+) = esperar quebrar
+        if tamanho >= 5 and tamanho % 2 == 1:  # Streak ímpar muito longa
+            return {
+                'acao': 'AGUARDAR_QUEBRA',
+                'motivo': f'Streak de {tamanho}x muito longa, aguardar'
+            }
+        
+        # Regra 3: Streak com confiança baixa = considerar quebra
+        if tamanho >= 2 and confianca < 2.5:
+            outras = [d for d in [1, 2, 3] if d != duzia_atual]
+            # Escolher a duzia com maior frequência recente
+            return {
+                'acao': 'CONSIDERAR_QUEBRA',
+                'duzia': outras[0] if outras else 0,
+                'motivo': f'Streak {tamanho}x com confiança baixa'
+            }
+        
+        # Regra 4: Streak saturada com alta taxa de quebra real
+        if saturado and taxa_quebra_real > 0.55:
+            outras = [d for d in [1, 2, 3] if d != duzia_atual]
+            return {
+                'acao': 'APOSTAR_QUEBRA',
+                'duzia': outras[0] if outras else 0,
+                'motivo': f'Streak saturada, quebra real {taxa_quebra_real*100:.0f}%'
+            }
+        
+        return {'acao': 'SEGUIR_PADRAO'}
+
+# =============================
+# ===== MELHORIA 4: PESOS POR HORÁRIO E PADRÃO =====
+# =============================
+class PesosHorarioPadrao:
+    def __init__(self):
+        # Matriz de pesos [horário][padrão]
+        self.pesos = {
+            'nobre': {
+                'D2→D3': 0.9,
+                'D1→D2': 0.85,
+                'D3→D2': 0.82,
+                'D2→D1': 0.78,
+                'D3→D3': 0.75,
+                'D1→D3': 0.72,
+                'D2→D2': 0.70,
+                'D3→D1': 0.68,
+                'D1→D1': 0.65,
+            },
+            'madrugada': {
+                'D2→D3': 0.60,
+                'D1→D2': 0.55,
+                'D3→D2': 0.58,
+                'D2→D1': 0.50,
+                'D3→D3': 0.62,
+                'D1→D3': 0.55,
+                'D2→D2': 0.48,
+                'D3→D1': 0.45,
+                'D1→D1': 0.42,
+            },
+            'tarde': {
+                'D2→D3': 0.70,
+                'D1→D2': 0.68,
+                'D3→D2': 0.72,
+                'D2→D1': 0.62,
+                'D3→D3': 0.65,
+                'D1→D3': 0.60,
+                'D2→D2': 0.55,
+                'D3→D1': 0.52,
+                'D1→D1': 0.50,
+            }
+        }
+    
+    def get_faixa_horaria(self, hora_atual):
+        if 18 <= hora_atual <= 22:
+            return 'nobre'
+        elif 0 <= hora_atual <= 6:
+            return 'madrugada'
+        elif 12 <= hora_atual < 18:
+            return 'tarde'
+        else:
+            return 'normal'
+    
+    def get_peso(self, padrao, hora_atual):
+        faixa = self.get_faixa_horaria(hora_atual)
+        if faixa in self.pesos:
+            # Tenta encontrar o padrão exato
+            for chave, peso in self.pesos[faixa].items():
+                if chave in padrao:
+                    return peso
+            # Se não encontrar, retorna peso padrão da faixa
+            if faixa == 'nobre':
+                return 0.75
+            elif faixa == 'madrugada':
+                return 0.55
+            else:
+                return 0.60
+        return 0.60
+
+# =============================
+# ===== MELHORIA 5: STOP LOSS INTELIGENTE =====
+# =============================
+class StopLossInteligente:
+    def __init__(self, max_erros_consecutivos=2, max_erros_sessao=4):
+        self.max_erros = max_erros_consecutivos
+        self.max_erros_sessao = max_erros_sessao
+        self.erros_consecutivos = 0
+        self.erros_sessao = 0
+        self.rodadas_sem_aposta = 0
+        self.em_pausa = False
+    
+    def reset(self):
+        self.erros_consecutivos = 0
+        self.erros_sessao = 0
+        self.rodadas_sem_aposta = 0
+        self.em_pausa = False
+    
+    def verificar(self, ultimo_resultado=None):
+        if ultimo_resultado == 'erro':
+            self.erros_consecutivos += 1
+            self.erros_sessao += 1
+            self.rodadas_sem_aposta = 0
+            
+            if self.erros_consecutivos >= self.max_erros:
+                self.em_pausa = True
+                return {
+                    'parar': True,
+                    'motivo': f'{self.erros_consecutivos} erros consecutivos',
+                    'esperar_rodadas': 2
+                }
+            
+            if self.erros_sessao >= self.max_erros_sessao:
+                self.em_pausa = True
+                return {
+                    'parar': True,
+                    'motivo': f'{self.erros_sessao} erros na sessão',
+                    'esperar_rodadas': 3
+                }
+        else:
+            self.erros_consecutivos = 0
+            if ultimo_resultado == 'acerto':
+                self.rodadas_sem_aposta = 0
+                if self.em_pausa and self.erros_sessao < self.max_erros_sessao:
+                    self.em_pausa = False
+        
+        return {'parar': self.em_pausa}
+    
+    def get_estado(self):
+        return {
+            'erros_consecutivos': self.erros_consecutivos,
+            'erros_sessao': self.erros_sessao,
+            'em_pausa': self.em_pausa,
+            'max_erros': self.max_erros,
+            'max_erros_sessao': self.max_erros_sessao
+        }
+
+# =============================
+# ===== MELHORIA 6: ML COM APRENDIZADO POR HORÁRIO =====
+# =============================
+class MLAprendizadoHorario:
+    def __init__(self):
+        self.historico_horario = {}  # {horario: {padrao: {'acertos': 0, 'total': 0}}}
+        self.limiar_min_amostras = 5
+    
+    def registrar_resultado(self, hora, padrao, acertou):
+        faixa = self._get_faixa_horaria(hora)
+        if faixa not in self.historico_horario:
+            self.historico_horario[faixa] = {}
+        if padrao not in self.historico_horario[faixa]:
+            self.historico_horario[faixa][padrao] = {'acertos': 0, 'total': 0}
+        
+        self.historico_horario[faixa][padrao]['total'] += 1
+        if acertou:
+            self.historico_horario[faixa][padrao]['acertos'] += 1
+    
+    def _get_faixa_horaria(self, hora):
+        if 18 <= hora <= 22:
+            return 'nobre'
+        elif 0 <= hora <= 6:
+            return 'madrugada'
+        elif 12 <= hora < 18:
+            return 'tarde'
+        else:
+            return 'normal'
+    
+    def get_taxa_historica(self, hora, padrao):
+        faixa = self._get_faixa_horaria(hora)
+        if faixa in self.historico_horario and padrao in self.historico_horario[faixa]:
+            dados = self.historico_horario[faixa][padrao]
+            if dados['total'] >= self.limiar_min_amostras:
+                return dados['acertos'] / dados['total']
+        return None
+    
+    def ajustar_predicao(self, predicao_base, hora, padrao):
+        taxa_historica = self.get_taxa_historica(hora, padrao)
+        if taxa_historica is not None:
+            # Média ponderada: 60% predição atual, 40% histórico
+            return (0.6 * predicao_base) + (0.4 * taxa_historica)
+        return predicao_base
+    
+    def get_melhores_padroes_por_horario(self, hora):
+        faixa = self._get_faixa_horaria(hora)
+        if faixa in self.historico_horario:
+            padroes = []
+            for padrao, dados in self.historico_horario[faixa].items():
+                if dados['total'] >= self.limiar_min_amostras:
+                    taxa = dados['acertos'] / dados['total']
+                    padroes.append((padrao, taxa, dados['total']))
+            return sorted(padroes, key=lambda x: x[1], reverse=True)
+        return []
 
 # =============================
 # NOVAS FEATURES PARA ML V14.0
@@ -360,7 +653,7 @@ def extrair_features_vies_curto_prazo(historico_duzias, janela_curta=5, janela_l
 
 
 # =============================
-# SETUPS — V14.0 CORRIGIDO
+# SETUPS — V14.0 CORRIGIDO COM NOVAS CONFIGURAÇÕES
 # =============================
 SETUP_BASE = {
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
@@ -398,8 +691,7 @@ SETUP_BASE = {
     'padrao_qualidade_min_p2': 15,
     'padrao_qualidade_min_p3': 10,
     'padrao_qualidade_min_p4': 8,
-    # NOVAS CONFIGURAÇÕES V14.0
-    'usar_features_ml_avancadas': True,  # Ativa as novas features
+    'usar_features_ml_avancadas': True,
     'ml_features_pos_zero_peso': 1.0,
     'ml_features_numero_duzia_peso': 1.0,
     'ml_features_fadiga_peso': 1.2,
@@ -407,6 +699,15 @@ SETUP_BASE = {
     'ml_features_ciclos_peso': 0.8,
     'ml_features_entropia_peso': 0.7,
     'ml_features_vies_curto_peso': 1.1,
+    # ===== NOVAS CONFIGURAÇÕES DAS MELHORIAS =====
+    'green_light_conf_min': 2.8,
+    'green_light_streak_min': 3,
+    'green_light_anti_erro_conf_min': 3.2,
+    'stop_loss_max_erros_consecutivos': 2,
+    'stop_loss_max_erros_sessao': 4,
+    'peso_horario_ativo': True,
+    'ml_aprendizado_horario_ativo': True,
+    'ml_aprendizado_horario_min_amostras': 5,
 }
 
 # 🔴 XXXTREME LIGHTNING — V14.0 CORRIGIDO
@@ -479,6 +780,15 @@ SETUP_XXXTREME = {
     'usar_quebra_pos_zero': False,
     'usar_exaustao_dominancia': True,
     'usar_mudanca_velocidade': False,
+    
+    # ===== NOVAS CONFIGURAÇÕES PARA XXXTREME =====
+    'green_light_conf_min': 2.8,
+    'green_light_streak_min': 3,
+    'green_light_anti_erro_conf_min': 3.2,
+    'stop_loss_max_erros_consecutivos': 1,  # Mais rigoroso para XXXtreme
+    'stop_loss_max_erros_sessao': 3,
+    'peso_horario_ativo': True,
+    'ml_aprendizado_horario_ativo': True,
 }
 
 # 🟢 IMMERSIVE ROULETTE — V14.0 CORRIGIDO
@@ -575,6 +885,15 @@ SETUP_IMMERSIVE = {
     'padrao_qualidade_min_p2': 10,
     'padrao_qualidade_min_p3': 6,
     'padrao_qualidade_min_p4': 4,
+    
+    # ===== NOVAS CONFIGURAÇÕES PARA IMMERSIVE =====
+    'green_light_conf_min': 2.5,
+    'green_light_streak_min': 3,
+    'green_light_anti_erro_conf_min': 3.0,
+    'stop_loss_max_erros_consecutivos': 2,
+    'stop_loss_max_erros_sessao': 4,
+    'peso_horario_ativo': True,
+    'ml_aprendizado_horario_ativo': True,
 }
 
 # 🔴 MEGA ROULETTE — V14.0 CORRIGIDO
@@ -616,6 +935,15 @@ SETUP_MEGA = {
     'drift_rodadas_auto_reset': 20,
     'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 1.0,
     'padrao_qualidade_min_p2': 12, 'padrao_qualidade_min_p3': 8, 'padrao_qualidade_min_p4': 6,
+    
+    # ===== NOVAS CONFIGURAÇÕES PARA MEGA =====
+    'green_light_conf_min': 2.6,
+    'green_light_streak_min': 3,
+    'green_light_anti_erro_conf_min': 3.0,
+    'stop_loss_max_erros_consecutivos': 2,
+    'stop_loss_max_erros_sessao': 3,
+    'peso_horario_ativo': True,
+    'ml_aprendizado_horario_ativo': True,
 }
 
 ROLETA_CONFIGS = {
@@ -1056,7 +1384,7 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
-# 🧠 DUZIA AI V14.0 — ML AVANÇADO
+# 🧠 DUZIA AI V14.0 — ML AVANÇADO COM MELHORIAS
 # =============================
 
 class DuziaAI:
@@ -1064,7 +1392,7 @@ class DuziaAI:
         self.historico = deque(maxlen=window)
         self.historico_completo = []
         self.numeros_completos = []
-        self.historico_raios = []  # NOVO: para features de raio
+        self.historico_raios = []
         self.ultimas_previsoes = []
         self.ultimos_resultados = []
         self.transicoes = defaultdict(Counter)
@@ -1102,6 +1430,19 @@ class DuziaAI:
         self._rodadas_desde_decaimento = 0
         self._streak_info_atual = {}
         self._rodadas_sem_entrada = 0
+        self._ultimos_lucky_numbers = []
+        self._ultimo_multiplicador = 0
+
+        # ===== NOVOS SISTEMAS =====
+        self.confianca_filtro = ConfiancaFiltro()
+        self.green_light = GreenLightSystem()
+        self.streak_inteligente = StreakInteligente()
+        self.pesos_horario = PesosHorarioPadrao()
+        self.stop_loss = StopLossInteligente(
+            max_erros_consecutivos=2,
+            max_erros_sessao=4
+        )
+        self.ml_aprendizado_horario = MLAprendizadoHorario()
 
         config = self._get_config()
         self.padrao_min_ocorrencias = config.get('padrao_min_ocorrencias', 3)
@@ -1142,8 +1483,6 @@ class DuziaAI:
         self.streak_config_ativo = config.get('streak_ativo', True)
         self.streak_min_len = config.get('streak_min_len', 2)
         self.streak_peso_feature = config.get('streak_peso_feature', 1.0)
-        
-        # NOVAS CONFIGURAÇÕES V14.0
         self.usar_features_ml_avancadas = config.get('usar_features_ml_avancadas', True)
 
         self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
@@ -1287,7 +1626,6 @@ class DuziaAI:
         conf_p2 = conf_p3 = conf_p4 = 0.0
         q_p2, q_p3, q_p4 = self._get_qualidade_min_dinamica()
 
-        # Padrão 2
         if len(duzias) >= 1:
             d1 = duzias[-1]
             if d1 in self.padroes_tam2:
@@ -1310,7 +1648,6 @@ class DuziaAI:
                 else:
                     if not modo_treino: self.padrao_stats_ui['tam2'] = None; self.padrao_ativo_ui['tam2'] = None
 
-        # Padrão 3
         if len(duzias) >= 2:
             d1, d2 = duzias[-2], duzias[-1]; par = (d1, d2)
             if par in self.padroes_tam3:
@@ -1333,7 +1670,6 @@ class DuziaAI:
                 else:
                     if not modo_treino: self.padrao_stats_ui['tam3'] = None; self.padrao_ativo_ui['tam3'] = None
 
-        # Padrão 4
         if len(duzias) >= 3:
             d1, d2, d3 = duzias[-3], duzias[-2], duzias[-1]; trio = (d1, d2, d3)
             if trio in self.padroes_tam4:
@@ -1380,10 +1716,8 @@ class DuziaAI:
             float(st_info.get('streak_taxa_quebra_real', 0.0)),
         ]
 
-    # NOVO: Extração completa de features para ML V14.0
     def _extrair_features_ml_completas(self, historico_duzias, historico_numeros,
                                          erros_consec, rodadas_zero, repeticoes_duzia, janela=20, modo_treino=False):
-        # Features base (já existentes)
         features_base = self._extrair_features_core(
             historico_duzias, historico_numeros,
             erros_consec, rodadas_zero, repeticoes_duzia, janela,
@@ -1396,7 +1730,6 @@ class DuziaAI:
         if not self.usar_features_ml_avancadas:
             return features_base
         
-        # NOVAS FEATURES
         features_pos_zero = extrair_features_pos_zero(historico_numeros, historico_duzias)
         features_numero_duzia = extrair_features_numero_duzia(historico_numeros, historico_duzias)
         features_fadiga = extrair_features_fadiga(historico_duzias)
@@ -1405,7 +1738,6 @@ class DuziaAI:
         features_entropia = extrair_features_entropia_local(historico_duzias)
         features_vies_curto = extrair_features_vies_curto_prazo(historico_duzias)
         
-        # Aplicar pesos conforme configuração
         config = self._get_config()
         peso_zero = config.get('ml_features_pos_zero_peso', 1.0)
         peso_numero = config.get('ml_features_numero_duzia_peso', 1.0)
@@ -1415,7 +1747,6 @@ class DuziaAI:
         peso_entropia = config.get('ml_features_entropia_peso', 0.7)
         peso_vies = config.get('ml_features_vies_curto_peso', 1.1)
         
-        # Aplicar pesos (multiplicar features por seus pesos)
         features_pos_zero = [f * peso_zero for f in features_pos_zero]
         features_numero_duzia = [f * peso_numero for f in features_numero_duzia]
         features_fadiga = [f * peso_fadiga for f in features_fadiga]
@@ -1424,7 +1755,6 @@ class DuziaAI:
         features_entropia = [f * peso_entropia for f in features_entropia]
         features_vies_curto = [f * peso_vies for f in features_vies_curto]
         
-        # Concatenar todas as features
         return features_base + features_pos_zero + features_numero_duzia + features_fadiga + \
                features_alternancia + features_ciclos + features_entropia + features_vies_curto
 
@@ -1627,7 +1957,6 @@ class DuziaAI:
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
         
-        # NOVO: registrar raios para features
         if numero != 0 and numero in getattr(self, '_ultimos_lucky_numbers', []):
             mult = getattr(self, '_ultimo_multiplicador', 0)
             self.historico_raios.append((numero, mult, d))
@@ -1677,6 +2006,18 @@ class DuziaAI:
                                         'acertou_numero': acertou_numero, 'acertou_zero': acertou_zero})
         self.ultimo_resultado_duzia = acertou_duzia
         self.ultimo_resultado_numero = acertou_numero
+        
+        # ===== MELHORIA 5: Atualizar Stop Loss =====
+        if acertou_duzia or acertou_zero:
+            self.stop_loss.verificar('acerto')
+        else:
+            self.stop_loss.verificar('erro')
+        
+        # ===== MELHORIA 6: Registrar para ML por horário =====
+        hora_atual = datetime.now().hour
+        padrao = self.padrao_info_para_ml()
+        self.ml_aprendizado_horario.registrar_resultado(hora_atual, padrao, acertou_duzia or acertou_zero)
+        
         config = self._get_config()
         if eh_raio and multiplicador >= config['raio_alto_minimo'] and config['pausa_pos_raio'] > 0:
             self.em_pausa_pos_raio = True; self.rodadas_pos_raio = 0; self.ultimo_raio_alto = multiplicador
@@ -1715,6 +2056,14 @@ class DuziaAI:
             self._drift_ativo = taxa_rec < self.drift_taxa_minima and len(recentes) >= self.drift_alertar_apos
         else:
             self._drift_ativo = False
+
+    def padrao_info_para_ml(self):
+        """Extrai o padrão atual para registro no ML por horário"""
+        if self.padrao_stats_ui.get('tam3'):
+            return self.padrao_stats_ui['tam3'].get('gatilho', 'desconhecido')
+        elif self.padrao_stats_ui.get('tam2'):
+            return self.padrao_stats_ui['tam2'].get('gatilho', 'desconhecido')
+        return 'desconhecido'
 
     def _prever_ml(self):
         if not ML_DISPONIVEL or self.modelo_ml is None: return {1: 0.0, 2: 0.0, 3: 0.0}
@@ -1863,6 +2212,12 @@ class DuziaAI:
             return {"entrar": False, "motivo": "⏸️ Pausa"}
         config = self._get_config()
         hora_atual = datetime.now().hour
+        
+        # ===== MELHORIA 5: Verificar Stop Loss =====
+        stop_estado = self.stop_loss.get_estado()
+        if stop_estado['em_pausa']:
+            return {"entrar": False, "motivo": f"⏸️ Stop Loss: {stop_estado['erros_consecutivos']} erros consecutivos"}
+        
         if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
             if config['horario_bloqueio_inicio'] <= hora_atual < config['horario_bloqueio_fim']:
                 return {"entrar": False, "motivo": f"⏸️ Horário bloqueado"}
@@ -1895,6 +2250,55 @@ class DuziaAI:
         streak_sinal = ""
         if self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
             streak_sinal = f"🔥 STK D{streak_duzia}({streak_len}x)"
+
+        # ===== MELHORIA 1: Filtro de Confiança por Horário =====
+        if not self.confianca_filtro.pode_apostar(confianca, hora_atual):
+            conf_min = self.confianca_filtro.get_conf_minima(hora_atual)
+            return {"entrar": False, "motivo": f"Confiança {confianca:.2f} < {conf_min} (horário)"}
+
+        # ===== MELHORIA 3: Streak Inteligente =====
+        if self.streak_config_ativo and streak_len >= self.streak_min_len:
+            streak_acao = self.streak_inteligente.decidir_acao(
+                streak_info, confianca, d1, d2
+            )
+            if streak_acao['acao'] == 'APOSTAR_NA_STREAK':
+                d1 = streak_acao['duzia']
+                d2 = streak_acao.get('duzia_secundaria', d2)
+                motivo = f"🟢 Streak: {streak_acao['motivo']}"
+            elif streak_acao['acao'] == 'AGUARDAR_QUEBRA':
+                return {"entrar": False, "motivo": streak_acao['motivo']}
+            elif streak_acao['acao'] == 'CONSIDERAR_QUEBRA':
+                d1 = streak_acao['duzia']
+                motivo = f"🟡 Streak: {streak_acao['motivo']}"
+            elif streak_acao['acao'] == 'APOSTAR_QUEBRA':
+                d1 = streak_acao['duzia']
+                motivo = f"🟡 Streak: {streak_acao['motivo']}"
+
+        # ===== MELHORIA 2: Green Light System =====
+        entrada_verificacao = {
+            'confianca': confianca,
+            'modo_anti_erro': self.erros_consecutivos > 0
+        }
+        green, green_motivo = self.green_light.verificar(entrada_verificacao, hora_atual, streak_info)
+        if not green:
+            return {"entrar": False, "motivo": f"🚦 {green_motivo}"}
+
+        # ===== MELHORIA 4: Aplicar Peso por Horário =====
+        padrao_atual = self.padrao_info_para_ml()
+        if config.get('peso_horario_ativo', True):
+            peso_horario = self.pesos_horario.get_peso(padrao_atual, hora_atual)
+            if peso_horario < 0.55:
+                return {"entrar": False, "motivo": f"Peso horário baixo ({peso_horario:.2f})"}
+            # Ajusta o score com o peso
+            s1 = s1 * (0.7 + 0.3 * peso_horario)
+            s2 = s2 * (0.7 + 0.3 * peso_horario)
+
+        # ===== MELHORIA 6: Ajustar predição com ML por horário =====
+        if config.get('ml_aprendizado_horario_ativo', True):
+            predicao_ajustada = self.ml_aprendizado_horario.ajustar_predicao(d1, hora_atual, padrao_atual)
+            # Se a taxa histórica for alta, reforça a predição
+            if predicao_ajustada != d1:
+                d1 = int(round(predicao_ajustada))
 
         if modo_base == 'ml':
             score_minimo = config.get('ml_score_minimo_entrada', 30)
@@ -1992,6 +2396,10 @@ class DuziaAI:
             "numeros_completos": list(self.numeros_completos), "modo_previsao": modo,
             "rotacao_forcada": forcar_rotacao, "padrao_ativo": info_padrao,
             "streak_info": streak_sinal if streak_sinal else None,
+            # ===== NOVAS INFORMAÇÕES DAS MELHORIAS =====
+            "green_light_aprovado": True,
+            "peso_horario_aplicado": config.get('peso_horario_ativo', True),
+            "stop_loss_estado": self.stop_loss.get_estado(),
         }
 
 
@@ -2040,6 +2448,8 @@ class SistemaBot:
         self.sessao_ativa = True; self.rodadas_na_sessao = 0
         self.acertos_sessao = 0; self.erros_sessao = 0
         self.total_sessoes += 1; self.sessao_pausa_ate = None
+        # ===== MELHORIA 5: Resetar Stop Loss ao iniciar sessão =====
+        self.duzia_ai.stop_loss.reset()
         salvar_sessao(); return True
 
     def _encerrar_sessao(self):
@@ -2070,7 +2480,6 @@ class SistemaBot:
             nr = numero_data.get('number'); lucky_numbers = numero_data.get('luckyNumbers', [])
             lucky_multipliers = numero_data.get('luckyMultipliers', {}); table_id = numero_data.get('table_id', 'unknown')
             table_name = numero_data.get('table_name', 'Desconhecida')
-            # NOVO: armazenar lucky numbers para features de raio
             self.duzia_ai._ultimos_lucky_numbers = lucky_numbers
             self.duzia_ai._ultimo_multiplicador = lucky_multipliers.get(nr, 0) if nr else 0
         else:
@@ -2384,6 +2793,13 @@ with st.sidebar:
         n = len(sis.historico_numeros)
         st.info(f"🧠 Aguardando... ({n}/30 rod)")
 
+    # ===== NOVO: Mostrar status do Stop Loss =====
+    stop_estado = sis.duzia_ai.stop_loss.get_estado()
+    if stop_estado['em_pausa']:
+        st.error(f"⏸️ STOP LOSS ATIVO! {stop_estado['erros_consecutivos']} erros consecutivos")
+    elif stop_estado['erros_consecutivos'] > 0:
+        st.warning(f"⚠️ {stop_estado['erros_consecutivos']}/{stop_estado['max_erros']} erros consecutivos")
+
     if sis.duzia_ai._drift_ativo:
         reset_em = sis.duzia_ai.drift_rodadas_auto_reset - sis.duzia_ai._rodadas_sem_entrada
         st.error(f"⚠️ DRIFT! Reset em {max(0,reset_em)} rodadas sem entrada.")
@@ -2417,6 +2833,10 @@ with st.sidebar:
     st.caption(f"• Drift reset auto: {config_ativa.get('drift_rodadas_auto_reset', 20)} rod")
     st.caption(f"• Max rep dúzia: {config_ativa.get('ml_max_repeticoes_mesma_duzia', 2)}")
     st.caption(f"• ML Avançado: {'✅' if config_ativa.get('usar_features_ml_avancadas', True) else '❌'}")
+    # ===== NOVO: Mostrar status das melhorias =====
+    st.caption(f"• Stop Loss: {config_ativa.get('stop_loss_max_erros_consecutivos', 2)} erros")
+    st.caption(f"• Green Light: {'✅' if config_ativa.get('green_light_conf_min', 2.8) else '❌'}")
+    st.caption(f"• Peso Horário: {'✅' if config_ativa.get('peso_horario_ativo', True) else '❌'}")
 
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
@@ -2482,6 +2902,11 @@ if sis.duzia_ai._drift_ativo:
 if sis.duzia_ai._vies_dinamico_atual:
     st.warning(f"🔍 **Viés dinâmico:** D{sis.duzia_ai._vies_dinamico_atual} — {sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% acima do esperado.")
 
+# ===== NOVO: Banner do Stop Loss =====
+stop_estado = sis.duzia_ai.stop_loss.get_estado()
+if stop_estado['em_pausa']:
+    st.error(f"⏸️ **STOP LOSS ATIVO!** {stop_estado['erros_consecutivos']} erros consecutivos. Aguarde recuperação.")
+
 stk = sis.duzia_ai._streak_info_atual
 if stk and stk.get('streak_atual_len', 0) >= 2:
     stk_len = stk['streak_atual_len']; stk_duzia = stk['streak_atual_duzia']
@@ -2533,6 +2958,8 @@ with cg:
         titulo = f"🎯 ML V14.0 ({api_name}) | {modo_atual.upper()}"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ZERO"
         if sis.duzia_ai._drift_ativo: titulo += " | ⚠️ DRIFT"
+        # ===== NOVO: Mostrar Stop Loss no título =====
+        if stop_estado['em_pausa']: titulo += " | ⏸️ STOP LOSS"
         stk = sis.duzia_ai._streak_info_atual
         if stk and stk.get('streak_atual_len', 0) >= 2:
             titulo += f" | 🔥STK D{stk['streak_atual_duzia']}×{stk['streak_atual_len']}"
@@ -2563,6 +2990,9 @@ with ce:
     if sis.duzia_ai._drift_ativo:
         reset_em = sis.duzia_ai.drift_rodadas_auto_reset - sis.duzia_ai._rodadas_sem_entrada
         st.error(f"⚠️ DRIFT — Reset em {max(0,reset_em)} rodadas")
+    # ===== NOVO: Mostrar Stop Loss =====
+    if stop_estado['em_pausa']:
+        st.error(f"⏸️ STOP LOSS: {stop_estado['erros_consecutivos']} erros consecutivos")
     if sis.duzia_ai.alerta_zero_ativo: st.warning("⚠️ ALERTA ZERO! 🟢")
     if sis.duzia_ai.em_pausa_pos_raio: st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
     if sis.duzia_ai.anti_vies_ativo:
