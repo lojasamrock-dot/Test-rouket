@@ -460,8 +460,8 @@ SETUP_XXXTREME = {
     'peso_adaptativo_janela': 12,
     'peso_adaptativo_boost': 1.4,
     
-    'confianca_minima_entrada': 2.0,  # REDUZIDO de 2.2 para 2.0
-    'filtro_conf_baixa': 1.6,
+    'confianca_minima_entrada': 1.8,  # REDUZIDO de 2.2 para 2.0
+    'filtro_conf_baixa': 1.5,
     'confianca_maxima_segura': 3.2,
     
     'streak_ativo': True,
@@ -472,9 +472,9 @@ SETUP_XXXTREME = {
     'ml_max_repeticoes_mesma_duzia': 2,
     
     'padrao_consenso_min_conf': 0.30,
-    'ml_ignorar_consenso_conf_min': 2.8,
+    'ml_ignorar_consenso_conf_min': 2.5,
     
-    'ml_score_minimo_entrada': 25,
+    'ml_score_minimo_entrada': 20,
     'ml_score_minimo_fallback': 38,
     'ml_min_rodadas_fallback': 8,
     
@@ -482,17 +482,17 @@ SETUP_XXXTREME = {
     'padrao_conf_minima_tam2': 2.5,
     'padrao_conf_minima_tam4': 5,
     
-    'max_repeticoes_embalo': 2,
+    'max_repeticoes_embalo': 3,
     'embalo_consecutivas_min': 2,
-    'pausa_pos_raio': 2,
+    'pausa_pos_raio': 1,
     
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 12,
     'vies_dinamico_limiar': 0.14,
     'vies_dinamico_penalidade': 0.80,
     
-    'ml_janela_treino': 80,
-    'ml_atualizar_a_cada': 8,
+    'ml_janela_treino': 50,
+    'ml_atualizar_a_cada': 5,
     
     'alerta_peso_adaptativo_off': True,
     
@@ -502,10 +502,10 @@ SETUP_XXXTREME = {
     'drift_rodadas_auto_reset': 15,
     
     'decaimento_fator': 0.95,
-    'decaimento_a_cada': 4,
+    'decaimento_a_cada': 2,
     
-    'score_frequencia_peso': 40,
-    'score_ml_peso': 55,  # AUMENTADO
+    'score_frequencia_peso': 45,
+    'score_ml_peso': 50,  # AUMENTADO
     
     'padrao_qualidade_min_p2': 18,
     'padrao_qualidade_min_p3': 12,
