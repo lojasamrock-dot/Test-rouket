@@ -2923,4 +2923,5 @@ modelo_path = get_modelo_ml_path(api_name)
 st.caption(f"💾 Modelo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)" if os.path.exists(modelo_path) else "⚠️ Modelo não salvo ainda")
 
 salvar_sessao()
-[file content end]
+
+#[file content end]
