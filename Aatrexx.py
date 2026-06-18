@@ -619,7 +619,7 @@ SETUP_IMMERSIVE = {
     'score_frequencia_peso': 45,
     'score_streak_peso': 6,
     'score_markov_peso': 8,
-    'score_ml_peso': 45,
+    'score_ml_peso': 50,
     'score_anti_erro_peso': 20,
     'ml_janela_treino': 60,
     'ml_atualizar_a_cada': 5,
