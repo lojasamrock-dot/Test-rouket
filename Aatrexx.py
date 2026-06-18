@@ -1,5 +1,4 @@
-[file name]: V144Aatrexx_v2.py
-[file content begin]
+
 import streamlit as st
 import json
 import os
