@@ -16,6 +16,7 @@ from io import StringIO, BytesIO
 try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
     from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import train_test_split
     import joblib
     ML_DISPONIVEL = True
 except ImportError:
@@ -170,7 +171,7 @@ def extrair_features_streak(historico_duzias):
 
 
 # =============================
-# NOVAS FEATURES PARA ML V14.0
+# NOVAS FEATURES PARA ML V14.1 - OTIMIZADO
 # =============================
 
 def extrair_features_pos_zero(historico_numeros, historico_duzias):
@@ -245,6 +246,7 @@ def extrair_features_fadiga(historico_duzias, janela=15):
     excesso_d2 = max(0, (freq.get(2, 0) - esperado) / max(1, esperado))
     excesso_d3 = max(0, (freq.get(3, 0) - esperado) / max(1, esperado))
     
+    # Flag de reversão (duzia com excesso > 30% tende a reverter)
     reversao_d1 = 1 if excesso_d1 > 0.3 else 0
     reversao_d2 = 1 if excesso_d2 > 0.3 else 0
     reversao_d3 = 1 if excesso_d3 > 0.3 else 0
@@ -359,8 +361,44 @@ def extrair_features_vies_curto_prazo(historico_duzias, janela_curta=5, janela_l
     return [tendencia_1, tendencia_2, tendencia_3, alta, max(tendencia_1, tendencia_2, tendencia_3), min(tendencia_1, tendencia_2, tendencia_3)]
 
 
+def extrair_features_raio(historico_raios, janela=20):
+    """Features relacionadas a raios/lightning"""
+    if not historico_raios or len(historico_raios) < 3:
+        return [0, 0, 0, 0, 0]
+    
+    raios_recentes = historico_raios[-janela:] if len(historico_raios) >= janela else historico_raios
+    raios_duzias = [r[2] for r in raios_recentes if r[2] != 0]
+    raios_mult = [r[1] for r in raios_recentes if r[1] > 0]
+    
+    freq_duzias = Counter(raios_duzias)
+    total = max(1, len(raios_duzias))
+    
+    duzia_mais_raios = freq_duzias.most_common(1)[0][0] if freq_duzias else 0
+    prob_d1_raio = freq_duzias.get(1, 0) / total
+    prob_d2_raio = freq_duzias.get(2, 0) / total
+    prob_d3_raio = freq_duzias.get(3, 0) / total
+    
+    raio_recente = 1 if raios_recentes and raios_recentes[-1][1] > 0 else 0
+    mult_medio = sum(raios_mult) / max(1, len(raios_mult))
+    
+    return [duzia_mais_raios, prob_d1_raio, prob_d2_raio, prob_d3_raio, raio_recente, mult_medio]
+
+
+def extrair_features_consenso(consenso_info):
+    """Feature de confiança do consenso"""
+    if not consenso_info or consenso_info.get('tipo') == 'nenhum':
+        return [0, 0, 0]
+    
+    tipo_peso = {'triplo': 1.0, 'duplo': 0.7, 'simples': 0.4}
+    conf = consenso_info.get('conf', 0)
+    tipo = consenso_info.get('tipo', 'nenhum')
+    duzia = consenso_info.get('duzia', 0)
+    
+    return [conf, tipo_peso.get(tipo, 0), duzia]
+
+
 # =============================
-# SETUPS — V14.0 CORRIGIDO
+# SETUPS — V14.1 OTIMIZADO
 # =============================
 SETUP_BASE = {
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
@@ -375,10 +413,10 @@ SETUP_BASE = {
     'ritmo_v_peso': 9, 'ritmo_v_forca': 9, 'ritmo_v_confirmacoes': 2,
     'ml_janela_treino': 80,
     'ml_atualizar_a_cada': 10,
-    'score_ml_peso': 45,
-    'ml_score_minimo_entrada': 30,
-    'ml_score_minimo_fallback': 38,
-    'ml_min_rodadas_fallback': 8,
+    'score_ml_peso': 55,  # AUMENTADO de 45 para 55
+    'ml_score_minimo_entrada': 28,  # AUMENTADO de 30 para 28 (mais entradas)
+    'ml_score_minimo_fallback': 35,  # REDUZIDO de 38 para 35
+    'ml_min_rodadas_fallback': 6,  # REDUZIDO de 8 para 6
     'ml_max_repeticoes_mesma_duzia': 2,
     'ml_score_minimo_pos_rotacao': 18,
     'padrao_min_ocorrencias': 3,
@@ -398,18 +436,22 @@ SETUP_BASE = {
     'padrao_qualidade_min_p2': 15,
     'padrao_qualidade_min_p3': 10,
     'padrao_qualidade_min_p4': 8,
-    # NOVAS CONFIGURAÇÕES V14.0
-    'usar_features_ml_avancadas': True,  # Ativa as novas features
-    'ml_features_pos_zero_peso': 1.0,
+    # NOVAS CONFIGURAÇÕES V14.1
+    'usar_features_ml_avancadas': True,
+    'ml_features_pos_zero_peso': 1.2,  # AUMENTADO
     'ml_features_numero_duzia_peso': 1.0,
-    'ml_features_fadiga_peso': 1.2,
+    'ml_features_fadiga_peso': 1.5,  # AUMENTADO
     'ml_features_alternancia_peso': 1.0,
-    'ml_features_ciclos_peso': 0.8,
-    'ml_features_entropia_peso': 0.7,
-    'ml_features_vies_curto_peso': 1.1,
+    'ml_features_ciclos_peso': 0.9,  # AUMENTADO
+    'ml_features_entropia_peso': 0.8,  # AUMENTADO
+    'ml_features_vies_curto_peso': 1.2,  # AUMENTADO
+    'ml_features_raio_peso': 1.3,  # NOVO
+    'ml_features_consenso_peso': 1.4,  # NOVO
+    'streak_reforca_ml': True,  # NOVO - Streak reforça ML
+    'streak_conf_min_reforco': 2.5,  # NOVO - Conf min para reforço
 }
 
-# 🔴 XXXTREME LIGHTNING — V14.0 CORRIGIDO
+# 🔴 XXXTREME LIGHTNING — V14.1 OTIMIZADO
 SETUP_XXXTREME = {
     **SETUP_BASE,
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
@@ -418,21 +460,23 @@ SETUP_XXXTREME = {
     'peso_adaptativo_janela': 12,
     'peso_adaptativo_boost': 1.4,
     
-    'confianca_minima_entrada': 2.2,
-    'filtro_conf_baixa': 1.8,
+    'confianca_minima_entrada': 2.0,  # REDUZIDO de 2.2 para 2.0
+    'filtro_conf_baixa': 1.6,
     'confianca_maxima_segura': 3.2,
     
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 0.7,
+    'streak_reforca_ml': True,
+    'streak_conf_min_reforco': 2.5,
     'ml_max_repeticoes_mesma_duzia': 2,
     
     'padrao_consenso_min_conf': 0.30,
     'ml_ignorar_consenso_conf_min': 2.8,
     
     'ml_score_minimo_entrada': 25,
-    'ml_score_minimo_fallback': 42,
-    'ml_min_rodadas_fallback': 10,
+    'ml_score_minimo_fallback': 38,
+    'ml_min_rodadas_fallback': 8,
     
     'padrao_min_ocorrencias': 4,
     'padrao_conf_minima_tam2': 2.5,
@@ -461,7 +505,7 @@ SETUP_XXXTREME = {
     'decaimento_a_cada': 4,
     
     'score_frequencia_peso': 40,
-    'score_ml_peso': 50,
+    'score_ml_peso': 55,  # AUMENTADO
     
     'padrao_qualidade_min_p2': 18,
     'padrao_qualidade_min_p3': 12,
@@ -481,13 +525,13 @@ SETUP_XXXTREME = {
     'usar_mudanca_velocidade': False,
 }
 
-# 🟢 IMMERSIVE ROULETTE — V14.0 CORRIGIDO
+# 🟢 IMMERSIVE ROULETTE — V14.1 OTIMIZADO
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
     
-    'confianca_minima_entrada': 1.9,
-    'filtro_conf_baixa': 1.4,
+    'confianca_minima_entrada': 1.7,  # REDUZIDO de 1.9 para 1.7
+    'filtro_conf_baixa': 1.2,
     'confianca_maxima_segura': 3.0,
     'rodadas_verificacao_conf_alta': 5,
     
@@ -523,14 +567,14 @@ SETUP_IMMERSIVE = {
     'score_frequencia_peso': 45,
     'score_streak_peso': 6,
     'score_markov_peso': 8,
-    'score_ml_peso': 45,
+    'score_ml_peso': 55,  # AUMENTADO
     'score_anti_erro_peso': 20,
     
     'ml_janela_treino': 60,
     'ml_atualizar_a_cada': 5,
-    'ml_score_minimo_entrada': 22,
-    'ml_score_minimo_fallback': 32,
-    'ml_min_rodadas_fallback': 8,
+    'ml_score_minimo_entrada': 20,  # REDUZIDO de 22 para 20
+    'ml_score_minimo_fallback': 30,  # REDUZIDO de 32 para 30
+    'ml_min_rodadas_fallback': 6,  # REDUZIDO de 8 para 6
     'ml_max_repeticoes_mesma_duzia': 2,
     'ml_score_minimo_pos_rotacao': 16,
     'ml_ignorar_consenso_conf_min': 2.5,
@@ -571,17 +615,19 @@ SETUP_IMMERSIVE = {
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 1.0,
+    'streak_reforca_ml': True,
+    'streak_conf_min_reforco': 2.3,
     
     'padrao_qualidade_min_p2': 10,
     'padrao_qualidade_min_p3': 6,
     'padrao_qualidade_min_p4': 4,
 }
 
-# 🔴 MEGA ROULETTE — V14.0 CORRIGIDO
+# 🔴 MEGA ROULETTE — V14.1 OTIMIZADO
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.8,
+    'confianca_minima_entrada': 1.6,  # REDUZIDO
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
     'filtro_conf_baixa': 1.5, 'fadiga_duzia': 3,
@@ -596,10 +642,13 @@ SETUP_MEGA = {
     'usar_quebra_pos_zero': False, 'usar_exaustao_dominancia': False,
     'usar_mudanca_velocidade': False,
     'score_frequencia_peso': 45, 'score_streak_peso': 6,
-    'score_markov_peso': 8, 'score_ml_peso': 35, 'score_anti_erro_peso': 20,
+    'score_markov_peso': 8, 'score_ml_peso': 55,  # AUMENTADO
+    'score_anti_erro_peso': 20,
     'ml_janela_treino': 80, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 28, 'ml_score_minimo_fallback': 38,
-    'ml_min_rodadas_fallback': 10, 'ml_max_repeticoes_mesma_duzia': 2,
+    'ml_score_minimo_entrada': 25,  # REDUZIDO
+    'ml_score_minimo_fallback': 35,  # REDUZIDO
+    'ml_min_rodadas_fallback': 8,
+    'ml_max_repeticoes_mesma_duzia': 2,
     'ml_score_minimo_pos_rotacao': 16,
     'padrao_min_ocorrencias': 3,
     'padrao_peso_tam2': 20, 'padrao_peso_tam3': 50, 'padrao_peso_tam4': 30,
@@ -615,6 +664,8 @@ SETUP_MEGA = {
     'drift_janela': 15, 'drift_taxa_minima': 0.28, 'drift_alertar_apos': 5,
     'drift_rodadas_auto_reset': 20,
     'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 1.0,
+    'streak_reforca_ml': True,
+    'streak_conf_min_reforco': 2.4,
     'padrao_qualidade_min_p2': 12, 'padrao_qualidade_min_p3': 8, 'padrao_qualidade_min_p4': 6,
 }
 
@@ -1056,7 +1107,7 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
-# 🧠 DUZIA AI V14.0 — ML AVANÇADO
+# 🧠 DUZIA AI V14.1 — ML OTIMIZADO
 # =============================
 
 class DuziaAI:
@@ -1064,7 +1115,7 @@ class DuziaAI:
         self.historico = deque(maxlen=window)
         self.historico_completo = []
         self.numeros_completos = []
-        self.historico_raios = []  # NOVO: para features de raio
+        self.historico_raios = []
         self.ultimas_previsoes = []
         self.ultimos_resultados = []
         self.transicoes = defaultdict(Counter)
@@ -1102,6 +1153,9 @@ class DuziaAI:
         self._rodadas_desde_decaimento = 0
         self._streak_info_atual = {}
         self._rodadas_sem_entrada = 0
+        self._ultimo_modelo_accuracy = 0.0
+        self._melhor_modelo = None
+        self._melhor_accuracy = 0.0
 
         config = self._get_config()
         self.padrao_min_ocorrencias = config.get('padrao_min_ocorrencias', 3)
@@ -1142,9 +1196,13 @@ class DuziaAI:
         self.streak_config_ativo = config.get('streak_ativo', True)
         self.streak_min_len = config.get('streak_min_len', 2)
         self.streak_peso_feature = config.get('streak_peso_feature', 1.0)
+        self.streak_reforca_ml = config.get('streak_reforca_ml', True)
+        self.streak_conf_min_reforco = config.get('streak_conf_min_reforco', 2.5)
         
-        # NOVAS CONFIGURAÇÕES V14.0
+        # NOVAS CONFIGURAÇÕES V14.1
         self.usar_features_ml_avancadas = config.get('usar_features_ml_avancadas', True)
+        self.ml_features_raio_peso = config.get('ml_features_raio_peso', 1.3)
+        self.ml_features_consenso_peso = config.get('ml_features_consenso_peso', 1.4)
 
         self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.padrao_stats_ui = {'tam2': None, 'tam3': None, 'tam4': None}
@@ -1380,10 +1438,9 @@ class DuziaAI:
             float(st_info.get('streak_taxa_quebra_real', 0.0)),
         ]
 
-    # NOVO: Extração completa de features para ML V14.0
+    # EXTRAÇÃO COMPLETA DE FEATURES V14.1
     def _extrair_features_ml_completas(self, historico_duzias, historico_numeros,
                                          erros_consec, rodadas_zero, repeticoes_duzia, janela=20, modo_treino=False):
-        # Features base (já existentes)
         features_base = self._extrair_features_core(
             historico_duzias, historico_numeros,
             erros_consec, rodadas_zero, repeticoes_duzia, janela,
@@ -1405,17 +1462,25 @@ class DuziaAI:
         features_entropia = extrair_features_entropia_local(historico_duzias)
         features_vies_curto = extrair_features_vies_curto_prazo(historico_duzias)
         
+        # FEATURES DE RAIO
+        features_raio = extrair_features_raio(self.historico_raios)
+        
+        # FEATURES DE CONSENSO
+        features_consenso = extrair_features_consenso(self.consenso_info)
+        
         # Aplicar pesos conforme configuração
         config = self._get_config()
-        peso_zero = config.get('ml_features_pos_zero_peso', 1.0)
+        peso_zero = config.get('ml_features_pos_zero_peso', 1.2)
         peso_numero = config.get('ml_features_numero_duzia_peso', 1.0)
-        peso_fadiga = config.get('ml_features_fadiga_peso', 1.2)
+        peso_fadiga = config.get('ml_features_fadiga_peso', 1.5)
         peso_alternancia = config.get('ml_features_alternancia_peso', 1.0)
-        peso_ciclos = config.get('ml_features_ciclos_peso', 0.8)
-        peso_entropia = config.get('ml_features_entropia_peso', 0.7)
-        peso_vies = config.get('ml_features_vies_curto_peso', 1.1)
+        peso_ciclos = config.get('ml_features_ciclos_peso', 0.9)
+        peso_entropia = config.get('ml_features_entropia_peso', 0.8)
+        peso_vies = config.get('ml_features_vies_curto_peso', 1.2)
+        peso_raio = config.get('ml_features_raio_peso', 1.3)
+        peso_consenso = config.get('ml_features_consenso_peso', 1.4)
         
-        # Aplicar pesos (multiplicar features por seus pesos)
+        # Aplicar pesos
         features_pos_zero = [f * peso_zero for f in features_pos_zero]
         features_numero_duzia = [f * peso_numero for f in features_numero_duzia]
         features_fadiga = [f * peso_fadiga for f in features_fadiga]
@@ -1423,10 +1488,13 @@ class DuziaAI:
         features_ciclos = [f * peso_ciclos for f in features_ciclos]
         features_entropia = [f * peso_entropia for f in features_entropia]
         features_vies_curto = [f * peso_vies for f in features_vies_curto]
+        features_raio = [f * peso_raio for f in features_raio]
+        features_consenso = [f * peso_consenso for f in features_consenso]
         
         # Concatenar todas as features
         return features_base + features_pos_zero + features_numero_duzia + features_fadiga + \
-               features_alternancia + features_ciclos + features_entropia + features_vies_curto
+               features_alternancia + features_ciclos + features_entropia + features_vies_curto + \
+               features_raio + features_consenso
 
     def _extrair_features_core(self, historico_duzias, historico_numeros,
                                 erros_consec, rodadas_zero, repeticoes_duzia, janela=20, modo_treino=False):
@@ -1604,22 +1672,58 @@ class DuziaAI:
             if len(X) < 12: return False
 
             X_arr = np.array(X)
-            sample_weights = self._calcular_pesos_treino(len(X))
+            
+            # Validação 20% dos dados
+            try:
+                X_train, X_val, y_train, y_val = train_test_split(X_arr, y, test_size=0.2, random_state=42, stratify=y)
+                tem_validacao = True
+            except:
+                X_train, y_train = X_arr, y
+                tem_validacao = False
+
+            sample_weights = self._calcular_pesos_treino(len(X_train))
 
             rf = RandomForestClassifier(n_estimators=120, max_depth=10, random_state=42,
                                          n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
             gbt = GradientBoostingClassifier(n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42)
 
-            rf.fit(X_arr, y, sample_weight=sample_weights)
-            gbt.fit(X_arr, y, sample_weight=sample_weights)
+            rf.fit(X_train, y_train, sample_weight=sample_weights)
+            gbt.fit(X_train, y_train, sample_weight=sample_weights)
 
-            self.modelo_ml = _EnsembleManual(rf, gbt)
+            novo_modelo = _EnsembleManual(rf, gbt)
+            
+            # Validar novo modelo
+            if tem_validacao:
+                try:
+                    proba, classes = novo_modelo.predict_proba(X_val)
+                    preds = classes[np.argmax(proba, axis=1)]
+                    accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
+                    
+                    # Só atualiza se melhorar
+                    if accuracy > self._melhor_accuracy:
+                        self._melhor_accuracy = accuracy
+                        self._melhor_modelo = novo_modelo
+                        self.modelo_ml = novo_modelo
+                        self.ultimo_treino_ml = rodada_atual
+                        salvar_modelo_ml(self.modelo_ml, self.api_name)
+                        logging.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)} | Features: {X_arr.shape[1]}")
+                        return True
+                    else:
+                        logging.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%})")
+                        return False
+                except Exception as e:
+                    logging.error(f"❌ Erro na validação ML: {e}")
+            
+            # Fallback: salvar mesmo sem validação
+            self.modelo_ml = novo_modelo
             self.ultimo_treino_ml = rodada_atual
             salvar_modelo_ml(self.modelo_ml, self.api_name)
-            logging.info(f"🧠 ML V14.0 Treinado! Amostras: {len(X)} | Features: {X_arr.shape[1]}")
+            logging.info(f"🧠 ML V14.1 Treinado! Amostras: {len(X)} | Features: {X_arr.shape[1]}")
             return True
+            
         except Exception as e:
-            logging.error(f"❌ Erro no treino ML: {e}"); return False
+            logging.error(f"❌ Erro no treino ML: {e}")
+            return False
 
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -1627,7 +1731,7 @@ class DuziaAI:
         self.historico_completo.append(d)
         self.numeros_completos.append(numero)
         
-        # NOVO: registrar raios para features
+        # Registrar raios
         if numero != 0 and numero in getattr(self, '_ultimos_lucky_numbers', []):
             mult = getattr(self, '_ultimo_multiplicador', 0)
             self.historico_raios.append((numero, mult, d))
@@ -1793,12 +1897,46 @@ class DuziaAI:
             for d in outras: scores_ajustados[d] += score_removido * (scores[d] / total_outras)
         return scores_ajustados
 
+    def _aplicar_streak_reforco(self, ml_scores):
+        """Aplica reforço de streak na previsão ML quando configurado"""
+        if not self.streak_reforca_ml:
+            return ml_scores
+        
+        streak_info = self._streak_info_atual
+        if not streak_info:
+            return ml_scores
+        
+        streak_len = streak_info.get('streak_atual_len', 0)
+        streak_duzia = streak_info.get('streak_atual_duzia', 0)
+        
+        if streak_len < self.streak_min_len or streak_duzia == 0:
+            return ml_scores
+        
+        # Verifica confiança mínima para reforço
+        if self.ultima_confianca < self.streak_conf_min_reforco:
+            return ml_scores
+        
+        scores_ajustados = ml_scores.copy()
+        
+        # Aplica bônus na duzia da streak
+        bonus = min(15.0, streak_len * 3.0)  # Bônus progressivo
+        scores_ajustados[streak_duzia] = min(100, scores_ajustados[streak_duzia] + bonus)
+        
+        # Penaliza as outras dúzias levemente
+        for d in [1, 2, 3]:
+            if d != streak_duzia:
+                scores_ajustados[d] = max(0, scores_ajustados[d] - bonus * 0.2)
+        
+        return scores_ajustados
+
     def calcular_score(self):
         ml_scores = self._prever_ml()
         ml_ativo = not all(v == 0.0 for v in ml_scores.values())
+        
         if ml_ativo:
             modo = 'ml_disco' if self.ultimo_treino_ml <= 1 else 'ml'
             scores = self._aplicar_reforco_consenso(ml_scores)
+            scores = self._aplicar_streak_reforco(scores)  # NOVO: streak reforça ML
             scores = self._aplicar_anti_vies(scores)
             scores = self._aplicar_vies_dinamico(scores)
             scores = self._aplicar_peso_adaptativo(scores)
@@ -1897,7 +2035,7 @@ class DuziaAI:
             streak_sinal = f"🔥 STK D{streak_duzia}({streak_len}x)"
 
         if modo_base == 'ml':
-            score_minimo = config.get('ml_score_minimo_entrada', 30)
+            score_minimo = config.get('ml_score_minimo_entrada', 28)
             pode_entrar = s1 > score_minimo
             if pode_entrar:
                 treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
@@ -1917,8 +2055,8 @@ class DuziaAI:
             else:
                 motivo = f"Score ML baixo ({s1:.1f} < {score_minimo})"
         else:
-            score_min_fb = config.get('ml_score_minimo_fallback', 38)
-            min_rodadas_fb = config.get('ml_min_rodadas_fallback', 8)
+            score_min_fb = config.get('ml_score_minimo_fallback', 35)
+            min_rodadas_fb = config.get('ml_min_rodadas_fallback', 6)
             if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
                 pode_entrar = True
                 motivo = f"🟡 Fallback | Score: {s1:.1f}"
@@ -1961,12 +2099,9 @@ class DuziaAI:
         streak_aplicado = False
         if pode_entrar and self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
             streak_aplicado = True
-            if streak_duzia == d1:
-                duzia_secundaria_final = streak_cobertura if streak_cobertura != 0 else d2
-            elif streak_duzia == d2:
-                duzia_secundaria_final = streak_duzia
-            else:
-                duzia_secundaria_final = streak_duzia if streak_duzia != 0 else d2
+            # Streak APENAS reforça, não força (usando o reforço já aplicado)
+            # Mantém a duzia secundária como estava
+            pass
 
         info_padrao = {
             'tam2': self.padrao_stats_ui.get('tam2'), 'tam3': self.padrao_stats_ui.get('tam3'),
@@ -2070,7 +2205,6 @@ class SistemaBot:
             nr = numero_data.get('number'); lucky_numbers = numero_data.get('luckyNumbers', [])
             lucky_multipliers = numero_data.get('luckyMultipliers', {}); table_id = numero_data.get('table_id', 'unknown')
             table_name = numero_data.get('table_name', 'Desconhecida')
-            # NOVO: armazenar lucky numbers para features de raio
             self.duzia_ai._ultimos_lucky_numbers = lucky_numbers
             self.duzia_ai._ultimo_multiplicador = lucky_multipliers.get(nr, 0) if nr else 0
         else:
@@ -2241,8 +2375,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V14.0 - ML Avançado", layout="wide")
-st.title("🎰 DuziaAI V14.0 — ML Avançado ✅ | Features Pós-Zero, Fadiga, Ciclos, Alternância (BRT)")
+st.set_page_config(page_title="🎰 DuziaAI V14.1 - ML Otimizado", layout="wide")
+st.title("🎰 DuziaAI V14.1 — ML Otimizado ✅ | Features Pós-Zero, Fadiga, Ciclos, Raio, Consenso (BRT)")
 
 config_global = carregar_config_global()
 
@@ -2303,7 +2437,7 @@ if "sistema" not in st.session_state:
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V14.0 — ML Avançado ✅")
+    st.markdown("## ⚙️ V14.1 — ML Otimizado ✅")
     sis = st.session_state.sistema
 
     st.markdown("### 📊 Status da Sessão")
@@ -2379,7 +2513,8 @@ with st.sidebar:
     config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
 
     if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
-        st.success(f"🧠 ML AVANÇADO V14.0 ATIVO | R{sis.duzia_ai.ultimo_treino_ml}" if sis.duzia_ai.ultimo_treino_ml > 1 else "🧠 ML CARREGADO 💾")
+        acc = getattr(sis.duzia_ai, '_melhor_accuracy', 0)
+        st.success(f"🧠 ML V14.1 OTIMIZADO | Acc: {acc:.1%}" if acc > 0 else f"🧠 ML CARREGADO 💾 | R{sis.duzia_ai.ultimo_treino_ml}")
     else:
         n = len(sis.historico_numeros)
         st.info(f"🧠 Aguardando... ({n}/30 rod)")
@@ -2408,13 +2543,13 @@ with st.sidebar:
     elif consenso['tipo'] == 'simples': st.info(f"💡 Sinal: D{consenso['duzia']}")
 
     st.markdown("---")
-    st.caption(f"🔧 **{api_name} V14.0**")
+    st.caption(f"🔧 **{api_name} V14.1**")
     st.caption(f"• Conf mín: {config_ativa.get('confianca_minima_entrada', 1.8)}")
-    st.caption(f"• Score mín ML: {config_ativa.get('ml_score_minimo_entrada', 30)}")
-    st.caption(f"• Score mín Fallback: {config_ativa.get('ml_score_minimo_fallback', 38)}")
-    st.caption(f"• Janela ML: {config_ativa.get('ml_janela_treino', 80)} | Fallback min: {config_ativa.get('ml_min_rodadas_fallback', 8)} rod")
+    st.caption(f"• Score mín ML: {config_ativa.get('ml_score_minimo_entrada', 28)}")
+    st.caption(f"• Score mín Fallback: {config_ativa.get('ml_score_minimo_fallback', 35)}")
+    st.caption(f"• Janela ML: {config_ativa.get('ml_janela_treino', 80)} | Fallback min: {config_ativa.get('ml_min_rodadas_fallback', 6)} rod")
     st.caption(f"• P2/P3/P4: {config_ativa.get('padrao_peso_tam2',20)}/{config_ativa.get('padrao_peso_tam3',50)}/{config_ativa.get('padrao_peso_tam4',30)}%")
-    st.caption(f"• Drift reset auto: {config_ativa.get('drift_rodadas_auto_reset', 20)} rod")
+    st.caption(f"• ML Score: {config_ativa.get('score_ml_peso',55)}%")
     st.caption(f"• Max rep dúzia: {config_ativa.get('ml_max_repeticoes_mesma_duzia', 2)}")
     st.caption(f"• ML Avançado: {'✅' if config_ativa.get('usar_features_ml_avancadas', True) else '❌'}")
 
@@ -2530,7 +2665,7 @@ with cg:
             marker_color=['#FF6B6B' if score[d]==max_score else '#4ECDC4' for d in [1,2,3]],
             text=[f'{score[d]:.1f}' for d in [1,2,3]], textposition='auto'
         )])
-        titulo = f"🎯 ML V14.0 ({api_name}) | {modo_atual.upper()}"
+        titulo = f"🎯 ML V14.1 ({api_name}) | {modo_atual.upper()}"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ZERO"
         if sis.duzia_ai._drift_ativo: titulo += " | ⚠️ DRIFT"
         stk = sis.duzia_ai._streak_info_atual
@@ -2606,7 +2741,7 @@ with ce:
         melhores_principal = _selecionar_melhores_numeros(dz_princ, list(sis.historico_numeros), 6)
         melhores_secundaria = _selecionar_melhores_numeros(duzia_secundaria, list(sis.historico_numeros), 6) if duzia_secundaria else None
         cor = "#FF6347" if e.get('modo_anti_erro') else "#00CED1"
-        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V14.0 ✅"
+        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V14.1 ✅"
         padrao_html = f'<p style="text-align:center; color:#FFD700; font-size:0.8em;">🧩 {padrao_info["resumo"]}</p>' if padrao_info.get('resumo') else ""
         streak_html = f'<p style="text-align:center; color:#FF8C00; font-size:0.85em;">{streak_ent}</p>' if streak_ent else ""
         st.markdown(f"""
@@ -2663,7 +2798,7 @@ with col_t2:
     st.success("📢 Telegram Alt OK") if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt else st.warning("📢 Telegram Alt NÃO")
 
 config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
-st.caption(f"🤖 DuziaAI V14.0 | {api_name} | ✅ ML Avançado | P2:{config_ativa['padrao_peso_tam2']}% P3:{config_ativa['padrao_peso_tam3']}% P4:{config_ativa['padrao_peso_tam4']}% | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V14.1 | {api_name} | ✅ ML Otimizado | P2:{config_ativa['padrao_peso_tam2']}% P3:{config_ativa['padrao_peso_tam3']}% P4:{config_ativa['padrao_peso_tam4']}% | {formatar_hora_brasilia()}")
 modelo_path = get_modelo_ml_path(api_name)
 st.caption(f"💾 Modelo: {modelo_path} ({os.path.getsize(modelo_path)/1024:.1f} KB)" if os.path.exists(modelo_path) else "⚠️ Modelo não salvo ainda")
 
