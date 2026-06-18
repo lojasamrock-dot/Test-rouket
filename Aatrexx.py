@@ -469,7 +469,7 @@ SETUP_XXXTREME = {
     'streak_peso_feature': 0.7,
     'streak_reforca_ml': True,
     'streak_conf_min_reforco': 2.5,
-    'ml_max_repeticoes_mesma_duzia': 2,
+    'ml_max_repeticoes_mesma_duzia': 1,
     
     'padrao_consenso_min_conf': 0.30,
     'ml_ignorar_consenso_conf_min': 2.5,
@@ -478,7 +478,7 @@ SETUP_XXXTREME = {
     'ml_score_minimo_fallback': 38,
     'ml_min_rodadas_fallback': 8,
     
-    'padrao_min_ocorrencias': 4,
+    'padrao_min_ocorrencias': 5,
     'padrao_conf_minima_tam2': 2.5,
     'padrao_conf_minima_tam4': 5,
     
@@ -530,7 +530,7 @@ SETUP_IMMERSIVE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
     
-    'confianca_minima_entrada': 1.7,  # REDUZIDO de 1.9 para 1.7
+    'confianca_minima_entrada': 1.8,  # REDUZIDO de 1.9 para 1.7
     'filtro_conf_baixa': 1.2,
     'confianca_maxima_segura': 3.0,
     'rodadas_verificacao_conf_alta': 5,
