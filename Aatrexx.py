@@ -2831,11 +2831,103 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V14.1 - Detector de Transição", layout="wide")
-st.title("🎰 DuziaAI V14.1 — Detector de Transição ✅ | Features + CUSUM + Regime")
+# =============================
+# APLICAÇÃO STREAMLIT - VERSÃO CORRIGIDA
+# =============================
 
+# Garante que o sistema seja inicializado corretamente
+def inicializar_sistema():
+    """Inicializa o sistema de forma segura"""
+    if "sistema" not in st.session_state:
+        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
+        st.session_state.sistema = SistemaBot()
+        _carregar_sistema(api_name)
+    return st.session_state.sistema
+
+def _carregar_sistema_seguro(api_name):
+    """Carrega os dados persistidos de forma segura"""
+    sis = st.session_state.sistema
+    if sis is None:
+        return
+    
+    try:
+        dados = carregar_dados_persistidos(api_name)
+        if not dados:
+            return
+        
+        # Carrega números do histórico
+        for n in dados.get('historico_numeros', []):
+            try:
+                if hasattr(sis.duzia_ai, 'adicionar'):
+                    sis.duzia_ai.adicionar(n)
+                    sis.historico_numeros.append(n)
+            except Exception as e:
+                logging.warning(f"⚠️ Erro ao carregar número {n}: {e}")
+                continue
+        
+        # Carrega outros dados
+        sis.numero_rodada = dados.get('numero_rodada', len(dados.get('historico_numeros', [])))
+        
+        campos = ['acertos_duzia', 'erros_duzia', 'acertos_numero', 'erros_numero', 
+                  'acertos_zero', 'erros_zero', 'acertos_primaria', 'acertos_secundaria']
+        for campo in campos:
+            if campo in dados:
+                setattr(sis, campo, dados.get(campo, 0))
+        
+        sis.entrada_ativa = dados.get('entrada_ativa', None)
+        sis.historico_entradas = dados.get('historico_entradas', [])
+        sis.rodadas_na_sessao = dados.get('rodadas_na_sessao', 0)
+        sis.sessao_ativa = dados.get('sessao_ativa', False)
+        sis.total_sessoes = dados.get('total_sessoes', 0)
+        sis.acertos_sessao = dados.get('acertos_sessao', 0)
+        sis.erros_sessao = dados.get('erros_sessao', 0)
+        
+        if dados.get('sessao_pausa_ate'): 
+            sis.sessao_pausa_ate = datetime.fromisoformat(dados['sessao_pausa_ate'])
+        if dados.get('ultimo_treino_ml'): 
+            sis.duzia_ai.ultimo_treino_ml = dados['ultimo_treino_ml']
+        
+        # Carrega performances
+        for campo in ['performance_por_mesa', 'performance_por_horario']:
+            if campo in dados:
+                for k, v in dados[campo].items(): 
+                    getattr(sis, campo)[k] = v
+                    if hasattr(sis.duzia_ai, campo):
+                        getattr(sis.duzia_ai, campo)[k] = v
+        
+        # Carrega padrões
+        if hasattr(sis.duzia_ai, '_carregar_padroes_hibridos'):
+            try:
+                sis.duzia_ai._carregar_padroes_hibridos()
+            except:
+                pass
+        
+        # Atualiza referências
+        sis.duzia_ai._historico_entradas_ref = sis.historico_entradas
+        sis.duzia_ai.acertos_zero_ref = sis.acertos_zero
+        sis.duzia_ai.erros_zero_ref = sis.erros_zero
+        
+        # Carrega histórico
+        paths = get_session_paths(api_name)
+        if os.path.exists(paths['historico']):
+            try:
+                with open(paths['historico'], 'r') as f: 
+                    st.session_state.historico = json.load(f)
+            except:
+                st.session_state.historico = []
+                
+    except Exception as e:
+        logging.error(f"❌ Erro ao carregar sistema: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+
+# CONFIGURAÇÃO DA PÁGINA
+st.set_page_config(page_title="🎰 DuziaAI V14.1 - Detector de Transição", layout="wide")
+
+# CARREGA CONFIGURAÇÕES GLOBAIS
 config_global = carregar_config_global()
 
+# INICIALIZA SESSION STATE COM VALORES PADRÃO
 for key, default in [
     ("api_selecionada", config_global.get('api_selecionada', 'XXXtreme Lightning')),
     ("ultima_api", config_global.get('api_selecionada', 'XXXtreme Lightning')),
@@ -2851,80 +2943,31 @@ for key, default in [
     ("janela_duzia_ai", config_global.get('janela_duzia_ai', 30)),
     ("historico", []),
 ]:
-    if key not in st.session_state: st.session_state[key] = default
+    if key not in st.session_state: 
+        st.session_state[key] = default
 
-#def _carregar_sistema(api_name):
-def _carregar_sistema(api_name):
-    sis = st.session_state.sistema
-    dados = carregar_dados_persistidos(api_name)
-    if dados:
-        # ✅ CORREÇÃO: Carregamento seguro com verificação de atributos
-        for n in dados.get('historico_numeros', []):
-            try:
-                # Tenta usar o método adicionar normalmente
-                if hasattr(sis.duzia_ai, 'adicionar'):
-                    sis.duzia_ai.adicionar(n)
-                    sis.historico_numeros.append(n)
-                else:
-                    # Fallback: adiciona manualmente
-                    sis.historico_numeros.append(n)
-                    if hasattr(sis.duzia_ai, 'historico_completo'):
-                        sis.duzia_ai.historico_completo.append(get_duzia(n))
-                    if hasattr(sis.duzia_ai, 'historico'):
-                        sis.duzia_ai.historico.append(get_duzia(n))
-                    if hasattr(sis.duzia_ai, 'numeros_completos'):
-                        sis.duzia_ai.numeros_completos.append(n)
-            except Exception as e:
-                logging.warning(f"⚠️ Erro ao carregar número {n}: {e}")
-                # Fallback: adiciona manualmente sem usar o método adicionar
-                try:
-                    sis.historico_numeros.append(n)
-                    if hasattr(sis.duzia_ai, 'historico_completo'):
-                        sis.duzia_ai.historico_completo.append(get_duzia(n))
-                    if hasattr(sis.duzia_ai, 'historico'):
-                        sis.duzia_ai.historico.append(get_duzia(n))
-                    if hasattr(sis.duzia_ai, 'numeros_completos'):
-                        sis.duzia_ai.numeros_completos.append(n)
-                except:
-                    pass
-                continue
-        
-        sis.numero_rodada = dados.get('numero_rodada', len(dados.get('historico_numeros', [])))
-        for campo in ['acertos_duzia','erros_duzia','acertos_numero','erros_numero','acertos_zero','erros_zero','acertos_primaria','acertos_secundaria']:
-            if campo in dados:
-                setattr(sis, campo, dados.get(campo, 0))
-        sis.entrada_ativa = dados.get('entrada_ativa', None)
-        sis.historico_entradas = dados.get('historico_entradas', [])
-        sis.rodadas_na_sessao = dados.get('rodadas_na_sessao', 0)
-        sis.sessao_ativa = dados.get('sessao_ativa', False)
-        sis.total_sessoes = dados.get('total_sessoes', 0)
-        sis.acertos_sessao = dados.get('acertos_sessao', 0)
-        sis.erros_sessao = dados.get('erros_sessao', 0)
-        if dados.get('sessao_pausa_ate'): 
-            sis.sessao_pausa_ate = datetime.fromisoformat(dados['sessao_pausa_ate'])
-        if dados.get('ultimo_treino_ml'): 
-            sis.duzia_ai.ultimo_treino_ml = dados['ultimo_treino_ml']
-        for campo in ['performance_por_mesa', 'performance_por_horario']:
-            if campo in dados:
-                for k, v in dados[campo].items(): 
-                    getattr(sis, campo)[k] = v
-                    if hasattr(sis.duzia_ai, campo):
-                        getattr(sis.duzia_ai, campo)[k] = v
-        if hasattr(sis.duzia_ai, '_carregar_padroes_hibridos'):
-            try:
-                sis.duzia_ai._carregar_padroes_hibridos()
-            except:
-                pass
-        sis.duzia_ai._historico_entradas_ref = sis.historico_entradas
-        sis.duzia_ai.acertos_zero_ref = sis.acertos_zero
-        sis.duzia_ai.erros_zero_ref = sis.erros_zero
-        paths = get_session_paths(api_name)
-        if os.path.exists(paths['historico']):
-            try:
-                with open(paths['historico'], 'r') as f: 
-                    st.session_state.historico = json.load(f)
-            except:
-                st.session_state.historico = []
+# INICIALIZA O SISTEMA
+if "sistema" not in st.session_state:
+    api_name = st.session_state.api_selecionada
+    st.session_state.sistema = SistemaBot()
+    _carregar_sistema_seguro(api_name)
+
+# VERIFICA SE A API MUDOU
+if st.session_state.api_selecionada != st.session_state.ultima_api:
+    st.session_state.ultima_api = st.session_state.api_selecionada
+    st.session_state.sistema = SistemaBot()
+    _carregar_sistema_seguro(st.session_state.api_selecionada)
+    st.rerun()
+
+# OBTÉM REFERÊNCIA AO SISTEMA
+sis = st.session_state.sistema
+
+# TÍTULO
+st.title("🎰 DuziaAI V14.1 — Detector de Transição ✅ | Features + CUSUM + Regime")
+
+# ============================================================
+# O RESTO DO CÓDIGO DA INTERFACE PERMANECE IGUAL
+# ============================================================
     
 
 
