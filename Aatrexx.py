@@ -3068,69 +3068,7 @@ if sis.historico_entradas:
 else:
     st.info("Nenhuma entrada ainda.")
 
-st.markdown("---")
-# =============================
-# FINAL - RODAPÉ E STATUS
-# =============================
 
-st.markdown("---")
-col_t1, col_t2 = st.columns(2)
-
-with col_t1:
-    if st.session_state.telegram_token and st.session_state.telegram_chat_id:
-        st.success("🔔 Telegram Principal OK")
-    else:
-        st.warning("🔔 Telegram Principal NÃO")
-
-with col_t2:
-    if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt:
-        st.success("📢 Telegram Alt OK")
-    else:
-        st.warning("📢 Telegram Alt NÃO")
-
-config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
-st.caption(f"🤖 DuziaAI V14.1 | {api_name} | ✅ Detector de Transição | {formatar_hora_brasilia()}")
-
-modelo_path = get_modelo_ml_path(api_name)
-if os.path.exists(modelo_path):
-    tamanho = os.path.getsize(modelo_path) / 1024
-    st.caption(f"💾 Modelo: {modelo_path} ({tamanho:.1f} KB)")
-else:
-    st.caption("⚠️ Modelo não salvo ainda")
-
-salvar_sessao()
-```
-
----
-
-📝 O QUE FOI CORRIGIDO
-
-O erro estava na linha:
-
-```python
-# ERRADO (causa o erro que você viu):
-st.success("🔔 Telegram Principal OK") if ... else st.warning("🔔 Telegram Principal NÃO")
-```
-
-Problema: Isso tenta usar um if inline com dois métodos diferentes, o que causa conflito na avaliação.
-
-Correção: Usar blocos if/else separados:
-
-```python
-# CORRETO:
-if st.session_state.telegram_token and st.session_state.telegram_chat_id:
-    st.success("🔔 Telegram Principal OK")
-else:
-    st.warning("🔔 Telegram Principal NÃO")
-```
-
----
-
-📦 CÓDIGO COMPLETO DAS ÚLTIMAS LINHAS (SUBSTITUA)
-
-Substitua a partir de st.markdown("---") antes do rodapé:
-
-```python
 st.markdown("---")
 
 # =============================
