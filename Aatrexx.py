@@ -2656,7 +2656,8 @@ class SistemaBot:
             nr = numero_data; lucky_numbers = []; lucky_multipliers = {}
             table_id = 'unknown'; table_name = 'Desconhecida'
 
-        if nr is None or not validar_numero(nr): return        self.numero_rodada += 1
+        if nr is None or not validar_numero(nr): return        
+        self.numero_rodada += 1
         self.duzia_ai.adicionar(nr)
         self.historico_numeros.append(nr)
         self.ultimo_numero = nr
