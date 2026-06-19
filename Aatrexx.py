@@ -3040,59 +3040,16 @@ with st.sidebar:
     st.caption(f"• ML Avançado: {'✅' if config_ativa.get('usar_features_ml_avancadas', True) else '❌'}")
 
     st.markdown("---")
-    _janela_nova = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
-    if _janela_nova != st.session_state.janela_duzia_ai:
-        st.session_state.janela_duzia_ai = _janela_nova; salvar_config_global()
-
-    _agressivo_novo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
-    if _agressivo_novo != st.session_state.modo_agressivo:
-        st.session_state.modo_agressivo = _agressivo_novo; salvar_config_global()
-
-    _automatico_novo = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
-    if _automatico_novo != st.session_state.modo_automatico:
-        st.session_state.modo_automatico = _automatico_novo; salvar_config_global()
+    st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
+    st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
+    st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
 
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
-        st.caption("As credenciais são salvas automaticamente em config_global.json ao alterar.")
-        _tg_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password", key="input_telegram_token")
-        _tg_chat = st.text_input("Chat ID Principal", value=st.session_state.telegram_chat_id, key="input_telegram_chat_id")
-        _tg_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password", key="input_telegram_token_alt")
-        _tg_chat_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt, key="input_telegram_chat_id_alt")
-
-        _tg_mudou = (
-            _tg_token != st.session_state.telegram_token or
-            _tg_chat != st.session_state.telegram_chat_id or
-            _tg_token_alt != st.session_state.telegram_token_alt or
-            _tg_chat_alt != st.session_state.telegram_chat_id_alt
-        )
-
-        st.session_state.telegram_token = _tg_token
-        st.session_state.telegram_chat_id = _tg_chat
-        st.session_state.telegram_token_alt = _tg_token_alt
-        st.session_state.telegram_chat_id_alt = _tg_chat_alt
-
-        if _tg_mudou:
-            salvar_config_global()
-            st.success("✅ Credenciais do Telegram salvas!")
-
-        col_tg1, col_tg2 = st.columns(2)
-        with col_tg1:
-            if st.button("🧪 Testar Principal", use_container_width=True, key="btn_test_tg_main"):
-                if st.session_state.telegram_token and st.session_state.telegram_chat_id:
-                    ok = enviar_telegram("✅ Teste DuziaAI: Telegram Principal conectado!",
-                                          st.session_state.telegram_token, st.session_state.telegram_chat_id)
-                    st.success("✅ Mensagem enviada!") if ok else st.error("❌ Falha ao enviar. Verifique token/chat ID.")
-                else:
-                    st.warning("⚠️ Preencha token e chat ID primeiro.")
-        with col_tg2:
-            if st.button("🧪 Testar Alternativo", use_container_width=True, key="btn_test_tg_alt"):
-                if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt:
-                    ok = enviar_telegram("✅ Teste DuziaAI: Telegram Alternativo conectado!",
-                                          st.session_state.telegram_token_alt, st.session_state.telegram_chat_id_alt)
-                    st.success("✅ Mensagem enviada!") if ok else st.error("❌ Falha ao enviar. Verifique token/chat ID.")
-                else:
-                    st.warning("⚠️ Preencha token e chat ID primeiro.")
+        st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
+        st.session_state.telegram_chat_id = st.text_input("Chat ID Principal", value=st.session_state.telegram_chat_id)
+        st.session_state.telegram_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password")
+        st.session_state.telegram_chat_id_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt)
 
     # 🔧 DIAGNÓSTICO ML - NOVO
     st.markdown("---")
