@@ -2853,15 +2853,46 @@ for key, default in [
 ]:
     if key not in st.session_state: st.session_state[key] = default
 
+#def _carregar_sistema(api_name):
 def _carregar_sistema(api_name):
     sis = st.session_state.sistema
     dados = carregar_dados_persistidos(api_name)
     if dados:
+        # ✅ CORREÇÃO: Carregamento seguro com verificação de atributos
         for n in dados.get('historico_numeros', []):
-            sis.duzia_ai.adicionar(n); sis.historico_numeros.append(n)
+            try:
+                # Tenta usar o método adicionar normalmente
+                if hasattr(sis.duzia_ai, 'adicionar'):
+                    sis.duzia_ai.adicionar(n)
+                    sis.historico_numeros.append(n)
+                else:
+                    # Fallback: adiciona manualmente
+                    sis.historico_numeros.append(n)
+                    if hasattr(sis.duzia_ai, 'historico_completo'):
+                        sis.duzia_ai.historico_completo.append(get_duzia(n))
+                    if hasattr(sis.duzia_ai, 'historico'):
+                        sis.duzia_ai.historico.append(get_duzia(n))
+                    if hasattr(sis.duzia_ai, 'numeros_completos'):
+                        sis.duzia_ai.numeros_completos.append(n)
+            except Exception as e:
+                logging.warning(f"⚠️ Erro ao carregar número {n}: {e}")
+                # Fallback: adiciona manualmente sem usar o método adicionar
+                try:
+                    sis.historico_numeros.append(n)
+                    if hasattr(sis.duzia_ai, 'historico_completo'):
+                        sis.duzia_ai.historico_completo.append(get_duzia(n))
+                    if hasattr(sis.duzia_ai, 'historico'):
+                        sis.duzia_ai.historico.append(get_duzia(n))
+                    if hasattr(sis.duzia_ai, 'numeros_completos'):
+                        sis.duzia_ai.numeros_completos.append(n)
+                except:
+                    pass
+                continue
+        
         sis.numero_rodada = dados.get('numero_rodada', len(dados.get('historico_numeros', [])))
         for campo in ['acertos_duzia','erros_duzia','acertos_numero','erros_numero','acertos_zero','erros_zero','acertos_primaria','acertos_secundaria']:
-            setattr(sis, campo, dados.get(campo, 0))
+            if campo in dados:
+                setattr(sis, campo, dados.get(campo, 0))
         sis.entrada_ativa = dados.get('entrada_ativa', None)
         sis.historico_entradas = dados.get('historico_entradas', [])
         sis.rodadas_na_sessao = dados.get('rodadas_na_sessao', 0)
@@ -2869,31 +2900,32 @@ def _carregar_sistema(api_name):
         sis.total_sessoes = dados.get('total_sessoes', 0)
         sis.acertos_sessao = dados.get('acertos_sessao', 0)
         sis.erros_sessao = dados.get('erros_sessao', 0)
-        if dados.get('sessao_pausa_ate'): sis.sessao_pausa_ate = datetime.fromisoformat(dados['sessao_pausa_ate'])
-        if dados.get('ultimo_treino_ml'): sis.duzia_ai.ultimo_treino_ml = dados['ultimo_treino_ml']
+        if dados.get('sessao_pausa_ate'): 
+            sis.sessao_pausa_ate = datetime.fromisoformat(dados['sessao_pausa_ate'])
+        if dados.get('ultimo_treino_ml'): 
+            sis.duzia_ai.ultimo_treino_ml = dados['ultimo_treino_ml']
         for campo in ['performance_por_mesa', 'performance_por_horario']:
             if campo in dados:
-                for k, v in dados[campo].items(): getattr(sis, campo)[k] = v; getattr(sis.duzia_ai, campo)[k] = v
-        sis.duzia_ai._carregar_padroes_hibridos()
+                for k, v in dados[campo].items(): 
+                    getattr(sis, campo)[k] = v
+                    if hasattr(sis.duzia_ai, campo):
+                        getattr(sis.duzia_ai, campo)[k] = v
+        if hasattr(sis.duzia_ai, '_carregar_padroes_hibridos'):
+            try:
+                sis.duzia_ai._carregar_padroes_hibridos()
+            except:
+                pass
         sis.duzia_ai._historico_entradas_ref = sis.historico_entradas
         sis.duzia_ai.acertos_zero_ref = sis.acertos_zero
         sis.duzia_ai.erros_zero_ref = sis.erros_zero
         paths = get_session_paths(api_name)
         if os.path.exists(paths['historico']):
-            with open(paths['historico'], 'r') as f: st.session_state.historico = json.load(f)
-
-if st.session_state.api_selecionada != st.session_state.ultima_api:
-    st.session_state.ultima_api = st.session_state.api_selecionada
-    st.session_state.sistema = SistemaBot()
-    _carregar_sistema(st.session_state.api_selecionada)
-    st.rerun()
-
-if "sistema" not in st.session_state:
-    st.session_state.sistema = SistemaBot()
-    _carregar_sistema(st.session_state.api_selecionada)
-
-# O restante do código (Sidebar, Conteúdo Principal, etc) permanece IDÊNTICO ao original
-# Apenas as 3 funções corrigidas dentro da classe DuziaAI foram alteradas
+            try:
+                with open(paths['historico'], 'r') as f: 
+                    st.session_state.historico = json.load(f)
+            except:
+                st.session_state.historico = []
+    
 
 
 # =============================
