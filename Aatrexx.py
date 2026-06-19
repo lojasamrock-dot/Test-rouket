@@ -1884,11 +1884,56 @@ class DuziaAI:
             for k in [1,2,3]: features[f'combo_d{k}'] = round(combo_scores[k] / soma_pesos, 4)
             features['combo_conf'] = round(combo_conf_total / soma_pesos, 4)
 
+        # Guarda os scores/conf calculados PARA ESTE PONTO do histórico (independente de
+        # modo_treino), usados para reconstruir um estado "congelado" e correto durante
+        # o treino, em vez de reutilizar self.padrao_stats_ui/self.consenso_info ao vivo.
+        self._ultimo_pf_scores = {
+            'scores_p2': scores_p2, 'scores_p3': scores_p3, 'scores_p4': scores_p4,
+            'conf_p2': conf_p2, 'conf_p3': conf_p3, 'conf_p4': conf_p4,
+        }
+
         if not modo_treino:
             tipo, duzia, conf = self._detectar_consenso(scores_p2, scores_p3, scores_p4, conf_p2, conf_p3, conf_p4)
             self.consenso_info = {'tipo': tipo, 'duzia': duzia, 'conf': conf}
 
         return features
+
+    def _detectar_consenso_simples(self, pf):
+        s = getattr(self, '_ultimo_pf_scores', None) or {}
+        q_p2, q_p3, q_p4 = self._get_qualidade_min_dinamica()
+        scores_p2, scores_p3, scores_p4 = s.get('scores_p2'), s.get('scores_p3'), s.get('scores_p4')
+        conf_p2, conf_p3, conf_p4 = s.get('conf_p2', 0.0), s.get('conf_p3', 0.0), s.get('conf_p4', 0.0)
+
+        # Qualidade calculada com os totais DESTE ponto do histórico (pf), não com o
+        # estado ao vivo de self.padrao_stats_ui.
+        qualidade = {'p2': pf.get('p2_total', 0) > q_p2, 'p3': pf.get('p3_total', 0) > q_p3,
+                     'p4': pf.get('p4_total', 0) > q_p4}
+
+        preferencias = []; confs = []
+        if scores_p2 and conf_p2 >= self.consenso_min_conf and qualidade['p2']:
+            preferencias.append(max(scores_p2, key=scores_p2.get)); confs.append(conf_p2)
+        if scores_p3 and conf_p3 >= self.consenso_min_conf and qualidade['p3']:
+            preferencias.append(max(scores_p3, key=scores_p3.get)); confs.append(conf_p3)
+        if scores_p4 and conf_p4 >= self.consenso_min_conf and qualidade['p4']:
+            preferencias.append(max(scores_p4, key=scores_p4.get)); confs.append(conf_p4)
+
+        if sum(qualidade.values()) < 1 or len(preferencias) < 1:
+            return {'tipo': 'nenhum', 'duzia': None, 'conf': 0.0}
+
+        contagem = Counter(preferencias); mais_comum = contagem.most_common(1)[0]
+        if mais_comum[1] >= 3: return {'tipo': 'triplo', 'duzia': mais_comum[0], 'conf': sum(confs) / len(confs)}
+        elif mais_comum[1] >= 2: return {'tipo': 'duplo', 'duzia': mais_comum[0], 'conf': sum(confs) / len(confs)}
+        elif len(preferencias) == 1: return {'tipo': 'simples', 'duzia': preferencias[0], 'conf': confs[0]}
+        return {'tipo': 'nenhum', 'duzia': None, 'conf': 0.0}
+
+    def _montar_padrao_stats_simples(self, pf):
+        s = getattr(self, '_ultimo_pf_scores', None) or {}
+        stats = {'tam2': None, 'tam3': None, 'tam4': None}
+        if s.get('scores_p3'):
+            stats['tam3'] = {'gatilho': '', 'total': pf.get('p3_total', 0), 'scores': s['scores_p3'], 'conf': pf.get('p3_conf', 0.0)}
+        if s.get('scores_p4'):
+            stats['tam4'] = {'gatilho': '', 'total': pf.get('p4_total', 0), 'scores': s['scores_p4'], 'conf': pf.get('p4_conf', 0.0)}
+        return stats
 
     def _extrair_features_streak_ml(self, historico_duzias):
         st_info = extrair_features_streak(historico_duzias)
@@ -1956,16 +2001,27 @@ class DuziaAI:
         # 🆕 FEATURES BASEADAS EM PADRÕES DETECTADOS (histórico de assertividade real)
         historico_entradas = self._historico_entradas_ref or []
 
+        if modo_treino:
+            # Em modo_treino, self.padrao_stats_ui/self.consenso_info refletem o estado
+            # AO VIVO (atual), não o estado histórico do ponto simulado. Reconstruímos
+            # versões "congeladas" a partir de pf (já calculado corretamente para este
+            # ponto do histórico) para não contaminar o treino com dados do presente.
+            consenso_info_pt = self._detectar_consenso_simples(pf)
+            padrao_stats_ui_pt = self._montar_padrao_stats_simples(pf)
+        else:
+            consenso_info_pt = self.consenso_info
+            padrao_stats_ui_pt = self.padrao_stats_ui
+
         if self.usar_features_consenso_duplo:
-            f = extrair_features_consenso_duplo_historico(historico_entradas, self.consenso_info)
+            f = extrair_features_consenso_duplo_historico(historico_entradas, consenso_info_pt)
             resultado += [v * self.peso_consenso_duplo for v in f]
 
         if self.usar_features_p4_reforco:
-            f = extrair_features_p4_reforco_historico(historico_entradas, self.padrao_stats_ui)
+            f = extrair_features_p4_reforco_historico(historico_entradas, padrao_stats_ui_pt)
             resultado += [v * self.peso_p4_reforco for v in f]
 
         if self.usar_features_p3_otimizado:
-            f = extrair_features_p3_otimizado_historico(historico_entradas, self.padrao_stats_ui)
+            f = extrair_features_p3_otimizado_historico(historico_entradas, padrao_stats_ui_pt)
             resultado += [v * self.peso_p3_otimizado for v in f]
 
         if self.usar_features_streak_inteligente:
@@ -2192,13 +2248,20 @@ class DuziaAI:
                     proba, classes = novo_modelo.predict_proba(X_val)
                     preds = classes[np.argmax(proba, axis=1)]
                     accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
-                    
-                    if accuracy > self._melhor_accuracy:
-                        self._melhor_accuracy = accuracy
-                        self._melhor_modelo = novo_modelo
+
+                    # ✅ Se ainda não há modelo ativo, salva o treino atual mesmo que a
+                    # accuracy não supere _melhor_accuracy — caso contrário a ML nunca
+                    # chega a ativar (modelo_ml permanece None indefinidamente).
+                    sem_modelo_ativo = self.modelo_ml is None
+
+                    if accuracy >= self._melhor_accuracy or sem_modelo_ativo:
+                        if accuracy >= self._melhor_accuracy:
+                            self._melhor_accuracy = accuracy
+                            self._melhor_modelo = novo_modelo
                         self.modelo_ml = novo_modelo
                         self.ultimo_treino_ml = rodada_atual
-                        
+                        self._ultimo_modelo_accuracy = accuracy
+
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
                             logging.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
                             return True
@@ -2336,8 +2399,10 @@ class DuziaAI:
             try: n_features_modelo = self.modelo_ml.n_features_in_
             except: n_features_modelo = None
             if n_features_modelo is not None and len(features) != n_features_modelo:
-                logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Retreinando...")
+                logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Forçando retreino imediato...")
                 self.modelo_ml = None; self.ultimo_treino_ml = 0
+                self._melhor_modelo = None; self._melhor_accuracy = 0.0
+                self._treinar_ml_online()
                 return {1: 0.0, 2: 0.0, 3: 0.0}
             probabilidades, classes = self.modelo_ml.predict_proba([features])
             ml_scores = {1: 0.0, 2: 0.0, 3: 0.0}
@@ -2348,6 +2413,8 @@ class DuziaAI:
             logging.error(f"❌ Erro na inferência ML: {e}")
             if "feature" in str(e).lower() or "shape" in str(e).lower():
                 self.modelo_ml = None; self.ultimo_treino_ml = 0
+                self._melhor_modelo = None; self._melhor_accuracy = 0.0
+                self._treinar_ml_online()
             return {1: 0.0, 2: 0.0, 3: 0.0}
 
     def _prever_fallback_frequencia(self):
