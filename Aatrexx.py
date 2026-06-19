@@ -2597,6 +2597,9 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
+# =============================
+# APLICAÇÃO STREAMLIT
+# =============================
 st.set_page_config(page_title="🎰 DuziaAI V14.1 - Detector de Transição", layout="wide")
 st.title("🎰 DuziaAI V14.1 — Detector de Transição ✅ | Features + CUSUM + Regime")
 
@@ -2680,8 +2683,11 @@ with st.sidebar:
     # 🆕 INDICADOR DE REGIME
     st.markdown("---")
     st.markdown("### 🔄 Regime Atual")
-    regime = sis.duzia_ai.regime_atual if hasattr(sis.duzia_ai, 'regime_atual') else 'estavel'
-    if regime == 'transicao':
+    
+    # 🔧 CORRIGIDO: Verificação segura do regime
+    regime_atual = getattr(sis.duzia_ai, 'regime_atual', 'estavel')
+    
+    if regime_atual == 'transicao':
         st.error("⚠️ **TRANSIÇÃO DETECTADA**")
         st.caption("• Alta variância")
         st.caption("• Padrões mudando")
@@ -2690,7 +2696,7 @@ with st.sidebar:
             stats = sis.duzia_ai.detector_regime.get_estatisticas()
             st.caption(f"• CUSUM: +{stats['cusum_pos']:.2f}/-{stats['cusum_neg']:.2f}")
             st.caption(f"• Rodadas no regime: {stats['rodadas_no_regime']}")
-    elif regime == 'instavel':
+    elif regime_atual == 'instavel':
         st.warning("⚡ **INSTÁVEL**")
         st.caption("• Aguardar estabilização")
         if hasattr(sis.duzia_ai, 'detector_regime'):
@@ -2854,11 +2860,11 @@ st.markdown("---")
 sis = st.session_state.sistema
 api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
 
-# 🆕 BANNER DE REGIME
-regime = sis.duzia_ai.regime_atual if hasattr(sis.duzia_ai, 'regime_atual') else 'estavel'
-if regime == 'transicao':
+# 🆕 BANNER DE REGIME (CORRIGIDO)
+regime_atual = getattr(sis.duzia_ai, 'regime_atual', 'estavel')
+if regime_atual == 'transicao':
     st.error("⚠️ **TRANSIÇÃO DETECTADA** — Entradas com confiança reduzida. Aumentando cobertura.")
-elif regime == 'instavel':
+elif regime_atual == 'instavel':
     st.warning("⚡ **REGIME INSTÁVEL** — Aguardando estabilização. Score mínimo +10.")
 else:
     st.success("✅ **REGIME ESTÁVEL** — Padrões consolidados. Operação normal.")
@@ -2921,8 +2927,11 @@ with cg:
         titulo = f"🎯 ML V14.1 ({api_name}) | {modo_atual.upper()}"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ZERO"
         if sis.duzia_ai._drift_ativo: titulo += " | ⚠️ DRIFT"
-        if sis.duzia_ai.regime_ativo and sis.duzia_ai.regime_atual in ('transicao', 'instavel'):
+        
+        # 🔧 CORRIGIDO - Verificação segura do regime
+        if hasattr(sis.duzia_ai, 'regime_atual') and sis.duzia_ai.regime_atual in ('transicao', 'instavel'):
             titulo += f" | 🔄 {sis.duzia_ai.regime_atual.upper()}"
+        
         stk = sis.duzia_ai._streak_info_atual
         if stk and stk.get('streak_atual_len', 0) >= 2:
             titulo += f" | 🔥STK D{stk['streak_atual_duzia']}×{stk['streak_atual_len']}"
@@ -2951,14 +2960,14 @@ with cg:
 with ce:
     st.subheader("🎰 Entrada Atual")
     
-    # 🆕 Regime atual
-    if hasattr(sis.duzia_ai, 'regime_atual'):
-        if sis.duzia_ai.regime_atual == 'transicao':
-            st.error("⚠️ **TRANSIÇÃO** — Reduzindo confiança")
-        elif sis.duzia_ai.regime_atual == 'instavel':
-            st.warning("⚡ **INSTÁVEL** — Score mínimo +10")
-        else:
-            st.success("✅ **ESTÁVEL**")
+    # 🆕 Regime atual (CORRIGIDO)
+    regime_atual = getattr(sis.duzia_ai, 'regime_atual', 'estavel')
+    if regime_atual == 'transicao':
+        st.error("⚠️ **TRANSIÇÃO** — Reduzindo confiança")
+    elif regime_atual == 'instavel':
+        st.warning("⚡ **INSTÁVEL** — Score mínimo +10")
+    else:
+        st.success("✅ **ESTÁVEL**")
     
     if sis.duzia_ai._drift_ativo:
         reset_em = sis.duzia_ai.drift_rodadas_auto_reset - sis.duzia_ai._rodadas_sem_entrada
