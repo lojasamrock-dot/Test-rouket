@@ -482,6 +482,195 @@ def extrair_features_consenso(consenso_info):
 
 
 # =============================
+# 🆕 FEATURES BASEADAS EM PADRÕES DETECTADOS (histórico de assertividade)
+# =============================
+
+def _taxa_acerto_por_filtro(historico_entradas, filtro_fn, janela=60):
+    """Calcula (acertos, erros, taxa, rodadas_desde_ultimo) para entradas que passam por filtro_fn."""
+    if not historico_entradas:
+        return 0, 0, 0.0, 0
+    entradas = historico_entradas[-janela:] if len(historico_entradas) > janela else historico_entradas
+    acertos = erros = 0
+    rodadas_desde_ultimo = 0
+    achou = False
+    for e in reversed(entradas):
+        if filtro_fn(e):
+            if not achou:
+                achou = True
+            if e.get('acerto_duzia') or e.get('acerto_zero'):
+                acertos += 1
+            else:
+                erros += 1
+        elif not achou:
+            rodadas_desde_ultimo += 1
+    total = acertos + erros
+    taxa = acertos / total if total > 0 else 0.0
+    return acertos, erros, taxa, rodadas_desde_ultimo
+
+
+def extrair_features_consenso_duplo_historico(historico_entradas, consenso_info):
+    """Features de consenso duplo ativo agora + histórico de assertividade desse sinal."""
+    ativo = 1.0 if consenso_info and consenso_info.get('tipo') == 'duplo' else 0.0
+    conf_atual = float(consenso_info.get('conf', 0)) if consenso_info else 0.0
+    duzia_atual = float(consenso_info.get('duzia') or 0) if consenso_info else 0.0
+
+    def _eh_duplo(e):
+        pi = e.get('padrao_info') or {}
+        return (pi.get('consenso') or {}).get('tipo') == 'duplo'
+
+    acertos, erros, taxa, rodadas = _taxa_acerto_por_filtro(historico_entradas, _eh_duplo)
+    return [ativo, conf_atual, duzia_atual, float(acertos), float(erros), taxa, float(rodadas)]
+
+
+def extrair_features_p4_reforco_historico(historico_entradas, padrao_stats_ui):
+    """Features de padrão P4 ativo agora + histórico de assertividade do P4."""
+    p4 = (padrao_stats_ui or {}).get('tam4')
+    ativo = 1.0 if p4 else 0.0
+    conf_atual = float(p4.get('conf', 0)) if p4 else 0.0
+    total_atual = float(p4.get('total', 0)) if p4 else 0.0
+    dominancia = 0.0
+    if p4 and p4.get('scores'):
+        scores = p4['scores']
+        melhor = max(scores, key=scores.get)
+        dominancia = float(scores[melhor])
+
+    def _eh_p4(e):
+        pi = e.get('padrao_info') or {}
+        return bool(pi.get('tam4'))
+
+    acertos, erros, taxa, _ = _taxa_acerto_por_filtro(historico_entradas, _eh_p4)
+    return [ativo, conf_atual, total_atual, dominancia, float(acertos), float(erros), taxa]
+
+
+def extrair_features_p3_otimizado_historico(historico_entradas, padrao_stats_ui):
+    """Features de padrão P3 ativo agora + histórico de assertividade do P3."""
+    p3 = (padrao_stats_ui or {}).get('tam3')
+    ativo = 1.0 if p3 else 0.0
+    conf_atual = float(p3.get('conf', 0)) if p3 else 0.0
+    total_atual = float(p3.get('total', 0)) if p3 else 0.0
+    d1 = d2 = d3 = 0.0
+    if p3 and p3.get('scores'):
+        scores = p3['scores']
+        d1, d2, d3 = float(scores.get(1, 0)), float(scores.get(2, 0)), float(scores.get(3, 0))
+
+    def _eh_p3(e):
+        pi = e.get('padrao_info') or {}
+        return bool(pi.get('tam3'))
+
+    acertos, erros, taxa, _ = _taxa_acerto_por_filtro(historico_entradas, _eh_p3)
+    return [ativo, conf_atual, total_atual, d1, d2, d3, float(acertos), float(erros), taxa]
+
+
+def extrair_features_zero_detectado(historico_numeros, alerta_zero_ativo, acertos_zero=0, erros_zero=0):
+    """Features específicas para o sinal de zero: gap atual, frequência na janela e histórico de acerto."""
+    if not historico_numeros:
+        return [1.0 if alerta_zero_ativo else 0.0, 0.0, 0.0, 0.0]
+
+    rodadas_desde_zero = 0
+    for n in reversed(historico_numeros):
+        if n == 0:
+            break
+        rodadas_desde_zero += 1
+
+    janela = min(50, len(historico_numeros))
+    zeros_janela = historico_numeros[-janela:].count(0)
+    freq_janela = zeros_janela / janela if janela > 0 else 0.0
+
+    total = acertos_zero + erros_zero
+    taxa_historica = acertos_zero / total if total > 0 else 0.0
+
+    return [1.0 if alerta_zero_ativo else 0.0, float(rodadas_desde_zero), freq_janela, taxa_historica]
+
+
+def extrair_features_streak_inteligente_historico(historico_duzias, historico_entradas):
+    """
+    Features avançadas de streak: além do estado atual (já coberto por
+    extrair_features_streak), agrega estatísticas históricas de todas as
+    sequências (média, desvio, maior streak) e o aproveitamento real das
+    entradas feitas durante streaks (acertos/erros registrados).
+    """
+    duzias = [d for d in historico_duzias if d != 0]
+    if len(duzias) < 3:
+        return [0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0]
+
+    streaks = []
+    streak_corrente = 1
+    duzia_corrente = duzias[0]
+    for d in duzias[1:]:
+        if d == duzia_corrente:
+            streak_corrente += 1
+        else:
+            streaks.append(streak_corrente)
+            streak_corrente = 1
+            duzia_corrente = d
+    streaks.append(streak_corrente)
+
+    media_streak = float(sum(streaks) / len(streaks)) if streaks else 0.0
+    desvio_streak = float(np.std(streaks)) if len(streaks) > 1 else 0.0
+    maior_streak = float(max(streaks)) if streaks else 0.0
+
+    streak_atual_len = streaks[-1] if streaks else 0
+
+    # Probabilidade histórica de uma streak desse tamanho continuar (baseada em streaks passadas)
+    streaks_anteriores = streaks[:-1]
+    if streaks_anteriores:
+        continuou = sum(1 for s in streaks_anteriores if s >= streak_atual_len + 1)
+        prob_continuar = continuou / len(streaks_anteriores)
+    else:
+        prob_continuar = 0.5
+
+    # Aproveitamento real das entradas registradas durante streaks ativas (streak_info preenchido)
+    def _em_streak(e):
+        return bool(e.get('streak_info'))
+
+    acertos, erros, _, _ = _taxa_acerto_por_filtro(historico_entradas, _em_streak)
+
+    return [media_streak, desvio_streak, maior_streak, float(streak_atual_len),
+            float(prob_continuar), float(acertos), float(erros)]
+
+
+def extrair_features_contexto_geral(historico_duzias, historico_numeros):
+    """Features amplas de contexto: volatilidade, diversidade, tendência, alternância e paridade."""
+    duzias = [d for d in historico_duzias if d != 0]
+    if len(duzias) < 5:
+        return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    janela20 = duzias[-20:] if len(duzias) >= 20 else duzias
+    freq = Counter(janela20)
+    total = max(1, len(janela20))
+    proporcoes = [freq.get(d, 0) / total for d in [1, 2, 3]]
+    volatilidade = float(np.std(proporcoes)) if proporcoes else 0.0
+
+    diversidade_10 = float(len(set(duzias[-10:]))) if len(duzias) >= 10 else float(len(set(duzias)))
+
+    tendencia = 0.0
+    if len(duzias) >= 10:
+        rec = duzias[-10:]
+        if all(rec[i] <= rec[i + 1] for i in range(len(rec) - 1)):
+            tendencia = 1.0
+        elif all(rec[i] >= rec[i + 1] for i in range(len(rec) - 1)):
+            tendencia = -1.0
+
+    alternancia_abab = 0.0
+    if len(duzias) >= 4:
+        for i in range(len(duzias) - 3):
+            if duzias[i] == duzias[i + 2] and duzias[i + 1] == duzias[i + 3] and duzias[i] != duzias[i + 1]:
+                alternancia_abab += 1.0
+
+    padrao_ciclico = 0.0
+    if len(duzias) >= 4:
+        for i in range(len(duzias) - 3):
+            if duzias[i] == 1 and duzias[i + 1] == 2 and duzias[i + 2] == 3:
+                padrao_ciclico += 1.0
+
+    numeros_janela = historico_numeros[-20:] if len(historico_numeros) >= 20 else historico_numeros
+    nums_nao_zero = [n for n in numeros_janela if n != 0]
+    paridade = sum(1 for n in nums_nao_zero if n % 2 == 0) / max(1, len(nums_nao_zero))
+
+    return [volatilidade, diversidade_10, tendencia, alternancia_abab, padrao_ciclico, paridade, float(total)]
+
+
+# =============================
 # SETUPS — V14.1 COM DETECTOR DE TRANSIÇÃO
 # =============================
 SETUP_BASE = {
@@ -521,6 +710,18 @@ SETUP_BASE = {
     'padrao_qualidade_min_p3': 10,
     'padrao_qualidade_min_p4': 8,
     'usar_features_ml_avancadas': True,
+    'usar_features_consenso_duplo': True,
+    'peso_consenso_duplo': 2.0,
+    'usar_features_p4_reforco': True,
+    'peso_p4_reforco': 1.8,
+    'usar_features_streak_inteligente': True,
+    'peso_streak_inteligente': 1.5,
+    'usar_features_p3_otimizado': True,
+    'peso_p3_otimizado': 1.3,
+    'usar_features_zero_detectado': True,
+    'peso_zero_detectado': 1.2,
+    'usar_features_contexto': True,
+    'peso_contexto': 1.0,
     'ml_features_pos_zero_peso': 1.2,
     'ml_features_numero_duzia_peso': 1.0,
     'ml_features_fadiga_peso': 1.5,
@@ -901,7 +1102,8 @@ def carregar_config_global():
     try:
         if os.path.exists(CONFIG_GLOBAL_PATH):
             with open(CONFIG_GLOBAL_PATH, 'r') as f: return json.load(f)
-    except: pass
+    except Exception as e:
+        logging.error(f"Erro ao carregar config global (usando padrões): {e}")
     return {}
 
 def get_session_paths(api_name):
@@ -1180,10 +1382,16 @@ def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero,
 
 def enviar_telegram(mensagem, token, chat_id):
     try:
-        if not token or not chat_id: return
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+        if not token or not chat_id: return False
+        resp = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
                      json={"chat_id": chat_id, "text": mensagem, "parse_mode": "HTML"}, timeout=10)
-    except Exception as e: logging.error(f"Erro Telegram: {e}")
+        if resp.status_code == 200:
+            return True
+        logging.error(f"Erro Telegram: HTTP {resp.status_code} - {resp.text[:200]}")
+        return False
+    except Exception as e:
+        logging.error(f"Erro Telegram: {e}")
+        return False
 
 API_URLS = {
     'XXXtreme Lightning': "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremelightningroulette/latest",
@@ -1434,7 +1642,27 @@ class DuziaAI:
         self.usar_features_ml_avancadas = config.get('usar_features_ml_avancadas', True)
         self.ml_features_raio_peso = config.get('ml_features_raio_peso', 1.3)
         self.ml_features_consenso_peso = config.get('ml_features_consenso_peso', 1.4)
-        
+
+        # 🆕 Referência externa para histórico de entradas (preenchida pelo SistemaBot).
+        # Mantida como lista própria para não depender de reestruturação das classes.
+        self._historico_entradas_ref = []
+        self.acertos_zero_ref = 0
+        self.erros_zero_ref = 0
+
+        # 🆕 Pesos das features avançadas baseadas em padrões detectados (histórico de assertividade)
+        self.usar_features_consenso_duplo = config.get('usar_features_consenso_duplo', True)
+        self.peso_consenso_duplo = config.get('peso_consenso_duplo', 2.0)
+        self.usar_features_p4_reforco = config.get('usar_features_p4_reforco', True)
+        self.peso_p4_reforco = config.get('peso_p4_reforco', 1.8)
+        self.usar_features_streak_inteligente = config.get('usar_features_streak_inteligente', True)
+        self.peso_streak_inteligente = config.get('peso_streak_inteligente', 1.5)
+        self.usar_features_p3_otimizado = config.get('usar_features_p3_otimizado', True)
+        self.peso_p3_otimizado = config.get('peso_p3_otimizado', 1.3)
+        self.usar_features_zero_detectado = config.get('usar_features_zero_detectado', True)
+        self.peso_zero_detectado = config.get('peso_zero_detectado', 1.2)
+        self.usar_features_contexto = config.get('usar_features_contexto', True)
+        self.peso_contexto = config.get('peso_contexto', 1.0)
+
         # Configurações de transição
         self.detector_ativo = config.get('detector_regime_ativo', True)
         self.transicao_penalidade_conf = config.get('transicao_penalidade_conf', 0.70)
@@ -1656,11 +1884,56 @@ class DuziaAI:
             for k in [1,2,3]: features[f'combo_d{k}'] = round(combo_scores[k] / soma_pesos, 4)
             features['combo_conf'] = round(combo_conf_total / soma_pesos, 4)
 
+        # Guarda os scores/conf calculados PARA ESTE PONTO do histórico (independente de
+        # modo_treino), usados para reconstruir um estado "congelado" e correto durante
+        # o treino, em vez de reutilizar self.padrao_stats_ui/self.consenso_info ao vivo.
+        self._ultimo_pf_scores = {
+            'scores_p2': scores_p2, 'scores_p3': scores_p3, 'scores_p4': scores_p4,
+            'conf_p2': conf_p2, 'conf_p3': conf_p3, 'conf_p4': conf_p4,
+        }
+
         if not modo_treino:
             tipo, duzia, conf = self._detectar_consenso(scores_p2, scores_p3, scores_p4, conf_p2, conf_p3, conf_p4)
             self.consenso_info = {'tipo': tipo, 'duzia': duzia, 'conf': conf}
 
         return features
+
+    def _detectar_consenso_simples(self, pf):
+        s = getattr(self, '_ultimo_pf_scores', None) or {}
+        q_p2, q_p3, q_p4 = self._get_qualidade_min_dinamica()
+        scores_p2, scores_p3, scores_p4 = s.get('scores_p2'), s.get('scores_p3'), s.get('scores_p4')
+        conf_p2, conf_p3, conf_p4 = s.get('conf_p2', 0.0), s.get('conf_p3', 0.0), s.get('conf_p4', 0.0)
+
+        # Qualidade calculada com os totais DESTE ponto do histórico (pf), não com o
+        # estado ao vivo de self.padrao_stats_ui.
+        qualidade = {'p2': pf.get('p2_total', 0) > q_p2, 'p3': pf.get('p3_total', 0) > q_p3,
+                     'p4': pf.get('p4_total', 0) > q_p4}
+
+        preferencias = []; confs = []
+        if scores_p2 and conf_p2 >= self.consenso_min_conf and qualidade['p2']:
+            preferencias.append(max(scores_p2, key=scores_p2.get)); confs.append(conf_p2)
+        if scores_p3 and conf_p3 >= self.consenso_min_conf and qualidade['p3']:
+            preferencias.append(max(scores_p3, key=scores_p3.get)); confs.append(conf_p3)
+        if scores_p4 and conf_p4 >= self.consenso_min_conf and qualidade['p4']:
+            preferencias.append(max(scores_p4, key=scores_p4.get)); confs.append(conf_p4)
+
+        if sum(qualidade.values()) < 1 or len(preferencias) < 1:
+            return {'tipo': 'nenhum', 'duzia': None, 'conf': 0.0}
+
+        contagem = Counter(preferencias); mais_comum = contagem.most_common(1)[0]
+        if mais_comum[1] >= 3: return {'tipo': 'triplo', 'duzia': mais_comum[0], 'conf': sum(confs) / len(confs)}
+        elif mais_comum[1] >= 2: return {'tipo': 'duplo', 'duzia': mais_comum[0], 'conf': sum(confs) / len(confs)}
+        elif len(preferencias) == 1: return {'tipo': 'simples', 'duzia': preferencias[0], 'conf': confs[0]}
+        return {'tipo': 'nenhum', 'duzia': None, 'conf': 0.0}
+
+    def _montar_padrao_stats_simples(self, pf):
+        s = getattr(self, '_ultimo_pf_scores', None) or {}
+        stats = {'tam2': None, 'tam3': None, 'tam4': None}
+        if s.get('scores_p3'):
+            stats['tam3'] = {'gatilho': '', 'total': pf.get('p3_total', 0), 'scores': s['scores_p3'], 'conf': pf.get('p3_conf', 0.0)}
+        if s.get('scores_p4'):
+            stats['tam4'] = {'gatilho': '', 'total': pf.get('p4_total', 0), 'scores': s['scores_p4'], 'conf': pf.get('p4_conf', 0.0)}
+        return stats
 
     def _extrair_features_streak_ml(self, historico_duzias):
         st_info = extrair_features_streak(historico_duzias)
@@ -1720,10 +1993,54 @@ class DuziaAI:
         features_vies_curto = [f * peso_vies for f in features_vies_curto]
         features_raio = [f * peso_raio for f in features_raio]
         features_consenso = [f * peso_consenso for f in features_consenso]
-        
-        return features_base + features_pos_zero + features_numero_duzia + features_fadiga + \
+
+        resultado = features_base + features_pos_zero + features_numero_duzia + features_fadiga + \
                features_alternancia + features_ciclos + features_entropia + features_vies_curto + \
                features_raio + features_consenso
+
+        # 🆕 FEATURES BASEADAS EM PADRÕES DETECTADOS (histórico de assertividade real)
+        historico_entradas = self._historico_entradas_ref or []
+
+        if modo_treino:
+            # Em modo_treino, self.padrao_stats_ui/self.consenso_info refletem o estado
+            # AO VIVO (atual), não o estado histórico do ponto simulado. Reconstruímos
+            # versões "congeladas" a partir de self._ultimo_pf (já calculado corretamente
+            # para este ponto do histórico, dentro de _extrair_features_core) para não
+            # contaminar o treino com dados do presente.
+            pf_pt = getattr(self, '_ultimo_pf', None) or {}
+            consenso_info_pt = self._detectar_consenso_simples(pf_pt)
+            padrao_stats_ui_pt = self._montar_padrao_stats_simples(pf_pt)
+        else:
+            consenso_info_pt = self.consenso_info
+            padrao_stats_ui_pt = self.padrao_stats_ui
+
+        if self.usar_features_consenso_duplo:
+            f = extrair_features_consenso_duplo_historico(historico_entradas, consenso_info_pt)
+            resultado += [v * self.peso_consenso_duplo for v in f]
+
+        if self.usar_features_p4_reforco:
+            f = extrair_features_p4_reforco_historico(historico_entradas, padrao_stats_ui_pt)
+            resultado += [v * self.peso_p4_reforco for v in f]
+
+        if self.usar_features_p3_otimizado:
+            f = extrair_features_p3_otimizado_historico(historico_entradas, padrao_stats_ui_pt)
+            resultado += [v * self.peso_p3_otimizado for v in f]
+
+        if self.usar_features_streak_inteligente:
+            f = extrair_features_streak_inteligente_historico(historico_duzias, historico_entradas)
+            resultado += [v * self.peso_streak_inteligente for v in f]
+
+        if self.usar_features_zero_detectado:
+            f = extrair_features_zero_detectado(historico_numeros, self.alerta_zero_ativo,
+                                                 acertos_zero=getattr(self, 'acertos_zero_ref', 0),
+                                                 erros_zero=getattr(self, 'erros_zero_ref', 0))
+            resultado += [v * self.peso_zero_detectado for v in f]
+
+        if self.usar_features_contexto:
+            f = extrair_features_contexto_geral(historico_duzias, historico_numeros)
+            resultado += [v * self.peso_contexto for v in f]
+
+        return resultado
 
     def _extrair_features_core(self, historico_duzias, historico_numeros,
                                 erros_consec, rodadas_zero, repeticoes_duzia, janela=20, modo_treino=False):
@@ -1822,6 +2139,7 @@ class DuziaAI:
         ]
 
         pf = self._extrair_features_padroes_hibridos(historico_duzias, modo_treino=modo_treino)
+        self._ultimo_pf = pf  # 🔧 Exposto como atributo: usado em _extrair_features_ml_completas
         features_padroes = [
             pf['p2_d1'], pf['p2_d2'], pf['p2_d3'], pf['p2_conf'], pf['p2_total'], pf['p2_dom'],
             pf['p3_d1'], pf['p3_d2'], pf['p3_d3'], pf['p3_conf'], pf['p3_total'], pf['p3_dom'],
@@ -1933,13 +2251,20 @@ class DuziaAI:
                     proba, classes = novo_modelo.predict_proba(X_val)
                     preds = classes[np.argmax(proba, axis=1)]
                     accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
-                    
-                    if accuracy > self._melhor_accuracy:
-                        self._melhor_accuracy = accuracy
-                        self._melhor_modelo = novo_modelo
+
+                    # ✅ Se ainda não há modelo ativo, salva o treino atual mesmo que a
+                    # accuracy não supere _melhor_accuracy — caso contrário a ML nunca
+                    # chega a ativar (modelo_ml permanece None indefinidamente).
+                    sem_modelo_ativo = self.modelo_ml is None
+
+                    if accuracy >= self._melhor_accuracy or sem_modelo_ativo:
+                        if accuracy >= self._melhor_accuracy:
+                            self._melhor_accuracy = accuracy
+                            self._melhor_modelo = novo_modelo
                         self.modelo_ml = novo_modelo
                         self.ultimo_treino_ml = rodada_atual
-                        
+                        self._ultimo_modelo_accuracy = accuracy
+
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
                             logging.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
                             return True
@@ -2077,8 +2402,10 @@ class DuziaAI:
             try: n_features_modelo = self.modelo_ml.n_features_in_
             except: n_features_modelo = None
             if n_features_modelo is not None and len(features) != n_features_modelo:
-                logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Retreinando...")
+                logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Forçando retreino imediato...")
                 self.modelo_ml = None; self.ultimo_treino_ml = 0
+                self._melhor_modelo = None; self._melhor_accuracy = 0.0
+                self._treinar_ml_online()
                 return {1: 0.0, 2: 0.0, 3: 0.0}
             probabilidades, classes = self.modelo_ml.predict_proba([features])
             ml_scores = {1: 0.0, 2: 0.0, 3: 0.0}
@@ -2089,6 +2416,8 @@ class DuziaAI:
             logging.error(f"❌ Erro na inferência ML: {e}")
             if "feature" in str(e).lower() or "shape" in str(e).lower():
                 self.modelo_ml = None; self.ultimo_treino_ml = 0
+                self._melhor_modelo = None; self._melhor_accuracy = 0.0
+                self._treinar_ml_online()
             return {1: 0.0, 2: 0.0, 3: 0.0}
 
     def _prever_fallback_frequencia(self):
@@ -2451,6 +2780,7 @@ class SistemaBot:
         self.sessao_pausa_ate = None; self.total_sessoes = 0
         self.acertos_sessao = 0; self.erros_sessao = 0
         self.gerenciador_sessoes = GerenciadorSessoes(api_name)
+        self.duzia_ai._historico_entradas_ref = self.historico_entradas
 
     def iniciar_sessao(self):
         if self.sessao_pausa_ate and hora_brasilia() < self.sessao_pausa_ate: return False
@@ -2522,6 +2852,8 @@ class SistemaBot:
             elif nr != 0: self.erros_numero += 1
             if acerto_zero: self.acertos_zero += 1
             elif nr == 0: self.erros_zero += 1
+            self.duzia_ai.acertos_zero_ref = self.acertos_zero
+            self.duzia_ai.erros_zero_ref = self.erros_zero
 
             if acerto_primaria or acerto_zero: self.acertos_primaria += 1; self.acertos_duzia += 1
             elif acerto_secundaria: self.acertos_secundaria += 1; self.acertos_duzia += 1
@@ -2565,6 +2897,7 @@ class SistemaBot:
                 'regime': self.duzia_ai.regime_atual,
             })
             if len(self.historico_entradas) > 100: self.historico_entradas = self.historico_entradas[-100:]
+            self.duzia_ai._historico_entradas_ref = self.historico_entradas
 
             enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, eh_raio, multiplicador)
             self.entrada_ativa = None
@@ -2624,6 +2957,9 @@ class SistemaBot:
         self.acertos_sessao = self.erros_sessao = 0
         self.duzia_ai = DuziaAI(window=st.session_state.get('janela_duzia_ai', 30),
                                 api_name=st.session_state.get('api_selecionada', 'XXXtreme Lightning'))
+        self.duzia_ai._historico_entradas_ref = self.historico_entradas
+        self.duzia_ai.acertos_zero_ref = self.acertos_zero
+        self.duzia_ai.erros_zero_ref = self.erros_zero
         salvar_sessao()
 
 
@@ -2707,6 +3043,9 @@ def _carregar_sistema(api_name):
             if campo in dados:
                 for k, v in dados[campo].items(): getattr(sis, campo)[k] = v; getattr(sis.duzia_ai, campo)[k] = v
         sis.duzia_ai._carregar_padroes_hibridos()
+        sis.duzia_ai._historico_entradas_ref = sis.historico_entradas
+        sis.duzia_ai.acertos_zero_ref = sis.acertos_zero
+        sis.duzia_ai.erros_zero_ref = sis.erros_zero
         paths = get_session_paths(api_name)
         if os.path.exists(paths['historico']):
             with open(paths['historico'], 'r') as f: st.session_state.historico = json.load(f)
@@ -2866,16 +3205,59 @@ with st.sidebar:
     st.caption(f"• ML Avançado: {'✅' if config_ativa.get('usar_features_ml_avancadas', True) else '❌'}")
 
     st.markdown("---")
-    st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
-    st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
-    st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
+    _janela_nova = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
+    if _janela_nova != st.session_state.janela_duzia_ai:
+        st.session_state.janela_duzia_ai = _janela_nova; salvar_config_global()
+
+    _agressivo_novo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
+    if _agressivo_novo != st.session_state.modo_agressivo:
+        st.session_state.modo_agressivo = _agressivo_novo; salvar_config_global()
+
+    _automatico_novo = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
+    if _automatico_novo != st.session_state.modo_automatico:
+        st.session_state.modo_automatico = _automatico_novo; salvar_config_global()
 
     st.markdown("---")
     with st.expander("🔔 Telegram", expanded=False):
-        st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
-        st.session_state.telegram_chat_id = st.text_input("Chat ID Principal", value=st.session_state.telegram_chat_id)
-        st.session_state.telegram_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password")
-        st.session_state.telegram_chat_id_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt)
+        st.caption("As credenciais são salvas automaticamente em config_global.json ao alterar.")
+        _tg_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password", key="input_telegram_token")
+        _tg_chat = st.text_input("Chat ID Principal", value=st.session_state.telegram_chat_id, key="input_telegram_chat_id")
+        _tg_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password", key="input_telegram_token_alt")
+        _tg_chat_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt, key="input_telegram_chat_id_alt")
+
+        _tg_mudou = (
+            _tg_token != st.session_state.telegram_token or
+            _tg_chat != st.session_state.telegram_chat_id or
+            _tg_token_alt != st.session_state.telegram_token_alt or
+            _tg_chat_alt != st.session_state.telegram_chat_id_alt
+        )
+
+        st.session_state.telegram_token = _tg_token
+        st.session_state.telegram_chat_id = _tg_chat
+        st.session_state.telegram_token_alt = _tg_token_alt
+        st.session_state.telegram_chat_id_alt = _tg_chat_alt
+
+        if _tg_mudou:
+            salvar_config_global()
+            st.success("✅ Credenciais do Telegram salvas!")
+
+        col_tg1, col_tg2 = st.columns(2)
+        with col_tg1:
+            if st.button("🧪 Testar Principal", use_container_width=True, key="btn_test_tg_main"):
+                if st.session_state.telegram_token and st.session_state.telegram_chat_id:
+                    ok = enviar_telegram("✅ Teste DuziaAI: Telegram Principal conectado!",
+                                          st.session_state.telegram_token, st.session_state.telegram_chat_id)
+                    st.success("✅ Mensagem enviada!") if ok else st.error("❌ Falha ao enviar. Verifique token/chat ID.")
+                else:
+                    st.warning("⚠️ Preencha token e chat ID primeiro.")
+        with col_tg2:
+            if st.button("🧪 Testar Alternativo", use_container_width=True, key="btn_test_tg_alt"):
+                if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt:
+                    ok = enviar_telegram("✅ Teste DuziaAI: Telegram Alternativo conectado!",
+                                          st.session_state.telegram_token_alt, st.session_state.telegram_chat_id_alt)
+                    st.success("✅ Mensagem enviada!") if ok else st.error("❌ Falha ao enviar. Verifique token/chat ID.")
+                else:
+                    st.warning("⚠️ Preencha token e chat ID primeiro.")
 
     # 🔧 DIAGNÓSTICO ML - NOVO
     st.markdown("---")
