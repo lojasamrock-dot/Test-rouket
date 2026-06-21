@@ -1329,7 +1329,7 @@ class _EnsembleManual:
 
 
 # =============================
-# 🧠 DUZIA AI V14.1 — COM DETECTOR DE TRANSIÇÃO E REGRAS DE BLOQUEIO
+# 🧠 DUZIA AI V14.1 — COM DETECTOR DE TRANSIÇÃO
 # =============================
 
 class DuziaAI:
@@ -2275,62 +2275,13 @@ class DuziaAI:
         return [d for d in [1, 2, 3] if d != duzia]
 
     def prever(self):
-        # ==================== REGRAS DE BLOQUEIO - INÍCIO ====================
-        
-        # REGRA 6: BLOQUEAR HORÁRIO CRÍTICO
-        import datetime
-        hora_atual = datetime.datetime.now().hour
-        
-        # Horários críticos para Immersive Roulette
-        if self.api_name == 'Immersive Roulette':
-            if 1 <= hora_atual <= 3:  # 01:00 - 03:00
-                # Só permite se consenso TRIPLO com confiança > 2.8
-                if self.consenso_info['tipo'] == 'triplo' and self.consenso_info.get('conf', 0) > 2.8:
-                    pass  # Permite, mas com penalidade
-                else:
-                    return {
-                        "entrar": False,
-                        "motivo": f"🚫 HORÁRIO CRÍTICO ({hora_atual:02d}:00 - Madrugada)",
-                        "score": {1: 0, 2: 0, 3: 0},
-                        "confianca": 0,
-                        "duzia": 0,
-                        "duzia_secundaria": 0,
-                        "gatilho_ativo": "BLOQUEADO",
-                        "incluir_zero": False,
-                        "numeros_completos": list(self.numeros_completos),
-                        "modo_previsao": "bloqueado",
-                        "rotacao_forcada": False,
-                        "streak_info": None,
-                        "padrao_ativo": {"resumo": "🚫 HORÁRIO CRÍTICO"}
-                    }
-        
-        # REGRA 3: BLOQUEAR REGIME DE TRANSIÇÃO
-        if self.detector_ativo and self.regime_atual in ('transicao',):
-            # Verifica se é uma exceção: consenso TRIPLO com confiança > 2.5
-            if self.consenso_info['tipo'] == 'triplo' and self.consenso_info.get('conf', 0) > 2.5:
-                # Permite entrada, mas com penalidade
-                pass
-            else:
-                return {
-                    "entrar": False,
-                    "motivo": f"🚫 REGIME {self.regime_atual.upper()} - AGUARDAR ESTABILIZAÇÃO",
-                    "score": {1: 0, 2: 0, 3: 0},
-                    "confianca": 0,
-                    "duzia": 0,
-                    "duzia_secundaria": 0,
-                    "gatilho_ativo": "BLOQUEADO",
-                    "incluir_zero": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "bloqueado",
-                    "rotacao_forcada": False,
-                    "streak_info": None,
-                    "padrao_ativo": {"resumo": f"🚫 {self.regime_atual.upper()}"}
-                }
-        
-        # Verificar pausa e drift
         if self.pausa_ate and hora_brasilia() < self.pausa_ate:
             return {"entrar": False, "motivo": "⏸️ Pausa"}
         config = self._get_config()
+        hora_atual = datetime.now().hour
+        if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
+            if config['horario_bloqueio_inicio'] <= hora_atual < config['horario_bloqueio_fim']:
+                return {"entrar": False, "motivo": f"⏸️ Horário bloqueado"}
         if self.em_pausa_pos_raio:
             return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
         if self._drift_ativo:
@@ -2356,216 +2307,6 @@ class DuziaAI:
         streak_len = streak_info.get('streak_atual_len', 0)
         streak_duzia = streak_info.get('streak_atual_duzia', 0)
         streak_cobertura = streak_info.get('cobertura_streak_duzia', 0)
-        streak_saturado = streak_info.get('streak_saturado', 0)
-        taxa_quebra = streak_info.get('streak_taxa_quebra_real', 0)
-        prob_quebra = streak_info.get('prob_quebra_streak3', 0.5) if streak_len >= 3 else streak_info.get('prob_quebra_streak2', 0.5)
-
-        # REGRA 1: BLOQUEAR STREAK SATURADA
-        if self.streak_config_ativo and streak_info:
-            # Bloquear se streak está saturada
-            if streak_saturado == 1:
-                return {
-                    "entrar": False,
-                    "motivo": f"🚫 STREAK SATURADA D{streak_duzia}×{streak_len} | Quebra: {taxa_quebra*100:.0f}%",
-                    "score": scores,
-                    "confianca": 0,
-                    "duzia": 0,
-                    "duzia_secundaria": 0,
-                    "gatilho_ativo": "BLOQUEADO",
-                    "incluir_zero": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "bloqueado",
-                    "rotacao_forcada": False,
-                    "streak_info": None,
-                    "padrao_ativo": {"resumo": "🚫 STREAK SATURADA"}
-                }
-            
-            # Bloquear se streak >= 4 e sem consenso forte
-            if streak_len >= 4 and self.consenso_info['tipo'] not in ('triplo', 'duplo'):
-                return {
-                    "entrar": False,
-                    "motivo": f"🚫 STREAK LONGA D{streak_duzia}×{streak_len} sem consenso",
-                    "score": scores,
-                    "confianca": 0,
-                    "duzia": 0,
-                    "duzia_secundaria": 0,
-                    "gatilho_ativo": "BLOQUEADO",
-                    "incluir_zero": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "bloqueado",
-                    "rotacao_forcada": False,
-                    "streak_info": None,
-                    "padrao_ativo": {"resumo": "🚫 STREAK LONGA SEM CONSENSO"}
-                }
-            
-            # Bloquear se probabilidade de quebra > 70%
-            if prob_quebra > 0.70 and streak_len >= 3:
-                return {
-                    "entrar": False,
-                    "motivo": f"🚫 QUEBRA IMINENTE D{streak_duzia}×{streak_len} | P(quebra)={prob_quebra*100:.0f}%",
-                    "score": scores,
-                    "confianca": 0,
-                    "duzia": 0,
-                    "duzia_secundaria": 0,
-                    "gatilho_ativo": "BLOQUEADO",
-                    "incluir_zero": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "bloqueado",
-                    "rotacao_forcada": False,
-                    "streak_info": None,
-                    "padrao_ativo": {"resumo": "🚫 QUEBRA IMINENTE"}
-                }
-
-        # REGRA 5: BLOQUEAR P4 ISOLADO
-        p4_stats = self.padrao_stats_ui.get('tam4')
-        p3_stats = self.padrao_stats_ui.get('tam3')
-        p2_stats = self.padrao_stats_ui.get('tam2')
-
-        if p4_stats and p4_stats.get('scores'):
-            duzia_p4 = max(p4_stats['scores'], key=p4_stats['scores'].get)
-            conf_p4 = p4_stats.get('conf', 0)
-            
-            # P4 forte, mas P2/P3 fracos ou discordam
-            if conf_p4 > 1.5 and p4_stats.get('total', 0) > 10:
-                # Verifica se P2 e P3 concordam com P4
-                duzia_p2 = None
-                duzia_p3 = None
-                
-                if p2_stats and p2_stats.get('scores'):
-                    duzia_p2 = max(p2_stats['scores'], key=p2_stats['scores'].get)
-                    conf_p2 = p2_stats.get('conf', 0)
-                    # P2 muito fraco ou discordante
-                    if conf_p2 < 1.0 or duzia_p2 != duzia_p4:
-                        duzia_p2 = None
-                
-                if p3_stats and p3_stats.get('scores'):
-                    duzia_p3 = max(p3_stats['scores'], key=p3_stats['scores'].get)
-                    conf_p3 = p3_stats.get('conf', 0)
-                    # P3 muito fraco ou discordante
-                    if conf_p3 < 1.0 or duzia_p3 != duzia_p4:
-                        duzia_p3 = None
-                
-                # Se P2 e P3 não concordam com P4, bloquear
-                if duzia_p2 is None and duzia_p3 is None:
-                    return {
-                        "entrar": False,
-                        "motivo": f"🚫 P4 ISOLADO - P2/P3 discordam",
-                        "score": scores,
-                        "confianca": 0,
-                        "duzia": 0,
-                        "duzia_secundaria": 0,
-                        "gatilho_ativo": "BLOQUEADO",
-                        "incluir_zero": False,
-                        "numeros_completos": list(self.numeros_completos),
-                        "modo_previsao": "bloqueado",
-                        "rotacao_forcada": False,
-                        "streak_info": None,
-                        "padrao_ativo": {"resumo": "🚫 P4 ISOLADO"}
-                    }
-
-        # REGRA 2: BLOQUEAR SEM CONSENSO
-        # Só permite entrada se houver consenso TRIPLO, DUPLO ou SIMPLES com confiança suficiente
-        if self.consenso_info['tipo'] == 'nenhum':
-            # Se não há consenso, verifica se tem streak forte
-            if not (streak_info and streak_info.get('streak_atual_len', 0) >= 3):
-                return {
-                    "entrar": False,
-                    "motivo": "🚫 SEM CONSENSO - P2/P3/P4 discordam",
-                    "score": scores,
-                    "confianca": 0,
-                    "duzia": 0,
-                    "duzia_secundaria": 0,
-                    "gatilho_ativo": "BLOQUEADO",
-                    "incluir_zero": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "bloqueado",
-                    "rotacao_forcada": False,
-                    "streak_info": None,
-                    "padrao_ativo": {"resumo": "🚫 SEM CONSENSO"}
-                }
-
-        # Se consenso é SIMPLES, exige confiança maior
-        if self.consenso_info['tipo'] == 'simples':
-            conf_consenso = self.consenso_info.get('conf', 0)
-            if conf_consenso < 0.50:
-                return {
-                    "entrar": False,
-                    "motivo": f"🚫 CONSENSO SIMPLES FRACO (conf={conf_consenso:.2f})",
-                    "score": scores,
-                    "confianca": 0,
-                    "duzia": 0,
-                    "duzia_secundaria": 0,
-                    "gatilho_ativo": "BLOQUEADO",
-                    "incluir_zero": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "bloqueado",
-                    "rotacao_forcada": False,
-                    "streak_info": None,
-                    "padrao_ativo": {"resumo": "🚫 CONSENSO SIMPLES FRACO"}
-                }
-
-        # REGRA 7: ANTI-ERRO REFORÇADO
-        if self.erros_consecutivos >= 2:
-            # Após 2 erros consecutivos, exige consenso TRIPLO
-            if self.consenso_info['tipo'] != 'triplo':
-                return {
-                    "entrar": False,
-                    "motivo": f"🚫 {self.erros_consecutivos} ERROS CONSECUTIVOS - AGUARDAR TRIPLO",
-                    "score": scores,
-                    "confianca": 0,
-                    "duzia": 0,
-                    "duzia_secundaria": 0,
-                    "gatilho_ativo": "BLOQUEADO",
-                    "incluir_zero": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "bloqueado",
-                    "rotacao_forcada": False,
-                    "streak_info": None,
-                    "padrao_ativo": {"resumo": f"🚫 {self.erros_consecutivos} ERROS"}
-                }
-            
-            # Se tem TRIPLO, exige confiança muito alta
-            if self.consenso_info['tipo'] == 'triplo' and self.consenso_info.get('conf', 0) < 2.0:
-                return {
-                    "entrar": False,
-                    "motivo": f"🚫 ANTI-ERRO: TRIPLO FRACO (conf={self.consenso_info.get('conf', 0):.2f})",
-                    "score": scores,
-                    "confianca": 0,
-                    "duzia": 0,
-                    "duzia_secundaria": 0,
-                    "gatilho_ativo": "BLOQUEADO",
-                    "incluir_zero": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "bloqueado",
-                    "rotacao_forcada": False,
-                    "streak_info": None,
-                    "padrao_ativo": {"resumo": "🚫 ANTI-ERRO: TRIPLO FRACO"}
-                }
-
-        # Se já tem 3+ erros, pausa total
-        if self.erros_consecutivos >= 3:
-            return {
-                "entrar": False,
-                "motivo": f"🚫 PAUSA - {self.erros_consecutivos} ERROS CONSECUTIVOS",
-                "score": {1: 0, 2: 0, 3: 0},
-                "confianca": 0,
-                "duzia": 0,
-                "duzia_secundaria": 0,
-                "gatilho_ativo": "BLOQUEADO",
-                "incluir_zero": False,
-                "numeros_completos": list(self.numeros_completos),
-                "modo_previsao": "bloqueado",
-                "rotacao_forcada": False,
-                "streak_info": None,
-                "padrao_ativo": {"resumo": "🚫 PAUSA POR ERROS"}
-            }
-
-        # ==================== REGRAS DE BLOQUEIO - FIM ====================
-
-        # Verifica bloqueio de horário da configuração
-        if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
-            if config['horario_bloqueio_inicio'] <= hora_atual < config['horario_bloqueio_fim']:
-                return {"entrar": False, "motivo": f"⏸️ Horário bloqueado"}
 
         streak_sinal = ""
         if self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
@@ -2609,25 +2350,6 @@ class DuziaAI:
                 if streak_sinal: motivo += f" | {streak_sinal}"
             else:
                 motivo = f"Aguardando ML ({len(self.historico_completo)}/{max(30, min_rodadas_fb)} rod)"
-
-        # REGRA 4: CONFIANÇA MÍNIMA RIGOROSA
-        confianca_min = config.get('confianca_minima_entrada', 1.8)
-
-        # Aumenta exigência em certas condições
-        if self.erros_consecutivos > 0:
-            confianca_min += 0.5  # Anti-erro: mais rigoroso
-        if self.consenso_info['tipo'] == 'simples':
-            confianca_min += 0.3  # Consenso simples: mais rigoroso
-        if self.detector_ativo and self.regime_atual == 'instavel':
-            confianca_min += 0.5  # Regime instável: mais rigoroso
-
-        if confianca < confianca_min and not forcar_rotacao:
-            # Verifica exceção: consenso TRIPLO forte
-            if self.consenso_info['tipo'] == 'triplo' and self.consenso_info.get('conf', 0) > 2.0:
-                pass  # Permite
-            else:
-                pode_entrar = False
-                motivo = f"🚫 CONFIANÇA BAIXA ({confianca:.2f} < {confianca_min:.2f})"
 
         max_rep = config.get('ml_max_repeticoes_mesma_duzia', 2)
         if pode_entrar and len(self.ultimas_previsoes) >= max_rep:
