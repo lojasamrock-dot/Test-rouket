@@ -1349,6 +1349,9 @@ def _calcular_autocorrelacao(serie, lag=3):
 # =============================
 # 🧠 DUZIA AI V14.1 — COM DETECTOR DE TRANSIÇÃO
 # =============================
+# =============================
+# 🧠 DUZIA AI V14.2 — OTIMIZADO (MENOS RESTRITIVO)
+# =============================
 
 class DuziaAI:
     def __init__(self, window=30, api_name='XXXtreme Lightning'):
