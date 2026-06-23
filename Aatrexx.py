@@ -2448,6 +2448,9 @@ class DuziaAI:
 # =============================
 # SISTEMA PRINCIPAL
 # =============================
+# =============================
+# SISTEMA PRINCIPAL (OTIMIZADO)
+# =============================
 
 class SistemaBot:
     def __init__(self):
@@ -2644,6 +2647,7 @@ class SistemaBot:
         self.duzia_ai = DuziaAI(window=st.session_state.get('janela_duzia_ai', 30),
                                 api_name=st.session_state.get('api_selecionada', 'XXXtreme Lightning'))
         salvar_sessao()
+
 
 
 def salvar_resultado_em_arquivo(historico, caminho):
