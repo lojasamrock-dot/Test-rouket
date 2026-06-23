@@ -2302,7 +2302,7 @@ class DuziaAI:
     # ==================== REGRAS DE BLOQUEIO - OTIMIZADAS ====================
     
     # REGRA 6: HORÁRIO CRÍTICO (MENOS RESTRITIVO)
-    hora_atual = datetime.now().hour
+       hora_atual = datetime.now().hour
     
     # Apenas bloqueia horários EXTREMAMENTE críticos
     if self.api_name == 'Immersive Roulette':
