@@ -2301,7 +2301,7 @@ class DuziaAI:
     # ==================== REGRAS DE BLOQUEIO - OTIMIZADAS ====================
     
     # REGRA 6: HORÁRIO CRÍTICO (MENOS RESTRITIVO)
-    import datetime
+    #import datetime
     hora_atual = datetime.datetime.now().hour
     
     # Apenas bloqueia horários EXTREMAMENTE críticos
