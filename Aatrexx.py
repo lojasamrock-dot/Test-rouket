@@ -23,11 +23,29 @@ try:
 except ImportError:
     ML_DISPONIVEL = False
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler('roleta_bot.log'), logging.StreamHandler()]
-)
+# Configuração do logging com gerenciamento adequado
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Handler para arquivo
+file_handler = logging.FileHandler('roleta_bot.log', mode='a', encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+
+# Handler para console
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+
+# Formatter
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+
+# Adiciona handlers
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# Evita propagação para o root logger
+logger.propagate = False
 
 BRT = timezone(timedelta(hours=-3))
 
@@ -482,6 +500,53 @@ def extrair_features_consenso(consenso_info):
 
 
 # =============================
+# 🧠 ENSEMBLE MANUAL - MOVIDO PARA ESCOPO GLOBAL
+# =============================
+
+class EnsembleManual:
+    """Ensemble manual de RandomForest + GradientBoosting - OTIMIZADO PARA SERIALIZAÇÃO"""
+    
+    def __init__(self, rf, gbt):
+        self.rf = rf
+        self.gbt = gbt
+        self.classes_ = rf.classes_
+        
+        # Obtém n_features_in_ de forma segura
+        try:
+            self.n_features_in_ = rf.n_features_in_
+        except AttributeError:
+            try:
+                self.n_features_in_ = gbt.n_features_in_
+            except AttributeError:
+                self.n_features_in_ = None
+        
+        # Adiciona metadados para debug
+        self._modelo_tipo = "EnsembleManual"
+        self._data_criacao = datetime.now().isoformat()
+        
+    def predict_proba(self, X):
+        """Prediz probabilidades usando ensemble"""
+        try:
+            p_rf = self.rf.predict_proba(X)
+            p_gbt = self.gbt.predict_proba(X)
+            return (p_rf + p_gbt) / 2.0, self.classes_
+        except Exception as e:
+            logger.error(f"❌ Erro no predict_proba: {e}")
+            # Fallback: usa apenas RandomForest
+            p_rf = self.rf.predict_proba(X)
+            return p_rf, self.classes_
+
+    def predict(self, X):
+        """Prediz classes usando ensemble"""
+        try:
+            proba, classes = self.predict_proba(X)
+            return classes[np.argmax(proba, axis=1)]
+        except Exception as e:
+            logger.error(f"❌ Erro no predict: {e}")
+            return self.rf.predict(X)
+
+
+# =============================
 # SETUPS — V14.1 COM DETECTOR DE TRANSIÇÃO
 # =============================
 SETUP_BASE = {
@@ -772,7 +837,7 @@ def get_modelo_ml_path(api_name):
 def salvar_modelo_ml(modelo, api_name):
     """Salva o modelo ML com verificação de integridade"""
     if modelo is None:
-        logging.warning("⚠️ Tentativa de salvar modelo None")
+        logger.warning("⚠️ Tentativa de salvar modelo None")
         return False
     
     try:
@@ -781,7 +846,7 @@ def salvar_modelo_ml(modelo, api_name):
         
         # Verifica se o modelo tem os atributos necessários
         if not hasattr(modelo, 'predict_proba'):
-            logging.error("❌ Modelo não tem método predict_proba")
+            logger.error("❌ Modelo não tem método predict_proba")
             return False
         
         # Salva com compressão para reduzir tamanho
@@ -791,20 +856,20 @@ def salvar_modelo_ml(modelo, api_name):
         if os.path.exists(caminho):
             tamanho = os.path.getsize(caminho)
             if tamanho > 1000:  # Deve ter pelo menos 1KB
-                logging.info(f"✅ Modelo salvo com sucesso! Tamanho: {tamanho/1024:.1f} KB")
+                logger.info(f"✅ Modelo salvo com sucesso! Tamanho: {tamanho/1024:.1f} KB")
                 return True
             else:
-                logging.error(f"❌ Modelo salvo com tamanho suspeito: {tamanho} bytes")
+                logger.error(f"❌ Modelo salvo com tamanho suspeito: {tamanho} bytes")
                 os.remove(caminho)  # Remove arquivo corrompido
                 return False
         else:
-            logging.error("❌ Arquivo do modelo não foi criado")
+            logger.error("❌ Arquivo do modelo não foi criado")
             return False
             
     except Exception as e:
-        logging.error(f"❌ Erro ao salvar modelo ML: {e}")
+        logger.error(f"❌ Erro ao salvar modelo ML: {e}")
         import traceback
-        logging.error(traceback.format_exc())
+        logger.error(traceback.format_exc())
         return False
 
 def carregar_modelo_ml(api_name):
@@ -817,7 +882,7 @@ def carregar_modelo_ml(api_name):
         # Verifica se o arquivo tem tamanho válido
         tamanho = os.path.getsize(caminho)
         if tamanho < 1000:  # Menos de 1KB é suspeito
-            logging.warning(f"⚠️ Arquivo do modelo muito pequeno ({tamanho} bytes). Ignorando.")
+            logger.warning(f"⚠️ Arquivo do modelo muito pequeno ({tamanho} bytes). Ignorando.")
             os.remove(caminho)  # Remove arquivo corrompido
             return None
         
@@ -825,19 +890,19 @@ def carregar_modelo_ml(api_name):
         
         # Verifica se o modelo carregado é funcional
         if not hasattr(modelo, 'predict_proba'):
-            logging.error("❌ Modelo carregado não tem predict_proba")
+            logger.error("❌ Modelo carregado não tem predict_proba")
             return None
             
-        logging.info(f"✅ Modelo carregado com sucesso! Tamanho: {tamanho/1024:.1f} KB")
+        logger.info(f"✅ Modelo carregado com sucesso! Tamanho: {tamanho/1024:.1f} KB")
         return modelo
         
     except Exception as e:
-        logging.error(f"❌ Erro ao carregar modelo ML: {e}")
+        logger.error(f"❌ Erro ao carregar modelo ML: {e}")
         # Remove arquivo corrompido
         try:
             if os.path.exists(caminho):
                 os.remove(caminho)
-                logging.info("🗑️ Arquivo corrompido removido")
+                logger.info("🗑️ Arquivo corrompido removido")
         except:
             pass
         return None
@@ -895,7 +960,7 @@ def salvar_config_global():
     }
     try:
         with open(CONFIG_GLOBAL_PATH, 'w') as f: json.dump(config, f)
-    except Exception as e: logging.error(f"Erro ao salvar config global: {e}")
+    except Exception as e: logger.error(f"Erro ao salvar config global: {e}")
 
 def carregar_config_global():
     try:
@@ -941,7 +1006,7 @@ class GerenciadorSessoes:
             self._atualizar_historico_sessoes(numero_sessao, dados_sessao, nome)
             return caminho
         except Exception as e:
-            logging.error(f"Erro ao salvar sessão: {e}"); return None
+            logger.error(f"Erro ao salvar sessão: {e}"); return None
 
     def _atualizar_historico_sessoes(self, numero_sessao, dados_sessao, nome_arquivo):
         paths = get_session_paths(self.api_name)
@@ -1060,7 +1125,7 @@ def salvar_sessao():
         salvar_config_global()
         return True
     except Exception as e:
-        logging.error(f"Erro ao salvar: {e}")
+        logger.error(f"Erro ao salvar: {e}")
         return False
 
 def carregar_dados_persistidos(api_name):
@@ -1092,7 +1157,7 @@ def nova_sessao():
         st.session_state.historico = []
         return True
     except Exception as e:
-        logging.error(f"Erro: {e}")
+        logger.error(f"Erro: {e}")
         return False
 
 def _selecionar_melhores_numeros(duzia, numeros_completos, quantidade=6):
@@ -1150,7 +1215,7 @@ def enviar_previsao_auto(previsao):
             enviar_telegram(f"🎯: {melhores_str}" + (" + 🟢 ZERO" if incluir_zero else ""),
                            st.session_state.telegram_token_alt, st.session_state.telegram_chat_id_alt)
         salvar_sessao()
-    except Exception as e: logging.error(f"Erro enviar previsão: {e}")
+    except Exception as e: logger.error(f"Erro enviar previsão: {e}")
 
 def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero, eh_raio=False, multiplicador=0):
     try:
@@ -1176,14 +1241,14 @@ def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero,
             else: msg_alt = f"❌ RED - Nº {numero_real}"
             enviar_telegram(msg_alt, st.session_state.telegram_token_alt, st.session_state.telegram_chat_id_alt)
         salvar_sessao()
-    except Exception as e: logging.error(f"Erro resultado: {e}")
+    except Exception as e: logger.error(f"Erro resultado: {e}")
 
 def enviar_telegram(mensagem, token, chat_id):
     try:
         if not token or not chat_id: return
         requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
                      json={"chat_id": chat_id, "text": mensagem, "parse_mode": "HTML"}, timeout=10)
-    except Exception as e: logging.error(f"Erro Telegram: {e}")
+    except Exception as e: logger.error(f"Erro Telegram: {e}")
 
 API_URLS = {
     'XXXtreme Lightning': "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremelightningroulette/latest",
@@ -1216,7 +1281,7 @@ def fetch_XXXtreme_Lightning():
                 if m is not None: lm[n] = m
         return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm,
                 "table_id": ti.get("id", "unknown"), "table_name": ti.get("name", "Desconhecida")}
-    except Exception as e: logging.warning(f"❌ Erro XXXtreme: {e}"); return None
+    except Exception as e: logger.warning(f"❌ Erro XXXtreme: {e}"); return None
 
 def fetch_Immersive_Roulette():
     try:
@@ -1226,7 +1291,7 @@ def fetch_Immersive_Roulette():
         return {"number": outcome.get("number"), "timestamp": data.get("startedAt"),
                 "luckyNumbers": [], "luckyMultipliers": {},
                 "table_id": ti.get("id", "unknown"), "table_name": ti.get("name", "Desconhecida")}
-    except Exception as e: logging.warning(f"❌ Erro Immersive: {e}"); return None
+    except Exception as e: logger.warning(f"❌ Erro Immersive: {e}"); return None
 
 def fetch_Mega_Roulette():
     try:
@@ -1242,7 +1307,7 @@ def fetch_Mega_Roulette():
                 if m is not None: lm[n] = m
         return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm,
                 "table_id": ti.get("id", "unknown"), "table_name": ti.get("name", "Desconhecida")}
-    except Exception as e: logging.warning(f"❌ Erro Mega: {e}"); return None
+    except Exception as e: logger.warning(f"❌ Erro Mega: {e}"); return None
 
 FETCH_FUNCTIONS = {
     'XXXtreme Lightning': fetch_XXXtreme_Lightning,
@@ -1279,53 +1344,6 @@ def _calcular_autocorrelacao(serie, lag=3):
         corr = np.corrcoef(s1, s2)[0, 1]
         return float(corr) if not np.isnan(corr) else 0.0
     except: return 0.0
-
-
-# =============================
-# 🧠 _ENSEMBLEMANUAL - OTIMIZADO PARA SERIALIZAÇÃO
-# =============================
-
-class _EnsembleManual:
-    """Ensemble manual de RandomForest + GradientBoosting - OTIMIZADO PARA SERIALIZAÇÃO"""
-    
-    def __init__(self, rf, gbt):
-        self.rf = rf
-        self.gbt = gbt
-        self.classes_ = rf.classes_
-        
-        # Obtém n_features_in_ de forma segura
-        try:
-            self.n_features_in_ = rf.n_features_in_
-        except AttributeError:
-            try:
-                self.n_features_in_ = gbt.n_features_in_
-            except AttributeError:
-                self.n_features_in_ = None
-        
-        # Adiciona metadados para debug
-        self._modelo_tipo = "EnsembleManual"
-        self._data_criacao = datetime.now().isoformat()
-        
-    def predict_proba(self, X):
-        """Prediz probabilidades usando ensemble"""
-        try:
-            p_rf = self.rf.predict_proba(X)
-            p_gbt = self.gbt.predict_proba(X)
-            return (p_rf + p_gbt) / 2.0, self.classes_
-        except Exception as e:
-            logging.error(f"❌ Erro no predict_proba: {e}")
-            # Fallback: usa apenas RandomForest
-            p_rf = self.rf.predict_proba(X)
-            return p_rf, self.classes_
-
-    def predict(self, X):
-        """Prediz classes usando ensemble"""
-        try:
-            proba, classes = self.predict_proba(X)
-            return classes[np.argmax(proba, axis=1)]
-        except Exception as e:
-            logging.error(f"❌ Erro no predict: {e}")
-            return self.rf.predict(X)
 
 
 # =============================
@@ -1455,7 +1473,7 @@ class DuziaAI:
         if modelo is not None:
             self.modelo_ml = modelo
             self.ultimo_treino_ml = 1
-            logging.info(f"🧠 Modelo ML carregado do disco para {self.api_name}")
+            logger.info(f"🧠 Modelo ML carregado do disco para {self.api_name}")
 
     def _salvar_padroes_hibridos(self):
         paths = get_session_paths(self.api_name)
@@ -1468,7 +1486,7 @@ class DuziaAI:
                 'tam4': {str(k): dict(v) for k, v in self.padroes_tam4.items()},
             }
             with open(caminho, 'w') as f: json.dump(dados, f)
-        except Exception as e: logging.error(f"❌ Erro ao salvar padrões: {e}")
+        except Exception as e: logger.error(f"❌ Erro ao salvar padrões: {e}")
 
     def _carregar_padroes_hibridos(self):
         paths = get_session_paths(self.api_name)
@@ -1486,7 +1504,7 @@ class DuziaAI:
                 for k, v in dados.get('tam4', {}).items():
                     try: self.padroes_tam4[tuple(ast.literal_eval(k))] = Counter({int(dk): dv for dk, dv in v.items()})
                     except: pass
-            except Exception as e: logging.error(f"❌ Erro ao carregar padrões: {e}")
+            except Exception as e: logger.error(f"❌ Erro ao carregar padrões: {e}")
 
     def _atualizar_padroes_hibridos(self, historico_duzias):
         duzias = [d for d in historico_duzias if d != 0]
@@ -1905,7 +1923,7 @@ class DuziaAI:
                 if target in [1, 2, 3]: X.append(features); y.append(target)
 
             if len(X) < 12: 
-                logging.info(f"⚠️ Poucas amostras para treino: {len(X)}")
+                logger.info(f"⚠️ Poucas amostras para treino: {len(X)}")
                 return False
 
             X_arr = np.array(X)
@@ -1926,7 +1944,8 @@ class DuziaAI:
             rf.fit(X_train, y_train, sample_weight=sample_weights)
             gbt.fit(X_train, y_train, sample_weight=sample_weights)
 
-            novo_modelo = _EnsembleManual(rf, gbt)
+            # Usa a classe global EnsembleManual
+            novo_modelo = EnsembleManual(rf, gbt)
             
             if tem_validacao:
                 try:
@@ -1941,37 +1960,37 @@ class DuziaAI:
                         self.ultimo_treino_ml = rodada_atual
                         
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logging.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
+                            logger.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
                             return True
                         else:
-                            logging.error("❌ Falha ao salvar modelo!")
+                            logger.error("❌ Falha ao salvar modelo!")
                             return False
                     else:
-                        logging.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%})")
+                        logger.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%})")
                         return False
                 except Exception as e:
-                    logging.error(f"❌ Erro na validação ML: {e}")
+                    logger.error(f"❌ Erro na validação ML: {e}")
                     # Mesmo sem validação, tenta salvar
                     self.modelo_ml = novo_modelo
                     self.ultimo_treino_ml = rodada_atual
                     if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                        logging.info(f"🧠 ML V14.1 Treinado (sem validação)! Amostras: {len(X)}")
+                        logger.info(f"🧠 ML V14.1 Treinado (sem validação)! Amostras: {len(X)}")
                         return True
                     return False
             
             self.modelo_ml = novo_modelo
             self.ultimo_treino_ml = rodada_atual
             if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                logging.info(f"🧠 ML V14.1 Treinado! Amostras: {len(X)}")
+                logger.info(f"🧠 ML V14.1 Treinado! Amostras: {len(X)}")
                 return True
             else:
-                logging.error("❌ Falha ao salvar modelo!")
+                logger.error("❌ Falha ao salvar modelo!")
                 return False
                 
         except Exception as e:
-            logging.error(f"❌ Erro no treino ML: {e}")
+            logger.error(f"❌ Erro no treino ML: {e}")
             import traceback
-            logging.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
             return False
 
     def adicionar(self, numero):
@@ -2010,7 +2029,7 @@ class DuziaAI:
         if self._drift_ativo and self._rodadas_sem_entrada >= self.drift_rodadas_auto_reset:
             self._drift_ativo = False
             self._rodadas_sem_entrada = 0
-            logging.info("🔄 Drift resetado automaticamente após rodadas sem entrada")
+            logger.info("🔄 Drift resetado automaticamente após rodadas sem entrada")
         self._treinar_ml_online()
 
     def registrar_previsao(self, duzia, confianca):
@@ -2077,7 +2096,7 @@ class DuziaAI:
             try: n_features_modelo = self.modelo_ml.n_features_in_
             except: n_features_modelo = None
             if n_features_modelo is not None and len(features) != n_features_modelo:
-                logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Retreinando...")
+                logger.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Retreinando...")
                 self.modelo_ml = None; self.ultimo_treino_ml = 0
                 return {1: 0.0, 2: 0.0, 3: 0.0}
             probabilidades, classes = self.modelo_ml.predict_proba([features])
@@ -2086,7 +2105,7 @@ class DuziaAI:
                 if classe in ml_scores: ml_scores[classe] = float(prob) * 100
             return ml_scores
         except Exception as e:
-            logging.error(f"❌ Erro na inferência ML: {e}")
+            logger.error(f"❌ Erro na inferência ML: {e}")
             if "feature" in str(e).lower() or "shape" in str(e).lower():
                 self.modelo_ml = None; self.ultimo_treino_ml = 0
             return {1: 0.0, 2: 0.0, 3: 0.0}
@@ -2630,7 +2649,7 @@ class SistemaBot:
 def salvar_resultado_em_arquivo(historico, caminho):
     try:
         with open(caminho, "w", encoding='utf-8') as f: json.dump(historico, f, indent=2)
-    except Exception as e: logging.error(f"Erro: {e}")
+    except Exception as e: logger.error(f"Erro: {e}")
 
 def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     try:
@@ -2656,7 +2675,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
                                   str(e.get('streak_info', '-')) if e.get('streak_info') else '-'])
         return True
     except Exception as e:
-        logging.error(f"Erro CSV: {e}")
+        logger.error(f"Erro CSV: {e}")
         return False
 
 
