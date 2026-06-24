@@ -2298,13 +2298,13 @@ class DuziaAI:
         return [d for d in [1, 2, 3] if d != duzia]
 
     #def prever(self):
-    def prever(self):
-        hora_atual = datetime.now().hour
-    
+def prever(self):
+    hora_atual = datetime.now().hour
+
     streak_info = self._streak_info_atual
     streak_duzia = streak_info.get('streak_atual_duzia', 0)
     streak_len = streak_info.get('streak_atual_len', 0)
-    
+
     if streak_duzia == 1 and streak_len >= 2:
         if self.consenso_info['tipo'] != 'triplo':
             return {
@@ -2322,7 +2322,7 @@ class DuziaAI:
                 "streak_info": None,
                 "padrao_ativo": {"resumo": "🚫 STREAK D1 BLOQUEADA"}
             }
-    
+
     if self.api_name == 'Immersive Roulette':
         if 2 <= hora_atual <= 3:
             if self.consenso_info['tipo'] in ('duplo', 'triplo') and self.consenso_info.get('conf', 0) > 1.5:
@@ -2343,7 +2343,7 @@ class DuziaAI:
                     "streak_info": None,
                     "padrao_ativo": {"resumo": "⏰ HORÁRIO CRÍTICO"}
                 }
-    
+
     if self.detector_ativo and self.regime_atual in ('transicao',):
         if self.consenso_info['tipo'] in ('duplo', 'triplo') and self.consenso_info.get('conf', 0) > 1.2:
             pass
@@ -2367,15 +2367,15 @@ class DuziaAI:
                     "streak_info": None,
                     "padrao_ativo": {"resumo": f"🔄 {self.regime_atual}"}
                 }
-    
+
     if self.pausa_ate and hora_brasilia() < self.pausa_ate:
         return {"entrar": False, "motivo": "⏸️ Pausa"}
-    
+
     config = self._get_config()
-    
+
     if self.em_pausa_pos_raio:
         return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
-    
+
     if self._drift_ativo:
         return {"entrar": False, "motivo": f"⚠️ DRIFT — Aguardando recuperação. ({self._rodadas_sem_entrada}/{self.drift_rodadas_auto_reset} rod)"}
 
@@ -2422,7 +2422,7 @@ class DuziaAI:
                 "streak_info": None,
                 "padrao_ativo": {"resumo": "🚫 STREAK SATURADA"}
             }
-        
+
         if prob_quebra > 0.80 and streak_len >= 5:
             return {
                 "entrar": False,
@@ -2447,23 +2447,23 @@ class DuziaAI:
     if p4_stats and p4_stats.get('scores'):
         duzia_p4 = max(p4_stats['scores'], key=p4_stats['scores'].get)
         conf_p4 = p4_stats.get('conf', 0)
-        
+
         if conf_p4 > 2.0 and p4_stats.get('total', 0) > 15:
             duzia_p2 = None
             duzia_p3 = None
-            
+
             if p2_stats and p2_stats.get('scores'):
                 duzia_p2 = max(p2_stats['scores'], key=p2_stats['scores'].get)
                 conf_p2 = p2_stats.get('conf', 0)
                 if conf_p2 < 0.5 or duzia_p2 != duzia_p4:
                     duzia_p2 = None
-            
+
             if p3_stats and p3_stats.get('scores'):
                 duzia_p3 = max(p3_stats['scores'], key=p3_stats['scores'].get)
                 conf_p3 = p3_stats.get('conf', 0)
                 if conf_p3 < 0.5 or duzia_p3 != duzia_p4:
                     duzia_p3 = None
-            
+
             if duzia_p2 is None and duzia_p3 is None:
                 return {
                     "entrar": False,
@@ -2484,7 +2484,7 @@ class DuziaAI:
     if self.consenso_info['tipo'] == 'nenhum':
         tem_streak_forte = streak_info and streak_info.get('streak_atual_len', 0) >= 3
         ml_score_alto = s1 > 40
-        
+
         if not tem_streak_forte and not ml_score_alto:
             return {
                 "entrar": False,
@@ -2519,7 +2519,7 @@ class DuziaAI:
                 "streak_info": None,
                 "padrao_ativo": {"resumo": f"🚫 {self.erros_consecutivos} ERROS"}
             }
-        
+
         if self.consenso_info.get('conf', 0) < 1.2:
             return {
                 "entrar": False,
@@ -2679,7 +2679,7 @@ class DuziaAI:
         "rotacao_forcada": forcar_rotacao,
         "streak_info": streak_sinal if streak_sinal else None,
     }
-    
+
     if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
         previsao = self._aplicar_regras_transicao(previsao)
 
@@ -2698,28 +2698,29 @@ class DuziaAI:
         'streak_aplicado': streak_aplicado,
         'resumo': []
     }
-    
+
     for t, nome in [('tam2','P2'),('tam3','P3'),('tam4','P4')]:
         if info_padrao[t]:
             info_padrao['resumo'].append(f"{nome}:{info_padrao[t]['gatilho']}")
-    
+
     if self.consenso_info['tipo'] in ('duplo','triplo','simples'):
         info_padrao['resumo'].append(f"{'🔒' if self.consenso_info['tipo']=='triplo' else '🔗'}D{self.consenso_info['duzia']}")
-    
+
     if self.vies_dinamico_ativo and self._vies_dinamico_atual:
         info_padrao['resumo'].append(f"🔍VD-D{self._vies_dinamico_atual}")
-    
+
     if streak_sinal:
         info_padrao['resumo'].append(streak_sinal)
-    
+
     if self.regime_atual in ('transicao', 'instavel'):
         info_padrao['resumo'].append(f"🔄{self.regime_atual}")
-    
+
     info_padrao['resumo'] = " | ".join(info_padrao['resumo']) if info_padrao['resumo'] else "-"
-    
+
     previsao['padrao_ativo'] = info_padrao
 
     return previsao
+    
     
     
     
