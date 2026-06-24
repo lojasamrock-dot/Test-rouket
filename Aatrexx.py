@@ -2299,6 +2299,31 @@ class DuziaAI:
 
     #def prever(self):
     def prever(self):
+       # Adicionar no início do método prever(), antes das regras atuais:
+
+# REGRA ESPECIAL: STREAK D1
+streak_info = self._streak_info_atual
+streak_duzia = streak_info.get('streak_atual_duzia', 0)
+streak_len = streak_info.get('streak_atual_len', 0)
+
+if streak_duzia == 1 and streak_len >= 2:
+    # Exige consenso TRIPLO para D1
+    if self.consenso_info['tipo'] != 'triplo':
+        return {
+            "entrar": False,
+            "motivo": f"🚫 Streak D1({streak_len}x) requer TRIPLO",
+            "score": scores,
+            "confianca": 0,
+            "duzia": 0,
+            "duzia_secundaria": 0,
+            "gatilho_ativo": "BLOQUEADO",
+            "incluir_zero": False,
+            "numeros_completos": list(self.numeros_completos),
+            "modo_previsao": "bloqueado",
+            "rotacao_forcada": False,
+            "streak_info": None,
+            "padrao_ativo": {"resumo": "🚫 STREAK D1 BLOQUEADA"}
+        } 
         hora_atual = datetime.now().hour
         
         if self.api_name == 'Immersive Roulette':
