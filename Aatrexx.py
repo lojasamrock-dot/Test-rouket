@@ -1,3 +1,7 @@
+# ============================================================
+# DUZIA AI V14.1 - COM DETECTOR DE TRANSIÇÃO E ML CORRIGIDO
+# ============================================================
+
 import streamlit as st
 import json
 import os
@@ -13,7 +17,8 @@ import csv
 import base64
 from io import StringIO, BytesIO
 import math
-#import data time
+import tempfile
+import shutil
 
 try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -835,8 +840,10 @@ def get_modelo_ml_path(api_name):
     criar_pasta_modelos_ml()
     return os.path.join(PASTA_MODELOS_ML, f"modelo_ml_{api_name.lower().replace(' ', '_')}.joblib")
 
+# ====================== FUNÇÕES CORRIGIDAS ======================
+
 def salvar_modelo_ml(modelo, api_name):
-    """Salva o modelo ML com verificação de integridade"""
+    """Salva o modelo ML com verificação rigorosa"""
     if modelo is None:
         logger.warning("⚠️ Tentativa de salvar modelo None")
         return False
@@ -845,26 +852,51 @@ def salvar_modelo_ml(modelo, api_name):
         criar_pasta_modelos_ml()
         caminho = get_modelo_ml_path(api_name)
         
-        # Verifica se o modelo tem os atributos necessários
+        # Verifica se o modelo é válido
         if not hasattr(modelo, 'predict_proba'):
-            logger.error("❌ Modelo não tem método predict_proba")
+            logger.error("❌ Modelo não tem predict_proba")
             return False
         
-        # Salva com compressão para reduzir tamanho
-        joblib.dump(modelo, caminho, compress=3)
+        # Salva em arquivo temporário primeiro
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.joblib') as tmp:
+            temp_path = tmp.name
         
-        # Verifica se salvou corretamente
-        if os.path.exists(caminho):
-            tamanho = os.path.getsize(caminho)
-            if tamanho > 1000:  # Deve ter pelo menos 1KB
-                logger.info(f"✅ Modelo salvo com sucesso! Tamanho: {tamanho/1024:.1f} KB")
-                return True
+        try:
+            # Salva com compressão média
+            joblib.dump(modelo, temp_path, compress=3)
+            
+            # Verifica se o arquivo temporário foi criado com tamanho > 0
+            if os.path.exists(temp_path):
+                tamanho = os.path.getsize(temp_path)
+                if tamanho < 1000:
+                    logger.error(f"❌ Arquivo temporário muito pequeno: {tamanho} bytes")
+                    os.remove(temp_path)
+                    return False
+                
+                # Move para o destino final
+                shutil.move(temp_path, caminho)
+                
+                # Verifica o arquivo final
+                if os.path.exists(caminho):
+                    tamanho_final = os.path.getsize(caminho)
+                    if tamanho_final > 1000:
+                        logger.info(f"✅ Modelo salvo! Tamanho: {tamanho_final/1024:.1f} KB")
+                        return True
+                    else:
+                        logger.error(f"❌ Arquivo final corrompido: {tamanho_final} bytes")
+                        os.remove(caminho)
+                        return False
+                else:
+                    logger.error("❌ Falha ao mover arquivo")
+                    return False
             else:
-                logger.error(f"❌ Modelo salvo com tamanho suspeito: {tamanho} bytes")
-                os.remove(caminho)  # Remove arquivo corrompido
+                logger.error("❌ Arquivo temporário não criado")
                 return False
-        else:
-            logger.error("❌ Arquivo do modelo não foi criado")
+                
+        except Exception as e:
+            logger.error(f"❌ Erro no dump: {e}")
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
             return False
             
     except Exception as e:
@@ -874,32 +906,36 @@ def salvar_modelo_ml(modelo, api_name):
         return False
 
 def carregar_modelo_ml(api_name):
-    """Carrega o modelo ML com verificação de integridade"""
+    """Carrega o modelo ML com verificação rigorosa"""
     try:
         caminho = get_modelo_ml_path(api_name)
         if not os.path.exists(caminho):
+            logger.info(f"ℹ️ Modelo não encontrado: {caminho}")
             return None
         
-        # Verifica se o arquivo tem tamanho válido
         tamanho = os.path.getsize(caminho)
-        if tamanho < 1000:  # Menos de 1KB é suspeito
-            logger.warning(f"⚠️ Arquivo do modelo muito pequeno ({tamanho} bytes). Ignorando.")
-            os.remove(caminho)  # Remove arquivo corrompido
+        if tamanho < 5000:  # Menos de 5KB é suspeito
+            logger.warning(f"⚠️ Arquivo do modelo muito pequeno ({tamanho} bytes). Removendo...")
+            os.remove(caminho)
             return None
         
         modelo = joblib.load(caminho)
         
-        # Verifica se o modelo carregado é funcional
         if not hasattr(modelo, 'predict_proba'):
             logger.error("❌ Modelo carregado não tem predict_proba")
+            os.remove(caminho)
+            return None
+        
+        if not hasattr(modelo, 'rf') or not hasattr(modelo, 'gbt'):
+            logger.error("❌ Modelo não tem rf/gbt")
+            os.remove(caminho)
             return None
             
-        logger.info(f"✅ Modelo carregado com sucesso! Tamanho: {tamanho/1024:.1f} KB")
+        logger.info(f"✅ Modelo carregado! Tamanho: {tamanho/1024:.1f} KB")
         return modelo
         
     except Exception as e:
         logger.error(f"❌ Erro ao carregar modelo ML: {e}")
-        # Remove arquivo corrompido
         try:
             if os.path.exists(caminho):
                 os.remove(caminho)
@@ -919,7 +955,7 @@ def diagnosticar_modelo(api_name):
         tamanho = os.path.getsize(caminho)
         print(f"📦 Tamanho: {tamanho} bytes ({tamanho/1024:.1f} KB)")
         
-        if tamanho < 1000:
+        if tamanho < 5000:
             print("⚠️ ARQUIVO MUITO PEQUENO - CORROMPIDO!")
             return False
         
@@ -944,6 +980,8 @@ def diagnosticar_modelo(api_name):
     else:
         print("❌ Arquivo do modelo NÃO encontrado")
         return False
+
+# ====================== FIM FUNÇÕES CORRIGIDAS ======================
 
 def salvar_config_global():
     config = {
@@ -1348,13 +1386,9 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
-# 🧠 DUZIA AI V14.1 — COM DETECTOR DE TRANSIÇÃO
-# =============================
-# =============================
 # 🧠 DUZIA AI V14.2 — OTIMIZADO (MENOS RESTRITIVO)
 # =============================
 
-#class DuziaAI:
 class DuziaAI:
     def __init__(self, window=30, api_name='XXXtreme Lightning'):
         self.historico = deque(maxlen=window)
@@ -2881,22 +2915,8 @@ class DuziaAI:
         previsao['padrao_ativo'] = info_padrao
 
         return previsao
-    
-    
-
-    
-    
-    
-    
-    
-    
-        
-        
 
 
-# =============================
-# SISTEMA PRINCIPAL
-# =============================
 # =============================
 # SISTEMA PRINCIPAL (OTIMIZADO)
 # =============================
@@ -3096,7 +3116,6 @@ class SistemaBot:
         self.duzia_ai = DuziaAI(window=st.session_state.get('janela_duzia_ai', 30),
                                 api_name=st.session_state.get('api_selecionada', 'XXXtreme Lightning'))
         salvar_sessao()
-
 
 
 def salvar_resultado_em_arquivo(historico, caminho):
@@ -3361,7 +3380,7 @@ with st.sidebar:
                 st.write(f"📁 Arquivo: {caminho}")
                 st.write(f"📦 Tamanho: {tamanho} bytes ({tamanho/1024:.1f} KB)")
                 
-                if tamanho < 1000:
+                if tamanho < 5000:
                     st.error("⚠️ ARQUIVO CORROMPIDO! Tamanho muito pequeno.")
                     if st.button("🗑️ Remover arquivo corrompido"):
                         os.remove(caminho)
