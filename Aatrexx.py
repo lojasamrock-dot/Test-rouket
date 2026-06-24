@@ -2298,14 +2298,14 @@ class DuziaAI:
         return [d for d in [1, 2, 3] if d != duzia]
 
     def prever(self):
-        hora_atual = datetime.now().hour
+    hora_atual = datetime.now().hour
 
     streak_info = self._streak_info_atual
     streak_duzia = streak_info.get('streak_atual_duzia', 0)
     streak_len = streak_info.get('streak_atual_len', 0)
 
     if streak_duzia == 1 and streak_len >= 2:
-        if self.consenso_info['tipo'] != 'triplo':
+    if self.consenso_info['tipo'] != 'triplo':
             return {
                 "entrar": False,
                 "motivo": f"🚫 Streak D1({streak_len}x) requer TRIPLO",
