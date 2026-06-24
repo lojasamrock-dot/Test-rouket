@@ -2305,8 +2305,8 @@ class DuziaAI:
         streak_len = streak_info.get('streak_atual_len', 0)
 
     if streak_duzia == 1 and streak_len >= 2:
-        if self.consenso_info['tipo'] != 'triplo':
-            return {
+    if self.consenso_info['tipo'] != 'triplo':
+        return {
                 "entrar": False,
                 "motivo": f"🚫 Streak D1({streak_len}x) requer TRIPLO",
                 "score": {1: 0, 2: 0, 3: 0},
