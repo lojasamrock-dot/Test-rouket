@@ -2299,15 +2299,12 @@ class DuziaAI:
 
     #def prever(self):
     def prever(self):
-    # REGRA ESPECIAL: STREAK D1 (deve ser a PRIMEIRA verificação)
-    hora_atual = datetime.now().hour
+        hora_atual = datetime.now().hour
     
-    # OBTÉM STREAK INFO ANTES DE TUDO
     streak_info = self._streak_info_atual
     streak_duzia = streak_info.get('streak_atual_duzia', 0)
     streak_len = streak_info.get('streak_atual_len', 0)
     
-    # REGRA ESPECIAL: STREAK D1 - Bloqueia se D1 streak >= 2 sem TRIPLO
     if streak_duzia == 1 and streak_len >= 2:
         if self.consenso_info['tipo'] != 'triplo':
             return {
@@ -2326,7 +2323,6 @@ class DuziaAI:
                 "padrao_ativo": {"resumo": "🚫 STREAK D1 BLOQUEADA"}
             }
     
-    # REGRA: HORÁRIO CRÍTICO (apenas Immersive)
     if self.api_name == 'Immersive Roulette':
         if 2 <= hora_atual <= 3:
             if self.consenso_info['tipo'] in ('duplo', 'triplo') and self.consenso_info.get('conf', 0) > 1.5:
@@ -2348,7 +2344,6 @@ class DuziaAI:
                     "padrao_ativo": {"resumo": "⏰ HORÁRIO CRÍTICO"}
                 }
     
-    # REGRA: REGIME DE TRANSIÇÃO
     if self.detector_ativo and self.regime_atual in ('transicao',):
         if self.consenso_info['tipo'] in ('duplo', 'triplo') and self.consenso_info.get('conf', 0) > 1.2:
             pass
@@ -2373,7 +2368,6 @@ class DuziaAI:
                     "padrao_ativo": {"resumo": f"🔄 {self.regime_atual}"}
                 }
     
-    # VERIFICAÇÕES DE PAUSA E DRIFT
     if self.pausa_ate and hora_brasilia() < self.pausa_ate:
         return {"entrar": False, "motivo": "⏸️ Pausa"}
     
@@ -2385,7 +2379,6 @@ class DuziaAI:
     if self._drift_ativo:
         return {"entrar": False, "motivo": f"⚠️ DRIFT — Aguardando recuperação. ({self._rodadas_sem_entrada}/{self.drift_rodadas_auto_reset} rod)"}
 
-    # CALCULA SCORES
     scores, modo = self.calcular_score()
     ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     d1, s1 = ranking[0]
@@ -2405,7 +2398,6 @@ class DuziaAI:
     motivo = ""
     forcar_rotacao = False
 
-    # ATUALIZA STREAK INFO (já foi obtido no início)
     streak_len = streak_info.get('streak_atual_len', 0)
     streak_duzia = streak_info.get('streak_atual_duzia', 0)
     streak_cobertura = streak_info.get('cobertura_streak_duzia', 0)
@@ -2413,7 +2405,6 @@ class DuziaAI:
     taxa_quebra = streak_info.get('streak_taxa_quebra_real', 0)
     prob_quebra = streak_info.get('prob_quebra_streak3', 0.5) if streak_len >= 3 else streak_info.get('prob_quebra_streak2', 0.5)
 
-    # REGRA: STREAK SATURADA
     if self.streak_config_ativo and streak_info:
         if streak_saturado == 1 and self.consenso_info['tipo'] not in ('triplo', 'duplo'):
             return {
@@ -2449,7 +2440,6 @@ class DuziaAI:
                 "padrao_ativo": {"resumo": "🚫 QUEBRA IMINENTE"}
             }
 
-    # REGRA: P4 ISOLADO
     p4_stats = self.padrao_stats_ui.get('tam4')
     p3_stats = self.padrao_stats_ui.get('tam3')
     p2_stats = self.padrao_stats_ui.get('tam2')
@@ -2491,7 +2481,6 @@ class DuziaAI:
                     "padrao_ativo": {"resumo": "🚫 P4 ISOLADO"}
                 }
 
-    # REGRA: SEM CONSENSO
     if self.consenso_info['tipo'] == 'nenhum':
         tem_streak_forte = streak_info and streak_info.get('streak_atual_len', 0) >= 3
         ml_score_alto = s1 > 40
@@ -2513,7 +2502,6 @@ class DuziaAI:
                 "padrao_ativo": {"resumo": "🚫 SEM CONSENSO"}
             }
 
-    # REGRA: ANTI-ERRO
     if self.erros_consecutivos >= 3:
         if self.consenso_info['tipo'] not in ('duplo', 'triplo'):
             return {
@@ -2566,12 +2554,10 @@ class DuziaAI:
             "padrao_ativo": {"resumo": "🚫 PAUSA POR ERROS"}
         }
 
-    # BLOQUEIO DE HORÁRIO DA CONFIGURAÇÃO
     if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
         if config['horario_bloqueio_inicio'] <= hora_atual < config['horario_bloqueio_fim']:
             return {"entrar": False, "motivo": f"⏸️ Horário bloqueado"}
 
-    # PREPARA SINAL DE STREAK
     streak_sinal = ""
     if self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
         streak_sinal = f"🔥 STK D{streak_duzia}({streak_len}x)"
@@ -2579,9 +2565,7 @@ class DuziaAI:
     score_min_extra = 0
     if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
         score_min_extra = config.get('transicao_score_minimo_extra', 10)
-        motivo_transicao = f"🔄 {self.regime_atual.upper()}"
 
-    # DECISÃO ML VS FALLBACK
     if modo_base == 'ml':
         score_minimo = config.get('ml_score_minimo_entrada', 28) + score_min_extra
         pode_entrar = s1 > score_minimo
@@ -2621,7 +2605,6 @@ class DuziaAI:
         else:
             motivo = f"Aguardando ML ({len(self.historico_completo)}/{max(30, min_rodadas_fb)} rod)"
 
-    # REGRA: CONFIANÇA MÍNIMA
     confianca_min = config.get('confianca_minima_entrada', 1.8)
 
     if self.erros_consecutivos >= 2:
@@ -2638,7 +2621,6 @@ class DuziaAI:
             pode_entrar = False
             motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
 
-    # REGRA: ROTAÇÃO DE REPETIÇÃO
     max_rep = config.get('ml_max_repeticoes_mesma_duzia', 2)
     if pode_entrar and len(self.ultimas_previsoes) >= max_rep:
         ultimas_n = self.ultimas_previsoes[-max_rep:]
@@ -2652,7 +2634,6 @@ class DuziaAI:
                 pode_entrar = False
                 motivo = f"🚫 Bloqueio repetição (>{max_rep}x)"
 
-    # PENALIDADE DE CONFIANÇA EM REGIME INSTÁVEL
     confianca_min = config.get('confianca_minima_entrada', 1.8)
     if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
         confianca_min *= 1.1
@@ -2664,24 +2645,20 @@ class DuziaAI:
             pode_entrar = False
             motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
 
-    # ANTI-ERRO REFORÇADO
     if pode_entrar and self.erros_consecutivos >= 2 and confianca < (confianca_min + 0.3):
         pode_entrar = False
         motivo = f"🚫 Anti-Erro: conf {confianca:.2f} insuficiente (erros: {self.erros_consecutivos})"
 
-    # INCLUIR ZERO
     incluir_zero = self.alerta_zero_ativo
     if self.rodadas_desde_zero >= config['zero_termometro_max']:
         incluir_zero = True
         if pode_entrar:
             motivo += " | 🌡️ Zero"
 
-    # CONFIANÇA CRÍTICA
     if confianca < 0.6:
         pode_entrar = False
         motivo = f"Confiança crítica ({confianca:.2f})"
 
-    # FINALIZA PREVISÃO
     duzia_secundaria_final = d2
     streak_aplicado = False
     if pode_entrar and self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
@@ -2743,6 +2720,7 @@ class DuziaAI:
     previsao['padrao_ativo'] = info_padrao
 
     return previsao
+    
     
     
     
