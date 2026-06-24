@@ -2297,9 +2297,8 @@ class DuziaAI:
     def _get_outras_duzias(self, duzia):
         return [d for d in [1, 2, 3] if d != duzia]
 
-    #def prever(self):
-def prever(self):
-    hora_atual = datetime.now().hour
+    def prever(self):
+        hora_atual = datetime.now().hour
 
     streak_info = self._streak_info_atual
     streak_duzia = streak_info.get('streak_atual_duzia', 0)
@@ -2720,6 +2719,7 @@ def prever(self):
     previsao['padrao_ativo'] = info_padrao
 
     return previsao
+
     
     
     
