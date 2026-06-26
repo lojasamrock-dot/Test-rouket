@@ -1,11 +1,3 @@
-# ============================================================
-# DUZIA AI V14.1 - COM DETECTOR DE TRANSIÇÃO E ML CORRIGIDO
-# ============================================================
-
-# ============================================================
-# DUZIA AI V14.2 - COM MODO STREAK FORTE E MENOS RESTRIÇÕES
-# ============================================================
-
 import streamlit as st
 import json
 import os
@@ -71,6 +63,149 @@ def timestamp_brasilia():
 
 def data_brasilia():
     return hora_brasilia().strftime('%Y-%m-%d')
+
+
+# =============================
+# 🎯 CORREÇÃO DE VIÉS BASEADA EM ERROS
+# =============================
+
+class CorrecaoViesDinamico:
+    """Corrige viés baseado em erros, não em frequência"""
+    
+    def __init__(self):
+        self.erros_por_duzia = {1: 0, 2: 0, 3: 0}
+        self.acertos_por_duzia = {1: 0, 2: 0, 3: 0}
+        self.fator_correcao = {1: 1.0, 2: 1.0, 3: 1.0}
+        self.janela = 20
+        self.total_analisado = 0
+        
+    def atualizar(self, duzia_prevista, duzia_real, acertou):
+        """Atualiza baseado no resultado"""
+        if duzia_prevista == 0 or duzia_real == 0:
+            return
+        
+        if acertou:
+            self.acertos_por_duzia[duzia_prevista] += 1
+        else:
+            self.erros_por_duzia[duzia_prevista] += 1
+        
+        self.total_analisado += 1
+        
+        # Mantém janela
+        total = sum(self.erros_por_duzia.values()) + sum(self.acertos_por_duzia.values())
+        if total > self.janela * 3:
+            # Reduz pela metade (mantém tendência)
+            for d in [1, 2, 3]:
+                self.erros_por_duzia[d] = max(0, self.erros_por_duzia[d] // 2)
+                self.acertos_por_duzia[d] = max(0, self.acertos_por_duzia[d] // 2)
+        
+        self._calcular_correcao()
+    
+    def _calcular_correcao(self):
+        """Calcula fator de correção baseado em erros"""
+        for d in [1, 2, 3]:
+            total = self.erros_por_duzia[d] + self.acertos_por_duzia[d]
+            if total > 0:
+                taxa_erro = self.erros_por_duzia[d] / total
+                
+                # Se erro > 60%, penaliza FORTEMENTE
+                if taxa_erro > 0.60:
+                    self.fator_correcao[d] = max(0.50, 1.0 - (taxa_erro - 0.60) * 2.0)
+                # Se acerto > 60%, reforça
+                elif taxa_erro < 0.40:
+                    self.fator_correcao[d] = min(1.50, 1.0 + (0.40 - taxa_erro) * 1.5)
+                else:
+                    self.fator_correcao[d] = 1.0
+    
+    def corrigir_scores(self, scores):
+        """Aplica correção baseada em erros"""
+        if self.total_analisado < 5:
+            return scores
+        
+        scores_corrigidos = scores.copy()
+        for d in [1, 2, 3]:
+            scores_corrigidos[d] *= self.fator_correcao[d]
+        
+        # Normaliza para manter soma
+        total = sum(scores_corrigidos.values())
+        if total > 0:
+            for d in [1, 2, 3]:
+                scores_corrigidos[d] = (scores_corrigidos[d] / total) * 100
+        
+        return scores_corrigidos
+    
+    def get_estatisticas(self):
+        """Retorna estatísticas para debug"""
+        return {
+            'acertos': self.acertos_por_duzia,
+            'erros': self.erros_por_duzia,
+            'fatores': self.fator_correcao,
+            'total': self.total_analisado
+        }
+
+
+class AprendizadoPorReforco:
+    """Aprende com acertos e erros usando reforço"""
+    
+    def __init__(self):
+        self.recompensas = {1: 0.0, 2: 0.0, 3: 0.0}
+        self.fator_aprendizado = 0.3
+        self.fator_desconto = 0.9
+        self.total_acoes = 0
+        
+    def atualizar(self, duzia_prevista, duzia_real, acertou):
+        """Atualiza recompensa baseada no resultado"""
+        if duzia_prevista == 0 or duzia_real == 0:
+            return
+        
+        # Recompensa: +1 se acertou, -1 se errou
+        recompensa = 1.0 if acertou else -1.0
+        
+        # Atualiza com aprendizado por reforço
+        self.recompensas[duzia_prevista] = (
+            self.fator_desconto * self.recompensas[duzia_prevista] + 
+            self.fator_aprendizado * recompensa
+        )
+        
+        # Penaliza levemente as outras dúzias por não terem sido escolhidas
+        for d in [1, 2, 3]:
+            if d != duzia_prevista:
+                self.recompensas[d] *= 0.98
+        
+        self.total_acoes += 1
+    
+    def corrigir_scores(self, scores):
+        """Aplica correção baseada em recompensas"""
+        if self.total_acoes < 5:
+            return scores
+        
+        scores_corrigidos = scores.copy()
+        
+        # Encontra min/max para normalizar
+        max_recomp = max(self.recompensas.values())
+        min_recomp = min(self.recompensas.values())
+        
+        if max_recomp > min_recomp:
+            for d in [1, 2, 3]:
+                # Normaliza para [0.5, 1.5]
+                if max_recomp > min_recomp:
+                    norm = 0.5 + (self.recompensas[d] - min_recomp) / (max_recomp - min_recomp)
+                    scores_corrigidos[d] *= max(0.3, min(1.7, norm))
+        
+        # Normaliza
+        total = sum(scores_corrigidos.values())
+        if total > 0:
+            for d in [1, 2, 3]:
+                scores_corrigidos[d] = (scores_corrigidos[d] / total) * 100
+        
+        return scores_corrigidos
+    
+    def get_estatisticas(self):
+        """Retorna estatísticas para debug"""
+        return {
+            'recompensas': self.recompensas,
+            'total_acoes': self.total_acoes
+        }
 
 
 # =============================
@@ -510,18 +645,17 @@ def extrair_features_consenso(consenso_info):
 
 
 # =============================
-# 🧠 ENSEMBLE MANUAL - MOVIDO PARA ESCOPO GLOBAL
+# 🧠 ENSEMBLE MANUAL
 # =============================
 
 class EnsembleManual:
-    """Ensemble manual de RandomForest + GradientBoosting - OTIMIZADO PARA SERIALIZAÇÃO"""
+    """Ensemble manual de RandomForest + GradientBoosting"""
     
     def __init__(self, rf, gbt):
         self.rf = rf
         self.gbt = gbt
         self.classes_ = rf.classes_
         
-        # Obtém n_features_in_ de forma segura
         try:
             self.n_features_in_ = rf.n_features_in_
         except AttributeError:
@@ -530,24 +664,20 @@ class EnsembleManual:
             except AttributeError:
                 self.n_features_in_ = None
         
-        # Adiciona metadados para debug
         self._modelo_tipo = "EnsembleManual"
         self._data_criacao = datetime.now().isoformat()
         
     def predict_proba(self, X):
-        """Prediz probabilidades usando ensemble"""
         try:
             p_rf = self.rf.predict_proba(X)
             p_gbt = self.gbt.predict_proba(X)
             return (p_rf + p_gbt) / 2.0, self.classes_
         except Exception as e:
             logger.error(f"❌ Erro no predict_proba: {e}")
-            # Fallback: usa apenas RandomForest
             p_rf = self.rf.predict_proba(X)
             return p_rf, self.classes_
 
     def predict(self, X):
-        """Prediz classes usando ensemble"""
         try:
             proba, classes = self.predict_proba(X)
             return classes[np.argmax(proba, axis=1)]
@@ -557,7 +687,7 @@ class EnsembleManual:
 
 
 # =============================
-# SETUPS — V14.2 COM MODO STREAK FORTE
+# SETUPS
 # =============================
 SETUP_BASE = {
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
@@ -592,8 +722,6 @@ SETUP_BASE = {
     'drift_alertar_apos': 5,
     'drift_rodadas_auto_reset': 20,
     'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 1.0,
-    'streak_modo_forte': True,  # NOVO: ativa modo streak forte
-    'streak_tamanho_modo_forte': 4,  # NOVO: a partir de quantas repetições ativa
     'padrao_qualidade_min_p2': 15,
     'padrao_qualidade_min_p3': 10,
     'padrao_qualidade_min_p4': 8,
@@ -633,8 +761,6 @@ SETUP_XXXTREME = {
     'streak_peso_feature': 0.7,
     'streak_reforca_ml': True,
     'streak_conf_min_reforco': 2.5,
-    'streak_modo_forte': True,
-    'streak_tamanho_modo_forte': 4,
     'ml_max_repeticoes_mesma_duzia': 2,
     'padrao_consenso_min_conf': 0.30,
     'ml_ignorar_consenso_conf_min': 2.8,
@@ -759,8 +885,6 @@ SETUP_IMMERSIVE = {
     'streak_peso_feature': 1.0,
     'streak_reforca_ml': True,
     'streak_conf_min_reforco': 2.3,
-    'streak_modo_forte': True,
-    'streak_tamanho_modo_forte': 4,
     'padrao_qualidade_min_p2': 10,
     'padrao_qualidade_min_p3': 6,
     'padrao_qualidade_min_p4': 4,
@@ -812,8 +936,6 @@ SETUP_MEGA = {
     'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 1.0,
     'streak_reforca_ml': True,
     'streak_conf_min_reforco': 2.4,
-    'streak_modo_forte': True,
-    'streak_tamanho_modo_forte': 4,
     'padrao_qualidade_min_p2': 12, 'padrao_qualidade_min_p3': 8, 'padrao_qualidade_min_p4': 6,
     'transicao_penalidade_conf': 0.60,
     'transicao_aumentar_cobertura': True,
@@ -833,7 +955,7 @@ PASTA_MODELOS_ML = "modelos_ml"
 
 
 # =============================
-# FUNÇÕES DE PERSISTÊNCIA - CORRIGIDAS
+# FUNÇÕES DE PERSISTÊNCIA
 # =============================
 
 def criar_pasta_modelos_ml():
@@ -852,10 +974,7 @@ def get_modelo_ml_path(api_name):
     criar_pasta_modelos_ml()
     return os.path.join(PASTA_MODELOS_ML, f"modelo_ml_{api_name.lower().replace(' ', '_')}.joblib")
 
-# ====================== FUNÇÕES CORRIGIDAS ======================
-
 def salvar_modelo_ml(modelo, api_name):
-    """Salva o modelo ML com verificação rigorosa"""
     if modelo is None:
         logger.warning("⚠️ Tentativa de salvar modelo None")
         return False
@@ -864,20 +983,16 @@ def salvar_modelo_ml(modelo, api_name):
         criar_pasta_modelos_ml()
         caminho = get_modelo_ml_path(api_name)
         
-        # Verifica se o modelo é válido
         if not hasattr(modelo, 'predict_proba'):
             logger.error("❌ Modelo não tem predict_proba")
             return False
         
-        # Salva em arquivo temporário primeiro
         with tempfile.NamedTemporaryFile(delete=False, suffix='.joblib') as tmp:
             temp_path = tmp.name
         
         try:
-            # Salva com compressão média
             joblib.dump(modelo, temp_path, compress=3)
             
-            # Verifica se o arquivo temporário foi criado com tamanho > 0
             if os.path.exists(temp_path):
                 tamanho = os.path.getsize(temp_path)
                 if tamanho < 1000:
@@ -885,10 +1000,8 @@ def salvar_modelo_ml(modelo, api_name):
                     os.remove(temp_path)
                     return False
                 
-                # Move para o destino final
                 shutil.move(temp_path, caminho)
                 
-                # Verifica o arquivo final
                 if os.path.exists(caminho):
                     tamanho_final = os.path.getsize(caminho)
                     if tamanho_final > 1000:
@@ -918,7 +1031,6 @@ def salvar_modelo_ml(modelo, api_name):
         return False
 
 def carregar_modelo_ml(api_name):
-    """Carrega o modelo ML com verificação rigorosa"""
     try:
         caminho = get_modelo_ml_path(api_name)
         if not os.path.exists(caminho):
@@ -926,7 +1038,7 @@ def carregar_modelo_ml(api_name):
             return None
         
         tamanho = os.path.getsize(caminho)
-        if tamanho < 5000:  # Menos de 5KB é suspeito
+        if tamanho < 5000:
             logger.warning(f"⚠️ Arquivo do modelo muito pequeno ({tamanho} bytes). Removendo...")
             os.remove(caminho)
             return None
@@ -957,7 +1069,6 @@ def carregar_modelo_ml(api_name):
         return None
 
 def diagnosticar_modelo(api_name):
-    """Diagnostica o estado do modelo ML"""
     caminho = get_modelo_ml_path(api_name)
     
     print(f"📊 DIAGNÓSTICO DO MODELO ML - {api_name}")
@@ -975,8 +1086,6 @@ def diagnosticar_modelo(api_name):
             modelo = joblib.load(caminho)
             print("✅ Modelo carregado com sucesso!")
             
-            # Verifica atributos
-            print(f"🔍 Atributos: {dir(modelo)}")
             if hasattr(modelo, 'predict_proba'):
                 print("✅ predict_proba disponível")
             else:
@@ -992,8 +1101,6 @@ def diagnosticar_modelo(api_name):
     else:
         print("❌ Arquivo do modelo NÃO encontrado")
         return False
-
-# ====================== FIM FUNÇÕES CORRIGIDAS ======================
 
 def salvar_config_global():
     config = {
@@ -1398,7 +1505,7 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
-# 🧠 DUZIA AI V14.2 — COM MODO STREAK FORTE
+# 🧠 DUZIA AI V14.2 — COM CORREÇÃO DE VIÉS
 # =============================
 
 class DuziaAI:
@@ -1422,7 +1529,7 @@ class DuziaAI:
         self.ultimo_resultado_duzia = None
         self.ultimo_resultado_numero = None
         self.ultima_confianca = 0
-        self.ultima_previsao_duzia = None
+        self.ultima_previsao_duzia = 0
         self.alertas_zero_disparados = 0
         self.zeros_previstos = 0
         self.acertos_consecutivos_mesma_duzia = 0
@@ -1447,9 +1554,11 @@ class DuziaAI:
         self._ultimo_modelo_accuracy = 0.0
         self._melhor_modelo = None
         self._melhor_accuracy = 0.0
-        self._modo_streak_forte = False  # NOVO: flag para modo streak
-        self._streak_duzia_ativa = 0  # NOVO: dúzia em streak
-        self._streak_cobertura = 0  # NOVO: cobertura para streak
+
+        # ===== NOVO: Sistemas de correção baseada em erros =====
+        self.corretor_vies = CorrecaoViesDinamico()
+        self.aprendizado_reforco = AprendizadoPorReforco()
+        self.historico_desempenho = []
 
         self.detector_regime = DetectorRegime(
             window=10,
@@ -1500,8 +1609,6 @@ class DuziaAI:
         self.streak_peso_feature = config.get('streak_peso_feature', 1.0)
         self.streak_reforca_ml = config.get('streak_reforca_ml', True)
         self.streak_conf_min_reforco = config.get('streak_conf_min_reforco', 2.5)
-        self.streak_modo_forte = config.get('streak_modo_forte', True)  # NOVO
-        self.streak_tamanho_modo_forte = config.get('streak_tamanho_modo_forte', 4)  # NOVO
 
         self.usar_features_ml_avancadas = config.get('usar_features_ml_avancadas', True)
         self.ml_features_raio_peso = config.get('ml_features_raio_peso', 1.3)
@@ -2109,7 +2216,7 @@ class DuziaAI:
                         self.ultimo_treino_ml = rodada_atual
 
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logger.info(f"🧠 ML V14.2 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
+                            logger.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
                             return True
                         else:
                             logger.error("❌ Falha ao salvar modelo!")
@@ -2122,14 +2229,14 @@ class DuziaAI:
                     self.modelo_ml = novo_modelo
                     self.ultimo_treino_ml = rodada_atual
                     if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                        logger.info(f"🧠 ML V14.2 Treinado (sem validação)! Amostras: {len(X)}")
+                        logger.info(f"🧠 ML V14.1 Treinado (sem validação)! Amostras: {len(X)}")
                         return True
                     return False
 
             self.modelo_ml = novo_modelo
             self.ultimo_treino_ml = rodada_atual
             if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                logger.info(f"🧠 ML V14.2 Treinado! Amostras: {len(X)}")
+                logger.info(f"🧠 ML V14.1 Treinado! Amostras: {len(X)}")
                 return True
             else:
                 logger.error("❌ Falha ao salvar modelo!")
@@ -2201,6 +2308,27 @@ class DuziaAI:
         self._rodadas_sem_entrada = 0
 
     def registrar_resultado(self, duzia_real, acertou_duzia, acertou_numero, acertou_zero, mesa_id=None, eh_raio=False, multiplicador=0):
+        # ===== NOVO: Registra resultado para correção de viés =====
+        if self.ultima_previsao_duzia != 0 and duzia_real != 0:
+            acertou = acertou_duzia or acertou_zero
+            self.corretor_vies.atualizar(
+                self.ultima_previsao_duzia, 
+                duzia_real, 
+                acertou
+            )
+            self.aprendizado_reforco.atualizar(
+                self.ultima_previsao_duzia,
+                duzia_real,
+                acertou
+            )
+            
+            # Log para debug
+            if acertou:
+                logger.info(f"✅ Correção: D{self.ultima_previsao_duzia} ACERTOU")
+            else:
+                logger.info(f"❌ Correção: D{self.ultima_previsao_duzia} ERROU (era D{duzia_real})")
+        
+        # ===== Código existente =====
         self.ultimos_resultados.append({'duzia': duzia_real, 'acertou_duzia': acertou_duzia,
                                         'acertou_numero': acertou_numero, 'acertou_zero': acertou_zero})
         self.ultimo_resultado_duzia = acertou_duzia
@@ -2383,6 +2511,58 @@ class DuziaAI:
 
         return scores_ajustados
 
+    def _aplicar_pesos_por_erro(self, scores):
+        """Ajusta scores baseado em desempenho recente"""
+        
+        # Verifica últimas 10 previsões
+        if len(self.ultimas_previsoes) < 5:
+            return scores
+        
+        # Analisa acertos/erros por dúzia
+        desempenho = {1: {'acertos': 0, 'erros': 0}, 
+                      2: {'acertos': 0, 'erros': 0}, 
+                      3: {'acertos': 0, 'erros': 0}}
+        
+        # Pega as últimas 10 previsões e resultados
+        ultimas_prev = self.ultimas_previsoes[-10:]
+        ultimos_res = self.ultimos_resultados[-10:] if len(self.ultimos_resultados) >= 10 else self.ultimos_resultados
+        
+        for i, prev in enumerate(ultimas_prev):
+            if i < len(ultimos_res):
+                result = ultimos_res[i]
+                if result.get('acertou_duzia', False) or result.get('acertou_zero', False):
+                    if prev in desempenho:
+                        desempenho[prev]['acertos'] += 1
+                elif prev != 0 and prev in desempenho:
+                    desempenho[prev]['erros'] += 1
+        
+        # Calcula peso baseado em desempenho
+        scores_ajustados = scores.copy()
+        for d in [1, 2, 3]:
+            total = desempenho[d]['acertos'] + desempenho[d]['erros']
+            if total > 0:
+                taxa_acerto = desempenho[d]['acertos'] / total
+                
+                # Se está acertando muito (>70%), reforça
+                if taxa_acerto > 0.70:
+                    bonus = min(1.5, 1.0 + (taxa_acerto - 0.70) * 2.0)
+                    scores_ajustados[d] *= bonus
+                    logger.info(f"📈 Reforço D{d}: {taxa_acerto:.0%} acerto")
+                
+                # Se está errando muito (>60%), penaliza
+                elif taxa_acerto < 0.40:
+                    penalidade = max(0.5, 1.0 - (0.40 - taxa_acerto) * 2.0)
+                    scores_ajustados[d] *= penalidade
+                    logger.info(f"📉 Penalidade D{d}: {taxa_acerto:.0%} acerto")
+        
+        # Normaliza
+        total_score = sum(scores_ajustados.values())
+        if total_score > 0:
+            for d in [1, 2, 3]:
+                scores_ajustados[d] = (scores_ajustados[d] / total_score) * 100
+        
+        return scores_ajustados
+
     def _aplicar_regras_transicao(self, previsao):
         if not self.detector_ativo or self.regime_atual == 'estavel':
             return previsao
@@ -2428,12 +2608,24 @@ class DuziaAI:
             scores = self._aplicar_anti_vies(scores)
             scores = self._aplicar_vies_dinamico(scores)
             scores = self._aplicar_peso_adaptativo(scores)
+            
+            # ===== NOVO: Correção baseada em erros =====
+            scores = self.corretor_vies.corrigir_scores(scores)
+            scores = self.aprendizado_reforco.corrigir_scores(scores)
+            scores = self._aplicar_pesos_por_erro(scores)
+            
             return scores, modo
         else:
             scores = self._prever_fallback_frequencia()
             scores = self._aplicar_anti_vies(scores)
             scores = self._aplicar_vies_dinamico(scores)
             scores = self._aplicar_peso_adaptativo(scores)
+            
+            # ===== NOVO: Correção baseada em erros =====
+            scores = self.corretor_vies.corrigir_scores(scores)
+            scores = self.aprendizado_reforco.corrigir_scores(scores)
+            scores = self._aplicar_pesos_por_erro(scores)
+            
             return scores, 'fallback'
 
     def _aplicar_reforco_consenso(self, ml_scores):
@@ -2516,26 +2708,19 @@ class DuziaAI:
         streak_info = self._streak_info_atual
         streak_duzia = streak_info.get('streak_atual_duzia', 0)
         streak_len = streak_info.get('streak_atual_len', 0)
-        
-        # 🔥 NOVO: MODO STREAK FORTE
-        if self.streak_modo_forte and streak_len >= self.streak_tamanho_modo_forte and streak_duzia != 0:
-            # Streak forte detectada - entrada automática com cobertura
+
+        # ===== NOVO: MODO STREAK FORTE =====
+        if streak_len >= 4 and streak_duzia != 0:
+            # Streak de 4+ é SINAL FORTE - entrada automática com cobertura
             outras = self._get_outras_duzias(streak_duzia)
-            cobertura = outras[0]  # Dúzia mais provável para quebrar a streak
+            cobertura = outras[0]
             
             # Calcula score para a streak
             scores = {1: 0.0, 2: 0.0, 3: 0.0}
-            scores[streak_duzia] = 30 + (streak_len * 8)  # Score alto para continuar
-            scores[cobertura] = 20 + (streak_len * 2)  # Score médio para cobertura
+            scores[streak_duzia] = 30 + (streak_len * 10)
+            scores[cobertura] = 20
             
-            confianca = min(3.5, 1.5 + streak_len * 0.3)
-            
-            # Ativa flag de modo streak
-            self._modo_streak_forte = True
-            self._streak_duzia_ativa = streak_duzia
-            self._streak_cobertura = cobertura
-            
-            logger.info(f"🔥 MODO STREAK FORTE ATIVADO: D{streak_duzia}×{streak_len} | Cob: D{cobertura}")
+            confianca = min(3.5, 1.0 + streak_len * 0.4)
             
             return {
                 "entrar": True,
@@ -2548,57 +2733,77 @@ class DuziaAI:
                 "incluir_zero": False,
                 "modo_anti_erro": False,
                 "numeros_completos": list(self.numeros_completos),
-                "modo_previsao": "streak_forte",
+                "modo_previsao": "streak",
                 "rotacao_forcada": False,
                 "streak_info": f"🔥 STK D{streak_duzia}×{streak_len}",
                 "padrao_ativo": {"resumo": f"🔥 STREAK FORTE D{streak_duzia}×{streak_len}"}
             }
-        
-        # Reset do modo streak se a streak quebrou
-        if self._modo_streak_forte and (streak_duzia != self._streak_duzia_ativa or streak_len < self.streak_tamanho_modo_forte):
-            self._modo_streak_forte = False
-            self._streak_duzia_ativa = 0
-            self._streak_cobertura = 0
 
-        # ===== BLOQUEIOS MODIFICADOS (MENOS RESTRITIVOS) =====
-        
-        # MODIFICADO: Bloqueio de D1 com streak >= 2 - agora apenas alerta
-        if streak_duzia == 1 and streak_len >= 2 and streak_len < 4:
-            if self.consenso_info['tipo'] not in ('triplo', 'duplo'):
-                # Não bloqueia, apenas reduz confiança mais tarde
-                pass  # Permite continuar, mas com confiança reduzida
+        # ===== BLOQUEIOS EXISTENTES (MODIFICADOS) =====
+        if streak_duzia == 1 and streak_len >= 2:
+            if self.consenso_info['tipo'] != 'triplo':
+                # Para streaks D1 curtas (2-3), requer consenso
+                if streak_len < 4:
+                    return {
+                        "entrar": False,
+                        "motivo": f"🚫 Streak D1({streak_len}x) requer TRIPLO",
+                        "score": {1: 0, 2: 0, 3: 0},
+                        "confianca": 0,
+                        "duzia": 0,
+                        "duzia_secundaria": 0,
+                        "gatilho_ativo": "BLOQUEADO",
+                        "incluir_zero": False,
+                        "numeros_completos": list(self.numeros_completos),
+                        "modo_previsao": "bloqueado",
+                        "rotacao_forcada": False,
+                        "streak_info": None,
+                        "padrao_ativo": {"resumo": "🚫 STREAK D1 BLOQUEADA"}
+                    }
 
-        # MODIFICADO: Bloqueio de streak saturada - agora é oportunidade
-        if streak_info.get('streak_saturado', 0) == 1 and streak_len >= 5:
-            # Streak saturada é sinal de quebra iminente - apostar na cobertura
-            if self.consenso_info['tipo'] not in ('triplo', 'duplo'):
-                outras = self._get_outras_duzias(streak_duzia)
-                cobertura = outras[0]
-                scores = {1: 0.0, 2: 0.0, 3: 0.0}
-                scores[cobertura] = 35 + (streak_len * 2)
-                scores[streak_duzia] = 15
-                
-                return {
-                    "entrar": True,
-                    "motivo": f"⚡ STREAK SATURADA D{streak_duzia}×{streak_len} → Apostar na QUEBRA: D{cobertura}",
-                    "score": scores,
-                    "confianca": round(min(3.0, 1.8 + streak_len * 0.2), 2),
-                    "duzia": cobertura,
-                    "duzia_secundaria": streak_duzia,
-                    "gatilho_ativo": "STREAK_SATURADA",
-                    "incluir_zero": False,
-                    "modo_anti_erro": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "streak_saturada",
-                    "rotacao_forcada": False,
-                    "streak_info": f"⚡ QUEBRA D{cobertura}",
-                    "padrao_ativo": {"resumo": f"⚡ STREAK SATURADA → QUEBRA"}
-                }
+        if self.api_name == 'Immersive Roulette':
+            if 2 <= hora_atual <= 3:
+                if self.consenso_info['tipo'] in ('duplo', 'triplo') and self.consenso_info.get('conf', 0) > 1.5:
+                    pass
+                else:
+                    return {
+                        "entrar": False,
+                        "motivo": f"⏰ Horário crítico ({hora_atual:02d}:00) - aguardar consenso",
+                        "score": {1: 0, 2: 0, 3: 0},
+                        "confianca": 0,
+                        "duzia": 0,
+                        "duzia_secundaria": 0,
+                        "gatilho_ativo": "BLOQUEADO",
+                        "incluir_zero": False,
+                        "numeros_completos": list(self.numeros_completos),
+                        "modo_previsao": "bloqueado",
+                        "rotacao_forcada": False,
+                        "streak_info": None,
+                        "padrao_ativo": {"resumo": "⏰ HORÁRIO CRÍTICO"}
+                    }
 
-        # REMOVER: Bloqueio de quebra iminente (agora é oportunidade)
-        # O código original bloqueava, agora vamos usar a lógica acima
-
-        # ===== CONTINUAÇÃO DO CÓDIGO ORIGINAL (MODIFICADO) =====
+        if self.detector_ativo and self.regime_atual in ('transicao',):
+            if self.consenso_info['tipo'] in ('duplo', 'triplo') and self.consenso_info.get('conf', 0) > 1.2:
+                pass
+            else:
+                streak_len_temp = self._streak_info_atual.get('streak_atual_len', 0)
+                if streak_len_temp >= 3:
+                    pass
+                else:
+                    return {
+                        "entrar": False,
+                        "motivo": f"🔄 Regime {self.regime_atual} - aguardar consenso ou streak",
+                        "score": {1: 0, 2: 0, 3: 0},
+                        "confianca": 0,
+                        "duzia": 0,
+                        "duzia_secundaria": 0,
+                        "gatilho_ativo": "BLOQUEADO",
+                        "incluir_zero": False,
+                        "numeros_completos": list(self.numeros_completos),
+                        "modo_previsao": "bloqueado",
+                        "rotacao_forcada": False,
+                        "streak_info": None,
+                        "padrao_ativo": {"resumo": f"🔄 {self.regime_atual}"}
+                    }
 
         if self.pausa_ate and hora_brasilia() < self.pausa_ate:
             return {"entrar": False, "motivo": "⏸️ Pausa"}
@@ -2630,6 +2835,7 @@ class DuziaAI:
         motivo = ""
         forcar_rotacao = False
 
+        # ===== VERIFICAÇÕES DE STREAK =====
         streak_len = streak_info.get('streak_atual_len', 0)
         streak_duzia = streak_info.get('streak_atual_duzia', 0)
         streak_cobertura = streak_info.get('cobertura_streak_duzia', 0)
@@ -2637,39 +2843,58 @@ class DuziaAI:
         taxa_quebra = streak_info.get('streak_taxa_quebra_real', 0)
         prob_quebra = streak_info.get('prob_quebra_streak3', 0.5) if streak_len >= 3 else streak_info.get('prob_quebra_streak2', 0.5)
 
-        # MODIFICADO: Menos restrições para streak
+        # Streaks longas são permitidas (removido bloqueio de "saturada")
+        # apenas verifica se tem cobertura
         if self.streak_config_ativo and streak_info:
-            # REMOVER bloqueio de streak saturada (já tratado acima)
-            # REMOVER bloqueio de quebra iminente (já tratado acima)
-            pass
+            if streak_saturado == 1 and self.consenso_info['tipo'] not in ('triplo', 'duplo'):
+                # Permite entrada com cobertura
+                if streak_len < 4:  # Só bloqueia streaks curtas
+                    return {
+                        "entrar": False,
+                        "motivo": f"🚫 Streak saturada D{streak_duzia}×{streak_len} - sem consenso",
+                        "score": scores,
+                        "confianca": 0,
+                        "duzia": 0,
+                        "duzia_secundaria": 0,
+                        "gatilho_ativo": "BLOQUEADO",
+                        "incluir_zero": False,
+                        "numeros_completos": list(self.numeros_completos),
+                        "modo_previsao": "bloqueado",
+                        "rotacao_forcada": False,
+                        "streak_info": None,
+                        "padrao_ativo": {"resumo": "🚫 STREAK SATURADA"}
+                    }
+
+            # Quebra iminente é OPORTUNIDADE, não bloqueio
+            # Remove o bloqueio de quebra iminente
 
         p4_stats = self.padrao_stats_ui.get('tam4')
         p3_stats = self.padrao_stats_ui.get('tam3')
         p2_stats = self.padrao_stats_ui.get('tam2')
 
-        # MODIFICADO: P4 isolado agora permite entrada se houver streak forte
+        # P4 isolado - menos restritivo
         if p4_stats and p4_stats.get('scores'):
             duzia_p4 = max(p4_stats['scores'], key=p4_stats['scores'].get)
             conf_p4 = p4_stats.get('conf', 0)
 
-            if conf_p4 > 2.0 and p4_stats.get('total', 0) > 15 and streak_len < 3:
+            if conf_p4 > 2.0 and p4_stats.get('total', 0) > 15:
                 duzia_p2 = None
                 duzia_p3 = None
 
                 if p2_stats and p2_stats.get('scores'):
                     duzia_p2 = max(p2_stats['scores'], key=p2_stats['scores'].get)
                     conf_p2 = p2_stats.get('conf', 0)
-                    if conf_p2 < 0.5 or duzia_p2 != duzia_p4:
+                    if conf_p2 < 0.3 or duzia_p2 != duzia_p4:  # Menos restritivo
                         duzia_p2 = None
 
                 if p3_stats and p3_stats.get('scores'):
                     duzia_p3 = max(p3_stats['scores'], key=p3_stats['scores'].get)
                     conf_p3 = p3_stats.get('conf', 0)
-                    if conf_p3 < 0.5 or duzia_p3 != duzia_p4:
+                    if conf_p3 < 0.3 or duzia_p3 != duzia_p4:  # Menos restritivo
                         duzia_p3 = None
 
-                # Só bloqueia se NÃO houver streak forte
-                if duzia_p2 is None and duzia_p3 is None and streak_len < 3:
+                # Só bloqueia se NENHUM concorda com P4 E não tem streak forte
+                if duzia_p2 is None and duzia_p3 is None and streak_len < 4:
                     return {
                         "entrar": False,
                         "motivo": f"🚫 P4 isolado - P2/P3 discordam",
@@ -2686,7 +2911,7 @@ class DuziaAI:
                         "padrao_ativo": {"resumo": "🚫 P4 ISOLADO"}
                     }
 
-        # MODIFICADO: Sem consenso permite entrada com streak forte
+        # Sem consenso - permite com streak forte ou ML score alto
         if self.consenso_info['tipo'] == 'nenhum':
             tem_streak_forte = streak_info and streak_info.get('streak_atual_len', 0) >= 3
             ml_score_alto = s1 > 40
@@ -2708,25 +2933,27 @@ class DuziaAI:
                     "padrao_ativo": {"resumo": "🚫 SEM CONSENSO"}
                 }
 
+        # Anti-erro - menos restritivo
         if self.erros_consecutivos >= 3:
             if self.consenso_info['tipo'] not in ('duplo', 'triplo'):
-                return {
-                    "entrar": False,
-                    "motivo": f"🚫 {self.erros_consecutivos} erros - aguardar consenso",
-                    "score": scores,
-                    "confianca": 0,
-                    "duzia": 0,
-                    "duzia_secundaria": 0,
-                    "gatilho_ativo": "BLOQUEADO",
-                    "incluir_zero": False,
-                    "numeros_completos": list(self.numeros_completos),
-                    "modo_previsao": "bloqueado",
-                    "rotacao_forcada": False,
-                    "streak_info": None,
-                    "padrao_ativo": {"resumo": f"🚫 {self.erros_consecutivos} ERROS"}
-                }
+                if streak_len < 3:  # Só bloqueia se não tiver streak
+                    return {
+                        "entrar": False,
+                        "motivo": f"🚫 {self.erros_consecutivos} erros - aguardar consenso",
+                        "score": scores,
+                        "confianca": 0,
+                        "duzia": 0,
+                        "duzia_secundaria": 0,
+                        "gatilho_ativo": "BLOQUEADO",
+                        "incluir_zero": False,
+                        "numeros_completos": list(self.numeros_completos),
+                        "modo_previsao": "bloqueado",
+                        "rotacao_forcada": False,
+                        "streak_info": None,
+                        "padrao_ativo": {"resumo": f"🚫 {self.erros_consecutivos} ERROS"}
+                    }
 
-            if self.consenso_info.get('conf', 0) < 1.2:
+            if self.consenso_info.get('conf', 0) < 1.2 and streak_len < 3:
                 return {
                     "entrar": False,
                     "motivo": f"🚫 Anti-erro: consenso fraco (conf={self.consenso_info.get('conf', 0):.2f})",
@@ -2743,6 +2970,7 @@ class DuziaAI:
                     "padrao_ativo": {"resumo": "🚫 ANTI-ERRO"}
                 }
 
+        # Erros consecutivos - pausa apenas com 5+ erros
         if self.erros_consecutivos >= 5:
             return {
                 "entrar": False,
@@ -2773,10 +3001,7 @@ class DuziaAI:
             score_min_extra = config.get('transicao_score_minimo_extra', 10)
 
         if modo_base == 'ml':
-            score_minimo = config.get('ml_score_minimo_entrada', 28) + score_min_extra
-            # MODIFICADO: Reduz score mínimo se houver streak forte
-            if streak_len >= 3:
-                score_minimo = max(15, score_minimo - 10)
+            score_minimo = config.get('ml_score_minimo_entrada', 25) + score_min_extra
             pode_entrar = s1 > score_minimo
             if pode_entrar:
                 treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
@@ -2803,9 +3028,6 @@ class DuziaAI:
                 motivo = f"Score ML baixo ({s1:.1f} < {score_minimo})" + (f" +{score_min_extra} transição" if score_min_extra else "")
         else:
             score_min_fb = config.get('ml_score_minimo_fallback', 35) + score_min_extra
-            # MODIFICADO: Reduz score mínimo se houver streak forte
-            if streak_len >= 3:
-                score_min_fb = max(20, score_min_fb - 10)
             min_rodadas_fb = config.get('ml_min_rodadas_fallback', 6)
             if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
                 pode_entrar = True
@@ -2818,9 +3040,6 @@ class DuziaAI:
                 motivo = f"Aguardando ML ({len(self.historico_completo)}/{max(30, min_rodadas_fb)} rod)"
 
         confianca_min = config.get('confianca_minima_entrada', 1.8)
-        # MODIFICADO: Reduz confiança mínima se houver streak forte
-        if streak_len >= 3:
-            confianca_min = max(1.2, confianca_min - 0.5)
 
         if self.erros_consecutivos >= 2:
             confianca_min += 0.3
@@ -2828,9 +3047,14 @@ class DuziaAI:
             confianca_min += 0.2
         if self.detector_ativo and self.regime_atual == 'instavel':
             confianca_min += 0.3
+        # Streaks fortes reduzem a exigência de confiança
+        if streak_len >= 4:
+            confianca_min = max(1.5, confianca_min - 0.5)
 
         if confianca < confianca_min and not forcar_rotacao:
             if self.consenso_info['tipo'] == 'triplo' and self.consenso_info.get('conf', 0) > 1.5:
+                pass
+            elif streak_len >= 4:  # Streak forte permite confiança menor
                 pass
             else:
                 pode_entrar = False
@@ -2852,20 +3076,22 @@ class DuziaAI:
         confianca_min = config.get('confianca_minima_entrada', 1.8)
         if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
             confianca_min *= 1.1
-        # MODIFICADO: Reduz confiança mínima se houver streak forte
-        if streak_len >= 3:
-            confianca_min = max(1.2, confianca_min - 0.5)
+        if streak_len >= 4:
+            confianca_min = max(1.5, confianca_min - 0.5)
 
         if pode_entrar and confianca < confianca_min and not forcar_rotacao:
             if self.consenso_info['tipo'] in ('triplo',) and confianca >= 1.0:
                 motivo += " | 🔒 Exceção tripla"
+            elif streak_len >= 4:
+                motivo += " | 🔥 Streak forte"
             else:
                 pode_entrar = False
                 motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
 
         if pode_entrar and self.erros_consecutivos >= 2 and confianca < (confianca_min + 0.3):
-            pode_entrar = False
-            motivo = f"🚫 Anti-Erro: conf {confianca:.2f} insuficiente (erros: {self.erros_consecutivos})"
+            if streak_len < 4:  # Streak forte pode continuar
+                pode_entrar = False
+                motivo = f"🚫 Anti-Erro: conf {confianca:.2f} insuficiente (erros: {self.erros_consecutivos})"
 
         incluir_zero = self.alerta_zero_ativo
         if self.rodadas_desde_zero >= config['zero_termometro_max']:
@@ -2874,13 +3100,18 @@ class DuziaAI:
                 motivo += " | 🌡️ Zero"
 
         if confianca < 0.6:
-            pode_entrar = False
-            motivo = f"Confiança crítica ({confianca:.2f})"
+            if streak_len < 4:  # Streak forte permite confiança muito baixa
+                pode_entrar = False
+                motivo = f"Confiança crítica ({confianca:.2f})"
 
         duzia_secundaria_final = d2
         streak_aplicado = False
         if pode_entrar and self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
             streak_aplicado = True
+            # Se é streak forte, usa a cobertura correta
+            if streak_len >= 4:
+                outras = self._get_outras_duzias(streak_duzia)
+                duzia_secundaria_final = outras[0]
 
         previsao = {
             "entrar": pode_entrar,
@@ -2933,6 +3164,13 @@ class DuziaAI:
         if self.regime_atual in ('transicao', 'instavel'):
             info_padrao['resumo'].append(f"🔄{self.regime_atual}")
 
+        # ===== NOVO: Informações de correção de viés =====
+        if self.corretor_vies.total_analisado > 0:
+            vies_stats = self.corretor_vies.get_estatisticas()
+            for d in [1, 2, 3]:
+                if vies_stats['fatores'][d] != 1.0:
+                    info_padrao['resumo'].append(f"⚖️D{d}:{vies_stats['fatores'][d]:.2f}x")
+
         info_padrao['resumo'] = " | ".join(info_padrao['resumo']) if info_padrao['resumo'] else "-"
 
         previsao['padrao_ativo'] = info_padrao
@@ -2941,7 +3179,7 @@ class DuziaAI:
 
 
 # =============================
-# SISTEMA PRINCIPAL (OTIMIZADO)
+# SISTEMA PRINCIPAL
 # =============================
 
 class SistemaBot:
@@ -3177,8 +3415,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V14.2 - Modo Streak Forte", layout="wide")
-st.title("🎰 DuziaAI V14.2 — Modo Streak Forte ✅ | Captura Streaks de 4+")
+st.set_page_config(page_title="🎰 DuziaAI V14.1 - Detector de Transição", layout="wide")
+st.title("🎰 DuziaAI V14.1 — Detector de Transição ✅ | Features + CUSUM + Regime")
 
 config_global = carregar_config_global()
 
@@ -3234,9 +3472,6 @@ if st.session_state.api_selecionada != st.session_state.ultima_api:
 if "sistema" not in st.session_state:
     st.session_state.sistema = SistemaBot()
     _carregar_sistema(st.session_state.api_selecionada)
-
-
-
 
 
 # =============================
@@ -3373,6 +3608,19 @@ with st.sidebar:
     elif consenso['tipo'] == 'duplo': st.info(f"🔗 CONSENSO DUPLO: D{consenso['duzia']}")
     elif consenso['tipo'] == 'simples': st.info(f"💡 Sinal: D{consenso['duzia']}")
 
+    # ===== NOVO: Debug de correção de viés =====
+    with st.expander("🔧 Correção de Viés", expanded=False):
+        if hasattr(sis.duzia_ai, 'corretor_vies'):
+            stats = sis.duzia_ai.corretor_vies.get_estatisticas()
+            st.caption("📊 Correção por Erros:")
+            for d in [1, 2, 3]:
+                st.caption(f"  D{d}: ✅{stats['acertos'][d]} ❌{stats['erros'][d]} → {stats['fatores'][d]:.2f}x")
+            
+            rl_stats = sis.duzia_ai.aprendizado_reforco.get_estatisticas()
+            st.caption("🎯 Aprendizado por Reforço:")
+            for d in [1, 2, 3]:
+                st.caption(f"  D{d}: {rl_stats['recompensas'][d]:.2f}")
+
     st.markdown("---")
     st.caption(f"🔧 **{api_name} V14.1**")
     st.caption(f"• Conf mín: {config_ativa.get('confianca_minima_entrada', 1.8)}")
@@ -3394,7 +3642,6 @@ with st.sidebar:
         st.session_state.telegram_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password")
         st.session_state.telegram_chat_id_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt)
 
-    # 🔧 DIAGNÓSTICO ML - NOVO
     st.markdown("---")
     with st.expander("🔧 Diagnóstico ML", expanded=False):
         if st.button("🔍 Verificar Modelo", use_container_width=True):
