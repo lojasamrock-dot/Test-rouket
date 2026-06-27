@@ -215,10 +215,8 @@ class DetectorRegime:
             self.regime_atual = 'estavel'
             return 'estavel'
         
-        # Extrair indicadores
         entropia_idx = 28
         alt_idx = 41
-        fadiga_idx = len(features_atuais) - 20
         
         entropia_atuais = [f[entropia_idx] if len(f) > entropia_idx else 0.5 for f in self.historico_features[-self.window:]]
         alt_atuais = [f[alt_idx] if len(f) > alt_idx else 0.5 for f in self.historico_features[-self.window:]]
@@ -637,6 +635,7 @@ class EnsembleManual:
         
         self._modelo_tipo = "EnsembleManual"
         self._data_criacao = datetime.now().isoformat()
+        self._melhor_accuracy = 0.0
         
     def predict_proba(self, X):
         try:
@@ -971,6 +970,18 @@ def salvar_modelo_ml(modelo, api_name):
     try:
         criar_pasta_modelos_ml()
         caminho = get_modelo_ml_path(api_name)
+        
+        # 🔥 VERIFICAR SE JÁ EXISTE MODELO COM MESMA ACURÁCIA
+        if os.path.exists(caminho):
+            try:
+                modelo_existente = joblib.load(caminho)
+                if hasattr(modelo_existente, '_melhor_accuracy') and hasattr(modelo, '_melhor_accuracy'):
+                    if abs(modelo_existente._melhor_accuracy - modelo._melhor_accuracy) < 0.001:
+                        logger.info(f"ℹ️ Modelo já existe com mesma acurácia ({modelo._melhor_accuracy:.2%})")
+                        return True
+            except Exception as e:
+                logger.warning(f"⚠️ Não foi possível verificar modelo existente: {e}")
+                pass
         
         if not hasattr(modelo, 'predict_proba'):
             logger.error("❌ Modelo não tem predict_proba")
@@ -1309,7 +1320,9 @@ def salvar_sessao():
                 'erros_sessao': sis.erros_sessao,
                 'ultimo_treino_ml': sis.duzia_ai.ultimo_treino_ml,
                 'acertos_primaria': sis.acertos_primaria, 
-                'acertos_secundaria': sis.acertos_secundaria
+                'acertos_secundaria': sis.acertos_secundaria,
+                'melhor_accuracy': getattr(sis.duzia_ai, '_melhor_accuracy', 0.0),
+                'ultimo_treino_time': getattr(sis.duzia_ai, '_ultimo_treino_time', datetime.now()).isoformat()
             }, f, protocol=pickle.HIGHEST_PROTOCOL)
         
         if sis.duzia_ai.modelo_ml is not None:
@@ -1654,7 +1667,7 @@ def _calcular_autocorrelacao(serie, lag=3):
         return 0.0
 
 
-# ===== DUZIA AI V14.2 =====
+# ===== DUZIA AI V14.2 - CORRIGIDO =====
 
 class DuziaAI:
     def __init__(self, window=30, api_name='XXXtreme Lightning'):
@@ -1703,6 +1716,7 @@ class DuziaAI:
         self._melhor_modelo = None
         self._melhor_accuracy = 0.0
 
+        # ===== NOVO: Sistemas de correção baseada em erros =====
         self.corretor_vies = CorrecaoViesDinamico()
         self.aprendizado_reforco = AprendizadoPorReforco()
         self.historico_desempenho = []
@@ -1716,6 +1730,10 @@ class DuziaAI:
         )
         self.regime_atual = 'estavel'
         self._ultimo_features = None
+
+        # ===== NOVO: Controle de treino =====
+        self._ultimo_treino_time = datetime.now()
+        self._ultimo_modelo_hash = None
 
         config = self._get_config()
         self.padrao_min_ocorrencias = config.get('padrao_min_ocorrencias', 3)
@@ -1788,6 +1806,8 @@ class DuziaAI:
         if modelo is not None:
             self.modelo_ml = modelo
             self.ultimo_treino_ml = 1
+            if hasattr(modelo, '_melhor_accuracy'):
+                self._melhor_accuracy = modelo._melhor_accuracy
             logger.info(f"🧠 Modelo ML carregado do disco para {self.api_name}")
 
     def _salvar_padroes_hibridos(self):
@@ -2305,25 +2325,35 @@ class DuziaAI:
         return pesos / pesos.mean()
 
     def _treinar_ml_online(self):
+        """Versão corrigida com prevenção de loop infinito"""
         if not ML_DISPONIVEL:
             return False
+        
         config = self._get_config()
         janela_treino = config.get('ml_janela_treino', 80)
         atualizar_a_cada = config.get('ml_atualizar_a_cada', 10)
         rodada_atual = len(self.historico_completo)
-
-        if self.modelo_ml is not None and self.ultimo_treino_ml > 0:
+        
+        # 🔥 PREVENIR LOOP INFINITO - Verificar tempo mínimo entre treinos
+        if self.ultimo_treino_ml > 0:
             if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada:
                 return False
-        else:
-            if len(self.historico_completo) < 30:
+        
+        # Número mínimo de amostras
+        if len(self.historico_completo) < 30:
+            return False
+        
+        # 🔥 PREVENIR TREINO EXCESSIVO - Tempo mínimo de 10 segundos entre treinos
+        if self.ultimo_treino_ml > 0:
+            tempo_desde_ultimo_treino = (datetime.now() - self._ultimo_treino_time).seconds
+            if tempo_desde_ultimo_treino < 10:
                 return False
-
+        
         try:
             X, y = [], []
             inicio = max(0, len(self.historico_completo) - janela_treino)
             limite_amostras = min(len(self.historico_completo), inicio + janela_treino)
-
+            
             for i in range(inicio + 8, limite_amostras):
                 hist_duzias = self.historico_completo[max(0, i - janela_treino):i]
                 hist_nums = self.numeros_completos[max(0, i - janela_treino):i]
@@ -2336,70 +2366,72 @@ class DuziaAI:
                 if target in [1, 2, 3]:
                     X.append(features)
                     y.append(target)
-
+            
             if len(X) < 12:
                 logger.info(f"⚠️ Poucas amostras para treino: {len(X)}")
                 return False
-
+            
             X_arr = np.array(X)
-
+            
             try:
                 X_train, X_val, y_train, y_val = train_test_split(X_arr, y, test_size=0.2, random_state=42, stratify=y)
                 tem_validacao = True
             except:
                 X_train, y_train = X_arr, y
                 tem_validacao = False
-
+            
             sample_weights = self._calcular_pesos_treino(len(X_train))
-
+            
             rf = RandomForestClassifier(n_estimators=120, max_depth=10, random_state=42,
                                         n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
             gbt = GradientBoostingClassifier(n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42)
-
+            
             rf.fit(X_train, y_train, sample_weight=sample_weights)
             gbt.fit(X_train, y_train, sample_weight=sample_weights)
-
+            
             novo_modelo = EnsembleManual(rf, gbt)
-
+            
+            # 🔥 SÓ SALVAR SE MELHOR QUE 50% (ALEATÓRIO) E COM MELHORIA
             if tem_validacao:
                 try:
                     proba, classes = novo_modelo.predict_proba(X_val)
                     preds = classes[np.argmax(proba, axis=1)]
                     accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
-
-                    if accuracy > self._melhor_accuracy:
+                    
+                    if accuracy > 0.50 and accuracy > self._melhor_accuracy:
                         self._melhor_accuracy = accuracy
                         self._melhor_modelo = novo_modelo
                         self.modelo_ml = novo_modelo
                         self.ultimo_treino_ml = rodada_atual
-
+                        self._ultimo_treino_time = datetime.now()
+                        
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logger.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
+                            logger.info(f"🧠 ML Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
                             return True
                         else:
                             logger.error("❌ Falha ao salvar modelo!")
                             return False
                     else:
-                        logger.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%})")
+                        if accuracy <= 0.50:
+                            logger.info(f"⏭️ ML performance aleatória ({accuracy:.2%}) - ignorando")
+                        else:
+                            logger.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%})")
                         return False
                 except Exception as e:
-                    logger.error(f"❌ Erro na validação ML: {e}")
-                    self.modelo_ml = novo_modelo
-                    self.ultimo_treino_ml = rodada_atual
-                    if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                        logger.info(f"🧠 ML V14.1 Treinado (sem validação)! Amostras: {len(X)}")
-                        return True
+                    logger.error(f"❌ Erro na validação: {e}")
                     return False
-
-            self.modelo_ml = novo_modelo
-            self.ultimo_treino_ml = rodada_atual
-            if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                logger.info(f"🧠 ML V14.1 Treinado! Amostras: {len(X)}")
-                return True
-            else:
-                logger.error("❌ Falha ao salvar modelo!")
-                return False
-
+            
+            # Fallback: sem validação, só salva se não tiver modelo
+            if self.modelo_ml is None:
+                self.modelo_ml = novo_modelo
+                self.ultimo_treino_ml = rodada_atual
+                self._ultimo_treino_time = datetime.now()
+                if salvar_modelo_ml(self.modelo_ml, self.api_name):
+                    logger.info(f"🧠 ML Treinado (sem validação)! Amostras: {len(X)}")
+                    return True
+            
+            return False
+            
         except Exception as e:
             logger.error(f"❌ Erro no treino ML: {e}")
             import traceback
@@ -2450,6 +2482,8 @@ class DuziaAI:
             self._drift_ativo = False
             self._rodadas_sem_entrada = 0
             logger.info("🔄 Drift resetado automaticamente após rodadas sem entrada")
+        
+        # 🔥 TREINO ML COM CONTROLE
         self._treinar_ml_online()
 
     def registrar_previsao(self, duzia, confianca):
@@ -2480,10 +2514,8 @@ class DuziaAI:
             )
             
             if acertou:
-                logger.info(f"✅ Correção: D{self.ultima_previsao_duzia} ACERTOU")
                 self._erros_sequencia = 0
             else:
-                logger.info(f"❌ Correção: D{self.ultima_previsao_duzia} ERROU (era D{duzia_real})")
                 self._erros_sequencia += 1
         
         self.ultimos_resultados.append({'duzia': duzia_real, 'acertou_duzia': acertou_duzia,
@@ -2697,11 +2729,9 @@ class DuziaAI:
                 if taxa_acerto > 0.70:
                     bonus = min(1.5, 1.0 + (taxa_acerto - 0.70) * 2.0)
                     scores_ajustados[d] *= bonus
-                    logger.info(f"📈 Reforço D{d}: {taxa_acerto:.0%} acerto")
                 elif taxa_acerto < 0.40:
                     penalidade = max(0.5, 1.0 - (0.40 - taxa_acerto) * 2.0)
                     scores_ajustados[d] *= penalidade
-                    logger.info(f"📉 Penalidade D{d}: {taxa_acerto:.0%} acerto")
         
         total_score = sum(scores_ajustados.values())
         if total_score > 0:
@@ -2726,7 +2756,6 @@ class DuziaAI:
             scores_ajustados[3] *= 1.8
             scores_ajustados[1] *= 0.85
             scores_ajustados[2] *= 0.85
-            logger.info(f"🔧 D3 forçado: {freq.get(3,0)}/{total} → {freq.get(3,0)/total:.0%}")
             return scores_ajustados
         
         return scores
@@ -2739,7 +2768,6 @@ class DuziaAI:
             scores_ajustados = scores.copy()
             penalidade = self.penalidade_erro_sequencia ** self._erros_sequencia
             scores_ajustados[self.ultima_previsao_duzia] *= penalidade
-            logger.info(f"⚠️ Penalidade erro sequência: D{self.ultima_previsao_duzia} × {penalidade:.2f}")
             return scores_ajustados
         
         return scores
@@ -3079,10 +3107,7 @@ class DuziaAI:
 
         streak_len = streak_info.get('streak_atual_len', 0)
         streak_duzia = streak_info.get('streak_atual_duzia', 0)
-        streak_cobertura = streak_info.get('cobertura_streak_duzia', 0)
         streak_saturado = streak_info.get('streak_saturado', 0)
-        taxa_quebra = streak_info.get('streak_taxa_quebra_real', 0)
-        prob_quebra = streak_info.get('prob_quebra_streak3', 0.5) if streak_len >= 3 else streak_info.get('prob_quebra_streak2', 0.5)
 
         if self.streak_config_ativo and streak_info:
             if streak_saturado == 1 and self.consenso_info['tipo'] not in ('triplo', 'duplo'):
@@ -3757,6 +3782,8 @@ def _carregar_sistema(api_name):
             sis.sessao_pausa_ate = datetime.fromisoformat(dados['sessao_pausa_ate'])
         if dados.get('ultimo_treino_ml'): 
             sis.duzia_ai.ultimo_treino_ml = dados['ultimo_treino_ml']
+        if dados.get('melhor_accuracy'): 
+            sis.duzia_ai._melhor_accuracy = dados['melhor_accuracy']
         for campo in ['performance_por_mesa', 'performance_por_horario']:
             if campo in dados:
                 for k, v in dados[campo].items(): 
