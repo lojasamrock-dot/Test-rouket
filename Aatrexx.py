@@ -1034,6 +1034,7 @@ def salvar_modelo_ml(modelo, api_name):
             
     
 
+#def carregar_modelo_ml(api_name):
 def carregar_modelo_ml(api_name):
     if not ML_DISPONIVEL:
         logger.info("ℹ️ ML não disponível")
@@ -1075,6 +1076,7 @@ def carregar_modelo_ml(api_name):
         except:
             pass
         return None
+    
 
 def salvar_config_global():
     # Verifica se st.session_state existe
