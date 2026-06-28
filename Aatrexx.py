@@ -962,6 +962,7 @@ def get_modelo_ml_path(api_name):
     criar_pasta_modelos_ml()
     return os.path.join(PASTA_MODELOS_ML, f"modelo_ml_{api_name.lower().replace(' ', '_')}.joblib")
 
+#def salvar_modelo_ml(modelo, api_name):
 def salvar_modelo_ml(modelo, api_name):
     if modelo is None:
         logger.warning("⚠️ Tentativa de salvar modelo None")
@@ -977,7 +978,7 @@ def salvar_modelo_ml(modelo, api_name):
                 modelo_existente = joblib.load(caminho)
                 if hasattr(modelo_existente, '_melhor_accuracy') and hasattr(modelo, '_melhor_accuracy'):
                     if abs(modelo_existente._melhor_accuracy - modelo._melhor_accuracy) < 0.001:
-                        logger.info(f"ℹ️ Modelo já existe com mesma acurácia ({modelo._melhor_accuracy:.2%})")
+                        # 🔥 CORREÇÃO: Não loga repetidamente
                         return True
             except Exception as e:
                 logger.warning(f"⚠️ Não foi possível verificar modelo existente: {e}")
@@ -1029,6 +1030,9 @@ def salvar_modelo_ml(modelo, api_name):
         import traceback
         logger.error(traceback.format_exc())
         return False
+    
+            
+    
 
 def carregar_modelo_ml(api_name):
     if not ML_DISPONIVEL:
