@@ -2330,7 +2330,7 @@ class DuziaAI:
         pesos = fator_decaimento ** (n_amostras - 1 - indices)
         return pesos / pesos.mean()
 
-    def _treinar_ml_online(self):
+    #def _treinar_ml_online(self):
     def _treinar_ml_online(self):
         """Versão corrigida com prevenção de loop infinito e salvamento condicional"""
     if not ML_DISPONIVEL:
