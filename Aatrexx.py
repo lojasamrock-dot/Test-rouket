@@ -2331,8 +2331,8 @@ class DuziaAI:
         return pesos / pesos.mean()
 
     #def _treinar_ml_online(self):
-    def _treinar_ml_online(self):
-        """Versão corrigida com prevenção de loop infinito e salvamento condicional"""
+def _treinar_ml_online(self):
+    """Versão corrigida com prevenção de loop infinito e salvamento condicional"""
     if not ML_DISPONIVEL:
         return False
     
@@ -2464,6 +2464,7 @@ class DuziaAI:
         import traceback
         logger.error(traceback.format_exc())
         return False
+    
     
     
        
