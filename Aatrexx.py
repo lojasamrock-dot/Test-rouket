@@ -2334,7 +2334,7 @@ class DuziaAI:
     def _treinar_ml_online(self):
         """Versão corrigida com prevenção de loop infinito e salvamento condicional"""
     if not ML_DISPONIVEL:
-        return False
+           return False
     
     config = self._get_config()
     janela_treino = config.get('ml_janela_treino', 80)
