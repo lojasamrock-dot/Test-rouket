@@ -962,7 +962,6 @@ def get_modelo_ml_path(api_name):
     criar_pasta_modelos_ml()
     return os.path.join(PASTA_MODELOS_ML, f"modelo_ml_{api_name.lower().replace(' ', '_')}.joblib")
 
-#def salvar_modelo_ml(modelo, api_name):
 def salvar_modelo_ml(modelo, api_name):
     if modelo is None:
         logger.warning("⚠️ Tentativa de salvar modelo None")
@@ -978,7 +977,7 @@ def salvar_modelo_ml(modelo, api_name):
                 modelo_existente = joblib.load(caminho)
                 if hasattr(modelo_existente, '_melhor_accuracy') and hasattr(modelo, '_melhor_accuracy'):
                     if abs(modelo_existente._melhor_accuracy - modelo._melhor_accuracy) < 0.001:
-                        # 🔥 CORREÇÃO: Não loga repetidamente
+                        logger.info(f"ℹ️ Modelo já existe com mesma acurácia ({modelo._melhor_accuracy:.2%})")
                         return True
             except Exception as e:
                 logger.warning(f"⚠️ Não foi possível verificar modelo existente: {e}")
@@ -1030,11 +1029,7 @@ def salvar_modelo_ml(modelo, api_name):
         import traceback
         logger.error(traceback.format_exc())
         return False
-    
-            
-    
 
-#def carregar_modelo_ml(api_name):
 def carregar_modelo_ml(api_name):
     if not ML_DISPONIVEL:
         logger.info("ℹ️ ML não disponível")
@@ -1076,7 +1071,6 @@ def carregar_modelo_ml(api_name):
         except:
             pass
         return None
-    
 
 def salvar_config_global():
     # Verifica se st.session_state existe
@@ -2331,153 +2325,118 @@ class DuziaAI:
         return pesos / pesos.mean()
 
     def _treinar_ml_online(self):
-    """Versão corrigida com prevenção de loop infinito e salvamento condicional"""
-    if not ML_DISPONIVEL:
-        return False
-    
-    # Inicializar atributos se não existirem
-    if not hasattr(self, '_ultimo_treino_time'):
-        self._ultimo_treino_time = datetime.now() - timedelta(seconds=60)
-    if not hasattr(self, '_melhor_accuracy'):
-        self._melhor_accuracy = 0.0
-    
-    config = self._get_config()
-    janela_treino = config.get('ml_janela_treino', 80)
-    atualizar_a_cada = config.get('ml_atualizar_a_cada', 10)
-    rodada_atual = len(self.historico_completo)
-    
-    # PREVENIR LOOP INFINITO - Verificar tempo mínimo entre treinos
-    if self.ultimo_treino_ml > 0:
-        if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada:
-            return False
-    
-    # Número mínimo de amostras
-    if len(self.historico_completo) < 30:
-        return False
-    
-    # PREVENIR TREINO EXCESSIVO - Tempo mínimo de 10 segundos entre treinos
-    tempo_desde_ultimo = (datetime.now() - self._ultimo_treino_time).total_seconds()
-    if tempo_desde_ultimo < 10:
-        return False
-    
-    try:
-        X, y = [], []
-        inicio = max(0, len(self.historico_completo) - janela_treino)
-        limite_amostras = min(len(self.historico_completo), inicio + janela_treino)
-        
-        for i in range(inicio + 8, limite_amostras):
-            hist_duzias = self.historico_completo[max(0, i - janela_treino):i]
-            hist_nums = self.numeros_completos[max(0, i - janela_treino):i]
-            if len(hist_duzias) < 8:
-                continue
-            features = self._extrair_features_historico(hist_duzias, hist_nums, min(janela_treino, 20))
-            if features is None:
-                continue
-            target = self.historico_completo[i]
-            if target in [1, 2, 3]:
-                X.append(features)
-                y.append(target)
-        
-        if len(X) < 12:
-            logger.info(f"⚠️ Poucas amostras para treino: {len(X)}")
+        """Versão corrigida com prevenção de loop infinito"""
+        if not ML_DISPONIVEL:
             return False
         
-        X_arr = np.array(X)
+        config = self._get_config()
+        janela_treino = config.get('ml_janela_treino', 80)
+        atualizar_a_cada = config.get('ml_atualizar_a_cada', 10)
+        rodada_atual = len(self.historico_completo)
         
-        # Tentar criar validação, com fallback
-        tem_validacao = False
-        try:
-            if len(X) >= 20:  # Mínimo para validação
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X_arr, y, test_size=0.2, random_state=42, stratify=y
-                )
-                tem_validacao = True
-            else:
-                X_train, y_train = X_arr, y
-        except:
-            X_train, y_train = X_arr, y
-        
-        sample_weights = self._calcular_pesos_treino(len(X_train))
-        
-        rf = RandomForestClassifier(
-            n_estimators=120,
-            max_depth=10,
-            random_state=42,
-            n_jobs=-1,
-            class_weight='balanced',
-            min_samples_leaf=2
-        )
-        gbt = GradientBoostingClassifier(
-            n_estimators=60,
-            max_depth=5,
-            learning_rate=0.10,
-            random_state=42
-        )
-        
-        rf.fit(X_train, y_train, sample_weight=sample_weights)
-        gbt.fit(X_train, y_train, sample_weight=sample_weights)
-        
-        novo_modelo = EnsembleManual(rf, gbt)
-        
-        # AVALIAÇÃO E SALVAMENTO CONDICIONAL
-        if tem_validacao:
-            try:
-                proba, classes = novo_modelo.predict_proba(X_val)
-                preds = classes[np.argmax(proba, axis=1)]
-                accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
-                
-                # Só salva se acurácia > 0.50 E melhor que a anterior
-                if accuracy > 0.50 and accuracy > self._melhor_accuracy:
-                    self._melhor_accuracy = accuracy
-                    self._melhor_modelo = novo_modelo
-                    self.modelo_ml = novo_modelo
-                    self.ultimo_treino_ml = rodada_atual
-                    self._ultimo_treino_time = datetime.now()
-                    
-                    # Salvar no disco
-                    if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                        logger.info(f"🧠 ML Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
-                        return True
-                    else:
-                        logger.error("❌ Falha ao salvar modelo!")
-                        return False
-                else:
-                    motivo = "aleatória" if accuracy <= 0.50 else f"sem melhoria ({self._melhor_accuracy:.2%})"
-                    logger.info(f"⏭️ ML {motivo} ({accuracy:.2%}) - ignorando")
-                    return False
-                    
-            except Exception as e:
-                logger.error(f"❌ Erro na validação: {e}")
+        # 🔥 PREVENIR LOOP INFINITO - Verificar tempo mínimo entre treinos
+        if self.ultimo_treino_ml > 0:
+            if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada:
                 return False
         
-        # FALLBACK - Salva apenas se não tiver modelo e tiver amostras suficientes
-        if self.modelo_ml is None and len(X) >= 20:
-            self.modelo_ml = novo_modelo
-            self.ultimo_treino_ml = rodada_atual
-            self._ultimo_treino_time = datetime.now()
-            self._melhor_accuracy = 0.51  # Aceitar como baseline
+        # Número mínimo de amostras
+        if len(self.historico_completo) < 30:
+            return False
+        
+        # 🔥 PREVENIR TREINO EXCESSIVO - Tempo mínimo de 10 segundos entre treinos
+        if self.ultimo_treino_ml > 0:
+            tempo_desde_ultimo_treino = (datetime.now() - self._ultimo_treino_time).seconds
+            if tempo_desde_ultimo_treino < 10:
+                return False
+        
+        try:
+            X, y = [], []
+            inicio = max(0, len(self.historico_completo) - janela_treino)
+            limite_amostras = min(len(self.historico_completo), inicio + janela_treino)
             
-            if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                logger.info(f"🧠 ML Treinado (baseline)! Amostras: {len(X)}")
-                return True
-        else:
-            logger.info(f"⏭️ ML fallback ignorado - modelo existente ou amostras insuficientes")
-        
-        return False
-        
-    except Exception as e:
-        logger.error(f"❌ Erro no treino ML: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return False
-
-   
-    
-
-    
-    
-    
-       
+            for i in range(inicio + 8, limite_amostras):
+                hist_duzias = self.historico_completo[max(0, i - janela_treino):i]
+                hist_nums = self.numeros_completos[max(0, i - janela_treino):i]
+                if len(hist_duzias) < 8:
+                    continue
+                features = self._extrair_features_historico(hist_duzias, hist_nums, min(janela_treino, 20))
+                if features is None:
+                    continue
+                target = self.historico_completo[i]
+                if target in [1, 2, 3]:
+                    X.append(features)
+                    y.append(target)
+            
+            if len(X) < 12:
+                logger.info(f"⚠️ Poucas amostras para treino: {len(X)}")
+                return False
+            
+            X_arr = np.array(X)
+            
+            try:
+                X_train, X_val, y_train, y_val = train_test_split(X_arr, y, test_size=0.2, random_state=42, stratify=y)
+                tem_validacao = True
+            except:
+                X_train, y_train = X_arr, y
+                tem_validacao = False
+            
+            sample_weights = self._calcular_pesos_treino(len(X_train))
+            
+            rf = RandomForestClassifier(n_estimators=120, max_depth=10, random_state=42,
+                                        n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
+            gbt = GradientBoostingClassifier(n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42)
+            
+            rf.fit(X_train, y_train, sample_weight=sample_weights)
+            gbt.fit(X_train, y_train, sample_weight=sample_weights)
+            
+            novo_modelo = EnsembleManual(rf, gbt)
+            
+            # 🔥 SÓ SALVAR SE MELHOR QUE 50% (ALEATÓRIO) E COM MELHORIA
+            if tem_validacao:
+                try:
+                    proba, classes = novo_modelo.predict_proba(X_val)
+                    preds = classes[np.argmax(proba, axis=1)]
+                    accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
+                    
+                    if accuracy > 0.50 and accuracy > self._melhor_accuracy:
+                        self._melhor_accuracy = accuracy
+                        self._melhor_modelo = novo_modelo
+                        self.modelo_ml = novo_modelo
+                        self.ultimo_treino_ml = rodada_atual
+                        self._ultimo_treino_time = datetime.now()
+                        
+                        if salvar_modelo_ml(self.modelo_ml, self.api_name):
+                            logger.info(f"🧠 ML Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
+                            return True
+                        else:
+                            logger.error("❌ Falha ao salvar modelo!")
+                            return False
+                    else:
+                        if accuracy <= 0.50:
+                            logger.info(f"⏭️ ML performance aleatória ({accuracy:.2%}) - ignorando")
+                        else:
+                            logger.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%})")
+                        return False
+                except Exception as e:
+                    logger.error(f"❌ Erro na validação: {e}")
+                    return False
+            
+            # Fallback: sem validação, só salva se não tiver modelo
+            if self.modelo_ml is None:
+                self.modelo_ml = novo_modelo
+                self.ultimo_treino_ml = rodada_atual
+                self._ultimo_treino_time = datetime.now()
+                if salvar_modelo_ml(self.modelo_ml, self.api_name):
+                    logger.info(f"🧠 ML Treinado (sem validação)! Amostras: {len(X)}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Erro no treino ML: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
 
     def adicionar(self, numero):
         d = get_duzia(numero)
