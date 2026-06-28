@@ -2330,11 +2330,17 @@ class DuziaAI:
         pesos = fator_decaimento ** (n_amostras - 1 - indices)
         return pesos / pesos.mean()
 
-    #def _treinar_ml_online(self):
+    def _treinar_ml_online(self):
     def _treinar_ml_online(self):
         """Versão corrigida com prevenção de loop infinito e salvamento condicional"""
     if not ML_DISPONIVEL:
-           return False
+        return False
+    
+    # Inicializar atributos se não existirem
+    if not hasattr(self, '_ultimo_treino_time'):
+        self._ultimo_treino_time = datetime.now() - timedelta(seconds=60)
+    if not hasattr(self, '_melhor_accuracy'):
+        self._melhor_accuracy = 0.0
     
     config = self._get_config()
     janela_treino = config.get('ml_janela_treino', 80)
@@ -2351,10 +2357,9 @@ class DuziaAI:
         return False
     
     # 🔥 PREVENIR TREINO EXCESSIVO - Tempo mínimo de 10 segundos entre treinos
-    if self.ultimo_treino_ml > 0:
-        tempo_desde_ultimo_treino = (datetime.now() - self._ultimo_treino_time).seconds
-        if tempo_desde_ultimo_treino < 10:
-            return False
+    tempo_desde_ultimo = (datetime.now() - self._ultimo_treino_time).total_seconds()
+    if tempo_desde_ultimo < 10:
+        return False
     
     try:
         X, y = [], []
@@ -2380,25 +2385,35 @@ class DuziaAI:
         
         X_arr = np.array(X)
         
+        # Tentar criar validação, com fallback
+        tem_validacao = False
         try:
-            X_train, X_val, y_train, y_val = train_test_split(X_arr, y, test_size=0.2, random_state=42, stratify=y)
-            tem_validacao = True
+            if len(X) >= 20:  # Mínimo para validação
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_arr, y, test_size=0.2, random_state=42, stratify=y
+                )
+                tem_validacao = True
+            else:
+                X_train, y_train = X_arr, y
         except:
             X_train, y_train = X_arr, y
-            tem_validacao = False
         
         sample_weights = self._calcular_pesos_treino(len(X_train))
         
-        rf = RandomForestClassifier(n_estimators=120, max_depth=10, random_state=42,
-                                    n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
-        gbt = GradientBoostingClassifier(n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42)
+        rf = RandomForestClassifier(
+            n_estimators=120, max_depth=10, random_state=42,
+            n_jobs=-1, class_weight='balanced', min_samples_leaf=2
+        )
+        gbt = GradientBoostingClassifier(
+            n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42
+        )
         
         rf.fit(X_train, y_train, sample_weight=sample_weights)
         gbt.fit(X_train, y_train, sample_weight=sample_weights)
         
         novo_modelo = EnsembleManual(rf, gbt)
         
-        # 🔥 SÓ SALVAR SE MELHOR QUE 50% (ALEATÓRIO) E COM MELHORIA SIGNIFICATIVA
+        # 🔥 AVALIAÇÃO E SALVAMENTO CONDICIONAL
         if tem_validacao:
             try:
                 proba, classes = novo_modelo.predict_proba(X_val)
@@ -2413,7 +2428,7 @@ class DuziaAI:
                     self.ultimo_treino_ml = rodada_atual
                     self._ultimo_treino_time = datetime.now()
                     
-                    # 🔥 CORREÇÃO: Só salva no disco se realmente for melhor
+                    # Salvar no disco
                     if salvar_modelo_ml(self.modelo_ml, self.api_name):
                         logger.info(f"🧠 ML Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
                         return True
@@ -2421,23 +2436,26 @@ class DuziaAI:
                         logger.error("❌ Falha ao salvar modelo!")
                         return False
                 else:
-                    if accuracy <= 0.50:
-                        logger.info(f"⏭️ ML performance aleatória ({accuracy:.2%}) - ignorando")
-                    else:
-                        logger.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%})")
+                    motivo = "aleatória" if accuracy <= 0.50 else f"sem melhoria ({self._melhor_accuracy:.2%})"
+                    logger.info(f"⏭️ ML {motivo} ({accuracy:.2%}) - ignorando")
                     return False
+                    
             except Exception as e:
                 logger.error(f"❌ Erro na validação: {e}")
                 return False
         
-        # 🔥 CORREÇÃO: Fallback - só salva se não tiver modelo e acurácia for aceitável
-        if self.modelo_ml is None:
+        # 🔥 FALLBACK - Salva apenas se não tiver modelo e tiver amostras suficientes
+        if self.modelo_ml is None and len(X) >= 20:
             self.modelo_ml = novo_modelo
             self.ultimo_treino_ml = rodada_atual
             self._ultimo_treino_time = datetime.now()
+            self._melhor_accuracy = 0.51  # Aceitar como baseline
+            
             if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                logger.info(f"🧠 ML Treinado (sem validação)! Amostras: {len(X)}")
+                logger.info(f"🧠 ML Treinado (baseline)! Amostras: {len(X)}")
                 return True
+        else:
+            logger.info(f"⏭️ ML fallback ignorado - modelo existente ou amostras insuficientes")
         
         return False
         
@@ -2446,6 +2464,8 @@ class DuziaAI:
         import traceback
         logger.error(traceback.format_exc())
         return False
+    
+    
        
 
     def adicionar(self, numero):
