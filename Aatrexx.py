@@ -2330,8 +2330,8 @@ class DuziaAI:
         pesos = fator_decaimento ** (n_amostras - 1 - indices)
         return pesos / pesos.mean()
 
-    #def _treinar_ml_online(self):
-def _treinar_ml_online(self):
+   # def _treinar_ml_online(self):
+    def _treinar_ml_online(self):
     """Versão corrigida com prevenção de loop infinito e salvamento condicional"""
     if not ML_DISPONIVEL:
         return False
@@ -2347,7 +2347,7 @@ def _treinar_ml_online(self):
     atualizar_a_cada = config.get('ml_atualizar_a_cada', 10)
     rodada_atual = len(self.historico_completo)
     
-    # 🔥 PREVENIR LOOP INFINITO - Verificar tempo mínimo entre treinos
+    # PREVENIR LOOP INFINITO - Verificar tempo mínimo entre treinos
     if self.ultimo_treino_ml > 0:
         if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada:
             return False
@@ -2356,7 +2356,7 @@ def _treinar_ml_online(self):
     if len(self.historico_completo) < 30:
         return False
     
-    # 🔥 PREVENIR TREINO EXCESSIVO - Tempo mínimo de 10 segundos entre treinos
+    # PREVENIR TREINO EXCESSIVO - Tempo mínimo de 10 segundos entre treinos
     tempo_desde_ultimo = (datetime.now() - self._ultimo_treino_time).total_seconds()
     if tempo_desde_ultimo < 10:
         return False
@@ -2401,11 +2401,18 @@ def _treinar_ml_online(self):
         sample_weights = self._calcular_pesos_treino(len(X_train))
         
         rf = RandomForestClassifier(
-            n_estimators=120, max_depth=10, random_state=42,
-            n_jobs=-1, class_weight='balanced', min_samples_leaf=2
+            n_estimators=120,
+            max_depth=10,
+            random_state=42,
+            n_jobs=-1,
+            class_weight='balanced',
+            min_samples_leaf=2
         )
         gbt = GradientBoostingClassifier(
-            n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42
+            n_estimators=60,
+            max_depth=5,
+            learning_rate=0.10,
+            random_state=42
         )
         
         rf.fit(X_train, y_train, sample_weight=sample_weights)
@@ -2413,14 +2420,14 @@ def _treinar_ml_online(self):
         
         novo_modelo = EnsembleManual(rf, gbt)
         
-        # 🔥 AVALIAÇÃO E SALVAMENTO CONDICIONAL
+        # AVALIAÇÃO E SALVAMENTO CONDICIONAL
         if tem_validacao:
             try:
                 proba, classes = novo_modelo.predict_proba(X_val)
                 preds = classes[np.argmax(proba, axis=1)]
                 accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
                 
-                # 🔥 CORREÇÃO: Só salva se acurácia > 0.50 E melhor que a anterior
+                # Só salva se acurácia > 0.50 E melhor que a anterior
                 if accuracy > 0.50 and accuracy > self._melhor_accuracy:
                     self._melhor_accuracy = accuracy
                     self._melhor_modelo = novo_modelo
@@ -2444,7 +2451,7 @@ def _treinar_ml_online(self):
                 logger.error(f"❌ Erro na validação: {e}")
                 return False
         
-        # 🔥 FALLBACK - Salva apenas se não tiver modelo e tiver amostras suficientes
+        # FALLBACK - Salva apenas se não tiver modelo e tiver amostras suficientes
         if self.modelo_ml is None and len(X) >= 20:
             self.modelo_ml = novo_modelo
             self.ultimo_treino_ml = rodada_atual
@@ -2464,6 +2471,7 @@ def _treinar_ml_online(self):
         import traceback
         logger.error(traceback.format_exc())
         return False
+
     
     
     
