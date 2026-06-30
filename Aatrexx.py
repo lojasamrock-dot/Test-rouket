@@ -22,7 +22,6 @@ try:
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import train_test_split
     import joblib
-    from duzia_models import EnsembleManual
     ML_DISPONIVEL = True
 except ImportError:
     ML_DISPONIVEL = False
@@ -619,11 +618,42 @@ def extrair_features_consenso(consenso_info):
 
 
 # ===== ENSEMBLE MANUAL =====
-# A classe EnsembleManual foi movida para o módulo separado `duzia_models.py`
-# e é importada no topo deste arquivo (ver `from duzia_models import EnsembleManual`).
-# Isso evita o erro de pickle "it's not the same object as __main__.EnsembleManual",
-# causado pelo Streamlit reexecutar este script inteiro a cada rerun (o que
-# recriaria a classe como um objeto novo a cada vez, caso ela fosse definida aqui).
+
+class EnsembleManual:
+    def __init__(self, rf, gbt):
+        self.rf = rf
+        self.gbt = gbt
+        self.classes_ = rf.classes_
+        
+        try:
+            self.n_features_in_ = rf.n_features_in_
+        except AttributeError:
+            try:
+                self.n_features_in_ = gbt.n_features_in_
+            except AttributeError:
+                self.n_features_in_ = None
+        
+        self._modelo_tipo = "EnsembleManual"
+        self._data_criacao = datetime.now().isoformat()
+        self._melhor_accuracy = 0.0
+        
+    def predict_proba(self, X):
+        try:
+            p_rf = self.rf.predict_proba(X)
+            p_gbt = self.gbt.predict_proba(X)
+            return (p_rf + p_gbt) / 2.0, self.classes_
+        except Exception as e:
+            logger.error(f"❌ Erro no predict_proba: {e}")
+            p_rf = self.rf.predict_proba(X)
+            return p_rf, self.classes_
+
+    def predict(self, X):
+        try:
+            proba, classes = self.predict_proba(X)
+            return classes[np.argmax(proba, axis=1)]
+        except Exception as e:
+            logger.error(f"❌ Erro no predict: {e}")
+            return self.rf.predict(X)
 
 
 # ===== SETUPS =====
@@ -910,12 +940,6 @@ CONFIG_GLOBAL_PATH = "config_global.json"
 PASTA_SESSOES = "sessoes_salvas"
 PASTA_MODELOS_ML = "modelos_ml"
 
-# 🔥 Limiar mínimo de acurácia para aceitar um modelo ML treinado.
-# Antes era fixo em 0.50 (50%), o que descartava modelos com sinal real
-# acima do acaso (1/3 ≈ 33,3%) mas abaixo de 50%. Reduzido para 0.36
-# para aproveitar modelos com sinal moderado, evitando desperdiçar treinos.
-ML_ACCURACY_MINIMA = 0.36
-
 
 # ===== FUNÇÕES DE PERSISTÊNCIA =====
 
@@ -938,7 +962,6 @@ def get_modelo_ml_path(api_name):
     criar_pasta_modelos_ml()
     return os.path.join(PASTA_MODELOS_ML, f"modelo_ml_{api_name.lower().replace(' ', '_')}.joblib")
 
-#def salvar_modelo_ml(modelo, api_name):
 def salvar_modelo_ml(modelo, api_name):
     if modelo is None:
         logger.warning("⚠️ Tentativa de salvar modelo None")
@@ -954,7 +977,7 @@ def salvar_modelo_ml(modelo, api_name):
                 modelo_existente = joblib.load(caminho)
                 if hasattr(modelo_existente, '_melhor_accuracy') and hasattr(modelo, '_melhor_accuracy'):
                     if abs(modelo_existente._melhor_accuracy - modelo._melhor_accuracy) < 0.001:
-                        # 🔥 CORREÇÃO: Não loga repetidamente
+                        logger.info(f"ℹ️ Modelo já existe com mesma acurácia ({modelo._melhor_accuracy:.2%})")
                         return True
             except Exception as e:
                 logger.warning(f"⚠️ Não foi possível verificar modelo existente: {e}")
@@ -1007,14 +1030,6 @@ def salvar_modelo_ml(modelo, api_name):
         logger.error(traceback.format_exc())
         return False
 
-
-#def carregar_modelo_ml(api_name):
-
-@st.cache_resource(show_spinner=False)
-def _carregar_modelo_ml_cached(caminho, mtime, tamanho):
-    """Cache do joblib.load - só recarrega do disco se o arquivo mudar (mtime/tamanho)."""
-    return joblib.load(caminho)
-
 def carregar_modelo_ml(api_name):
     if not ML_DISPONIVEL:
         logger.info("ℹ️ ML não disponível")
@@ -1032,8 +1047,7 @@ def carregar_modelo_ml(api_name):
             os.remove(caminho)
             return None
         
-        mtime = os.path.getmtime(caminho)
-        modelo = _carregar_modelo_ml_cached(caminho, mtime, tamanho)
+        modelo = joblib.load(caminho)
         
         if not hasattr(modelo, 'predict_proba'):
             logger.error("❌ Modelo carregado não tem predict_proba")
@@ -1057,7 +1071,6 @@ def carregar_modelo_ml(api_name):
         except:
             pass
         return None
-    
 
 def salvar_config_global():
     # Verifica se st.session_state existe
@@ -2312,40 +2325,35 @@ class DuziaAI:
         return pesos / pesos.mean()
 
     def _treinar_ml_online(self):
-        """Versão corrigida com prevenção de loop infinito e salvamento condicional"""
+        """Versão corrigida com prevenção de loop infinito"""
         if not ML_DISPONIVEL:
             return False
-
-        # Inicializar atributos se não existirem
-        if not hasattr(self, '_ultimo_treino_time'):
-            self._ultimo_treino_time = datetime.now() - timedelta(seconds=60)
-        if not hasattr(self, '_melhor_accuracy'):
-            self._melhor_accuracy = 0.0
-
+        
         config = self._get_config()
         janela_treino = config.get('ml_janela_treino', 80)
         atualizar_a_cada = config.get('ml_atualizar_a_cada', 10)
         rodada_atual = len(self.historico_completo)
-
-        # PREVENIR LOOP INFINITO - Verificar tempo mínimo entre treinos
+        
+        # 🔥 PREVENIR LOOP INFINITO - Verificar tempo mínimo entre treinos
         if self.ultimo_treino_ml > 0:
             if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada:
                 return False
-
+        
         # Número mínimo de amostras
         if len(self.historico_completo) < 30:
             return False
-
-        # PREVENIR TREINO EXCESSIVO - Tempo mínimo de 10 segundos entre treinos
-        tempo_desde_ultimo = (datetime.now() - self._ultimo_treino_time).total_seconds()
-        if tempo_desde_ultimo < 10:
-            return False
-
+        
+        # 🔥 PREVENIR TREINO EXCESSIVO - Tempo mínimo de 10 segundos entre treinos
+        if self.ultimo_treino_ml > 0:
+            tempo_desde_ultimo_treino = (datetime.now() - self._ultimo_treino_time).seconds
+            if tempo_desde_ultimo_treino < 10:
+                return False
+        
         try:
             X, y = [], []
             inicio = max(0, len(self.historico_completo) - janela_treino)
             limite_amostras = min(len(self.historico_completo), inicio + janela_treino)
-
+            
             for i in range(inicio + 8, limite_amostras):
                 hist_duzias = self.historico_completo[max(0, i - janela_treino):i]
                 hist_nums = self.numeros_completos[max(0, i - janela_treino):i]
@@ -2358,64 +2366,45 @@ class DuziaAI:
                 if target in [1, 2, 3]:
                     X.append(features)
                     y.append(target)
-
+            
             if len(X) < 12:
                 logger.info(f"⚠️ Poucas amostras para treino: {len(X)}")
                 return False
-
+            
             X_arr = np.array(X)
-
-            # Tentar criar validação, com fallback
-            tem_validacao = False
+            
             try:
-                if len(X) >= 20:  # Mínimo para validação
-                    X_train, X_val, y_train, y_val = train_test_split(
-                        X_arr, y, test_size=0.2, random_state=42, stratify=y
-                    )
-                    tem_validacao = True
-                else:
-                    X_train, y_train = X_arr, y
+                X_train, X_val, y_train, y_val = train_test_split(X_arr, y, test_size=0.2, random_state=42, stratify=y)
+                tem_validacao = True
             except:
                 X_train, y_train = X_arr, y
-
+                tem_validacao = False
+            
             sample_weights = self._calcular_pesos_treino(len(X_train))
-
-            rf = RandomForestClassifier(
-                n_estimators=120,
-                max_depth=10,
-                random_state=42,
-                n_jobs=-1,
-                class_weight='balanced',
-                min_samples_leaf=2
-            )
-            gbt = GradientBoostingClassifier(
-                n_estimators=60,
-                max_depth=5,
-                learning_rate=0.10,
-                random_state=42
-            )
-
+            
+            rf = RandomForestClassifier(n_estimators=120, max_depth=10, random_state=42,
+                                        n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
+            gbt = GradientBoostingClassifier(n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42)
+            
             rf.fit(X_train, y_train, sample_weight=sample_weights)
             gbt.fit(X_train, y_train, sample_weight=sample_weights)
-
+            
             novo_modelo = EnsembleManual(rf, gbt)
-
-            # AVALIAÇÃO E SALVAMENTO CONDICIONAL
+            
+            # 🔥 SÓ SALVAR SE MELHOR QUE 50% (ALEATÓRIO) E COM MELHORIA
             if tem_validacao:
                 try:
                     proba, classes = novo_modelo.predict_proba(X_val)
                     preds = classes[np.argmax(proba, axis=1)]
                     accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
-
-                    # Só salva se acurácia > limiar mínimo E melhor que a anterior
-                    if accuracy > ML_ACCURACY_MINIMA and accuracy > self._melhor_accuracy:
+                    
+                    if accuracy > 0.50 and accuracy > self._melhor_accuracy:
                         self._melhor_accuracy = accuracy
                         self._melhor_modelo = novo_modelo
                         self.modelo_ml = novo_modelo
                         self.ultimo_treino_ml = rodada_atual
                         self._ultimo_treino_time = datetime.now()
-
-                        # Salvar no disco
+                        
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
                             logger.info(f"🧠 ML Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
                             return True
@@ -2423,29 +2412,26 @@ class DuziaAI:
                             logger.error("❌ Falha ao salvar modelo!")
                             return False
                     else:
-                        motivo = "aleatória" if accuracy <= ML_ACCURACY_MINIMA else f"sem melhoria ({self._melhor_accuracy:.2%})"
-                        logger.info(f"⏭️ ML {motivo} ({accuracy:.2%}) - ignorando")
+                        if accuracy <= 0.50:
+                            logger.info(f"⏭️ ML performance aleatória ({accuracy:.2%}) - ignorando")
+                        else:
+                            logger.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%})")
                         return False
-
                 except Exception as e:
                     logger.error(f"❌ Erro na validação: {e}")
                     return False
-
-            # FALLBACK - Salva apenas se não tiver modelo e tiver amostras suficientes
-            if self.modelo_ml is None and len(X) >= 20:
+            
+            # Fallback: sem validação, só salva se não tiver modelo
+            if self.modelo_ml is None:
                 self.modelo_ml = novo_modelo
                 self.ultimo_treino_ml = rodada_atual
                 self._ultimo_treino_time = datetime.now()
-                self._melhor_accuracy = ML_ACCURACY_MINIMA + 0.01  # Aceitar como baseline
-
                 if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                    logger.info(f"🧠 ML Treinado (baseline)! Amostras: {len(X)}")
+                    logger.info(f"🧠 ML Treinado (sem validação)! Amostras: {len(X)}")
                     return True
-            else:
-                logger.info(f"⏭️ ML fallback ignorado - modelo existente ou amostras insuficientes")
-
+            
             return False
-
+            
         except Exception as e:
             logger.error(f"❌ Erro no treino ML: {e}")
             import traceback
@@ -3870,15 +3856,15 @@ with st.sidebar:
 
     botao_desabilitado = sis.sessao_ativa or (sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate)
     if botao_desabilitado:
-        st.button("🚀 INICIAR SESSÃO", width='stretch', disabled=True)
+        st.button("🚀 INICIAR SESSÃO", use_container_width=True, disabled=True)
     else:
-        if st.button("🚀 INICIAR SESSÃO", width='stretch', type="primary"):
+        if st.button("🚀 INICIAR SESSÃO", use_container_width=True, type="primary"):
             if sis.iniciar_sessao(): 
                 st.success(f"✅ Sessão #{sis.total_sessoes} iniciada!")
                 st.rerun()
 
     st.markdown("---")
-    if st.button("🆕 RESET TOTAL", width='stretch'):
+    if st.button("🆕 RESET TOTAL", use_container_width=True):
         if nova_sessao(): 
             st.success("✅ Reset completo!")
             st.rerun()
@@ -3918,7 +3904,7 @@ with st.sidebar:
                             st.markdown(ger.get_download_link(ger.gerar_csv_sessao(s), f"sessao_{s.get('numero_sessao','?')}.csv", 'csv'), unsafe_allow_html=True)
                         stats = s.get('estatisticas', {})
                         st.caption(f"✅ {stats.get('acertos', 0)} | ❌ {stats.get('erros', 0)} | 📊 {stats.get('taxa_acerto', 0)}%")
-            if st.button("📦 Baixar Todas (JSON)", width='stretch'):
+            if st.button("📦 Baixar Todas (JSON)", use_container_width=True):
                 todas = ger.listar_sessoes()
                 if todas:
                     conteudo = json.dumps({'total_sessoes': len(todas), 'sessoes': todas}, indent=2, ensure_ascii=False)
@@ -4009,7 +3995,7 @@ with st.sidebar:
 
     st.markdown("---")
     with st.expander("🔧 Diagnóstico ML", expanded=False):
-        if st.button("🔍 Verificar Modelo", width='stretch'):
+        if st.button("🔍 Verificar Modelo", use_container_width=True):
             api_name_diag = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
             caminho = get_modelo_ml_path(api_name_diag)
             
@@ -4041,12 +4027,12 @@ with st.sidebar:
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("💾 Salvar", width='stretch'):
+        if st.button("💾 Salvar", use_container_width=True):
             salvar_resultado_em_arquivo(st.session_state.historico, get_session_paths(st.session_state.api_selecionada)['historico'])
             salvar_sessao()
             st.success("✅ Salvo!")
     with c2:
-        if st.button("📥 CSV", width='stretch'):
+        if st.button("📥 CSV", use_container_width=True):
             if exportar_historico_csv(st.session_state.sistema.historico_entradas): 
                 st.success("✅ CSV!")
 
@@ -4058,7 +4044,7 @@ c1, c2, c3 = st.columns([3, 1, 1])
 with c1:
     entrada = st.text_input("Número (0-36):", key="entrada_numero")
 with c2:
-    if st.button("🎯 Enviar", width='stretch', type="primary"):
+    if st.button("🎯 Enviar", use_container_width=True, type="primary"):
         if validar_numero(entrada):
             nr = int(entrada)
             st.session_state.historico.append({
@@ -4076,7 +4062,7 @@ with c2:
         else: 
             st.error("Número entre 0 e 36")
 with c3:
-    if st.button("🔄 Auto", width='stretch'):
+    if st.button("🔄 Auto", use_container_width=True):
         st.session_state.modo_automatico = not st.session_state.modo_automatico
         st.rerun()
 
@@ -4177,7 +4163,7 @@ with cg:
         if stk and stk.get('streak_atual_len', 0) >= 2:
             titulo += f" | 🔥STK D{stk['streak_atual_duzia']}×{stk['streak_atual_len']}"
         fig.update_layout(title=titulo, height=300, showlegend=False, yaxis_title="Score")
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(fig, use_container_width=True)
 
         if len(sis.historico_numeros) >= 8:
             ult = list(sis.historico_numeros)[-20:]
@@ -4197,7 +4183,7 @@ with cg:
                     fig2.add_trace(plt.Scatter(x=sx, y=sy, mode='markers', name='Sinal',
                                                 marker=dict(symbol='star', size=15, color='red')))
             fig2.update_layout(title="📉 Histórico", yaxis=dict(tickvals=[0,1,2,3], ticktext=['0','D1','D2','D3'], range=[-0.5,3.5]), height=300)
-            st.plotly_chart(fig2, width='stretch')
+            st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info(f"Aguardando dados... ({len(sis.historico_numeros)}/3 números)")
 
@@ -4327,8 +4313,8 @@ if sis.historico_entradas:
             "Nº": '🎯' if e.get('acerto_numero') else '-',
             "Zer": '🟢' if e.get('acerto_zero') else '-',
         })
-    st.dataframe(dados, width='stretch', height=300)
-    if st.button("📥 Exportar CSV", width='stretch'):
+    st.dataframe(dados, use_container_width=True, height=300)
+    if st.button("📥 Exportar CSV", use_container_width=True):
         if exportar_historico_csv(sis.historico_entradas): 
             st.success("✅ CSV exportado!")
 else:
