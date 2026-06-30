@@ -22,6 +22,7 @@ try:
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import train_test_split
     import joblib
+    from duzia_models import EnsembleManual
     ML_DISPONIVEL = True
 except ImportError:
     ML_DISPONIVEL = False
@@ -618,42 +619,11 @@ def extrair_features_consenso(consenso_info):
 
 
 # ===== ENSEMBLE MANUAL =====
-
-class EnsembleManual:
-    def __init__(self, rf, gbt):
-        self.rf = rf
-        self.gbt = gbt
-        self.classes_ = rf.classes_
-        
-        try:
-            self.n_features_in_ = rf.n_features_in_
-        except AttributeError:
-            try:
-                self.n_features_in_ = gbt.n_features_in_
-            except AttributeError:
-                self.n_features_in_ = None
-        
-        self._modelo_tipo = "EnsembleManual"
-        self._data_criacao = datetime.now().isoformat()
-        self._melhor_accuracy = 0.0
-        
-    def predict_proba(self, X):
-        try:
-            p_rf = self.rf.predict_proba(X)
-            p_gbt = self.gbt.predict_proba(X)
-            return (p_rf + p_gbt) / 2.0, self.classes_
-        except Exception as e:
-            logger.error(f"❌ Erro no predict_proba: {e}")
-            p_rf = self.rf.predict_proba(X)
-            return p_rf, self.classes_
-
-    def predict(self, X):
-        try:
-            proba, classes = self.predict_proba(X)
-            return classes[np.argmax(proba, axis=1)]
-        except Exception as e:
-            logger.error(f"❌ Erro no predict: {e}")
-            return self.rf.predict(X)
+# A classe EnsembleManual foi movida para o módulo separado `duzia_models.py`
+# e é importada no topo deste arquivo (ver `from duzia_models import EnsembleManual`).
+# Isso evita o erro de pickle "it's not the same object as __main__.EnsembleManual",
+# causado pelo Streamlit reexecutar este script inteiro a cada rerun (o que
+# recriaria a classe como um objeto novo a cada vez, caso ela fosse definida aqui).
 
 
 # ===== SETUPS =====
