@@ -567,7 +567,7 @@ SETUP_XXXTREME = {
     'padrao_conf_minima_tam4': 5,
     'max_repeticoes_embalo': 2,
     'embalo_consecutivas_min': 2,
-    'pausa_pos_raio': '1,
+    'pausa_pos_raio': 1,
     'vies_dinamico_ativo': True,
     'vies_dinamico_janela': 12,
     'vies_dinamico_limiar': 0.14,
