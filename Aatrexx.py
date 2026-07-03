@@ -18,6 +18,7 @@ try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import train_test_split
+    from sklearn.calibration import CalibratedClassifierCV
     import joblib
     ML_DISPONIVEL = True
 except ImportError:
@@ -784,8 +785,12 @@ def salvar_modelo_ml(modelo, api_name):
             logging.error("❌ Modelo não tem método predict_proba")
             return False
         
-        # Salva com compressão para reduzir tamanho
-        joblib.dump(modelo, caminho, compress=3)
+        # Salva em arquivo temporário e só substitui o definitivo no final
+        # (escrita atômica) — evita que um rerun do Streamlit no meio do
+        # dump deixe um .joblib pela metade/corrompido no disco.
+        caminho_tmp = caminho + ".tmp"
+        joblib.dump(modelo, caminho_tmp, compress=3)
+        os.replace(caminho_tmp, caminho)
         
         # Verifica se salvou corretamente
         if os.path.exists(caminho):
@@ -805,7 +810,23 @@ def salvar_modelo_ml(modelo, api_name):
         logging.error(f"❌ Erro ao salvar modelo ML: {e}")
         import traceback
         logging.error(traceback.format_exc())
+        try:
+            caminho_tmp = get_modelo_ml_path(api_name) + ".tmp"
+            if os.path.exists(caminho_tmp):
+                os.remove(caminho_tmp)
+        except:
+            pass
         return False
+
+def invalidar_modelo_ml(api_name):
+    """Remove o arquivo do modelo salvo em disco quando ele fica incompatível/corrompido."""
+    try:
+        caminho = get_modelo_ml_path(api_name)
+        if os.path.exists(caminho):
+            os.remove(caminho)
+            logging.info(f"🗑️ Modelo ML inválido removido do disco para {api_name}")
+    except Exception as e:
+        logging.error(f"❌ Erro ao invalidar modelo: {e}")
 
 def carregar_modelo_ml(api_name):
     """Carrega o modelo ML com verificação de integridade"""
@@ -1378,7 +1399,12 @@ class DuziaAI:
         self._ultimo_modelo_accuracy = 0.0
         self._melhor_modelo = None
         self._melhor_accuracy = 0.0
-        
+
+        # THRESHOLD ADAPTATIVO — ajusta o score mínimo de entrada com base
+        # na taxa de acerto real recente, em vez de usar um número fixo.
+        self.historico_confianca_resultado = deque(maxlen=100)
+        self._threshold_ajuste = 0.0
+
         # DETECTOR DE TRANSIÇÃO
         self.detector_regime = DetectorRegime(
             window=10,
@@ -1442,6 +1468,14 @@ class DuziaAI:
         self.transicao_evitar_dominante = config.get('transicao_evitar_dominante', True)
         self.transicao_score_minimo_extra = config.get('transicao_score_minimo_extra', 10)
 
+        # Configurações do threshold adaptativo
+        self.threshold_adaptativo_ativo = config.get('threshold_adaptativo_ativo', True)
+        self.threshold_adaptativo_janela = config.get('threshold_adaptativo_janela', 30)
+        self.threshold_adaptativo_alvo = config.get('threshold_adaptativo_alvo', 0.40)
+        self.threshold_adaptativo_passo = config.get('threshold_adaptativo_passo', 2.0)
+        self.threshold_adaptativo_min = config.get('threshold_adaptativo_min', -10.0)
+        self.threshold_adaptativo_max = config.get('threshold_adaptativo_max', 15.0)
+
         self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.padrao_stats_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.consenso_info = {'tipo': 'nenhum', 'duzia': None, 'conf': 0.0}
@@ -1452,10 +1486,37 @@ class DuziaAI:
     def _carregar_modelo_salvo(self):
         if not ML_DISPONIVEL: return
         modelo = carregar_modelo_ml(self.api_name)
-        if modelo is not None:
-            self.modelo_ml = modelo
-            self.ultimo_treino_ml = 1
-            logging.info(f"🧠 Modelo ML carregado do disco para {self.api_name}")
+        if modelo is None:
+            return
+        # Valida se o nº de features do modelo salvo bate com o que o
+        # extrator atual produz. Se o feature set mudou (ex: você adicionou
+        # features novas em versões anteriores), evita recarregar em loop
+        # um modelo desatualizado.
+        try:
+            n_features_salvo = getattr(modelo, 'n_features_in_', None)
+            features_teste = self._extrair_features_ml_completas(
+                historico_duzias=[1, 2, 3, 1, 2, 3, 1, 2],
+                historico_numeros=[1, 13, 25, 2, 14, 26, 3, 15],
+                erros_consec=0, rodadas_zero=0, repeticoes_duzia=0,
+                janela=20, modo_treino=True
+            )
+            n_features_atual = len(features_teste) if features_teste else None
+            if n_features_salvo is not None and n_features_atual is not None and n_features_salvo != n_features_atual:
+                logging.warning(
+                    f"⚠️ Modelo salvo incompatível ({n_features_salvo} vs {n_features_atual} features). "
+                    f"Descartando e invalidando arquivo em disco."
+                )
+                invalidar_modelo_ml(self.api_name)
+                return
+        except Exception as e:
+            logging.warning(f"⚠️ Não foi possível validar modelo salvo, descartando: {e}")
+            invalidar_modelo_ml(self.api_name)
+            return
+
+        self.modelo_ml = modelo
+        self.ultimo_treino_ml = 1
+        self._melhor_modelo = modelo
+        logging.info(f"🧠 Modelo ML carregado do disco para {self.api_name}")
 
     def _salvar_padroes_hibridos(self):
         paths = get_session_paths(self.api_name)
@@ -1906,72 +1967,114 @@ class DuziaAI:
 
             if len(X) < 12: 
                 logging.info(f"⚠️ Poucas amostras para treino: {len(X)}")
+                # Marca a tentativa para não ficar tentando de novo a cada rodada nova.
+                self.ultimo_treino_ml = max(self.ultimo_treino_ml, rodada_atual - atualizar_a_cada + 1)
                 return False
 
             X_arr = np.array(X)
-            
-            try:
-                X_train, X_val, y_train, y_val = train_test_split(X_arr, y, test_size=0.2, random_state=42, stratify=y)
-                tem_validacao = True
-            except:
-                X_train, y_train = X_arr, y
-                tem_validacao = False
+            y_arr = np.array(y)
+            n = len(X_arr)
+
+            # SPLIT CRONOLÓGICO — nunca embaralha. As amostras mais antigas
+            # (75%) treinam, as mais recentes (25%) validam. Isso simula de
+            # verdade "treinar com o passado e prever o futuro", em vez de
+            # misturar rodadas futuras dentro do treino via shuffle aleatório
+            # (o antigo train_test_split ignorava a ordem temporal).
+            corte = max(8, int(n * 0.75))
+            X_train, y_train = X_arr[:corte], y_arr[:corte]
+            X_val, y_val = X_arr[corte:], y_arr[corte:]
+            tem_validacao = len(X_val) >= 4 and len(set(y_val.tolist())) >= 2
 
             sample_weights = self._calcular_pesos_treino(len(X_train))
 
-            rf = RandomForestClassifier(n_estimators=120, max_depth=10, random_state=42,
-                                         n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
-            gbt = GradientBoostingClassifier(n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42)
+            rf_base = RandomForestClassifier(n_estimators=120, max_depth=10, random_state=42,
+                                              n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
+            gbt_base = GradientBoostingClassifier(n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42)
 
-            rf.fit(X_train, y_train, sample_weight=sample_weights)
-            gbt.fit(X_train, y_train, sample_weight=sample_weights)
+            # CALIBRAÇÃO DE PROBABILIDADE — RF e GBT costumam sair de fábrica
+            # com confiança mal calibrada (excesso ou falta de confiança).
+            # Isso importa muito aqui porque o score/confiança determina
+            # diretamente se o bot entra ou não (ml_score_minimo_entrada etc).
+            calibrado = False
+            try:
+                n_classes_train = len(set(y_train.tolist()))
+                cv_calib = max(2, min(3, len(y_train) // 6))
+                if n_classes_train >= 2 and len(y_train) >= 12:
+                    rf = CalibratedClassifierCV(rf_base, method='sigmoid', cv=cv_calib)
+                    gbt = CalibratedClassifierCV(gbt_base, method='sigmoid', cv=cv_calib)
+                    try:
+                        rf.fit(X_train, y_train, sample_weight=sample_weights)
+                        gbt.fit(X_train, y_train, sample_weight=sample_weights)
+                    except TypeError:
+                        # versões mais antigas do sklearn não aceitam sample_weight no wrapper
+                        rf.fit(X_train, y_train)
+                        gbt.fit(X_train, y_train)
+                    calibrado = True
+                else:
+                    raise ValueError("amostras insuficientes para calibração")
+            except Exception as e:
+                logging.info(f"ℹ️ Calibração não aplicada ({e}), usando modelos sem calibrar")
+                rf, gbt = rf_base, gbt_base
+                rf.fit(X_train, y_train, sample_weight=sample_weights)
+                gbt.fit(X_train, y_train, sample_weight=sample_weights)
 
             novo_modelo = _EnsembleManual(rf, gbt)
-            
+
+            # A cada nova tentativa, a barra de comparação relaxa um pouco.
+            # Sem isso, um accuracy "sortudo" de uma janela pequena travava
+            # o modelo para sempre e nenhum treino futuro conseguia superá-lo.
+            self._melhor_accuracy *= 0.97
+            # Esta é sempre a "última tentativa de treino", com ou sem sucesso,
+            # então o gate de cadência (ml_atualizar_a_cada) é sempre respeitado
+            # daqui pra frente — antes, quando o treino "não melhorava", esse
+            # valor nunca avançava e o bot re-treinava (pesado) a cada rodada.
+            self.ultimo_treino_ml = rodada_atual
+
             if tem_validacao:
                 try:
                     proba, classes = novo_modelo.predict_proba(X_val)
                     preds = classes[np.argmax(proba, axis=1)]
                     accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
                     
-                    if accuracy > self._melhor_accuracy:
+                    if accuracy >= self._melhor_accuracy:
                         self._melhor_accuracy = accuracy
                         self._melhor_modelo = novo_modelo
                         self.modelo_ml = novo_modelo
-                        self.ultimo_treino_ml = rodada_atual
                         
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logging.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)}")
+                            logging.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)} | Calibrado: {calibrado}")
                             return True
                         else:
                             logging.error("❌ Falha ao salvar modelo!")
                             return False
                     else:
-                        logging.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%})")
+                        logging.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%}) — mantendo modelo atual")
                         return False
                 except Exception as e:
                     logging.error(f"❌ Erro na validação ML: {e}")
-                    # Mesmo sem validação, tenta salvar
-                    self.modelo_ml = novo_modelo
-                    self.ultimo_treino_ml = rodada_atual
-                    if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                        logging.info(f"🧠 ML V14.1 Treinado (sem validação)! Amostras: {len(X)}")
-                        return True
+                    # Sem conseguir medir accuracy, não sobrescreve às cegas um
+                    # modelo bom que já existe — só aceita se ainda não houver nenhum.
+                    if self.modelo_ml is None:
+                        self.modelo_ml = novo_modelo
+                        if salvar_modelo_ml(self.modelo_ml, self.api_name):
+                            logging.info(f"🧠 ML V14.1 Treinado (sem validação, sem modelo prévio)! Amostras: {len(X)}")
+                            return True
                     return False
             
-            self.modelo_ml = novo_modelo
-            self.ultimo_treino_ml = rodada_atual
-            if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                logging.info(f"🧠 ML V14.1 Treinado! Amostras: {len(X)}")
-                return True
-            else:
-                logging.error("❌ Falha ao salvar modelo!")
-                return False
+            if self.modelo_ml is None:
+                self.modelo_ml = novo_modelo
+                if salvar_modelo_ml(self.modelo_ml, self.api_name):
+                    logging.info(f"🧠 ML V14.1 Treinado (amostra pequena, sem validação)! Amostras: {len(X)}")
+                    return True
+                else:
+                    logging.error("❌ Falha ao salvar modelo!")
+            return False
                 
         except Exception as e:
             logging.error(f"❌ Erro no treino ML: {e}")
             import traceback
             logging.error(traceback.format_exc())
+            self.ultimo_treino_ml = rodada_atual
             return False
 
     def adicionar(self, numero):
@@ -2029,6 +2132,11 @@ class DuziaAI:
                                         'acertou_numero': acertou_numero, 'acertou_zero': acertou_zero})
         self.ultimo_resultado_duzia = acertou_duzia
         self.ultimo_resultado_numero = acertou_numero
+
+        acertou_entrada = acertou_duzia or acertou_zero
+        self.historico_confianca_resultado.append((self.ultima_confianca, acertou_entrada))
+        self._atualizar_threshold_adaptativo()
+
         config = self._get_config()
         if eh_raio and multiplicador >= config['raio_alto_minimo'] and config['pausa_pos_raio'] > 0:
             self.em_pausa_pos_raio = True; self.rodadas_pos_raio = 0; self.ultimo_raio_alto = multiplicador
@@ -2068,6 +2176,35 @@ class DuziaAI:
         else:
             self._drift_ativo = False
 
+    def _atualizar_threshold_adaptativo(self):
+        """
+        Ajusta self._threshold_ajuste com base na taxa de acerto real das
+        últimas entradas. Se o bot está errando mais que o alvo, fica mais
+        exigente (score mínimo sobe). Se está acertando bem acima do alvo,
+        relaxa um pouco (permite mais entradas).
+        """
+        if not self.threshold_adaptativo_ativo:
+            self._threshold_ajuste = 0.0
+            return
+
+        janela = list(self.historico_confianca_resultado)[-self.threshold_adaptativo_janela:]
+        if len(janela) < 10:
+            return  # amostra pequena demais pra confiar no ajuste
+
+        acertos = sum(1 for _, acertou in janela if acertou)
+        taxa = acertos / len(janela)
+
+        if taxa < self.threshold_adaptativo_alvo:
+            self._threshold_ajuste = min(
+                self.threshold_adaptativo_max,
+                self._threshold_ajuste + self.threshold_adaptativo_passo
+            )
+        elif taxa > self.threshold_adaptativo_alvo + 0.10:
+            self._threshold_ajuste = max(
+                self.threshold_adaptativo_min,
+                self._threshold_ajuste - (self.threshold_adaptativo_passo * 0.5)
+            )
+
     def _prever_ml(self):
         if not ML_DISPONIVEL or self.modelo_ml is None: return {1: 0.0, 2: 0.0, 3: 0.0}
         if len(self.historico_completo) < 8: return {1: 0.0, 2: 0.0, 3: 0.0}
@@ -2078,7 +2215,8 @@ class DuziaAI:
             except: n_features_modelo = None
             if n_features_modelo is not None and len(features) != n_features_modelo:
                 logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Retreinando...")
-                self.modelo_ml = None; self.ultimo_treino_ml = 0
+                self.modelo_ml = None; self.ultimo_treino_ml = 0; self._melhor_accuracy = 0.0
+                invalidar_modelo_ml(self.api_name)  # evita recarregar o mesmo modelo velho no próximo rerun
                 return {1: 0.0, 2: 0.0, 3: 0.0}
             probabilidades, classes = self.modelo_ml.predict_proba([features])
             ml_scores = {1: 0.0, 2: 0.0, 3: 0.0}
@@ -2088,7 +2226,8 @@ class DuziaAI:
         except Exception as e:
             logging.error(f"❌ Erro na inferência ML: {e}")
             if "feature" in str(e).lower() or "shape" in str(e).lower():
-                self.modelo_ml = None; self.ultimo_treino_ml = 0
+                self.modelo_ml = None; self.ultimo_treino_ml = 0; self._melhor_accuracy = 0.0
+                invalidar_modelo_ml(self.api_name)
             return {1: 0.0, 2: 0.0, 3: 0.0}
 
     def _prever_fallback_frequencia(self):
@@ -2318,7 +2457,7 @@ class DuziaAI:
             motivo_transicao = f"🔄 {self.regime_atual.upper()}"
 
         if modo_base == 'ml':
-            score_minimo = config.get('ml_score_minimo_entrada', 28) + score_min_extra
+            score_minimo = config.get('ml_score_minimo_entrada', 28) + score_min_extra + self._threshold_ajuste
             pode_entrar = s1 > score_minimo
             if pode_entrar:
                 treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
@@ -2337,10 +2476,12 @@ class DuziaAI:
                 if self.vies_dinamico_ativo and self._vies_dinamico_atual:
                     motivo += f" | 🔍 VD-D{self._vies_dinamico_atual}({self._vies_dinamico_intensidade*100:.0f}%)"
                 if streak_sinal: motivo += f" | {streak_sinal}"
+                if abs(self._threshold_ajuste) >= 1:
+                    motivo += f" | 🎚️ ajuste:{self._threshold_ajuste:+.1f}"
             else:
-                motivo = f"Score ML baixo ({s1:.1f} < {score_minimo})" + (f" +{score_min_extra} transição" if score_min_extra else "")
+                motivo = f"Score ML baixo ({s1:.1f} < {score_minimo:.1f})" + (f" +{score_min_extra} transição" if score_min_extra else "")
         else:
-            score_min_fb = config.get('ml_score_minimo_fallback', 35) + score_min_extra
+            score_min_fb = config.get('ml_score_minimo_fallback', 35) + score_min_extra + self._threshold_ajuste
             min_rodadas_fb = config.get('ml_min_rodadas_fallback', 6)
             if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
                 pode_entrar = True
@@ -2348,6 +2489,8 @@ class DuziaAI:
                 if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
                     motivo = f"🔄 {self.regime_atual.upper()} " + motivo
                 if streak_sinal: motivo += f" | {streak_sinal}"
+                if abs(self._threshold_ajuste) >= 1:
+                    motivo += f" | 🎚️ ajuste:{self._threshold_ajuste:+.1f}"
             else:
                 motivo = f"Aguardando ML ({len(self.historico_completo)}/{max(30, min_rodadas_fb)} rod)"
 
