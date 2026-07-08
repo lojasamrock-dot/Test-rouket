@@ -549,7 +549,7 @@ SETUP_XXXTREME = {
     'peso_adaptativo_ativo': True,
     'peso_adaptativo_janela': 12,
     'peso_adaptativo_boost': 1.4,
-    'confianca_minima_entrada': 2.0,
+    'confianca_minima_entrada': 1.6,
     'filtro_conf_baixa': 1.6,
     'confianca_maxima_segura': 3.2,
     'streak_ativo': True,
