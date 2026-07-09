@@ -631,7 +631,7 @@ SETUP_IMMERSIVE = {
     'usar_embalo': True,
     'usar_ritmo_alternado': True,
     'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': False,
+    'usar_ritmo_ping_pong': True,
     'usar_ritmo_binario': True,
     'usar_quebra_pos_zero': True,
     'usar_exaustao_dominancia': False,
