@@ -483,6 +483,82 @@ def extrair_features_consenso(consenso_info):
 
 
 # =============================
+# 🆕 AJUSTE MEIO-TERMO (V14.2)
+# =============================
+#
+# Este bloco aplica um afrouxamento MODERADO em cima de qualquer config de
+# roleta já existente (SETUP_XXXTREME / SETUP_IMMERSIVE / SETUP_MEGA).
+# A ideia: reduzir o tempo de espera por sinal (drift, transição, threshold
+# adaptativo) sem desmontar os filtros de qualidade (padrões, streak, ML).
+#
+# Cada ajuste é feito por PERCENTUAL relativo ao valor que a própria roleta
+# já usava, não por valor fixo — assim preserva a calibração individual de
+# cada mesa (XXXtreme, Immersive, Mega já têm perfis diferentes entre si).
+#
+# Os percentuais abaixo equivalem a ~50% do afrouxamento que um setup
+# "assertivo" extremo aplicaria — ou seja, o meio-termo pedido.
+
+def _aplicar_ajuste_meio_termo(config):
+    cfg = config.copy()
+
+    def blend(chave, delta_pct, minimo=None):
+        if chave in cfg and cfg[chave] is not None:
+            novo = cfg[chave] * (1 + delta_pct)
+            if minimo is not None:
+                novo = max(minimo, novo)
+            cfg[chave] = novo
+
+    # --- Barreira de entrada (score/confiança) - afrouxa moderadamente ---
+    blend('ml_score_minimo_entrada', -0.18, minimo=10)
+    blend('ml_score_minimo_fallback', -0.14, minimo=18)
+    blend('confianca_minima_entrada', -0.11, minimo=1.2)
+    blend('filtro_conf_baixa', -0.16, minimo=0.9)
+    blend('confianca_maxima_segura', -0.08)
+    blend('ml_score_minimo_pos_rotacao', -0.16, minimo=10)
+    cfg['ml_min_rodadas_fallback'] = max(4, int(round(cfg.get('ml_min_rodadas_fallback', 6) * 0.83)))
+
+    # --- Transição: menos punitiva, mas ainda alerta ---
+    cfg['transicao_penalidade_conf'] = min(0.82, cfg.get('transicao_penalidade_conf', 0.70) + 0.10)
+    blend('transicao_score_minimo_extra', -0.30, minimo=3)
+
+    # --- Drift: detecta e libera bem mais rápido (principal gargalo de espera) ---
+    blend('drift_janela', -0.16, minimo=8)
+    blend('drift_taxa_minima', -0.22, minimo=0.15)
+    cfg['drift_alertar_apos'] = max(3, int(round(cfg.get('drift_alertar_apos', 5) * 0.8)))
+    cfg['drift_rodadas_auto_reset'] = max(8, int(round(cfg.get('drift_rodadas_auto_reset', 20) * 0.55)))
+
+    # --- Threshold adaptativo: mais responsivo (ver também fix de simetria no método) ---
+    blend('threshold_adaptativo_janela', -0.16, minimo=15)
+    blend('threshold_adaptativo_alvo', -0.12, minimo=0.25)
+    blend('threshold_adaptativo_passo', -0.25, minimo=1.0)
+    cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -10.0) * 0.7
+    cfg['threshold_adaptativo_max'] = cfg.get('threshold_adaptativo_max', 15.0) * 0.75
+
+    # --- Padrões/streak um pouco mais permissivos, sem abrir mão do mínimo ---
+    blend('padrao_min_ocorrencias', -0.16, minimo=2)
+    blend('padrao_conf_minima_tam2', -0.12, minimo=1.2)
+    blend('padrao_conf_minima_tam4', -0.18, minimo=2.5)
+    blend('padrao_consenso_min_conf', -0.25, minimo=0.12)
+    blend('padrao_qualidade_min_p2', -0.23, minimo=8)
+    blend('padrao_qualidade_min_p3', -0.25, minimo=5)
+    blend('padrao_qualidade_min_p4', -0.25, minimo=4)
+    if cfg.get('streak_min_len', 2) >= 2:
+        cfg['streak_min_len'] = cfg['streak_min_len'] - 1
+    blend('streak_conf_min_reforco', -0.14, minimo=1.6)
+
+    # --- ML re-treina um pouco mais cedo (não muda a lógica de treino/features) ---
+    blend('ml_janela_treino', -0.20, minimo=40)
+    cfg['ml_atualizar_a_cada'] = max(5, int(round(cfg.get('ml_atualizar_a_cada', 10) * 0.75)))
+
+    # --- Zero/viés dinâmico um pouco mais tolerantes ---
+    blend('zero_termometro_max', 0.15)
+    blend('vies_dinamico_janela', -0.16, minimo=15)
+    blend('vies_dinamico_limiar', 0.15)
+
+    return cfg
+
+
+# =============================
 # SETUPS — V14.1 COM DETECTOR DE TRANSIÇÃO
 # =============================
 SETUP_BASE = {
@@ -541,6 +617,12 @@ SETUP_BASE = {
     'transicao_aumentar_cobertura': True,
     'transicao_evitar_dominante': True,
     'transicao_score_minimo_extra': 10,
+    'threshold_adaptativo_ativo': True,
+    'threshold_adaptativo_janela': 30,
+    'threshold_adaptativo_alvo': 0.40,
+    'threshold_adaptativo_passo': 2.0,
+    'threshold_adaptativo_min': -10.0,
+    'threshold_adaptativo_max': 15.0,
 }
 
 SETUP_XXXTREME = {
@@ -603,6 +685,7 @@ SETUP_XXXTREME = {
     'transicao_evitar_dominante': True,
     'transicao_score_minimo_extra': 15,
 }
+SETUP_XXXTREME = _aplicar_ajuste_meio_termo(SETUP_XXXTREME)
 
 SETUP_IMMERSIVE = {
     **SETUP_BASE,
@@ -631,7 +714,7 @@ SETUP_IMMERSIVE = {
     'usar_embalo': True,
     'usar_ritmo_alternado': True,
     'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': True,
+    'usar_ritmo_ping_pong': False,
     'usar_ritmo_binario': True,
     'usar_quebra_pos_zero': True,
     'usar_exaustao_dominancia': False,
@@ -689,6 +772,7 @@ SETUP_IMMERSIVE = {
     'transicao_evitar_dominante': True,
     'transicao_score_minimo_extra': 10,
 }
+SETUP_IMMERSIVE = _aplicar_ajuste_meio_termo(SETUP_IMMERSIVE)
 
 SETUP_MEGA = {
     **SETUP_BASE,
@@ -738,6 +822,7 @@ SETUP_MEGA = {
     'transicao_evitar_dominante': True,
     'transicao_score_minimo_extra': 15,
 }
+SETUP_MEGA = _aplicar_ajuste_meio_termo(SETUP_MEGA)
 
 ROLETA_CONFIGS = {
     'XXXtreme Lightning': SETUP_XXXTREME,
@@ -2182,6 +2267,10 @@ class DuziaAI:
         últimas entradas. Se o bot está errando mais que o alvo, fica mais
         exigente (score mínimo sobe). Se está acertando bem acima do alvo,
         relaxa um pouco (permite mais entradas).
+
+        V14.2 — MEIO-TERMO: a subida e a descida agora usam passos mais
+        próximos (antes a queda usava metade do passo da subida, então o
+        bot ficava exigente por muito mais tempo do que ficava permissivo).
         """
         if not self.threshold_adaptativo_ativo:
             self._threshold_ajuste = 0.0
@@ -2202,7 +2291,7 @@ class DuziaAI:
         elif taxa > self.threshold_adaptativo_alvo + 0.10:
             self._threshold_ajuste = max(
                 self.threshold_adaptativo_min,
-                self._threshold_ajuste - (self.threshold_adaptativo_passo * 0.5)
+                self._threshold_ajuste - (self.threshold_adaptativo_passo * 0.8)
             )
 
     def _prever_ml(self):
@@ -2508,7 +2597,9 @@ class DuziaAI:
 
         confianca_min = config.get('confianca_minima_entrada', 1.8)
         if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
-            confianca_min *= 1.2
+            # V14.2 — MEIO-TERMO: era *1.2. Ainda exige mais confiança em
+            # regime instável/transição, mas um pouco menos que antes.
+            confianca_min *= 1.12
 
         if pode_entrar and confianca < confianca_min and not forcar_rotacao:
             if self.consenso_info['tipo'] in ('triplo',) and confianca >= 1.2:
@@ -2517,7 +2608,10 @@ class DuziaAI:
                 pode_entrar = False
                 motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
 
-        if pode_entrar and self.erros_consecutivos >= 1 and confianca < (confianca_min + 0.4):
+        # V14.2 — MEIO-TERMO: era erros_consecutivos >= 1. Passa a exigir 2
+        # erros seguidos antes de travar por "anti-erro", já que 1 erro
+        # isolado é normal e não precisa endurecer a entrada seguinte.
+        if pode_entrar and self.erros_consecutivos >= 2 and confianca < (confianca_min + 0.35):
             pode_entrar = False
             motivo = f"🚫 Anti-Erro: conf {confianca:.2f} insuficiente (erros: {self.erros_consecutivos})"
 
@@ -2526,7 +2620,9 @@ class DuziaAI:
             incluir_zero = True
             if pode_entrar: motivo += " | 🌡️ Zero"
 
-        if confianca < 0.8: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
+        # V14.2 — MEIO-TERMO: era < 0.8. Reduzido para não descartar entradas
+        # com confiança moderada, mantendo ainda um piso de segurança.
+        if confianca < 0.65: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
 
         duzia_secundaria_final = d2
         streak_aplicado = False
@@ -2806,8 +2902,8 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V14.1 - Detector de Transição", layout="wide")
-st.title("🎰 DuziaAI V14.1 — Detector de Transição ✅ | Features + CUSUM + Regime")
+st.set_page_config(page_title="🎰 DuziaAI V14.2 - Meio-Termo", layout="wide")
+st.title("🎰 DuziaAI V14.2 — Ajuste Meio-Termo ✅ | Menos espera, mesmos filtros de qualidade")
 
 config_global = carregar_config_global()
 
@@ -2869,7 +2965,7 @@ if "sistema" not in st.session_state:
 # SIDEBAR
 # =============================
 with st.sidebar:
-    st.markdown("## ⚙️ V14.1 — Detector de Transição ✅")
+    st.markdown("## ⚙️ V14.2 — Ajuste Meio-Termo ✅")
     sis = st.session_state.sistema
 
     st.markdown("### 📊 Status da Sessão")
@@ -2971,7 +3067,7 @@ with st.sidebar:
 
     if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
         acc = getattr(sis.duzia_ai, '_melhor_accuracy', 0)
-        st.success(f"🧠 ML V14.1 | Acc: {acc:.1%}" if acc > 0 else f"🧠 ML CARREGADO 💾 | R{sis.duzia_ai.ultimo_treino_ml}")
+        st.success(f"🧠 ML V14.2 | Acc: {acc:.1%}" if acc > 0 else f"🧠 ML CARREGADO 💾 | R{sis.duzia_ai.ultimo_treino_ml}")
     else:
         n = len(sis.historico_numeros)
         st.info(f"🧠 Aguardando... ({n}/30 rod)")
@@ -3000,12 +3096,13 @@ with st.sidebar:
     elif consenso['tipo'] == 'simples': st.info(f"💡 Sinal: D{consenso['duzia']}")
 
     st.markdown("---")
-    st.caption(f"🔧 **{api_name} V14.1**")
-    st.caption(f"• Conf mín: {config_ativa.get('confianca_minima_entrada', 1.8)}")
-    st.caption(f"• Score mín ML: {config_ativa.get('ml_score_minimo_entrada', 28)}")
-    st.caption(f"• Score mín Fallback: {config_ativa.get('ml_score_minimo_fallback', 35)}")
+    st.caption(f"🔧 **{api_name} V14.2 (meio-termo)**")
+    st.caption(f"• Conf mín: {config_ativa.get('confianca_minima_entrada', 1.8):.2f}")
+    st.caption(f"• Score mín ML: {config_ativa.get('ml_score_minimo_entrada', 28):.1f}")
+    st.caption(f"• Score mín Fallback: {config_ativa.get('ml_score_minimo_fallback', 35):.1f}")
+    st.caption(f"• Drift reset em: {config_ativa.get('drift_rodadas_auto_reset', 20)} rodadas")
     st.caption(f"• Transição penalidade: {config_ativa.get('transicao_penalidade_conf', 0.70)*100:.0f}%")
-    st.caption(f"• Transição score +{config_ativa.get('transicao_score_minimo_extra', 10)}")
+    st.caption(f"• Transição score +{config_ativa.get('transicao_score_minimo_extra', 10):.1f}")
     st.caption(f"• ML Avançado: {'✅' if config_ativa.get('usar_features_ml_avancadas', True) else '❌'}")
 
     st.markdown("---")
@@ -3020,7 +3117,7 @@ with st.sidebar:
         st.session_state.telegram_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password")
         st.session_state.telegram_chat_id_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt)
 
-    # 🔧 DIAGNÓSTICO ML - NOVO
+    # 🔧 DIAGNÓSTICO ML
     st.markdown("---")
     with st.expander("🔧 Diagnóstico ML", expanded=False):
         if st.button("🔍 Verificar Modelo", use_container_width=True):
@@ -3104,7 +3201,7 @@ regime_atual = getattr(sis.duzia_ai, 'regime_atual', 'estavel')
 if regime_atual == 'transicao':
     st.error("⚠️ **TRANSIÇÃO DETECTADA** — Entradas com confiança reduzida. Aumentando cobertura.")
 elif regime_atual == 'instavel':
-    st.warning("⚡ **REGIME INSTÁVEL** — Aguardando estabilização. Score mínimo +10.")
+    st.warning("⚡ **REGIME INSTÁVEL** — Aguardando estabilização.")
 else:
     st.success("✅ **REGIME ESTÁVEL** — Padrões consolidados. Operação normal.")
 
@@ -3162,7 +3259,7 @@ with cg:
             marker_color=['#FF6B6B' if score[d]==max_score else '#4ECDC4' for d in [1,2,3]],
             text=[f'{score[d]:.1f}' for d in [1,2,3]], textposition='auto'
         )])
-        titulo = f"🎯 ML V14.1 ({api_name}) | {modo_atual.upper()}"
+        titulo = f"🎯 ML V14.2 ({api_name}) | {modo_atual.upper()}"
         if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ZERO"
         if sis.duzia_ai._drift_ativo: titulo += " | ⚠️ DRIFT"
         if hasattr(sis.duzia_ai, 'regime_atual') and sis.duzia_ai.regime_atual in ('transicao', 'instavel'):
@@ -3199,7 +3296,7 @@ with ce:
     if regime_atual == 'transicao':
         st.error("⚠️ **TRANSIÇÃO** — Reduzindo confiança")
     elif regime_atual == 'instavel':
-        st.warning("⚡ **INSTÁVEL** — Score mínimo +10")
+        st.warning("⚡ **INSTÁVEL**")
     else:
         st.success("✅ **ESTÁVEL**")
     
@@ -3250,7 +3347,7 @@ with ce:
         melhores_principal = _selecionar_melhores_numeros(dz_princ, list(sis.historico_numeros), 6)
         melhores_secundaria = _selecionar_melhores_numeros(duzia_secundaria, list(sis.historico_numeros), 6) if duzia_secundaria else None
         cor = "#FF6347" if e.get('modo_anti_erro') else "#00CED1"
-        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V14.1 ✅"
+        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V14.2 ✅"
         if regime_ent in ('transicao', 'instavel'):
             icone_modo += f" 🔄{regime_ent}"
         padrao_html = f'<p style="text-align:center; color:#FFD700; font-size:0.8em;">🧩 {padrao_info["resumo"]}</p>' if padrao_info.get('resumo') else ""
@@ -3323,7 +3420,7 @@ with col_t2:
         st.warning("📢 Telegram Alt NÃO")
 
 config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
-st.caption(f"🤖 DuziaAI V14.1 | {api_name} | ✅ Detector de Transição | {formatar_hora_brasilia()}")
+st.caption(f"🤖 DuziaAI V14.2 | {api_name} | ✅ Ajuste Meio-Termo | {formatar_hora_brasilia()}")
 
 modelo_path = get_modelo_ml_path(api_name)
 if os.path.exists(modelo_path):
@@ -3332,4 +3429,4 @@ if os.path.exists(modelo_path):
 else:
     st.caption("⚠️ Modelo não salvo ainda")
 
-salvar_sessao() #analise o código acima e verifique porque está demorando muito pra gerar as entradas está passando muito tempo aguardando o sinal 20 rodadas pra uma entrada é um pouco veja aí o que podemos melhorar sem mexer na assertivo atividade
+salvar_sessao()
