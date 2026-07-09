@@ -3001,7 +3001,8 @@ with st.sidebar:
     if sis.duzia_ai._vies_dinamico_atual:
         st.warning(f"🔍 Viés: D{sis.duzia_ai._vies_dinamico_atual} ({sis.duzia_ai._vies_dinamico_intensidade*100:.0f}%)")
 
-    stk = sis.duzia_ai._streak_info_atual    if stk and stk.get('streak_atual_len', 0) >= 1:  # OTIMIZADO: 2 -> 1
+        stk = sis.duzia_ai._streak_info_atual    
+    if stk and stk.get('streak_atual_len', 0) >= 1:  # OTIMIZADO: 2 -> 1
         stk_len = stk['streak_atual_len']; stk_duzia = stk['streak_atual_duzia']
         stk_cont = stk.get('prob_continua_streak2' if stk_len == 2 else 'prob_continua_streak3', 0.5)
         if stk.get('streak_saturado'): st.error(f"⚠️ STK SATURADO D{stk_duzia}×{stk_len} | Quebra: {stk.get('streak_taxa_quebra_real', 0)*100:.0f}%")
