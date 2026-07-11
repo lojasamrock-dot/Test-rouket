@@ -620,6 +620,34 @@ def _aplicar_ajuste_fino_immersive(config, original):
     cfg['anti_erro_min_erros_consecutivos'] = 1
     cfg['transicao_confianca_multiplicador'] = 1.18
 
+    # --- 3) Qualidade da previsão do ML (V14.2.2) ---
+    # Mais dados de treino e retreino menos frequente = modelo mais estável
+    # e menos sujeito a "flutuar" de qualidade a cada poucas rodadas.
+    puxar_para_original('ml_janela_treino', 0.6, minimo=45)
+    puxar_para_original('ml_atualizar_a_cada', 0.5, minimo=6)
+
+    return cfg
+
+
+# Chaves que representam "quantidade de rodadas" e são usadas em algum
+# lugar do código como índice de fatiamento de lista (lista[-janela:]) ou
+# como limite de range()/loop. Python não aceita float nesses contextos —
+# TypeError: slice indices must be integers. Os blends acima (percentuais)
+# produzem float pra qualquer uma dessas chaves, então SEMPRE normalizamos
+# de volta pra int logo depois de qualquer ajuste, pra essas chaves nunca
+# vazarem float pro resto do código.
+_CHAVES_INTEIRAS_DE_JANELA = [
+    'drift_janela', 'drift_alertar_apos', 'drift_rodadas_auto_reset',
+    'threshold_adaptativo_janela', 'vies_dinamico_janela', 'ml_janela_treino',
+    'ml_atualizar_a_cada', 'ml_min_rodadas_fallback', 'zero_termometro_max',
+    'padrao_min_ocorrencias', 'streak_min_len', 'peso_adaptativo_janela',
+]
+
+def _forcar_inteiros_de_janela(config):
+    cfg = config.copy()
+    for chave in _CHAVES_INTEIRAS_DE_JANELA:
+        if chave in cfg and cfg[chave] is not None:
+            cfg[chave] = int(round(cfg[chave]))
     return cfg
 
 
@@ -756,6 +784,7 @@ SETUP_XXXTREME = {
     'transicao_score_minimo_extra': 15,
 }
 SETUP_XXXTREME = _aplicar_ajuste_meio_termo(SETUP_XXXTREME)
+SETUP_XXXTREME = _forcar_inteiros_de_janela(SETUP_XXXTREME)
 
 _SETUP_IMMERSIVE_PRE_AJUSTE = {
     **SETUP_BASE,
@@ -847,6 +876,7 @@ SETUP_IMMERSIVE = _aplicar_ajuste_meio_termo(_SETUP_IMMERSIVE_PRE_AJUSTE)
 # temporizadores e reforça a barreira de qualidade de volta (ver função
 # _aplicar_ajuste_fino_immersive acima para o motivo).
 SETUP_IMMERSIVE = _aplicar_ajuste_fino_immersive(SETUP_IMMERSIVE, _SETUP_IMMERSIVE_PRE_AJUSTE)
+SETUP_IMMERSIVE = _forcar_inteiros_de_janela(SETUP_IMMERSIVE)
 
 SETUP_MEGA = {
     **SETUP_BASE,
@@ -897,6 +927,7 @@ SETUP_MEGA = {
     'transicao_score_minimo_extra': 15,
 }
 SETUP_MEGA = _aplicar_ajuste_meio_termo(SETUP_MEGA)
+SETUP_MEGA = _forcar_inteiros_de_janela(SETUP_MEGA)
 
 ROLETA_CONFIGS = {
     'XXXtreme Lightning': SETUP_XXXTREME,
@@ -1468,10 +1499,17 @@ def _calcular_autocorrelacao(serie, lag=3):
 class _EnsembleManual:
     """Ensemble manual de RandomForest + GradientBoosting - OTIMIZADO PARA SERIALIZAÇÃO"""
     
-    def __init__(self, rf, gbt):
+    def __init__(self, rf, gbt, peso_rf=0.5, peso_gbt=0.5):
         self.rf = rf
         self.gbt = gbt
         self.classes_ = rf.classes_
+
+        # V14.2.2 — pesos por submodelo (calculados na validação, ver
+        # _treinar_ml_online). Antes era sempre média 50/50 fixa; agora o
+        # submodelo que realmente acertou mais naquele treino pesa mais.
+        soma = max(1e-6, peso_rf + peso_gbt)
+        self.peso_rf = peso_rf / soma
+        self.peso_gbt = peso_gbt / soma
         
         # Obtém n_features_in_ de forma segura
         try:
@@ -1487,11 +1525,11 @@ class _EnsembleManual:
         self._data_criacao = datetime.now().isoformat()
         
     def predict_proba(self, X):
-        """Prediz probabilidades usando ensemble"""
+        """Prediz probabilidades usando ensemble ponderado"""
         try:
             p_rf = self.rf.predict_proba(X)
             p_gbt = self.gbt.predict_proba(X)
-            return (p_rf + p_gbt) / 2.0, self.classes_
+            return (p_rf * self.peso_rf + p_gbt * self.peso_gbt), self.classes_
         except Exception as e:
             logging.error(f"❌ Erro no predict_proba: {e}")
             # Fallback: usa apenas RandomForest
@@ -1558,6 +1596,7 @@ class DuziaAI:
         self._ultimo_modelo_accuracy = 0.0
         self._melhor_modelo = None
         self._melhor_accuracy = 0.0
+        self._tentativas_sem_melhora = 0
 
         # THRESHOLD ADAPTATIVO — ajusta o score mínimo de entrada com base
         # na taxa de acerto real recente, em vez de usar um número fixo.
@@ -2181,12 +2220,29 @@ class DuziaAI:
                 rf.fit(X_train, y_train, sample_weight=sample_weights)
                 gbt.fit(X_train, y_train, sample_weight=sample_weights)
 
-            novo_modelo = _EnsembleManual(rf, gbt)
+            # V14.2.2 — PESO POR SUBMODELO: mede a acurácia de RF e GBT
+            # separadamente na validação e usa isso como peso do ensemble,
+            # em vez de sempre fazer média 50/50. O submodelo que realmente
+            # acerta mais naquele treino específico passa a "falar mais alto".
+            peso_rf, peso_gbt = 0.5, 0.5
+            if tem_validacao:
+                try:
+                    p_rf_val = rf.predict_proba(X_val)
+                    p_gbt_val = gbt.predict_proba(X_val)
+                    preds_rf = rf.classes_[np.argmax(p_rf_val, axis=1)] if hasattr(rf, 'classes_') else None
+                    preds_gbt = gbt.classes_[np.argmax(p_gbt_val, axis=1)] if hasattr(gbt, 'classes_') else None
+                    if preds_rf is not None and preds_gbt is not None:
+                        acc_rf = sum(1 for p, t in zip(preds_rf, y_val) if p == t) / len(y_val)
+                        acc_gbt = sum(1 for p, t in zip(preds_gbt, y_val) if p == t) / len(y_val)
+                        # piso de 0.15 pra nunca zerar de vez um dos dois
+                        # (mesmo o pior dos dois ainda contribui um pouco)
+                        peso_rf = max(0.15, acc_rf)
+                        peso_gbt = max(0.15, acc_gbt)
+                except Exception as e:
+                    logging.info(f"ℹ️ Não foi possível pesar submodelos individualmente ({e}), usando 50/50")
 
-            # A cada nova tentativa, a barra de comparação relaxa um pouco.
-            # Sem isso, um accuracy "sortudo" de uma janela pequena travava
-            # o modelo para sempre e nenhum treino futuro conseguia superá-lo.
-            self._melhor_accuracy *= 0.97
+            novo_modelo = _EnsembleManual(rf, gbt, peso_rf=peso_rf, peso_gbt=peso_gbt)
+
             # Esta é sempre a "última tentativa de treino", com ou sem sucesso,
             # então o gate de cadência (ml_atualizar_a_cada) é sempre respeitado
             # daqui pra frente — antes, quando o treino "não melhorava", esse
@@ -2203,14 +2259,25 @@ class DuziaAI:
                         self._melhor_accuracy = accuracy
                         self._melhor_modelo = novo_modelo
                         self.modelo_ml = novo_modelo
+                        self._tentativas_sem_melhora = 0
                         
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logging.info(f"🧠 ML V14.1 Treinado! Acc: {accuracy:.2%} | Amostras: {len(X)} | Calibrado: {calibrado}")
+                            logging.info(f"🧠 ML V14.2.2 Treinado! Acc: {accuracy:.2%} (RF:{peso_rf:.2f}/GBT:{peso_gbt:.2f}) | Amostras: {len(X)} | Calibrado: {calibrado}")
                             return True
                         else:
                             logging.error("❌ Falha ao salvar modelo!")
                             return False
                     else:
+                        # V14.2.2 — a barra só relaxa depois de 3 tentativas
+                        # SEGUIDAS sem melhora (não a cada treino), e com um
+                        # piso de 0.36 (um pouco acima do acaso de 1/3) — 
+                        # antes relaxava 3% em TODO treino, o que deixava a
+                        # exigência cair bem baixo em sessões longas e podia
+                        # abrir espaço pra um modelo pior substituir um bom.
+                        self._tentativas_sem_melhora += 1
+                        if self._tentativas_sem_melhora >= 3:
+                            self._melhor_accuracy = max(0.36, self._melhor_accuracy * 0.985)
+                            self._tentativas_sem_melhora = 0
                         logging.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%}) — mantendo modelo atual")
                         return False
                 except Exception as e:
@@ -2220,14 +2287,14 @@ class DuziaAI:
                     if self.modelo_ml is None:
                         self.modelo_ml = novo_modelo
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logging.info(f"🧠 ML V14.1 Treinado (sem validação, sem modelo prévio)! Amostras: {len(X)}")
+                            logging.info(f"🧠 ML V14.2.2 Treinado (sem validação, sem modelo prévio)! Amostras: {len(X)}")
                             return True
                     return False
             
             if self.modelo_ml is None:
                 self.modelo_ml = novo_modelo
                 if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                    logging.info(f"🧠 ML V14.1 Treinado (amostra pequena, sem validação)! Amostras: {len(X)}")
+                    logging.info(f"🧠 ML V14.2.2 Treinado (amostra pequena, sem validação)! Amostras: {len(X)}")
                     return True
                 else:
                     logging.error("❌ Falha ao salvar modelo!")
