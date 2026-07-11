@@ -558,6 +558,71 @@ def _aplicar_ajuste_meio_termo(config):
     return cfg
 
 
+def _aplicar_ajuste_fino_immersive(config, original):
+    """
+    Ajuste extra SÓ para a Immersive Roulette (V14.2.1).
+
+    Motivo: essa mesa, mesmo com o ajuste meio-termo geral, continuava
+    demorando muito E errando um pouco mais que as outras. As duas coisas
+    puxam pra direções opostas, então em vez de afrouxar tudo de novo,
+    aqui separamos:
+
+    1) TEMPORIZADORES (drift, threshold adaptativo, zero-termômetro) —
+       destravados ainda mais. Eles só controlam QUANTO TEMPO o bot fica
+       de braço cruzado depois de um erro/instabilidade, não a qualidade
+       da decisão em si. Afrouxar aqui é ganho de velocidade "de graça".
+
+    2) BARREIRA DE QUALIDADE (confiança mínima, score mínimo, qualidade
+       de padrão) — puxada de volta para mais perto do valor ORIGINAL
+       (pré meio-termo) da própria Immersive. Isso ataca o erro que você
+       reportou, sem reverter o ganho de velocidade dos temporizadores.
+    """
+    cfg = config.copy()
+
+    def blend_mais_solto(chave, delta_pct_extra, minimo=None):
+        if chave in cfg and cfg[chave] is not None:
+            novo = cfg[chave] * (1 + delta_pct_extra)
+            if minimo is not None:
+                novo = max(minimo, novo)
+            cfg[chave] = novo
+
+    def puxar_para_original(chave, peso_original=0.45, minimo=None):
+        if chave in cfg and chave in original and original[chave] is not None:
+            novo = cfg[chave] + peso_original * (original[chave] - cfg[chave])
+            if minimo is not None:
+                novo = max(minimo, novo)
+            cfg[chave] = novo
+
+    # --- 1) Destrava mais os temporizadores (não mexe na taxa de erro) ---
+    cfg['drift_rodadas_auto_reset'] = max(6, int(round(cfg.get('drift_rodadas_auto_reset', 10) * 0.75)))
+    blend_mais_solto('drift_janela', -0.12, minimo=7)
+    blend_mais_solto('drift_taxa_minima', -0.15, minimo=0.12)
+    cfg['drift_alertar_apos'] = max(2, cfg.get('drift_alertar_apos', 3) - 1)
+    blend_mais_solto('threshold_adaptativo_janela', -0.15, minimo=12)
+    cfg['threshold_adaptativo_max'] = cfg.get('threshold_adaptativo_max', 11) * 0.85
+    cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -7) * 0.85
+    blend_mais_solto('zero_termometro_max', 0.10)
+
+    # --- 2) Reforça a barreira de qualidade de volta (reduz erro) ---
+    puxar_para_original('confianca_minima_entrada', 0.45, minimo=1.3)
+    puxar_para_original('filtro_conf_baixa', 0.45)
+    puxar_para_original('ml_score_minimo_entrada', 0.45, minimo=14)
+    puxar_para_original('ml_score_minimo_fallback', 0.40, minimo=24)
+    puxar_para_original('padrao_qualidade_min_p2', 0.40)
+    puxar_para_original('padrao_qualidade_min_p3', 0.40)
+    puxar_para_original('padrao_qualidade_min_p4', 0.40)
+    puxar_para_original('padrao_conf_minima_tam2', 0.35)
+    puxar_para_original('padrao_conf_minima_tam4', 0.35)
+    puxar_para_original('streak_conf_min_reforco', 0.35)
+
+    # Volta o anti-erro e a penalidade de confiança em transição pro nível
+    # mais rígido (eram os valores "meio-termo" gerais: 2 erros e ×1.12).
+    cfg['anti_erro_min_erros_consecutivos'] = 1
+    cfg['transicao_confianca_multiplicador'] = 1.18
+
+    return cfg
+
+
 # =============================
 # SETUPS — V14.1 COM DETECTOR DE TRANSIÇÃO
 # =============================
@@ -623,6 +688,11 @@ SETUP_BASE = {
     'threshold_adaptativo_passo': 2.0,
     'threshold_adaptativo_min': -10.0,
     'threshold_adaptativo_max': 15.0,
+    # Usados por prever(): antes eram valores fixos no código (1.12 e 2
+    # erros). Agora são configuráveis por mesa — necessário para o ajuste
+    # fino específico da Immersive (V14.2.1) sem afetar as outras roletas.
+    'anti_erro_min_erros_consecutivos': 2,
+    'transicao_confianca_multiplicador': 1.12,
 }
 
 SETUP_XXXTREME = {
@@ -687,7 +757,7 @@ SETUP_XXXTREME = {
 }
 SETUP_XXXTREME = _aplicar_ajuste_meio_termo(SETUP_XXXTREME)
 
-SETUP_IMMERSIVE = {
+_SETUP_IMMERSIVE_PRE_AJUSTE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
     'confianca_minima_entrada': 1.7,
@@ -772,7 +842,11 @@ SETUP_IMMERSIVE = {
     'transicao_evitar_dominante': True,
     'transicao_score_minimo_extra': 10,
 }
-SETUP_IMMERSIVE = _aplicar_ajuste_meio_termo(SETUP_IMMERSIVE)
+SETUP_IMMERSIVE = _aplicar_ajuste_meio_termo(_SETUP_IMMERSIVE_PRE_AJUSTE)
+# V14.2.1 — ajuste fino extra só pra Immersive: destrava mais os
+# temporizadores e reforça a barreira de qualidade de volta (ver função
+# _aplicar_ajuste_fino_immersive acima para o motivo).
+SETUP_IMMERSIVE = _aplicar_ajuste_fino_immersive(SETUP_IMMERSIVE, _SETUP_IMMERSIVE_PRE_AJUSTE)
 
 SETUP_MEGA = {
     **SETUP_BASE,
@@ -1560,6 +1634,10 @@ class DuziaAI:
         self.threshold_adaptativo_passo = config.get('threshold_adaptativo_passo', 2.0)
         self.threshold_adaptativo_min = config.get('threshold_adaptativo_min', -10.0)
         self.threshold_adaptativo_max = config.get('threshold_adaptativo_max', 15.0)
+
+        # V14.2.1 — antes fixos no código (1.12 e 2 erros); agora por mesa.
+        self.anti_erro_min_erros_consecutivos = config.get('anti_erro_min_erros_consecutivos', 2)
+        self.transicao_confianca_multiplicador = config.get('transicao_confianca_multiplicador', 1.12)
 
         self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.padrao_stats_ui = {'tam2': None, 'tam3': None, 'tam4': None}
@@ -2597,9 +2675,9 @@ class DuziaAI:
 
         confianca_min = config.get('confianca_minima_entrada', 1.8)
         if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
-            # V14.2 — MEIO-TERMO: era *1.2. Ainda exige mais confiança em
-            # regime instável/transição, mas um pouco menos que antes.
-            confianca_min *= 1.12
+            # V14.2 — MEIO-TERMO: era *1.2. Configurável por mesa agora
+            # (self.transicao_confianca_multiplicador, lido do config).
+            confianca_min *= self.transicao_confianca_multiplicador
 
         if pode_entrar and confianca < confianca_min and not forcar_rotacao:
             if self.consenso_info['tipo'] in ('triplo',) and confianca >= 1.2:
@@ -2608,10 +2686,11 @@ class DuziaAI:
                 pode_entrar = False
                 motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
 
-        # V14.2 — MEIO-TERMO: era erros_consecutivos >= 1. Passa a exigir 2
-        # erros seguidos antes de travar por "anti-erro", já que 1 erro
-        # isolado é normal e não precisa endurecer a entrada seguinte.
-        if pode_entrar and self.erros_consecutivos >= 2 and confianca < (confianca_min + 0.35):
+        # V14.2 — MEIO-TERMO: era erros_consecutivos >= 1. Configurável por
+        # mesa agora (self.anti_erro_min_erros_consecutivos). Immersive
+        # volta pra >=1 porque estava errando mais; as outras mesas
+        # continuam em >=2 (1 erro isolado não trava mais a entrada).
+        if pode_entrar and self.erros_consecutivos >= self.anti_erro_min_erros_consecutivos and confianca < (confianca_min + 0.35):
             pode_entrar = False
             motivo = f"🚫 Anti-Erro: conf {confianca:.2f} insuficiente (erros: {self.erros_consecutivos})"
 
