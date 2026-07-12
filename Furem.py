@@ -688,7 +688,7 @@ SETUP_XXXTREME = {
     'peso_adaptativo_ativo': True,
     'peso_adaptativo_janela': 12,
     'peso_adaptativo_boost': 1.4,
-    'confianca_minima_entrada': 2.3,
+    'confianca_minima_entrada': 1.6,
     'filtro_conf_baixa': 2.1,
     'confianca_maxima_segura': 3.2,
     'streak_ativo': True,
@@ -749,7 +749,7 @@ SETUP_XXXTREME = _forcar_inteiros_de_janela(SETUP_XXXTREME)
 _SETUP_IMMERSIVE_PRE_AJUSTE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.3,
+    'confianca_minima_entrada': 1.6,
     'filtro_conf_baixa': 2.0,
     'confianca_maxima_segura': 3.0,
     'rodadas_verificacao_conf_alta': 5,
