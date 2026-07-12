@@ -721,6 +721,9 @@ SETUP_BASE = {
     # fino específico da Immersive (V14.2.1) sem afetar as outras roletas.
     'anti_erro_min_erros_consecutivos': 2,
     'transicao_confianca_multiplicador': 1.12,
+    # V14.3 — dúzia única / alta assertividade
+    'exigir_acuracia_minima_modelo': 0.40,
+    'exigir_prob_vencedora_minima': 40.0,
 }
 
 SETUP_XXXTREME = {
@@ -1674,9 +1677,17 @@ class DuziaAI:
         self.threshold_adaptativo_min = config.get('threshold_adaptativo_min', -10.0)
         self.threshold_adaptativo_max = config.get('threshold_adaptativo_max', 15.0)
 
-        # V14.2.1 — antes fixos no código (1.12 e 2 erros); agora por mesa.
+        # V14.3 — antes fixos no código (1.12 e 2 erros); agora por mesa.
         self.anti_erro_min_erros_consecutivos = config.get('anti_erro_min_erros_consecutivos', 2)
         self.transicao_confianca_multiplicador = config.get('transicao_confianca_multiplicador', 1.12)
+
+        # V14.3 — MODO DÚZIA ÚNICA / ALTA ASSERTIVIDADE:
+        # exigir_acuracia_minima_modelo: acurácia mínima que o modelo precisa
+        # ter provado na própria validação pra suas previsões serem usadas.
+        # exigir_prob_vencedora_minima: piso absoluto do score da dúzia
+        # vencedora (0-100), além da diferença pro segundo colocado.
+        self.exigir_acuracia_minima_modelo = config.get('exigir_acuracia_minima_modelo', 0.40)
+        self.exigir_prob_vencedora_minima = config.get('exigir_prob_vencedora_minima', 40.0)
 
         self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.padrao_stats_ui = {'tam2': None, 'tam3': None, 'tam4': None}
@@ -2553,7 +2564,6 @@ class DuziaAI:
         config = self._get_config()
         score_min_extra = config.get('transicao_score_minimo_extra', 10)
         penalidade_conf = config.get('transicao_penalidade_conf', 0.70)
-        aumentar_cobertura = config.get('transicao_aumentar_cobertura', True)
         evitar_dominante = config.get('transicao_evitar_dominante', True)
         
         previsao['score_minimo_extra'] = score_min_extra
@@ -2570,13 +2580,11 @@ class DuziaAI:
                         previsao['duzia'] = ranking[1][0]
                         previsao['motivo'] += " | 🔄 Transição - Evitando dominante"
         
-        if aumentar_cobertura and previsao['entrar']:
-            if not previsao.get('duzia_secundaria') or previsao['duzia_secundaria'] == previsao['duzia']:
-                scores = previsao.get('score', {})
-                ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-                if len(ranking) > 1:
-                    previsao['duzia_secundaria'] = ranking[1][0]
-                    previsao['motivo'] += " | 🛡️ Cobertura transição"
+        # V14.3 — MODO DÚZIA ÚNICA: não existe mais cobertura de dúzia
+        # secundária. Em regime de transição/instável a única defesa é
+        # exigir mais confiança (penalidade acima) e evitar a dúzia
+        # dominante — não diluir a aposta em duas dúzias.
+        previsao['duzia_secundaria'] = None
         
         return previsao
 
@@ -2669,6 +2677,24 @@ class DuziaAI:
         self.detectar_alerta_zero()
 
         modo_base = 'ml' if 'ml' in modo else 'fallback'
+
+        # V14.3 — GATE DE CONFIABILIDADE DO MODELO: se o modelo já foi
+        # validado ao menos uma vez (self._melhor_accuracy > 0) e a
+        # acurácia medida na própria validação está abaixo do mínimo
+        # exigido, não entra — mesmo que o score de uma rodada específica
+        # pareça bom. Isso impede confiar num modelo que estatisticamente
+        # já provou ser pouco melhor que o acaso (1/3).
+        if modo_base == 'ml' and self._melhor_accuracy > 0 and self._melhor_accuracy < self.exigir_acuracia_minima_modelo:
+            return {
+                "entrar": False,
+                "motivo": f"🚫 Modelo pouco confiável (acc validada {self._melhor_accuracy:.0%} < mínimo {self.exigir_acuracia_minima_modelo:.0%})",
+                "score": scores, "confianca": 0, "duzia": d1, "duzia_secundaria": None,
+                "gatilho_ativo": "ML", "incluir_zero": False, "modo_anti_erro": self.erros_consecutivos > 0,
+                "numeros_completos": list(self.numeros_completos), "modo_previsao": modo,
+                "rotacao_forcada": False, "streak_info": None,
+                "padrao_ativo": {"resumo": "-"},
+            }
+
         divisor = 20 if modo_base == 'ml' else 15
         confianca = min(3.5, max(0.5, (s1 - s2) / divisor))
 
@@ -2692,7 +2718,12 @@ class DuziaAI:
 
         if modo_base == 'ml':
             score_minimo = config.get('ml_score_minimo_entrada', 28) + score_min_extra + self._threshold_ajuste
-            pode_entrar = s1 > score_minimo
+            # V14.3 — PISO DE PROBABILIDADE VENCEDORA: além da diferença
+            # pro segundo colocado (score_minimo), exige que o score bruto
+            # do vencedor esteja meaningfully acima do acaso (33.3). Duas
+            # dúzias "quase empatadas" em 40/38/22 passariam no score
+            # mínimo antigo mas não aqui.
+            pode_entrar = s1 > score_minimo and s1 >= self.exigir_prob_vencedora_minima
             if pode_entrar:
                 treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
                 partes = []
@@ -2713,11 +2744,12 @@ class DuziaAI:
                 if abs(self._threshold_ajuste) >= 1:
                     motivo += f" | 🎚️ ajuste:{self._threshold_ajuste:+.1f}"
             else:
-                motivo = f"Score ML baixo ({s1:.1f} < {score_minimo:.1f})" + (f" +{score_min_extra} transição" if score_min_extra else "")
+                motivo_score = f"Score ML baixo ({s1:.1f} < {score_minimo:.1f})" if s1 <= score_minimo else f"Prob. vencedora baixa ({s1:.1f} < {self.exigir_prob_vencedora_minima:.1f})"
+                motivo = motivo_score + (f" +{score_min_extra} transição" if score_min_extra else "")
         else:
             score_min_fb = config.get('ml_score_minimo_fallback', 35) + score_min_extra + self._threshold_ajuste
             min_rodadas_fb = config.get('ml_min_rodadas_fallback', 6)
-            if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
+            if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb and s1 >= self.exigir_prob_vencedora_minima:
                 pode_entrar = True
                 motivo = f"🟡 Fallback | Score: {s1:.1f}"
                 if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
@@ -2770,7 +2802,7 @@ class DuziaAI:
         # com confiança moderada, mantendo ainda um piso de segurança.
         if confianca < 0.65: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
 
-        duzia_secundaria_final = d2
+        duzia_secundaria_final = None  # V14.3 — modo dúzia única, sem cobertura
         streak_aplicado = False
         if pode_entrar and self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
             streak_aplicado = True
@@ -2960,15 +2992,10 @@ class SistemaBot:
             previsao = self.duzia_ai.prever()
             if previsao['entrar']:
                 duzia_map = {1: list(range(1,13)), 2: list(range(13,25)), 3: list(range(25,37))}
-                numeros_principais = duzia_map.get(previsao['duzia'], [])
-                numeros_secundarios = duzia_map.get(previsao.get('duzia_secundaria', previsao['duzia']), [])
-
-                if st.session_state.get('modo_agressivo', False) or \
-                   (self.duzia_ai.regime_atual in ('transicao', 'instavel') and 
-                    self.duzia_ai.transicao_aumentar_cobertura):
-                    numeros_apostar = list(set(numeros_principais + numeros_secundarios))
-                else:
-                    numeros_apostar = numeros_principais
+                # V14.3 — MODO DÚZIA ÚNICA: sempre aposta só na dúzia de
+                # maior score, sem combinar com uma segunda dúzia de
+                # cobertura (nem em modo agressivo, nem em transição).
+                numeros_apostar = duzia_map.get(previsao['duzia'], [])
 
                 if previsao.get('incluir_zero', False) and 0 not in numeros_apostar:
                     numeros_apostar = [0] + numeros_apostar
@@ -2976,7 +3003,7 @@ class SistemaBot:
                 self.entrada_ativa = {
                     'numeros_apostar': numeros_apostar,
                     'duzia_prevista': previsao['duzia'],
-                    'duzia_sec_prevista': previsao.get('duzia_secundaria'),
+                    'duzia_sec_prevista': None,
                     'confianca': previsao.get('confianca', 0),
                     'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
                     'modo_anti_erro': previsao.get('modo_anti_erro', False),
@@ -2991,7 +3018,7 @@ class SistemaBot:
                     'numeros_apostar': numeros_apostar,
                     'incluir_zero': previsao.get('incluir_zero', False),
                     'duzia': previsao['duzia'],
-                    'duzia_secundaria': previsao.get('duzia_secundaria', previsao['duzia']),
+                    'duzia_secundaria': None,
                     'numeros_completos': list(self.historico_numeros),
                     'streak_info': previsao.get('streak_info'),
                 })
@@ -3253,7 +3280,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
-    st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
+    # V14.3 — removido "Modo Agressivo (2 Dúzias)": o sistema agora só
+    # aposta na dúzia de maior score (sem cobertura secundária).
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
 
     st.markdown("---")
