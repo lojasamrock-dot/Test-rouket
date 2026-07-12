@@ -1,3 +1,5 @@
+[file name]: a v14 meio termo CORRIGIDO.py
+[file content begin]
 import streamlit as st
 import json
 import os
@@ -18,10 +20,11 @@ try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import train_test_split
-    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.calibration import CalibratedClassifierCV  # ✅ CORRIGIDO: import correto
     import joblib
     ML_DISPONIVEL = True
-except ImportError:
+except ImportError as e:
+    logging.warning(f"⚠️ ML não disponível: {e}")
     ML_DISPONIVEL = False
 
 logging.basicConfig(
@@ -485,6 +488,18 @@ def extrair_features_consenso(consenso_info):
 # =============================
 # 🆕 AJUSTE MEIO-TERMO (V14.2)
 # =============================
+#
+# Este bloco aplica um afrouxamento MODERADO em cima de qualquer config de
+# roleta já existente (SETUP_XXXTREME / SETUP_IMMERSIVE / SETUP_MEGA).
+# A ideia: reduzir o tempo de espera por sinal (drift, transição, threshold
+# adaptativo) sem desmontar os filtros de qualidade (padrões, streak, ML).
+#
+# Cada ajuste é feito por PERCENTUAL relativo ao valor que a própria roleta
+# já usava, não por valor fixo — assim preserva a calibração individual de
+# cada mesa (XXXtreme, Immersive, Mega já têm perfis diferentes entre si).
+#
+# Os percentuais abaixo equivalem a ~50% do afrouxamento que um setup
+# "assertivo" extremo aplicaria — ou seja, o meio-termo pedido.
 
 def _aplicar_ajuste_meio_termo(config):
     cfg = config.copy()
@@ -509,20 +524,20 @@ def _aplicar_ajuste_meio_termo(config):
     cfg['transicao_penalidade_conf'] = min(0.82, cfg.get('transicao_penalidade_conf', 0.70) + 0.10)
     blend('transicao_score_minimo_extra', -0.30, minimo=3)
 
-    # --- Drift: detecta e libera bem mais rápido ---
+    # --- Drift: detecta e libera bem mais rápido (principal gargalo de espera) ---
     blend('drift_janela', -0.16, minimo=8)
     blend('drift_taxa_minima', -0.22, minimo=0.15)
     cfg['drift_alertar_apos'] = max(3, int(round(cfg.get('drift_alertar_apos', 5) * 0.8)))
     cfg['drift_rodadas_auto_reset'] = max(8, int(round(cfg.get('drift_rodadas_auto_reset', 20) * 0.55)))
 
-    # --- Threshold adaptativo: mais responsivo ---
+    # --- Threshold adaptativo: mais responsivo (ver também fix de simetria no método) ---
     blend('threshold_adaptativo_janela', -0.16, minimo=15)
     blend('threshold_adaptativo_alvo', -0.12, minimo=0.25)
     blend('threshold_adaptativo_passo', -0.25, minimo=1.0)
     cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -10.0) * 0.7
     cfg['threshold_adaptativo_max'] = cfg.get('threshold_adaptativo_max', 15.0) * 0.75
 
-    # --- Padrões/streak um pouco mais permissivos ---
+    # --- Padrões/streak um pouco mais permissivos, sem abrir mão do mínimo ---
     blend('padrao_min_ocorrencias', -0.16, minimo=2)
     blend('padrao_conf_minima_tam2', -0.12, minimo=1.2)
     blend('padrao_conf_minima_tam4', -0.18, minimo=2.5)
@@ -534,7 +549,7 @@ def _aplicar_ajuste_meio_termo(config):
         cfg['streak_min_len'] = cfg['streak_min_len'] - 1
     blend('streak_conf_min_reforco', -0.14, minimo=1.6)
 
-    # --- ML re-treina um pouco mais cedo ---
+    # --- ML re-treina um pouco mais cedo (não muda a lógica de treino/features) ---
     blend('ml_janela_treino', -0.20, minimo=40)
     cfg['ml_atualizar_a_cada'] = max(5, int(round(cfg.get('ml_atualizar_a_cada', 10) * 0.75)))
 
@@ -547,6 +562,24 @@ def _aplicar_ajuste_meio_termo(config):
 
 
 def _aplicar_ajuste_fino_immersive(config, original):
+    """
+    Ajuste extra SÓ para a Immersive Roulette (V14.2.1).
+
+    Motivo: essa mesa, mesmo com o ajuste meio-termo geral, continuava
+    demorando muito E errando um pouco mais que as outras. As duas coisas
+    puxam pra direções opostas, então em vez de afrouxar tudo de novo,
+    aqui separamos:
+
+    1) TEMPORIZADORES (drift, threshold adaptativo, zero-termômetro) —
+       destravados ainda mais. Eles só controlam QUANTO TEMPO o bot fica
+       de braço cruzado depois de um erro/instabilidade, não a qualidade
+       da decisão em si. Afrouxar aqui é ganho de velocidade "de graça".
+
+    2) BARREIRA DE QUALIDADE (confiança mínima, score mínimo, qualidade
+       de padrão) — puxada de volta para mais perto do valor ORIGINAL
+       (pré meio-termo) da própria Immersive. Isso ataca o erro que você
+       reportou, sem reverter o ganho de velocidade dos temporizadores.
+    """
     cfg = config.copy()
 
     def blend_mais_solto(chave, delta_pct_extra, minimo=None):
@@ -563,7 +596,7 @@ def _aplicar_ajuste_fino_immersive(config, original):
                 novo = max(minimo, novo)
             cfg[chave] = novo
 
-    # --- 1) Destrava mais os temporizadores ---
+    # --- 1) Destrava mais os temporizadores (não mexe na taxa de erro) ---
     cfg['drift_rodadas_auto_reset'] = max(6, int(round(cfg.get('drift_rodadas_auto_reset', 10) * 0.75)))
     blend_mais_solto('drift_janela', -0.12, minimo=7)
     blend_mais_solto('drift_taxa_minima', -0.15, minimo=0.12)
@@ -573,7 +606,7 @@ def _aplicar_ajuste_fino_immersive(config, original):
     cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -7) * 0.85
     blend_mais_solto('zero_termometro_max', 0.10)
 
-    # --- 2) Reforça a barreira de qualidade de volta ---
+    # --- 2) Reforça a barreira de qualidade de volta (reduz erro) ---
     puxar_para_original('confianca_minima_entrada', 0.45, minimo=1.3)
     puxar_para_original('filtro_conf_baixa', 0.45)
     puxar_para_original('ml_score_minimo_entrada', 0.45, minimo=14)
@@ -585,14 +618,27 @@ def _aplicar_ajuste_fino_immersive(config, original):
     puxar_para_original('padrao_conf_minima_tam4', 0.35)
     puxar_para_original('streak_conf_min_reforco', 0.35)
 
-    # --- 3) Qualidade da previsão do ML ---
+    # Volta o anti-erro e a penalidade de confiança em transição pro nível
+    # mais rígido (eram os valores "meio-termo" gerais: 2 erros e ×1.12).
+    cfg['anti_erro_min_erros_consecutivos'] = 1
+    cfg['transicao_confianca_multiplicador'] = 1.18
+
+    # --- 3) Qualidade da previsão do ML (V14.2.2) ---
+    # Mais dados de treino e retreino menos frequente = modelo mais estável
+    # e menos sujeito a "flutuar" de qualidade a cada poucas rodadas.
     puxar_para_original('ml_janela_treino', 0.6, minimo=45)
     puxar_para_original('ml_atualizar_a_cada', 0.5, minimo=6)
 
     return cfg
 
 
-# Chaves que representam "quantidade de rodadas"
+# Chaves que representam "quantidade de rodadas" e são usadas em algum
+# lugar do código como índice de fatiamento de lista (lista[-janela:]) ou
+# como limite de range()/loop. Python não aceita float nesses contextos —
+# TypeError: slice indices must be integers. Os blends acima (percentuais)
+# produzem float pra qualquer uma dessas chaves, então SEMPRE normalizamos
+# de volta pra int logo depois de qualquer ajuste, pra essas chaves nunca
+# vazarem float pro resto do código.
 _CHAVES_INTEIRAS_DE_JANELA = [
     'drift_janela', 'drift_alertar_apos', 'drift_rodadas_auto_reset',
     'threshold_adaptativo_janela', 'vies_dinamico_janela', 'ml_janela_treino',
@@ -673,8 +719,14 @@ SETUP_BASE = {
     'threshold_adaptativo_passo': 2.0,
     'threshold_adaptativo_min': -10.0,
     'threshold_adaptativo_max': 15.0,
+    # Usados por prever(): antes eram valores fixos no código (1.12 e 2
+    # erros). Agora são configuráveis por mesa — necessário para o ajuste
+    # fino específico da Immersive (V14.2.1) sem afetar as outras roletas.
     'anti_erro_min_erros_consecutivos': 2,
     'transicao_confianca_multiplicador': 1.12,
+    # V14.3 — dúzia única / alta assertividade
+    'exigir_acuracia_minima_modelo': 0.40,
+    'exigir_prob_vencedora_minima': 40.0,
 }
 
 SETUP_XXXTREME = {
@@ -826,6 +878,9 @@ _SETUP_IMMERSIVE_PRE_AJUSTE = {
     'transicao_score_minimo_extra': 10,
 }
 SETUP_IMMERSIVE = _aplicar_ajuste_meio_termo(_SETUP_IMMERSIVE_PRE_AJUSTE)
+# V14.2.1 — ajuste fino extra só pra Immersive: destrava mais os
+# temporizadores e reforça a barreira de qualidade de volta (ver função
+# _aplicar_ajuste_fino_immersive acima para o motivo).
 SETUP_IMMERSIVE = _aplicar_ajuste_fino_immersive(SETUP_IMMERSIVE, _SETUP_IMMERSIVE_PRE_AJUSTE)
 SETUP_IMMERSIVE = _forcar_inteiros_de_janela(SETUP_IMMERSIVE)
 
@@ -911,70 +966,8 @@ def get_modelo_ml_path(api_name):
     criar_pasta_modelos_ml()
     return os.path.join(PASTA_MODELOS_ML, f"modelo_ml_{api_name.lower().replace(' ', '_')}.joblib")
 
-# =============================
-# 🆕 _EnsembleManual COM SERIALIZAÇÃO CORRIGIDA
-# =============================
-
-class _EnsembleManual:
-    """Ensemble manual de RandomForest + GradientBoosting - COM SERIALIZAÇÃO CORRIGIDA"""
-    
-    def __init__(self, rf, gbt, peso_rf=0.5, peso_gbt=0.5):
-        self.rf = rf
-        self.gbt = gbt
-        self.classes_ = rf.classes_
-
-        # Pesos por submodelo
-        soma = max(1e-6, peso_rf + peso_gbt)
-        self.peso_rf = peso_rf / soma
-        self.peso_gbt = peso_gbt / soma
-        
-        # Obtém n_features_in_ de forma segura
-        try:
-            self.n_features_in_ = rf.n_features_in_
-        except AttributeError:
-            try:
-                self.n_features_in_ = gbt.n_features_in_
-            except AttributeError:
-                self.n_features_in_ = None
-        
-        self._modelo_tipo = "EnsembleManual"
-        self._data_criacao = datetime.now().isoformat()
-    
-    def __getstate__(self):
-        """Prepara o estado para serialização - CORRIGIDO"""
-        state = self.__dict__.copy()
-        return state
-    
-    def __setstate__(self, state):
-        """Restaura o estado após desserialização - CORRIGIDO"""
-        self.__dict__.update(state)
-        
-    def predict_proba(self, X):
-        """Prediz probabilidades usando ensemble ponderado"""
-        try:
-            p_rf = self.rf.predict_proba(X)
-            p_gbt = self.gbt.predict_proba(X)
-            
-            if self.peso_rf == 0.5 and self.peso_gbt == 0.5:
-                return (p_rf + p_gbt) / 2, self.classes_
-            return (p_rf * self.peso_rf + p_gbt * self.peso_gbt), self.classes_
-        except Exception as e:
-            logging.error(f"❌ Erro no predict_proba: {e}")
-            p_rf = self.rf.predict_proba(X)
-            return p_rf, self.classes_
-
-    def predict(self, X):
-        """Prediz classes usando ensemble"""
-        try:
-            proba, classes = self.predict_proba(X)
-            return classes[np.argmax(proba, axis=1)]
-        except Exception as e:
-            logging.error(f"❌ Erro no predict: {e}")
-            return self.rf.predict(X)
-
-
 def salvar_modelo_ml(modelo, api_name):
-    """Salva o modelo ML com verificação de integridade e serialização correta"""
+    """Salva o modelo ML com verificação de integridade"""
     if modelo is None:
         logging.warning("⚠️ Tentativa de salvar modelo None")
         return False
@@ -989,6 +982,8 @@ def salvar_modelo_ml(modelo, api_name):
             return False
         
         # Salva em arquivo temporário e só substitui o definitivo no final
+        # (escrita atômica) — evita que um rerun do Streamlit no meio do
+        # dump deixe um .joblib pela metade/corrompido no disco.
         caminho_tmp = caminho + ".tmp"
         joblib.dump(modelo, caminho_tmp, compress=3)
         os.replace(caminho_tmp, caminho)
@@ -996,12 +991,12 @@ def salvar_modelo_ml(modelo, api_name):
         # Verifica se salvou corretamente
         if os.path.exists(caminho):
             tamanho = os.path.getsize(caminho)
-            if tamanho > 1000:
+            if tamanho > 1000:  # Deve ter pelo menos 1KB
                 logging.info(f"✅ Modelo salvo com sucesso! Tamanho: {tamanho/1024:.1f} KB")
                 return True
             else:
                 logging.error(f"❌ Modelo salvo com tamanho suspeito: {tamanho} bytes")
-                os.remove(caminho)
+                os.remove(caminho)  # Remove arquivo corrompido
                 return False
         else:
             logging.error("❌ Arquivo do modelo não foi criado")
@@ -1020,7 +1015,7 @@ def salvar_modelo_ml(modelo, api_name):
         return False
 
 def invalidar_modelo_ml(api_name):
-    """Remove o arquivo do modelo salvo em disco"""
+    """Remove o arquivo do modelo salvo em disco quando ele fica incompatível/corrompido."""
     try:
         caminho = get_modelo_ml_path(api_name)
         if os.path.exists(caminho):
@@ -1036,14 +1031,16 @@ def carregar_modelo_ml(api_name):
         if not os.path.exists(caminho):
             return None
         
+        # Verifica se o arquivo tem tamanho válido
         tamanho = os.path.getsize(caminho)
-        if tamanho < 1000:
+        if tamanho < 1000:  # Menos de 1KB é suspeito
             logging.warning(f"⚠️ Arquivo do modelo muito pequeno ({tamanho} bytes). Ignorando.")
-            os.remove(caminho)
+            os.remove(caminho)  # Remove arquivo corrompido
             return None
         
         modelo = joblib.load(caminho)
         
+        # Verifica se o modelo carregado é funcional
         if not hasattr(modelo, 'predict_proba'):
             logging.error("❌ Modelo carregado não tem predict_proba")
             return None
@@ -1053,6 +1050,7 @@ def carregar_modelo_ml(api_name):
         
     except Exception as e:
         logging.error(f"❌ Erro ao carregar modelo ML: {e}")
+        # Remove arquivo corrompido
         try:
             if os.path.exists(caminho):
                 os.remove(caminho)
@@ -1060,6 +1058,82 @@ def carregar_modelo_ml(api_name):
         except:
             pass
         return None
+
+def diagnosticar_modelo(api_name):
+    """Diagnostica o estado do modelo ML"""
+    caminho = get_modelo_ml_path(api_name)
+    
+    print(f"📊 DIAGNÓSTICO DO MODELO ML - {api_name}")
+    print(f"📁 Caminho: {caminho}")
+    
+    if os.path.exists(caminho):
+        tamanho = os.path.getsize(caminho)
+        print(f"📦 Tamanho: {tamanho} bytes ({tamanho/1024:.1f} KB)")
+        
+        if tamanho < 1000:
+            print("⚠️ ARQUIVO MUITO PEQUENO - CORROMPIDO!")
+            return False
+        
+        try:
+            modelo = joblib.load(caminho)
+            print("✅ Modelo carregado com sucesso!")
+            
+            # Verifica atributos
+            print(f"🔍 Atributos: {dir(modelo)}")
+            if hasattr(modelo, 'predict_proba'):
+                print("✅ predict_proba disponível")
+            else:
+                print("❌ predict_proba NÃO disponível")
+                
+            if hasattr(modelo, 'rf') and hasattr(modelo, 'gbt'):
+                print("✅ RandomForest e GradientBoosting disponíveis")
+                
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao carregar modelo: {e}")
+            return False
+    else:
+        print("❌ Arquivo do modelo NÃO encontrado")
+        return False
+
+def salvar_config_global():
+    config = {
+        'telegram_token': st.session_state.get('telegram_token', ''),
+        'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
+        'telegram_token_alt': st.session_state.get('telegram_token_alt', ''),
+        'telegram_chat_id_alt': st.session_state.get('telegram_chat_id_alt', ''),
+        'modo_automatico': st.session_state.get('modo_automatico', True),
+        'modo_agressivo': st.session_state.get('modo_agressivo', False),
+        'janela_duzia_ai': st.session_state.get('janela_duzia_ai', 30),
+        'api_selecionada': st.session_state.get('api_selecionada', 'XXXtreme Lightning'),
+        'rodadas_por_sessao': st.session_state.get('rodadas_por_sessao', 10),
+        'pausa_entre_sessoes': st.session_state.get('pausa_entre_sessoes', 5),
+        'salvar_sessoes_auto': st.session_state.get('salvar_sessoes_auto', True),
+    }
+    try:
+        with open(CONFIG_GLOBAL_PATH, 'w') as f: json.dump(config, f)
+    except Exception as e: logging.error(f"Erro ao salvar config global: {e}")
+
+def carregar_config_global():
+    try:
+        if os.path.exists(CONFIG_GLOBAL_PATH):
+            with open(CONFIG_GLOBAL_PATH, 'r') as f: return json.load(f)
+    except: pass
+    return {}
+
+def get_session_paths(api_name):
+    safe = api_name.lower().replace(' ', '_')
+    return {
+        'session': f"session_data_{safe}.pkl",
+        'historico': f"historico_roleta_{safe}.json",
+        'performance': f"performance_bot_{safe}.json",
+        'entradas': f"historico_entradas_{safe}.json",
+        'performance_mesa': f"performance_mesa_{safe}.json",
+        'performance_horario': f"performance_horario_{safe}.json",
+        'sessao_controle': f"sessao_controle_{safe}.json",
+        'historico_sessoes': f"historico_sessoes_{safe}.json",
+        'padroes_hibridos': f"padroes_hibridos_{safe}.json",
+    }
 
 
 # =============================
@@ -1425,6 +1499,60 @@ def _calcular_autocorrelacao(serie, lag=3):
 
 
 # =============================
+# 🧠 _ENSEMBLEMANUAL - OTIMIZADO PARA SERIALIZAÇÃO
+# =============================
+
+class _EnsembleManual:
+    """Ensemble manual de RandomForest + GradientBoosting - OTIMIZADO PARA SERIALIZAÇÃO"""
+    
+    def __init__(self, rf, gbt, peso_rf=0.5, peso_gbt=0.5):
+        self.rf = rf
+        self.gbt = gbt
+        self.classes_ = rf.classes_
+
+        # V14.2.2 — pesos por submodelo (calculados na validação, ver
+        # _treinar_ml_online). Antes era sempre média 50/50 fixa; agora o
+        # submodelo que realmente acertou mais naquele treino pesa mais.
+        soma = max(1e-6, peso_rf + peso_gbt)
+        self.peso_rf = peso_rf / soma
+        self.peso_gbt = peso_gbt / soma
+        
+        # Obtém n_features_in_ de forma segura
+        try:
+            self.n_features_in_ = rf.n_features_in_
+        except AttributeError:
+            try:
+                self.n_features_in_ = gbt.n_features_in_
+            except AttributeError:
+                self.n_features_in_ = None
+        
+        # Adiciona metadados para debug
+        self._modelo_tipo = "EnsembleManual"
+        self._data_criacao = datetime.now().isoformat()
+        
+    def predict_proba(self, X):
+        """Prediz probabilidades usando ensemble ponderado"""
+        try:
+            p_rf = self.rf.predict_proba(X)
+            p_gbt = self.gbt.predict_proba(X)
+            # ✅ CORRIGIDO: retorna apenas o array de probabilidades
+            return (p_rf * self.peso_rf + p_gbt * self.peso_gbt)
+        except Exception as e:
+            logging.error(f"❌ Erro no predict_proba: {e}")
+            # Fallback: usa apenas RandomForest
+            return self.rf.predict_proba(X)
+
+    def predict(self, X):
+        """Prediz classes usando ensemble"""
+        try:
+            proba = self.predict_proba(X)
+            return self.classes_[np.argmax(proba, axis=1)]
+        except Exception as e:
+            logging.error(f"❌ Erro no predict: {e}")
+            return self.rf.predict(X)
+
+
+# =============================
 # 🧠 DUZIA AI V14.1 — COM DETECTOR DE TRANSIÇÃO
 # =============================
 
@@ -1475,10 +1603,9 @@ class DuziaAI:
         self._melhor_modelo = None
         self._melhor_accuracy = 0.0
         self._tentativas_sem_melhora = 0
-        self._ultimos_lucky_numbers = []
-        self._ultimo_multiplicador = 0
 
-        # THRESHOLD ADAPTATIVO
+        # THRESHOLD ADAPTATIVO — ajusta o score mínimo de entrada com base
+        # na taxa de acerto real recente, em vez de usar um número fixo.
         self.historico_confianca_resultado = deque(maxlen=100)
         self._threshold_ajuste = 0.0
 
@@ -1553,8 +1680,17 @@ class DuziaAI:
         self.threshold_adaptativo_min = config.get('threshold_adaptativo_min', -10.0)
         self.threshold_adaptativo_max = config.get('threshold_adaptativo_max', 15.0)
 
+        # V14.3 — antes fixos no código (1.12 e 2 erros); agora por mesa.
         self.anti_erro_min_erros_consecutivos = config.get('anti_erro_min_erros_consecutivos', 2)
         self.transicao_confianca_multiplicador = config.get('transicao_confianca_multiplicador', 1.12)
+
+        # V14.3 — MODO DÚZIA ÚNICA / ALTA ASSERTIVIDADE:
+        # exigir_acuracia_minima_modelo: acurácia mínima que o modelo precisa
+        # ter provado na própria validação pra suas previsões serem usadas.
+        # exigir_prob_vencedora_minima: piso absoluto do score da dúzia
+        # vencedora (0-100), além da diferença pro segundo colocado.
+        self.exigir_acuracia_minima_modelo = config.get('exigir_acuracia_minima_modelo', 0.40)
+        self.exigir_prob_vencedora_minima = config.get('exigir_prob_vencedora_minima', 40.0)
 
         self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
         self.padrao_stats_ui = {'tam2': None, 'tam3': None, 'tam4': None}
@@ -1568,6 +1704,10 @@ class DuziaAI:
         modelo = carregar_modelo_ml(self.api_name)
         if modelo is None:
             return
+        # Valida se o nº de features do modelo salvo bate com o que o
+        # extrator atual produz. Se o feature set mudou (ex: você adicionou
+        # features novas em versões anteriores), evita recarregar em loop
+        # um modelo desatualizado.
         try:
             n_features_salvo = getattr(modelo, 'n_features_in_', None)
             features_teste = self._extrair_features_ml_completas(
@@ -2043,6 +2183,7 @@ class DuziaAI:
 
             if len(X) < 12: 
                 logging.info(f"⚠️ Poucas amostras para treino: {len(X)}")
+                # Marca a tentativa para não ficar tentando de novo a cada rodada nova.
                 self.ultimo_treino_ml = max(self.ultimo_treino_ml, rodada_atual - atualizar_a_cada + 1)
                 return False
 
@@ -2050,7 +2191,11 @@ class DuziaAI:
             y_arr = np.array(y)
             n = len(X_arr)
 
-            # SPLIT CRONOLÓGICO
+            # SPLIT CRONOLÓGICO — nunca embaralha. As amostras mais antigas
+            # (75%) treinam, as mais recentes (25%) validam. Isso simula de
+            # verdade "treinar com o passado e prever o futuro", em vez de
+            # misturar rodadas futuras dentro do treino via shuffle aleatório
+            # (o antigo train_test_split ignorava a ordem temporal).
             corte = max(8, int(n * 0.75))
             X_train, y_train = X_arr[:corte], y_arr[:corte]
             X_val, y_val = X_arr[corte:], y_arr[corte:]
@@ -2062,22 +2207,26 @@ class DuziaAI:
                                               n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
             gbt_base = GradientBoostingClassifier(n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42)
 
-            # CALIBRAÇÃO DE PROBABILIDADE
+            # CALIBRAÇÃO DE PROBABILIDADE — RF e GBT costumam sair de fábrica
+            # com confiança mal calibrada (excesso ou falta de confiança).
+            # Isso importa muito aqui porque o score/confiança determina
+            # diretamente se o bot entra ou não (ml_score_minimo_entrada etc).
             calibrado = False
             try:
                 n_classes_train = len(set(y_train.tolist()))
                 cv_calib = max(2, min(3, len(y_train) // 6))
                 if n_classes_train >= 2 and len(y_train) >= 12:
-                    # CORRIGIDO: CalibratedClassifierCV com sample_weight separado
-                    rf_calib = CalibratedClassifierCV(rf_base, method='sigmoid', cv=cv_calib)
-                    gbt_calib = CalibratedClassifierCV(gbt_base, method='sigmoid', cv=cv_calib)
-                    
-                    # Fit sem sample_weight (mais compatível)
-                    rf_calib.fit(X_train, y_train)
-                    gbt_calib.fit(X_train, y_train)
-                    
-                    rf = rf_calib
-                    gbt = gbt_calib
+                    rf = CalibratedClassifierCV(rf_base, method='sigmoid', cv=cv_calib)
+                    gbt = CalibratedClassifierCV(gbt_base, method='sigmoid', cv=cv_calib)
+                    # ✅ CORRIGIDO: CalibratedClassifierCV NÃO aceita sample_weight
+                    # Treina os modelos base separadamente com peso e depois calibra
+                    rf_base.fit(X_train, y_train, sample_weight=sample_weights)
+                    gbt_base.fit(X_train, y_train, sample_weight=sample_weights)
+                    # Calibra usando os modelos já treinados
+                    rf = CalibratedClassifierCV(base_estimator=rf_base, method='sigmoid', cv=cv_calib)
+                    gbt = CalibratedClassifierCV(base_estimator=gbt_base, method='sigmoid', cv=cv_calib)
+                    rf.fit(X_train, y_train)
+                    gbt.fit(X_train, y_train)
                     calibrado = True
                 else:
                     raise ValueError("amostras insuficientes para calibração")
@@ -2087,7 +2236,10 @@ class DuziaAI:
                 rf.fit(X_train, y_train, sample_weight=sample_weights)
                 gbt.fit(X_train, y_train, sample_weight=sample_weights)
 
-            # PESO POR SUBMODELO
+            # V14.2.2 — PESO POR SUBMODELO: mede a acurácia de RF e GBT
+            # separadamente na validação e usa isso como peso do ensemble,
+            # em vez de sempre fazer média 50/50. O submodelo que realmente
+            # acerta mais naquele treino específico passa a "falar mais alto".
             peso_rf, peso_gbt = 0.5, 0.5
             if tem_validacao:
                 try:
@@ -2098,6 +2250,8 @@ class DuziaAI:
                     if preds_rf is not None and preds_gbt is not None:
                         acc_rf = sum(1 for p, t in zip(preds_rf, y_val) if p == t) / len(y_val)
                         acc_gbt = sum(1 for p, t in zip(preds_gbt, y_val) if p == t) / len(y_val)
+                        # piso de 0.15 pra nunca zerar de vez um dos dois
+                        # (mesmo o pior dos dois ainda contribui um pouco)
                         peso_rf = max(0.15, acc_rf)
                         peso_gbt = max(0.15, acc_gbt)
                 except Exception as e:
@@ -2105,12 +2259,16 @@ class DuziaAI:
 
             novo_modelo = _EnsembleManual(rf, gbt, peso_rf=peso_rf, peso_gbt=peso_gbt)
 
+            # Esta é sempre a "última tentativa de treino", com ou sem sucesso,
+            # então o gate de cadência (ml_atualizar_a_cada) é sempre respeitado
+            # daqui pra frente — antes, quando o treino "não melhorava", esse
+            # valor nunca avançava e o bot re-treinava (pesado) a cada rodada.
             self.ultimo_treino_ml = rodada_atual
 
             if tem_validacao:
                 try:
-                    proba, classes = novo_modelo.predict_proba(X_val)
-                    preds = classes[np.argmax(proba, axis=1)]
+                    proba = novo_modelo.predict_proba(X_val)
+                    preds = novo_modelo.classes_[np.argmax(proba, axis=1)]
                     accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
                     
                     if accuracy >= self._melhor_accuracy:
@@ -2126,6 +2284,12 @@ class DuziaAI:
                             logging.error("❌ Falha ao salvar modelo!")
                             return False
                     else:
+                        # V14.2.2 — a barra só relaxa depois de 3 tentativas
+                        # SEGUIDAS sem melhora (não a cada treino), e com um
+                        # piso de 0.36 (um pouco acima do acaso de 1/3) — 
+                        # antes relaxava 3% em TODO treino, o que deixava a
+                        # exigência cair bem baixo em sessões longas e podia
+                        # abrir espaço pra um modelo pior substituir um bom.
                         self._tentativas_sem_melhora += 1
                         if self._tentativas_sem_melhora >= 3:
                             self._melhor_accuracy = max(0.36, self._melhor_accuracy * 0.985)
@@ -2134,6 +2298,8 @@ class DuziaAI:
                         return False
                 except Exception as e:
                     logging.error(f"❌ Erro na validação ML: {e}")
+                    # Sem conseguir medir accuracy, não sobrescreve às cegas um
+                    # modelo bom que já existe — só aceita se ainda não houver nenhum.
                     if self.modelo_ml is None:
                         self.modelo_ml = novo_modelo
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
@@ -2183,8 +2349,7 @@ class DuziaAI:
         if len(self.numeros_completos) > 1000: self.numeros_completos = self.numeros_completos[-1000:]
         if self.em_pausa_pos_raio:
             self.rodadas_pos_raio += 1
-            pausa_pos_raio = self._get_config().get('pausa_pos_raio', 1)
-            if self.rodadas_pos_raio >= pausa_pos_raio: self.em_pausa_pos_raio = False
+            if self.rodadas_pos_raio >= self._get_config().get('pausa_pos_raio', 1): self.em_pausa_pos_raio = False
         if self.vies_dinamico_ativo:
             self._vies_dinamico_atual, self._vies_dinamico_intensidade = detectar_vies_dinamico(
                 self.historico_completo, janela=self.vies_dinamico_janela, limiar_excesso=self.vies_dinamico_limiar)
@@ -2219,7 +2384,7 @@ class DuziaAI:
         self._atualizar_threshold_adaptativo()
 
         config = self._get_config()
-        if eh_raio and multiplicador >= config.get('raio_alto_minimo', 100) and config.get('pausa_pos_raio', 1) > 0:
+        if eh_raio and multiplicador >= config['raio_alto_minimo'] and config['pausa_pos_raio'] > 0:
             self.em_pausa_pos_raio = True; self.rodadas_pos_raio = 0; self.ultimo_raio_alto = multiplicador
         if mesa_id:
             self.mesa_atual = mesa_id
@@ -2258,32 +2423,36 @@ class DuziaAI:
             self._drift_ativo = False
 
     def _atualizar_threshold_adaptativo(self):
-        """CORRIGIDO: tratamento de tipos e limites"""
+        """
+        Ajusta self._threshold_ajuste com base na taxa de acerto real das
+        últimas entradas. Se o bot está errando mais que o alvo, fica mais
+        exigente (score mínimo sobe). Se está acertando bem acima do alvo,
+        relaxa um pouco (permite mais entradas).
+
+        V14.2 — MEIO-TERMO: a subida e a descida agora usam passos mais
+        próximos (antes a queda usava metade do passo da subida, então o
+        bot ficava exigente por muito mais tempo do que ficava permissivo).
+        """
         if not self.threshold_adaptativo_ativo:
             self._threshold_ajuste = 0.0
             return
 
         janela = list(self.historico_confianca_resultado)[-self.threshold_adaptativo_janela:]
         if len(janela) < 10:
-            return
+            return  # amostra pequena demais pra confiar no ajuste
 
         acertos = sum(1 for _, acertou in janela if acertou)
         taxa = acertos / len(janela)
 
-        # Garante que os valores são float
-        passo = float(self.threshold_adaptativo_passo)
-        max_ajuste = float(self.threshold_adaptativo_max)
-        min_ajuste = float(self.threshold_adaptativo_min)
-
-        if taxa < float(self.threshold_adaptativo_alvo):
+        if taxa < self.threshold_adaptativo_alvo:
             self._threshold_ajuste = min(
-                max_ajuste,
-                self._threshold_ajuste + passo
+                self.threshold_adaptativo_max,
+                self._threshold_ajuste + self.threshold_adaptativo_passo
             )
-        elif taxa > float(self.threshold_adaptativo_alvo) + 0.10:
+        elif taxa > self.threshold_adaptativo_alvo + 0.10:
             self._threshold_ajuste = max(
-                min_ajuste,
-                self._threshold_ajuste - (passo * 0.8)
+                self.threshold_adaptativo_min,
+                self._threshold_ajuste - (self.threshold_adaptativo_passo * 0.8)
             )
 
     def _prever_ml(self):
@@ -2297,11 +2466,12 @@ class DuziaAI:
             if n_features_modelo is not None and len(features) != n_features_modelo:
                 logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Retreinando...")
                 self.modelo_ml = None; self.ultimo_treino_ml = 0; self._melhor_accuracy = 0.0
-                invalidar_modelo_ml(self.api_name)
+                invalidar_modelo_ml(self.api_name)  # evita recarregar o mesmo modelo velho no próximo rerun
                 return {1: 0.0, 2: 0.0, 3: 0.0}
-            probabilidades, classes = self.modelo_ml.predict_proba([features])
+            # ✅ CORRIGIDO: _EnsembleManual.predict_proba agora retorna apenas o array
+            probabilidades = self.modelo_ml.predict_proba([features])
             ml_scores = {1: 0.0, 2: 0.0, 3: 0.0}
-            for classe, prob in zip(classes, probabilidades[0]):
+            for classe, prob in zip(self.modelo_ml.classes_, probabilidades[0]):
                 if classe in ml_scores: ml_scores[classe] = float(prob) * 100
             return ml_scores
         except Exception as e:
@@ -2400,7 +2570,6 @@ class DuziaAI:
         config = self._get_config()
         score_min_extra = config.get('transicao_score_minimo_extra', 10)
         penalidade_conf = config.get('transicao_penalidade_conf', 0.70)
-        aumentar_cobertura = config.get('transicao_aumentar_cobertura', True)
         evitar_dominante = config.get('transicao_evitar_dominante', True)
         
         previsao['score_minimo_extra'] = score_min_extra
@@ -2417,13 +2586,11 @@ class DuziaAI:
                         previsao['duzia'] = ranking[1][0]
                         previsao['motivo'] += " | 🔄 Transição - Evitando dominante"
         
-        if aumentar_cobertura and previsao['entrar']:
-            if not previsao.get('duzia_secundaria') or previsao['duzia_secundaria'] == previsao['duzia']:
-                scores = previsao.get('score', {})
-                ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-                if len(ranking) > 1:
-                    previsao['duzia_secundaria'] = ranking[1][0]
-                    previsao['motivo'] += " | 🛡️ Cobertura transição"
+        # V14.3 — MODO DÚZIA ÚNICA: não existe mais cobertura de dúzia
+        # secundária. Em regime de transição/instável a única defesa é
+        # exigir mais confiança (penalidade acima) e evitar a dúzia
+        # dominante — não diluir a aposta em duas dúzias.
+        previsao['duzia_secundaria'] = None
         
         return previsao
 
@@ -2516,6 +2683,24 @@ class DuziaAI:
         self.detectar_alerta_zero()
 
         modo_base = 'ml' if 'ml' in modo else 'fallback'
+
+        # V14.3 — GATE DE CONFIABILIDADE DO MODELO: se o modelo já foi
+        # validado ao menos uma vez (self._melhor_accuracy > 0) e a
+        # acurácia medida na própria validação está abaixo do mínimo
+        # exigido, não entra — mesmo que o score de uma rodada específica
+        # pareça bom. Isso impede confiar num modelo que estatisticamente
+        # já provou ser pouco melhor que o acaso (1/3).
+        if modo_base == 'ml' and self._melhor_accuracy > 0 and self._melhor_accuracy < self.exigir_acuracia_minima_modelo:
+            return {
+                "entrar": False,
+                "motivo": f"🚫 Modelo pouco confiável (acc validada {self._melhor_accuracy:.0%} < mínimo {self.exigir_acuracia_minima_modelo:.0%})",
+                "score": scores, "confianca": 0, "duzia": d1, "duzia_secundaria": None,
+                "gatilho_ativo": "ML", "incluir_zero": False, "modo_anti_erro": self.erros_consecutivos > 0,
+                "numeros_completos": list(self.numeros_completos), "modo_previsao": modo,
+                "rotacao_forcada": False, "streak_info": None,
+                "padrao_ativo": {"resumo": "-"},
+            }
+
         divisor = 20 if modo_base == 'ml' else 15
         confianca = min(3.5, max(0.5, (s1 - s2) / divisor))
 
@@ -2539,7 +2724,12 @@ class DuziaAI:
 
         if modo_base == 'ml':
             score_minimo = config.get('ml_score_minimo_entrada', 28) + score_min_extra + self._threshold_ajuste
-            pode_entrar = s1 > score_minimo
+            # V14.3 — PISO DE PROBABILIDADE VENCEDORA: além da diferença
+            # pro segundo colocado (score_minimo), exige que o score bruto
+            # do vencedor esteja meaningfully acima do acaso (33.3). Duas
+            # dúzias "quase empatadas" em 40/38/22 passariam no score
+            # mínimo antigo mas não aqui.
+            pode_entrar = s1 > score_minimo and s1 >= self.exigir_prob_vencedora_minima
             if pode_entrar:
                 treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
                 partes = []
@@ -2560,11 +2750,12 @@ class DuziaAI:
                 if abs(self._threshold_ajuste) >= 1:
                     motivo += f" | 🎚️ ajuste:{self._threshold_ajuste:+.1f}"
             else:
-                motivo = f"Score ML baixo ({s1:.1f} < {score_minimo:.1f})" + (f" +{score_min_extra} transição" if score_min_extra else "")
+                motivo_score = f"Score ML baixo ({s1:.1f} < {score_minimo:.1f})" if s1 <= score_minimo else f"Prob. vencedora baixa ({s1:.1f} < {self.exigir_prob_vencedora_minima:.1f})"
+                motivo = motivo_score + (f" +{score_min_extra} transição" if score_min_extra else "")
         else:
             score_min_fb = config.get('ml_score_minimo_fallback', 35) + score_min_extra + self._threshold_ajuste
             min_rodadas_fb = config.get('ml_min_rodadas_fallback', 6)
-            if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
+            if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb and s1 >= self.exigir_prob_vencedora_minima:
                 pode_entrar = True
                 motivo = f"🟡 Fallback | Score: {s1:.1f}"
                 if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
@@ -2589,6 +2780,8 @@ class DuziaAI:
 
         confianca_min = config.get('confianca_minima_entrada', 1.8)
         if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
+            # V14.2 — MEIO-TERMO: era *1.2. Configurável por mesa agora
+            # (self.transicao_confianca_multiplicador, lido do config).
             confianca_min *= self.transicao_confianca_multiplicador
 
         if pode_entrar and confianca < confianca_min and not forcar_rotacao:
@@ -2598,18 +2791,24 @@ class DuziaAI:
                 pode_entrar = False
                 motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
 
+        # V14.2 — MEIO-TERMO: era erros_consecutivos >= 1. Configurável por
+        # mesa agora (self.anti_erro_min_erros_consecutivos). Immersive
+        # volta pra >=1 porque estava errando mais; as outras mesas
+        # continuam em >=2 (1 erro isolado não trava mais a entrada).
         if pode_entrar and self.erros_consecutivos >= self.anti_erro_min_erros_consecutivos and confianca < (confianca_min + 0.35):
             pode_entrar = False
             motivo = f"🚫 Anti-Erro: conf {confianca:.2f} insuficiente (erros: {self.erros_consecutivos})"
 
         incluir_zero = self.alerta_zero_ativo
-        if self.rodadas_desde_zero >= config.get('zero_termometro_max', 15):
+        if self.rodadas_desde_zero >= config['zero_termometro_max']:
             incluir_zero = True
             if pode_entrar: motivo += " | 🌡️ Zero"
 
+        # V14.2 — MEIO-TERMO: era < 0.8. Reduzido para não descartar entradas
+        # com confiança moderada, mantendo ainda um piso de segurança.
         if confianca < 0.65: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
 
-        duzia_secundaria_final = d2
+        duzia_secundaria_final = None  # V14.3 — modo dúzia única, sem cobertura
         streak_aplicado = False
         if pode_entrar and self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
             streak_aplicado = True
@@ -2799,15 +2998,10 @@ class SistemaBot:
             previsao = self.duzia_ai.prever()
             if previsao['entrar']:
                 duzia_map = {1: list(range(1,13)), 2: list(range(13,25)), 3: list(range(25,37))}
-                numeros_principais = duzia_map.get(previsao['duzia'], [])
-                numeros_secundarios = duzia_map.get(previsao.get('duzia_secundaria', previsao['duzia']), [])
-
-                if st.session_state.get('modo_agressivo', False) or \
-                   (self.duzia_ai.regime_atual in ('transicao', 'instavel') and 
-                    self.duzia_ai.transicao_aumentar_cobertura):
-                    numeros_apostar = list(set(numeros_principais + numeros_secundarios))
-                else:
-                    numeros_apostar = numeros_principais
+                # V14.3 — MODO DÚZIA ÚNICA: sempre aposta só na dúzia de
+                # maior score, sem combinar com uma segunda dúzia de
+                # cobertura (nem em modo agressivo, nem em transição).
+                numeros_apostar = duzia_map.get(previsao['duzia'], [])
 
                 if previsao.get('incluir_zero', False) and 0 not in numeros_apostar:
                     numeros_apostar = [0] + numeros_apostar
@@ -2815,7 +3009,7 @@ class SistemaBot:
                 self.entrada_ativa = {
                     'numeros_apostar': numeros_apostar,
                     'duzia_prevista': previsao['duzia'],
-                    'duzia_sec_prevista': previsao.get('duzia_secundaria'),
+                    'duzia_sec_prevista': None,
                     'confianca': previsao.get('confianca', 0),
                     'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
                     'modo_anti_erro': previsao.get('modo_anti_erro', False),
@@ -2830,7 +3024,7 @@ class SistemaBot:
                     'numeros_apostar': numeros_apostar,
                     'incluir_zero': previsao.get('incluir_zero', False),
                     'duzia': previsao['duzia'],
-                    'duzia_secundaria': previsao.get('duzia_secundaria', previsao['duzia']),
+                    'duzia_secundaria': None,
                     'numeros_completos': list(self.historico_numeros),
                     'streak_info': previsao.get('streak_info'),
                 })
@@ -2882,55 +3076,6 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     except Exception as e:
         logging.error(f"Erro CSV: {e}")
         return False
-
-
-# =============================
-# FUNÇÃO get_session_paths
-# =============================
-
-def get_session_paths(api_name):
-    safe = api_name.lower().replace(' ', '_')
-    return {
-        'session': f"session_data_{safe}.pkl",
-        'historico': f"historico_roleta_{safe}.json",
-        'performance': f"performance_bot_{safe}.json",
-        'entradas': f"historico_entradas_{safe}.json",
-        'performance_mesa': f"performance_mesa_{safe}.json",
-        'performance_horario': f"performance_horario_{safe}.json",
-        'sessao_controle': f"sessao_controle_{safe}.json",
-        'historico_sessoes': f"historico_sessoes_{safe}.json",
-        'padroes_hibridos': f"padroes_hibridos_{safe}.json",
-    }
-
-
-# =============================
-# SALVAR CONFIG GLOBAL
-# =============================
-
-def salvar_config_global():
-    config = {
-        'telegram_token': st.session_state.get('telegram_token', ''),
-        'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
-        'telegram_token_alt': st.session_state.get('telegram_token_alt', ''),
-        'telegram_chat_id_alt': st.session_state.get('telegram_chat_id_alt', ''),
-        'modo_automatico': st.session_state.get('modo_automatico', True),
-        'modo_agressivo': st.session_state.get('modo_agressivo', False),
-        'janela_duzia_ai': st.session_state.get('janela_duzia_ai', 30),
-        'api_selecionada': st.session_state.get('api_selecionada', 'XXXtreme Lightning'),
-        'rodadas_por_sessao': st.session_state.get('rodadas_por_sessao', 10),
-        'pausa_entre_sessoes': st.session_state.get('pausa_entre_sessoes', 5),
-        'salvar_sessoes_auto': st.session_state.get('salvar_sessoes_auto', True),
-    }
-    try:
-        with open(CONFIG_GLOBAL_PATH, 'w') as f: json.dump(config, f)
-    except Exception as e: logging.error(f"Erro ao salvar config global: {e}")
-
-def carregar_config_global():
-    try:
-        if os.path.exists(CONFIG_GLOBAL_PATH):
-            with open(CONFIG_GLOBAL_PATH, 'r') as f: return json.load(f)
-    except: pass
-    return {}
 
 
 # =============================
@@ -3141,7 +3286,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
-    st.session_state.modo_agressivo = st.checkbox("🔥 Modo Agressivo (2 Dúzias)", value=st.session_state.modo_agressivo)
+    # V14.3 — removido "Modo Agressivo (2 Dúzias)": o sistema agora só
+    # aposta na dúzia de maior score (sem cobertura secundária).
     st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
 
     st.markdown("---")
@@ -3464,3 +3610,4 @@ else:
     st.caption("⚠️ Modelo não salvo ainda")
 
 salvar_sessao()
+#[file content end]
