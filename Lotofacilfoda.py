@@ -483,11 +483,13 @@ def extrair_features_consenso(consenso_info):
 
 
 # =============================
-# 🆕 MODO ALTA PRECISÃO (V15.0) — 1 DÚZIA, SÓ ENTRADA DE ALTA CONFIANÇA
+# 🆕 MODO ALTA PRECISÃO (V15.1) — 1 DÚZIA, FOCO NA QUALIDADE DO ML
 # =============================
-# Substitui o antigo "ajuste meio-termo": em vez de afrouxar os limiares
-# para gerar mais entradas, este ajuste os APERTA para gerar menos
-# entradas, porém muito mais assertivas.
+# Em vez de travar a entrada com vários limiares estruturais (que geravam
+# poucas entradas e demora), o filtro de qualidade principal passa a ser
+# a PROBABILIDADE BRUTA do modelo de ML (calibrada). Os demais limiares
+# ficam próximos do padrão, apenas com um leve reforço, para não travar
+# o ritmo de entradas.
 
 def _aplicar_ajuste_meio_termo(config):
     cfg = config.copy()
@@ -499,50 +501,50 @@ def _aplicar_ajuste_meio_termo(config):
                 novo = max(minimo, novo)
             cfg[chave] = novo
 
-    # --- Barreira de entrada (score/confiança) - APERTA bastante ---
-    blend('ml_score_minimo_entrada', 0.35, minimo=32)
-    blend('ml_score_minimo_fallback', 0.30, minimo=42)
-    blend('confianca_minima_entrada', 0.35, minimo=2.2)
-    blend('filtro_conf_baixa', 0.30, minimo=1.8)
-    blend('confianca_maxima_segura', 0.05)
-    blend('ml_score_minimo_pos_rotacao', 0.30, minimo=22)
-    cfg['ml_min_rodadas_fallback'] = max(6, int(round(cfg.get('ml_min_rodadas_fallback', 6) * 1.15)))
+    # --- Barreira de entrada (score/confiança) - quase neutra ---
+    blend('ml_score_minimo_entrada', 0.0, minimo=18)
+    blend('ml_score_minimo_fallback', 0.0, minimo=25)
+    blend('confianca_minima_entrada', -0.05, minimo=1.3)
+    blend('filtro_conf_baixa', -0.05, minimo=1.0)
+    blend('confianca_maxima_segura', 0.0)
+    blend('ml_score_minimo_pos_rotacao', 0.0, minimo=12)
+    cfg['ml_min_rodadas_fallback'] = max(5, int(round(cfg.get('ml_min_rodadas_fallback', 6) * 0.95)))
 
-    # --- Transição: fica MAIS punitiva (menos entrada durante instabilidade) ---
-    cfg['transicao_penalidade_conf'] = max(0.45, cfg.get('transicao_penalidade_conf', 0.70) - 0.15)
-    blend('transicao_score_minimo_extra', 0.35, minimo=12)
+    # --- Transição: penalidade moderada (não trava tudo durante instabilidade) ---
+    cfg['transicao_penalidade_conf'] = min(0.80, cfg.get('transicao_penalidade_conf', 0.70) + 0.05)
+    blend('transicao_score_minimo_extra', -0.20, minimo=5)
 
-    # --- Drift: detecção responsiva, mas reset não libera cedo demais ---
+    # --- Drift: detecção responsiva, reset normal ---
     blend('drift_janela', -0.10, minimo=8)
     blend('drift_taxa_minima', -0.10, minimo=0.18)
-    cfg['drift_alertar_apos'] = max(2, int(round(cfg.get('drift_alertar_apos', 5) * 0.8)))
-    cfg['drift_rodadas_auto_reset'] = max(12, int(round(cfg.get('drift_rodadas_auto_reset', 20) * 0.85)))
+    cfg['drift_alertar_apos'] = max(3, int(round(cfg.get('drift_alertar_apos', 5) * 0.9)))
+    cfg['drift_rodadas_auto_reset'] = max(10, int(round(cfg.get('drift_rodadas_auto_reset', 20) * 0.7)))
 
-    # --- Threshold adaptativo: pode apertar mais forte, afrouxa bem menos ---
+    # --- Threshold adaptativo: pode afrouxar/apertar de forma equilibrada ---
     blend('threshold_adaptativo_janela', -0.10, minimo=15)
     blend('threshold_adaptativo_alvo', -0.05, minimo=0.30)
-    blend('threshold_adaptativo_passo', 0.10, minimo=1.0)
-    cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -10.0) * 0.55
-    cfg['threshold_adaptativo_max'] = cfg.get('threshold_adaptativo_max', 15.0) * 1.25
+    blend('threshold_adaptativo_passo', 0.0, minimo=1.0)
+    cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -10.0) * 0.9
+    cfg['threshold_adaptativo_max'] = cfg.get('threshold_adaptativo_max', 15.0) * 1.05
 
-    # --- Padrões/streak: exige mais qualidade e repetição comprovada ---
-    blend('padrao_min_ocorrencias', 0.20, minimo=4)
-    blend('padrao_conf_minima_tam2', 0.20, minimo=1.8)
-    blend('padrao_conf_minima_tam4', 0.20, minimo=3.5)
-    blend('padrao_consenso_min_conf', 0.20, minimo=0.28)
-    blend('padrao_qualidade_min_p2', 0.25, minimo=16)
-    blend('padrao_qualidade_min_p3', 0.25, minimo=11)
-    blend('padrao_qualidade_min_p4', 0.25, minimo=8)
-    blend('streak_conf_min_reforco', 0.15, minimo=2.6)
+    # --- Padrões/streak: qualidade normal, sem exigir demais ---
+    blend('padrao_min_ocorrencias', 0.0, minimo=3)
+    blend('padrao_conf_minima_tam2', 0.0, minimo=1.3)
+    blend('padrao_conf_minima_tam4', 0.0, minimo=2.5)
+    blend('padrao_consenso_min_conf', 0.0, minimo=0.20)
+    blend('padrao_qualidade_min_p2', 0.0, minimo=9)
+    blend('padrao_qualidade_min_p3', 0.0, minimo=6)
+    blend('padrao_qualidade_min_p4', 0.0, minimo=4)
+    blend('streak_conf_min_reforco', 0.0, minimo=1.7)
 
-    # --- ML treina com mais dados e atualiza com menos frequência (mais estável) ---
-    blend('ml_janela_treino', 0.15, minimo=90)
-    cfg['ml_atualizar_a_cada'] = max(8, int(round(cfg.get('ml_atualizar_a_cada', 10) * 1.2)))
+    # --- ML treina com janela padrão e atualiza com frequência normal ---
+    blend('ml_janela_treino', 0.0, minimo=60)
+    cfg['ml_atualizar_a_cada'] = max(6, int(round(cfg.get('ml_atualizar_a_cada', 10) * 1.0)))
 
-    # --- Probabilidade bruta mínima do ML (nova barreira de assertividade) ---
-    cfg['ml_prob_bruta_minima'] = max(cfg.get('ml_prob_bruta_minima', 0.42), 0.42)
+    # --- Probabilidade bruta mínima do ML: ESTE é o filtro principal de qualidade ---
+    cfg['ml_prob_bruta_minima'] = max(cfg.get('ml_prob_bruta_minima', 0.36), 0.36)
 
-    # --- Zero/viés dinâmico permanecem como estavam (não é foco de assertividade) ---
+    # --- Zero/viés dinâmico permanecem como estavam ---
     blend('zero_termometro_max', 0.10)
     blend('vies_dinamico_janela', -0.10, minimo=15)
     blend('vies_dinamico_limiar', 0.10)
@@ -577,17 +579,17 @@ def _aplicar_ajuste_fino_immersive(config, original):
     cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -7) * 0.85
     blend_mais_solto('zero_termometro_max', 0.10)
 
-    # --- 2) Reforça ainda mais a barreira de qualidade (não volta a afrouxar) ---
-    cfg['confianca_minima_entrada'] = max(cfg.get('confianca_minima_entrada', 1.3), 2.2)
-    cfg['filtro_conf_baixa'] = max(cfg.get('filtro_conf_baixa', 1.0), 1.8)
-    cfg['ml_score_minimo_entrada'] = max(cfg.get('ml_score_minimo_entrada', 14), 32)
-    cfg['ml_score_minimo_fallback'] = max(cfg.get('ml_score_minimo_fallback', 24), 42)
-    cfg['padrao_qualidade_min_p2'] = max(cfg.get('padrao_qualidade_min_p2', 8), 16)
-    cfg['padrao_qualidade_min_p3'] = max(cfg.get('padrao_qualidade_min_p3', 5), 11)
-    cfg['padrao_qualidade_min_p4'] = max(cfg.get('padrao_qualidade_min_p4', 4), 8)
-    cfg['padrao_conf_minima_tam2'] = max(cfg.get('padrao_conf_minima_tam2', 1.2), 1.8)
-    cfg['padrao_conf_minima_tam4'] = max(cfg.get('padrao_conf_minima_tam4', 2.5), 3.5)
-    cfg['streak_conf_min_reforco'] = max(cfg.get('streak_conf_min_reforco', 1.6), 2.6)
+    # --- 2) Mantém barreira de qualidade em nível normal (não sufoca entrada) ---
+    cfg['confianca_minima_entrada'] = max(cfg.get('confianca_minima_entrada', 1.3), 1.3)
+    cfg['filtro_conf_baixa'] = max(cfg.get('filtro_conf_baixa', 1.0), 1.0)
+    cfg['ml_score_minimo_entrada'] = max(cfg.get('ml_score_minimo_entrada', 14), 14)
+    cfg['ml_score_minimo_fallback'] = max(cfg.get('ml_score_minimo_fallback', 24), 24)
+    cfg['padrao_qualidade_min_p2'] = max(cfg.get('padrao_qualidade_min_p2', 8), 8)
+    cfg['padrao_qualidade_min_p3'] = max(cfg.get('padrao_qualidade_min_p3', 5), 5)
+    cfg['padrao_qualidade_min_p4'] = max(cfg.get('padrao_qualidade_min_p4', 4), 4)
+    cfg['padrao_conf_minima_tam2'] = max(cfg.get('padrao_conf_minima_tam2', 1.2), 1.2)
+    cfg['padrao_conf_minima_tam4'] = max(cfg.get('padrao_conf_minima_tam4', 2.5), 2.5)
+    cfg['streak_conf_min_reforco'] = max(cfg.get('streak_conf_min_reforco', 1.6), 1.6)
 
     # --- 3) Qualidade da previsão do ML ---
     puxar_para_original('ml_janela_treino', 0.6, minimo=45)
@@ -617,10 +619,10 @@ def _forcar_inteiros_de_janela(config):
 # =============================
 SETUP_BASE = {
     'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'confianca_minima_entrada': 2.4,
+    'confianca_minima_entrada': 1.6,
     'embalo_peso': 9, 'embalo_reforco': 5,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.0,
+    'filtro_conf_baixa': 1.3,
     'fadiga_duzia': 4, 'ritmo_alternado_peso': 10, 'ritmo_alternado_forca': 10,
     'max_repeticoes_embalo': 4, 'confianca_maxima_segura': 3.3,
     'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 1, 'raio_alto_minimo': 100,
@@ -629,16 +631,16 @@ SETUP_BASE = {
     'ml_janela_treino': 80,
     'ml_atualizar_a_cada': 10,
     'score_ml_peso': 55,
-    'ml_score_minimo_entrada': 38,
-    'ml_score_minimo_fallback': 45,
+    'ml_score_minimo_entrada': 22,
+    'ml_score_minimo_fallback': 30,
     'ml_min_rodadas_fallback': 6,
     'ml_max_repeticoes_mesma_duzia': 2,
-    'ml_score_minimo_pos_rotacao': 26,
-    'ml_prob_bruta_minima': 0.42,
-    'padrao_min_ocorrencias': 4,
-    'padrao_conf_minima_tam2': 2,
-    'padrao_conf_minima_tam4': 4,
-    'padrao_consenso_min_conf': 0.28,
+    'ml_score_minimo_pos_rotacao': 14,
+    'ml_prob_bruta_minima': 0.36,
+    'padrao_min_ocorrencias': 3,
+    'padrao_conf_minima_tam2': 1.5,
+    'padrao_conf_minima_tam4': 3,
+    'padrao_consenso_min_conf': 0.20,
     'anti_vies_ativo': False, 'anti_vies_duzia': None,
     'anti_vies_penalidade': 1.0, 'anti_vies_gatilho_p2': False, 'anti_vies_p4_isolado_extra': 1.0,
     'peso_adaptativo_ativo': False, 'peso_adaptativo_janela': 10, 'peso_adaptativo_boost': 1.0,
@@ -668,18 +670,18 @@ SETUP_BASE = {
     'detector_janela': 10,
     'detector_limiar_transicao': 0.35,
     'detector_limiar_instavel': 0.50,
-    'transicao_penalidade_conf': 0.70,
+    'transicao_penalidade_conf': 0.75,
     'transicao_aumentar_cobertura': False,
     'transicao_evitar_dominante': True,
-    'transicao_score_minimo_extra': 18,
+    'transicao_score_minimo_extra': 8,
     'threshold_adaptativo_ativo': True,
     'threshold_adaptativo_janela': 30,
     'threshold_adaptativo_alvo': 0.40,
     'threshold_adaptativo_passo': 2.0,
-    'threshold_adaptativo_min': -6.0,
-    'threshold_adaptativo_max': 20.0,
-    'anti_erro_min_erros_consecutivos': 1,
-    'transicao_confianca_multiplicador': 1.35,
+    'threshold_adaptativo_min': -9.0,
+    'threshold_adaptativo_max': 16.0,
+    'anti_erro_min_erros_consecutivos': 2,
+    'transicao_confianca_multiplicador': 1.10,
 }
 
 SETUP_XXXTREME = {
@@ -688,21 +690,21 @@ SETUP_XXXTREME = {
     'peso_adaptativo_ativo': True,
     'peso_adaptativo_janela': 12,
     'peso_adaptativo_boost': 1.4,
-    'confianca_minima_entrada': 2.3,
-    'filtro_conf_baixa': 2.1,
+    'confianca_minima_entrada': 1.5,
+    'filtro_conf_baixa': 1.4,
     'confianca_maxima_segura': 3.2,
     'streak_ativo': True,
     'streak_min_len': 2,
     'streak_peso_feature': 0.7,
     'streak_reforca_ml': True,
-    'streak_conf_min_reforco': 2.6,
+    'streak_conf_min_reforco': 1.8,
     'ml_max_repeticoes_mesma_duzia': 1,
-    'padrao_consenso_min_conf': 0.30,
+    'padrao_consenso_min_conf': 0.22,
     'ml_ignorar_consenso_conf_min': 2.8,
-    'ml_score_minimo_entrada': 34,
-    'ml_score_minimo_fallback': 46,
+    'ml_score_minimo_entrada': 15,
+    'ml_score_minimo_fallback': 32,
     'ml_min_rodadas_fallback': 8,
-    'ml_prob_bruta_minima': 0.44,
+    'ml_prob_bruta_minima': 0.36,
     'padrao_min_ocorrencias': 4,
     'padrao_conf_minima_tam2': 2.5,
     'padrao_conf_minima_tam4': 5,
@@ -738,10 +740,10 @@ SETUP_XXXTREME = {
     'usar_quebra_pos_zero': False,
     'usar_exaustao_dominancia': True,
     'usar_mudanca_velocidade': False,
-    'transicao_penalidade_conf': 0.60,
+    'transicao_penalidade_conf': 0.72,
     'transicao_aumentar_cobertura': False,
     'transicao_evitar_dominante': True,
-    'transicao_score_minimo_extra': 22,
+    'transicao_score_minimo_extra': 10,
 }
 SETUP_XXXTREME = _aplicar_ajuste_meio_termo(SETUP_XXXTREME)
 SETUP_XXXTREME = _forcar_inteiros_de_janela(SETUP_XXXTREME)
@@ -749,8 +751,8 @@ SETUP_XXXTREME = _forcar_inteiros_de_janela(SETUP_XXXTREME)
 _SETUP_IMMERSIVE_PRE_AJUSTE = {
     **SETUP_BASE,
     'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.3,
-    'filtro_conf_baixa': 2.0,
+    'confianca_minima_entrada': 1.5,
+    'filtro_conf_baixa': 1.1,
     'confianca_maxima_segura': 3.0,
     'rodadas_verificacao_conf_alta': 5,
     'embalo_peso': 6,
@@ -785,12 +787,12 @@ _SETUP_IMMERSIVE_PRE_AJUSTE = {
     'score_anti_erro_peso': 20,
     'ml_janela_treino': 60,
     'ml_atualizar_a_cada': 5,
-    'ml_score_minimo_entrada': 34,
-    'ml_score_minimo_fallback': 42,
+    'ml_score_minimo_entrada': 18,
+    'ml_score_minimo_fallback': 26,
     'ml_min_rodadas_fallback': 6,
     'ml_max_repeticoes_mesma_duzia': 2,
-    'ml_score_minimo_pos_rotacao': 24,
-    'ml_prob_bruta_minima': 0.42,
+    'ml_score_minimo_pos_rotacao': 14,
+    'ml_prob_bruta_minima': 0.35,
     'ml_ignorar_consenso_conf_min': 2.5,
     'padrao_min_ocorrencias': 3,
     'padrao_peso_tam2': 42,
@@ -823,14 +825,14 @@ _SETUP_IMMERSIVE_PRE_AJUSTE = {
     'streak_min_len': 2,
     'streak_peso_feature': 1.0,
     'streak_reforca_ml': True,
-    'streak_conf_min_reforco': 2.6,
-    'padrao_qualidade_min_p2': 16,
-    'padrao_qualidade_min_p3': 11,
-    'padrao_qualidade_min_p4': 8,
-    'transicao_penalidade_conf': 0.55,
+    'streak_conf_min_reforco': 2.0,
+    'padrao_qualidade_min_p2': 10,
+    'padrao_qualidade_min_p3': 6,
+    'padrao_qualidade_min_p4': 4,
+    'transicao_penalidade_conf': 0.68,
     'transicao_aumentar_cobertura': False,
     'transicao_evitar_dominante': True,
-    'transicao_score_minimo_extra': 18,
+    'transicao_score_minimo_extra': 8,
 }
 SETUP_IMMERSIVE = _aplicar_ajuste_meio_termo(_SETUP_IMMERSIVE_PRE_AJUSTE)
 SETUP_IMMERSIVE = _aplicar_ajuste_fino_immersive(SETUP_IMMERSIVE, _SETUP_IMMERSIVE_PRE_AJUSTE)
@@ -839,10 +841,10 @@ SETUP_IMMERSIVE = _forcar_inteiros_de_janela(SETUP_IMMERSIVE)
 SETUP_MEGA = {
     **SETUP_BASE,
     'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 2.3,
+    'confianca_minima_entrada': 1.5,
     'embalo_peso': 5, 'embalo_reforco': 2,
     'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 2.0, 'fadiga_duzia': 3,
+    'filtro_conf_baixa': 1.3, 'fadiga_duzia': 3,
     'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
     'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
     'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 2, 'raio_alto_minimo': 150,
@@ -857,12 +859,12 @@ SETUP_MEGA = {
     'score_markov_peso': 8, 'score_ml_peso': 55,
     'score_anti_erro_peso': 20,
     'ml_janela_treino': 80, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 36,
-    'ml_score_minimo_fallback': 45,
+    'ml_score_minimo_entrada': 22,
+    'ml_score_minimo_fallback': 30,
     'ml_min_rodadas_fallback': 8,
     'ml_max_repeticoes_mesma_duzia': 2,
-    'ml_score_minimo_pos_rotacao': 24,
-    'ml_prob_bruta_minima': 0.42,
+    'ml_score_minimo_pos_rotacao': 14,
+    'ml_prob_bruta_minima': 0.36,
     'padrao_min_ocorrencias': 3,
     'padrao_peso_tam2': 20, 'padrao_peso_tam3': 50, 'padrao_peso_tam4': 30,
     'padrao_conf_minima_tam2': 2, 'padrao_conf_minima_tam4': 4,
@@ -878,12 +880,12 @@ SETUP_MEGA = {
     'drift_rodadas_auto_reset': 20,
     'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 1.0,
     'streak_reforca_ml': True,
-    'streak_conf_min_reforco': 2.6,
-    'padrao_qualidade_min_p2': 16, 'padrao_qualidade_min_p3': 11, 'padrao_qualidade_min_p4': 8,
-    'transicao_penalidade_conf': 0.50,
+    'streak_conf_min_reforco': 2.0,
+    'padrao_qualidade_min_p2': 11, 'padrao_qualidade_min_p3': 7, 'padrao_qualidade_min_p4': 5,
+    'transicao_penalidade_conf': 0.65,
     'transicao_aumentar_cobertura': False,
     'transicao_evitar_dominante': True,
-    'transicao_score_minimo_extra': 22,
+    'transicao_score_minimo_extra': 10,
 }
 SETUP_MEGA = _aplicar_ajuste_meio_termo(SETUP_MEGA)
 SETUP_MEGA = _forcar_inteiros_de_janela(SETUP_MEGA)
@@ -2607,7 +2609,7 @@ class DuziaAI:
                 pode_entrar = False
                 motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
 
-        if pode_entrar and self.erros_consecutivos >= self.anti_erro_min_erros_consecutivos and confianca < (confianca_min + 0.55):
+        if pode_entrar and self.erros_consecutivos >= self.anti_erro_min_erros_consecutivos and confianca < (confianca_min + 0.30):
             pode_entrar = False
             motivo = f"🚫 Anti-Erro: conf {confianca:.2f} insuficiente (erros: {self.erros_consecutivos})"
 
@@ -2616,7 +2618,7 @@ class DuziaAI:
             incluir_zero = True
             if pode_entrar: motivo += " | 🌡️ Zero"
 
-        if confianca < 1.30: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
+        if confianca < 0.75: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
 
         duzia_secundaria_final = None  # 🆕 Sem cobertura: o bot opera só com a dúzia principal
         streak_aplicado = False
