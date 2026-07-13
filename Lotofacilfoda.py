@@ -514,10 +514,10 @@ def _aplicar_ajuste_meio_termo(config):
     cfg['transicao_penalidade_conf'] = min(0.80, cfg.get('transicao_penalidade_conf', 0.70) + 0.05)
     blend('transicao_score_minimo_extra', -0.20, minimo=5)
 
-    # --- Drift: detecção responsiva, reset normal ---
-    blend('drift_janela', -0.10, minimo=8)
-    blend('drift_taxa_minima', -0.10, minimo=0.18)
-    cfg['drift_alertar_apos'] = max(3, int(round(cfg.get('drift_alertar_apos', 5) * 0.9)))
+    # --- Drift: detecção responsiva, reage rápido a sequência de erros reais ---
+    blend('drift_janela', -0.20, minimo=6)
+    blend('drift_taxa_minima', 0.05, minimo=0.24)
+    cfg['drift_alertar_apos'] = max(4, int(round(cfg.get('drift_alertar_apos', 5) * 0.8)))
     cfg['drift_rodadas_auto_reset'] = max(10, int(round(cfg.get('drift_rodadas_auto_reset', 20) * 0.7)))
 
     # --- Threshold adaptativo: pode afrouxar/apertar de forma equilibrada ---
@@ -542,7 +542,7 @@ def _aplicar_ajuste_meio_termo(config):
     cfg['ml_atualizar_a_cada'] = max(6, int(round(cfg.get('ml_atualizar_a_cada', 10) * 1.0)))
 
     # --- Probabilidade bruta mínima do ML: ESTE é o filtro principal de qualidade ---
-    cfg['ml_prob_bruta_minima'] = max(cfg.get('ml_prob_bruta_minima', 0.36), 0.36)
+    cfg['ml_prob_bruta_minima'] = max(cfg.get('ml_prob_bruta_minima', 0.38), 0.38)
 
     # --- Zero/viés dinâmico permanecem como estavam ---
     blend('zero_termometro_max', 0.10)
@@ -569,11 +569,11 @@ def _aplicar_ajuste_fino_immersive(config, original):
                 novo = max(minimo, novo)
             cfg[chave] = novo
 
-    # --- 1) Destrava mais os temporizadores ---
+    # --- 1) Destrava temporizadores, mas sem enfraquecer demais a rede de segurança ---
     cfg['drift_rodadas_auto_reset'] = max(6, int(round(cfg.get('drift_rodadas_auto_reset', 10) * 0.75)))
-    blend_mais_solto('drift_janela', -0.12, minimo=7)
-    blend_mais_solto('drift_taxa_minima', -0.15, minimo=0.12)
-    cfg['drift_alertar_apos'] = max(2, cfg.get('drift_alertar_apos', 3) - 1)
+    blend_mais_solto('drift_janela', -0.05, minimo=6)
+    cfg['drift_taxa_minima'] = max(cfg.get('drift_taxa_minima', 0.22), 0.22)
+    cfg['drift_alertar_apos'] = max(3, cfg.get('drift_alertar_apos', 4))
     blend_mais_solto('threshold_adaptativo_janela', -0.15, minimo=12)
     cfg['threshold_adaptativo_max'] = cfg.get('threshold_adaptativo_max', 11) * 0.85
     cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -7) * 0.85
@@ -636,7 +636,7 @@ SETUP_BASE = {
     'ml_min_rodadas_fallback': 6,
     'ml_max_repeticoes_mesma_duzia': 2,
     'ml_score_minimo_pos_rotacao': 14,
-    'ml_prob_bruta_minima': 0.36,
+    'ml_prob_bruta_minima': 0.38,
     'padrao_min_ocorrencias': 3,
     'padrao_conf_minima_tam2': 1.5,
     'padrao_conf_minima_tam4': 3,
@@ -704,7 +704,7 @@ SETUP_XXXTREME = {
     'ml_score_minimo_entrada': 15,
     'ml_score_minimo_fallback': 32,
     'ml_min_rodadas_fallback': 8,
-    'ml_prob_bruta_minima': 0.36,
+    'ml_prob_bruta_minima': 0.38,
     'padrao_min_ocorrencias': 4,
     'padrao_conf_minima_tam2': 2.5,
     'padrao_conf_minima_tam4': 5,
@@ -792,7 +792,7 @@ _SETUP_IMMERSIVE_PRE_AJUSTE = {
     'ml_min_rodadas_fallback': 6,
     'ml_max_repeticoes_mesma_duzia': 2,
     'ml_score_minimo_pos_rotacao': 14,
-    'ml_prob_bruta_minima': 0.35,
+    'ml_prob_bruta_minima': 0.37,
     'ml_ignorar_consenso_conf_min': 2.5,
     'padrao_min_ocorrencias': 3,
     'padrao_peso_tam2': 42,
@@ -864,7 +864,7 @@ SETUP_MEGA = {
     'ml_min_rodadas_fallback': 8,
     'ml_max_repeticoes_mesma_duzia': 2,
     'ml_score_minimo_pos_rotacao': 14,
-    'ml_prob_bruta_minima': 0.36,
+    'ml_prob_bruta_minima': 0.38,
     'padrao_min_ocorrencias': 3,
     'padrao_peso_tam2': 20, 'padrao_peso_tam3': 50, 'padrao_peso_tam4': 30,
     'padrao_conf_minima_tam2': 2, 'padrao_conf_minima_tam4': 4,
@@ -2449,16 +2449,16 @@ class DuziaAI:
             conf_consenso = self.consenso_info['conf']
             melhor_ml = max(scores, key=scores.get)
             if melhor_ml == duzia_consenso:
+                # Padrão CONFIRMA o pick do ML → reforça (isso é sinal real)
                 peso_extra = self.consenso_peso_extra / 100.0
                 if self.consenso_info['tipo'] == 'triplo': peso_extra *= 1.5
                 boost = scores[duzia_consenso] * peso_extra * conf_consenso
                 scores[duzia_consenso] = min(100, scores[duzia_consenso] + boost)
-            else:
-                ml_conf = (max(scores.values()) - sorted(scores.values(), reverse=True)[1]) / 20
-                if ml_conf < self.ml_ignorar_consenso_conf_min:
-                    fator = 0.3 * conf_consenso
-                    scores[duzia_consenso] += (100 - scores[duzia_consenso]) * fator
-                    scores[melhor_ml] *= (1 - fator * 0.5)
+            # 🆕 Se o padrão DISCORDA do ML, não invertemos mais a escolha do
+            # modelo por causa de um heurístico de frequência simples — isso
+            # é a causa mais provável de entradas erradas com "confiança alta"
+            # (a confiança nesses casos vinha do padrão, não do ML). O padrão
+            # discordante é ignorado; o pick continua sendo o do ML calibrado.
         return scores
 
     def detectar_alerta_zero(self):
@@ -2632,6 +2632,7 @@ class DuziaAI:
             "incluir_zero": incluir_zero, "modo_anti_erro": self.erros_consecutivos > 0,
             "numeros_completos": list(self.numeros_completos), "modo_previsao": modo,
             "rotacao_forcada": forcar_rotacao, "streak_info": streak_sinal if streak_sinal else None,
+            "prob_ml_bruta": round(prob_bruta_d1 * 100, 1) if prob_bruta_d1 is not None else None,
         }
         
         if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
@@ -2788,6 +2789,7 @@ class SistemaBot:
                 'acerto_secundaria': False, 'acerto_numero': acerto_numero_exato,
                 'acerto_zero': acerto_zero, 'eh_raio': eh_raio, 'multiplicador': multiplicador,
                 'status': status_visual, 'confianca': self.entrada_ativa.get('confianca', 0),
+                'prob_ml_bruta': self.entrada_ativa.get('prob_ml_bruta'),
                 'gatilho': self.entrada_ativa.get('gatilho_ativo', 'ML'),
                 'modo_anti_erro': self.entrada_ativa.get('modo_anti_erro', False),
                 'incluir_zero': incluir_zero, 'table_id': table_id, 'table_name': table_name,
@@ -2816,6 +2818,7 @@ class SistemaBot:
                     'duzia_prevista': previsao['duzia'],
                     'duzia_sec_prevista': None,
                     'confianca': previsao.get('confianca', 0),
+                    'prob_ml_bruta': previsao.get('prob_ml_bruta'),
                     'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
                     'modo_anti_erro': previsao.get('modo_anti_erro', False),
                     'incluir_zero': previsao.get('incluir_zero', False),
@@ -2859,7 +2862,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     try:
         with open(caminho, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Conf','Gat','Z','🔄','Mesa','Duz','P1','Num','Zer','St','Regime','Padrões','Streak'])
+            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Conf','ProbML','Gat','Z','🔄','Mesa','Duz','P1','Num','Zer','St','Regime','Padrões','Streak'])
             for e in historico_entradas:
                 real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0) != 0 else "0"
                 ns = e.get('numero', 0)
@@ -2867,7 +2870,9 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
                 writer.writerow([e.get('rodada'), e.get('hora'), nd,
                                   f"⚡{e.get('multiplicador',0)}x" if e.get('eh_raio') else '-',
                                   real, f"D{e.get('duzia_prevista','?')}",
-                                  f"{e.get('confianca',0):.1f}", e.get('gatilho','ML'),
+                                  f"{e.get('confianca',0):.1f}",
+                                  f"{e.get('prob_ml_bruta'):.0f}%" if e.get('prob_ml_bruta') is not None else '-',
+                                  e.get('gatilho','ML'),
                                   '🟢' if e.get('incluir_zero') else '-', '🔄' if e.get('modo_anti_erro') else '-',
                                   e.get('table_name', '?')[:15] if e.get('table_name') else '?',
                                   '✅' if e.get('acerto_duzia') else '❌', '✅' if e.get('acerto_primaria') else '-',
@@ -3371,6 +3376,7 @@ with ce:
     if sis.entrada_ativa and sis.sessao_ativa:
         e = sis.entrada_ativa
         conf = e.get('confianca', 0); dz_princ = e.get('duzia_prevista', 0)
+        prob_ml = e.get('prob_ml_bruta')
         gatilho = e.get('gatilho_ativo', 'ML')
         padrao_info = e.get('padrao_ativo', {}); streak_ent = e.get('streak_info', None)
         regime_ent = e.get('regime', 'estavel')
@@ -3384,7 +3390,7 @@ with ce:
         st.markdown(f"""
         <div style="background-color:{cor}15; border:2px solid {cor}; border-radius:15px; padding:15px;">
             <h2 style="color:{cor}; text-align:center;">🎯 Dúzia {dz_princ}</h2>
-            <p style="text-align:center;">Confiança: {conf:.2f}</p>
+            <p style="text-align:center;">Confiança: {conf:.2f}{f' | ProbML: {prob_ml:.0f}%' if prob_ml is not None else ''}</p>
             <p style="text-align:center;">{icone_modo}</p>
             {padrao_html}{streak_html}
         </div>""", unsafe_allow_html=True)
@@ -3408,7 +3414,9 @@ if sis.historico_entradas:
         dados.append({
             "Rod": e.get('rodada'), "Hora": e.get('hora'), "🎲": nd, "Real": real,
             "Prev": f"D{e.get('duzia_prevista','?')}",
-            "Conf": f"{e.get('confianca',0):.1f}", "Gat": e.get('gatilho','ML'),
+            "Conf": f"{e.get('confianca',0):.1f}",
+            "ProbML": f"{e.get('prob_ml_bruta'):.0f}%" if e.get('prob_ml_bruta') is not None else "-",
+            "Gat": e.get('gatilho','ML'),
             "Z": '🟢' if e.get('incluir_zero') else '-', "🔄": '🔄' if e.get('modo_anti_erro') else '-',
             "Regime": e.get('regime', 'estavel')[:8],
             "🧩": str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-',
