@@ -16,7 +16,9 @@ import math
 
 try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import make_pipeline
     from sklearn.model_selection import train_test_split
     from sklearn.calibration import CalibratedClassifierCV
     import joblib
@@ -947,17 +949,19 @@ def get_modelo_ml_path(api_name):
 # =============================
 
 class _EnsembleManual:
-    """Ensemble manual de RandomForest + GradientBoosting - COM SERIALIZAÇÃO CORRIGIDA"""
+    """Ensemble manual de RandomForest + GradientBoosting (+ Regressão Logística opcional)."""
     
-    def __init__(self, rf, gbt, peso_rf=0.5, peso_gbt=0.5):
+    def __init__(self, rf, gbt, peso_rf=0.5, peso_gbt=0.5, lr=None, peso_lr=0.0):
         self.rf = rf
         self.gbt = gbt
+        self.lr = lr
         self.classes_ = rf.classes_
 
         # Pesos por submodelo
-        soma = max(1e-6, peso_rf + peso_gbt)
+        soma = max(1e-6, peso_rf + peso_gbt + (peso_lr if lr is not None else 0.0))
         self.peso_rf = peso_rf / soma
         self.peso_gbt = peso_gbt / soma
+        self.peso_lr = (peso_lr / soma) if lr is not None else 0.0
         
         # Obtém n_features_in_ de forma segura
         try:
@@ -981,11 +985,18 @@ class _EnsembleManual:
         self.__dict__.update(state)
         
     def predict_proba(self, X):
-        """Prediz probabilidades usando ensemble ponderado"""
+        """Prediz probabilidades usando ensemble ponderado (RF + GBT + LR opcional)"""
         try:
             p_rf = self.rf.predict_proba(X)
             p_gbt = self.gbt.predict_proba(X)
-            
+            lr = getattr(self, 'lr', None)
+            peso_lr = getattr(self, 'peso_lr', 0.0)
+
+            if lr is not None and peso_lr > 0:
+                p_lr = lr.predict_proba(X)
+                total = p_rf * self.peso_rf + p_gbt * self.peso_gbt + p_lr * peso_lr
+                return total, self.classes_
+
             if self.peso_rf == 0.5 and self.peso_gbt == 0.5:
                 return (p_rf + p_gbt) / 2, self.classes_
             return (p_rf * self.peso_rf + p_gbt * self.peso_gbt), self.classes_
@@ -2073,9 +2084,23 @@ class DuziaAI:
 
             sample_weights = self._calcular_pesos_treino(len(X_train))
 
-            rf_base = RandomForestClassifier(n_estimators=120, max_depth=10, random_state=42,
-                                              n_jobs=-1, class_weight='balanced', min_samples_leaf=2)
-            gbt_base = GradientBoostingClassifier(n_estimators=60, max_depth=5, learning_rate=0.10, random_state=42)
+            # 🆕 RF/GBT mais regularizados: com poucas amostras (30-90) e ~50
+            # features, árvores profundas memorizam ruído. Profundidade e
+            # folha mínima maiores reduzem variância sem perder muito viés.
+            rf_base = RandomForestClassifier(n_estimators=150, max_depth=7, random_state=42,
+                                              n_jobs=-1, class_weight='balanced', min_samples_leaf=3,
+                                              max_features='sqrt')
+            gbt_base = GradientBoostingClassifier(n_estimators=80, max_depth=3, learning_rate=0.07,
+                                                   subsample=0.85, min_samples_leaf=3, random_state=42)
+            # 🆕 Terceiro modelo, de perfil bem diferente das árvores: Regressão
+            # Logística regularizada (com padronização de features). É um
+            # modelo linear e de baixa variância — quando as árvores
+            # "inventam" padrões espúrios em pouca amostra, a LR tende a ficar
+            # mais perto da distribuição real, dando um contrapeso ao ensemble.
+            lr_base = make_pipeline(
+                StandardScaler(),
+                LogisticRegression(C=0.5, max_iter=1000, class_weight='balanced', random_state=42)
+            )
 
             # CALIBRAÇÃO DE PROBABILIDADE
             calibrado = False
@@ -2102,8 +2127,16 @@ class DuziaAI:
                 rf.fit(X_train, y_train, sample_weight=sample_weights)
                 gbt.fit(X_train, y_train, sample_weight=sample_weights)
 
+            lr = None
+            try:
+                lr = lr_base
+                lr.fit(X_train, y_train, logisticregression__sample_weight=sample_weights)
+            except Exception as e:
+                logging.info(f"ℹ️ LR não treinada nesta rodada ({e})")
+                lr = None
+
             # PESO POR SUBMODELO
-            peso_rf, peso_gbt = 0.5, 0.5
+            peso_rf, peso_gbt, peso_lr = 0.5, 0.5, 0.0
             if tem_validacao:
                 try:
                     p_rf_val = rf.predict_proba(X_val)
@@ -2115,10 +2148,20 @@ class DuziaAI:
                         acc_gbt = sum(1 for p, t in zip(preds_gbt, y_val) if p == t) / len(y_val)
                         peso_rf = max(0.15, acc_rf)
                         peso_gbt = max(0.15, acc_gbt)
+                        if lr is not None:
+                            try:
+                                p_lr_val = lr.predict_proba(X_val)
+                                preds_lr = lr.classes_[np.argmax(p_lr_val, axis=1)]
+                                acc_lr = sum(1 for p, t in zip(preds_lr, y_val) if p == t) / len(y_val)
+                                # Só entra no blend se performar pelo menos perto do acaso;
+                                # caso contrário, mantém peso 0 (não participa).
+                                peso_lr = max(0.0, acc_lr - 0.05) if acc_lr >= 0.30 else 0.0
+                            except Exception:
+                                peso_lr = 0.0
                 except Exception as e:
                     logging.info(f"ℹ️ Não foi possível pesar submodelos individualmente ({e}), usando 50/50")
 
-            novo_modelo = _EnsembleManual(rf, gbt, peso_rf=peso_rf, peso_gbt=peso_gbt)
+            novo_modelo = _EnsembleManual(rf, gbt, peso_rf=peso_rf, peso_gbt=peso_gbt, lr=lr, peso_lr=peso_lr)
 
             self.ultimo_treino_ml = rodada_atual
 
@@ -2135,7 +2178,7 @@ class DuziaAI:
                         self._tentativas_sem_melhora = 0
                         
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logging.info(f"🧠 ML V14.2.2 Treinado! Acc: {accuracy:.2%} (RF:{peso_rf:.2f}/GBT:{peso_gbt:.2f}) | Amostras: {len(X)} | Calibrado: {calibrado}")
+                            logging.info(f"🧠 ML V15.2 Treinado! Acc: {accuracy:.2%} (RF:{peso_rf:.2f}/GBT:{peso_gbt:.2f}/LR:{peso_lr:.2f}) | Amostras: {len(X)} | Calibrado: {calibrado}")
                             return True
                         else:
                             logging.error("❌ Falha ao salvar modelo!")
@@ -2681,7 +2724,7 @@ class SistemaBot:
                 'incluir_zero': incluir_zero, 'table_id': table_id, 'table_name': table_name,
                 'padrao_info': self.entrada_ativa.get('padrao_ativo'),
                 'streak_info': self.entrada_ativa.get('streak_info'),
-                'regime': self.duzia_ai.regime_atual,
+                'regime': self.entrada_ativa.get('regime', self.duzia_ai.regime_atual),
             })
             if len(self.historico_entradas) > 100: self.historico_entradas = self.historico_entradas[-100:]
 
