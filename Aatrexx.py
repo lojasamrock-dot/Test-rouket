@@ -2036,7 +2036,7 @@ class DuziaAI:
             modo_treino=True
         )
 
-    def _calcular_pesos_treino(self, n_amostras, fator_decaimento=0.985):
+    def _calcular_pesos_treino(self, n_amostras, fator_decaimento=0.97):
         indices = np.arange(n_amostras)
         pesos = fator_decaimento ** (n_amostras - 1 - indices)
         return pesos / pesos.mean()
@@ -2108,13 +2108,21 @@ class DuziaAI:
                 n_classes_train = len(set(y_train.tolist()))
                 cv_calib = max(2, min(3, len(y_train) // 6))
                 if n_classes_train >= 2 and len(y_train) >= 12:
-                    # CORRIGIDO: CalibratedClassifierCV com sample_weight separado
                     rf_calib = CalibratedClassifierCV(rf_base, method='sigmoid', cv=cv_calib)
                     gbt_calib = CalibratedClassifierCV(gbt_base, method='sigmoid', cv=cv_calib)
-                    
-                    # Fit sem sample_weight (mais compatível)
-                    rf_calib.fit(X_train, y_train)
-                    gbt_calib.fit(X_train, y_train)
+
+                    # 🆕 CORREÇÃO: antes o fit calibrado ignorava os pesos de
+                    # recência (sample_weight), então o modelo tratava uma
+                    # rodada de dezenas de jogadas atrás com o mesmo peso de
+                    # uma rodada recente — isso o deixava "preso" em padrões
+                    # antigos e lento pra reagir a uma virada real de dúzia.
+                    try:
+                        rf_calib.fit(X_train, y_train, sample_weight=sample_weights)
+                        gbt_calib.fit(X_train, y_train, sample_weight=sample_weights)
+                    except TypeError:
+                        # versões antigas do sklearn podem não aceitar sample_weight aqui
+                        rf_calib.fit(X_train, y_train)
+                        gbt_calib.fit(X_train, y_train)
                     
                     rf = rf_calib
                     gbt = gbt_calib
