@@ -2551,6 +2551,8 @@ class DuziaAI:
         if confianca < 0.75: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
 
         duzia_secundaria_final = None  # 🆕 Sem cobertura: o bot opera só com a dúzia principal
+        # Apenas informativo (exibição) — não influencia mais a previsão/score.
+        streak_aplicado = bool(self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0)
 
         previsao = {
             "entrar": pode_entrar, "motivo": motivo, "score": scores,
