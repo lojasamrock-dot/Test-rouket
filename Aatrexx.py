@@ -1709,18 +1709,8 @@ class DuziaAI:
         api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
         return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
 
-    def _aplicar_peso_adaptativo(self, scores):
-        if not self.peso_adaptativo_ativo: return scores
-        duzias_reais = [d for d in self.historico_completo[-self.peso_adaptativo_janela:] if d != 0]
-        if len(duzias_reais) < 5: return scores
-        freq = Counter(duzias_reais); total = len(duzias_reais)
-        scores_ajustados = scores.copy()
-        for duzia in [1, 2, 3]:
-            freq_pct = freq.get(duzia, 0) / total
-            if freq_pct >= 0.40:
-                boost = 1.0 + (freq_pct - 0.40) * (self.peso_adaptativo_boost - 1.0) / 0.60
-                scores_ajustados[duzia] *= boost
-        return scores_ajustados
+    # 🆕 [REMOVIDO] _aplicar_peso_adaptativo (heurística de reforço por
+    # frequência dominante) — não é mais chamada; a previsão vem só do ML.
 
     def _extrair_features_temporais(self, historico_duzias):
         agora = hora_brasilia(); hora = agora.hour; minuto = agora.minute
@@ -2241,8 +2231,6 @@ class DuziaAI:
 
         acertou_entrada = acertou_duzia or acertou_zero
         self.historico_confianca_resultado.append((self.ultima_confianca, acertou_entrada))
-        if self.consenso_info['tipo'] in ('duplo', 'triplo'):
-            self.historico_consenso_acertos.append(1 if (self.consenso_info['duzia'] == duzia_real or acertou_zero) else 0)
         self._atualizar_threshold_adaptativo()
 
         config = self._get_config()
@@ -2350,200 +2338,27 @@ class DuziaAI:
         gap_max = max(gap_d1, gap_d2, gap_d3, 1)
         return {1: freq[1]*60 + (gap_d1/gap_max)*40, 2: freq[2]*60 + (gap_d2/gap_max)*40, 3: freq[3]*60 + (gap_d3/gap_max)*40}
 
-    def _aplicar_anti_vies(self, scores):
-        if not self.anti_vies_ativo: return scores
-        duzia_alvo = self.anti_vies_duzia
-        if duzia_alvo is None and self.vies_dinamico_ativo: duzia_alvo = self._vies_dinamico_atual
-        if duzia_alvo is None: return scores
-        scores_ajustados = scores.copy()
-        if self.anti_vies_gatilho_p2:
-            p2_stats = self.padrao_stats_ui.get('tam2')
-            if p2_stats and p2_stats.get('scores'):
-                if max(p2_stats['scores'], key=p2_stats['scores'].get) != duzia_alvo: return scores
-        p4_isolado = False
-        if self.anti_vies_p4_isolado_extra < 1.0:
-            p3_stats = self.padrao_stats_ui.get('tam3'); p4_stats = self.padrao_stats_ui.get('tam4')
-            if p4_stats and p4_stats.get('scores') and p3_stats and p3_stats.get('scores'):
-                if max(p4_stats['scores'], key=p4_stats['scores'].get) == duzia_alvo and \
-                   max(p3_stats['scores'], key=p3_stats['scores'].get) != duzia_alvo: p4_isolado = True
-        penalidade = self.anti_vies_penalidade * (self.anti_vies_p4_isolado_extra if p4_isolado else 1.0)
-        scores_ajustados[duzia_alvo] *= penalidade
-        score_removido = scores[duzia_alvo] - scores_ajustados[duzia_alvo]
-        outras = [d for d in [1,2,3] if d != duzia_alvo]
-        total_outras = sum(scores[d] for d in outras)
-        if total_outras > 0:
-            for d in outras: scores_ajustados[d] += score_removido * (scores[d] / total_outras)
-        else:
-            for d in outras: scores_ajustados[d] += score_removido / 2
-        return scores_ajustados
-
-    def _aplicar_vies_dinamico(self, scores):
-        if not self.vies_dinamico_ativo or self._vies_dinamico_atual is None: return scores
-        if self.anti_vies_ativo and self.anti_vies_duzia == self._vies_dinamico_atual: return scores
-        duzia_viesada = self._vies_dinamico_atual
-
-        # 🆕 Se há consenso real (padrão duplo/triplo confirmado) sobre a mesma
-        # dúzia que o viés dinâmico quer penalizar, o consenso é o sinal mais
-        # concreto (baseado em repetição observada) — não faz sentido penalizar
-        # a dúzia que o próprio consenso aponta como mais provável.
-        penalidade_base = self.vies_dinamico_penalidade
-        if self.consenso_info['tipo'] in ('duplo', 'triplo'):
-            if self.consenso_info['duzia'] == duzia_viesada:
-                return scores  # consenso confirma: sem penalidade
-            else:
-                penalidade_base = min(0.90, penalidade_base + 0.20)  # consenso discorda: penalidade mais suave
-
-        scores_ajustados = scores.copy()
-        intensidade = min(1.0, self._vies_dinamico_intensidade / 0.30)
-        penalidade_efetiva = 1.0 - (1.0 - penalidade_base) * intensidade
-        scores_ajustados[duzia_viesada] *= penalidade_efetiva
-        score_removido = scores[duzia_viesada] - scores_ajustados[duzia_viesada]
-        outras = [d for d in [1, 2, 3] if d != duzia_viesada]
-        total_outras = sum(scores[d] for d in outras)
-        if total_outras > 0:
-            for d in outras: scores_ajustados[d] += score_removido * (scores[d] / total_outras)
-        return scores_ajustados
-
-    def _aplicar_streak_reforco(self, ml_scores):
-        if not self.streak_reforca_ml:
-            return ml_scores
-        
-        streak_info = self._streak_info_atual
-        if not streak_info:
-            return ml_scores
-        
-        streak_len = streak_info.get('streak_atual_len', 0)
-        streak_duzia = streak_info.get('streak_atual_duzia', 0)
-        
-        if streak_len < self.streak_min_len or streak_duzia == 0:
-            return ml_scores
-        
-        if self.ultima_confianca < self.streak_conf_min_reforco:
-            return ml_scores
-
-        # 🆕 Usa a probabilidade REAL (histórica) de o streak continuar ou
-        # quebrar, já calculada em extrair_features_streak, em vez de sempre
-        # reforçar a dúzia do streak de forma cega.
-        if streak_len >= 3:
-            prob_continua = 1.0 - streak_info.get('streak_taxa_quebra_real', streak_info.get('prob_quebra_streak3', 0.5))
-        else:
-            prob_continua = streak_info.get('prob_continua_streak2', 0.5)
-
-        scores_ajustados = ml_scores.copy()
-
-        if prob_continua >= 0.50:
-            # Continuação é mais provável que quebra: reforça a dúzia do streak
-            # proporcionalmente a quanto a probabilidade supera o acaso (33%).
-            forca = min(1.0, (prob_continua - 0.333) / 0.40)
-            bonus = min(20.0, streak_len * 3.0) * max(0.3, forca) * self._fator_volatilidade()
-            scores_ajustados[streak_duzia] = min(100, scores_ajustados[streak_duzia] + bonus)
-            for d in [1, 2, 3]:
-                if d != streak_duzia:
-                    scores_ajustados[d] = max(0, scores_ajustados[d] - bonus * 0.2)
-        else:
-            # Quebra é mais provável (dado real, histórico): penaliza a dúzia
-            # do streak em vez de reforçá-la.
-            penalidade = min(0.75, 1.0 - (0.50 - prob_continua))
-            scores_ajustados[streak_duzia] *= penalidade
-            score_removido = ml_scores[streak_duzia] - scores_ajustados[streak_duzia]
-            outras = [d for d in [1, 2, 3] if d != streak_duzia]
-            total_outras = sum(ml_scores[d] for d in outras)
-            if total_outras > 0:
-                for d in outras: scores_ajustados[d] += score_removido * (ml_scores[d] / total_outras)
-
-        return scores_ajustados
-
-    def _aplicar_regras_transicao(self, previsao):
-        """Aplica regras especiais quando em transição"""
-        if not self.detector_ativo or self.regime_atual == 'estavel':
-            return previsao
-        
-        config = self._get_config()
-        score_min_extra = config.get('transicao_score_minimo_extra', 10)
-        penalidade_conf = config.get('transicao_penalidade_conf', 0.70)
-        evitar_dominante = config.get('transicao_evitar_dominante', True)
-        
-        previsao['score_minimo_extra'] = score_min_extra
-        previsao['confianca'] *= penalidade_conf
-        
-        if evitar_dominante and len(self.historico_completo) >= 10:
-            duzias_rec = [d for d in self.historico_completo[-10:] if d != 0]
-            if duzias_rec:
-                dominante = Counter(duzias_rec).most_common(1)[0][0]
-                if previsao['duzia'] == dominante:
-                    scores = previsao.get('score', {})
-                    ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-                    if len(ranking) > 1 and ranking[1][0] != dominante:
-                        previsao['duzia'] = ranking[1][0]
-                        previsao['motivo'] += " | 🔄 Transição - Evitando dominante"
-        
-        return previsao
+    # 🆕 [REMOVIDO] As funções heurísticas de pós-processamento do score
+    # (_aplicar_anti_vies, _aplicar_vies_dinamico, _aplicar_streak_reforco,
+    # _aplicar_regras_transicao, _fator_volatilidade, _aplicar_reforco_consenso,
+    # _aplicar_peso_adaptativo) foram removidas por pedido explícito. A
+    # previsão agora vem 100% do score bruto do modelo de ML (ou do fallback
+    # de frequência quando o ML ainda não tem dados suficientes), sem nenhuma
+    # camada manual de reforço/penalidade sobreposta.
 
     def calcular_score(self):
         ml_scores = self._prever_ml()
         ml_ativo = not all(v == 0.0 for v in ml_scores.values())
-        # Guarda a probabilidade BRUTA do ML (antes de qualquer reforço/bônus),
-        # usada depois como barreira extra de assertividade em prever().
+        # Guarda a probabilidade BRUTA do ML — agora é também a probabilidade
+        # FINAL usada para a previsão. Nenhuma heurística pós-processa o score.
         self._ml_scores_brutos = ml_scores.copy() if ml_ativo else None
 
         if ml_ativo:
             modo = 'ml_disco' if self.ultimo_treino_ml <= 1 else 'ml'
-            scores = self._aplicar_reforco_consenso(ml_scores)
-            scores = self._aplicar_streak_reforco(scores)
-            scores = self._aplicar_anti_vies(scores)
-            scores = self._aplicar_vies_dinamico(scores)
-            scores = self._aplicar_peso_adaptativo(scores)
-            return scores, modo
+            return ml_scores, modo
         else:
             scores = self._prever_fallback_frequencia()
-            scores = self._aplicar_anti_vies(scores)
-            scores = self._aplicar_vies_dinamico(scores)
-            scores = self._aplicar_peso_adaptativo(scores)
             return scores, 'fallback'
-
-    def _fator_volatilidade(self):
-        """
-        🆕 Mede a taxa de alternância real das dúzias recentes e retorna um
-        fator para amplificar (ambiente com momentum/repetição) ou reduzir
-        (ambiente muito alternado, onde streak/consenso são menos confiáveis)
-        o peso do streak e do consenso — em vez de trocar limiares fixos.
-        """
-        duzias_rec = [d for d in self.historico_completo[-10:] if d != 0]
-        if len(duzias_rec) < 6:
-            return 1.0
-        trocas = sum(1 for i in range(1, len(duzias_rec)) if duzias_rec[i] != duzias_rec[i-1])
-        taxa = trocas / (len(duzias_rec) - 1)
-        if taxa >= 0.65:
-            return 0.6
-        elif taxa <= 0.35:
-            return 1.25
-        return 1.0
-
-    def _aplicar_reforco_consenso(self, ml_scores):
-        scores = ml_scores.copy()
-        if self.consenso_info['tipo'] in ('duplo', 'triplo', 'simples'):
-            duzia_consenso = self.consenso_info['duzia']
-            # 🆕 Ajusta a confiança do consenso pela taxa de acerto REAL dele nas
-            # últimas rodadas em que foi usado — se o consenso está errando,
-            # seu peso cai; se está acertando, seu peso cresce (até o normal).
-            if len(self.historico_consenso_acertos) >= 5:
-                taxa_acerto = sum(self.historico_consenso_acertos) / len(self.historico_consenso_acertos)
-                if taxa_acerto < 0.40:
-                    self.consenso_confianca_dinamica = max(0.3, self.consenso_confianca_dinamica * 0.90)
-                elif taxa_acerto > 0.60:
-                    self.consenso_confianca_dinamica = min(1.0, self.consenso_confianca_dinamica * 1.05)
-            conf_consenso = self.consenso_info['conf'] * self.consenso_confianca_dinamica
-            melhor_ml = max(scores, key=scores.get)
-            if melhor_ml == duzia_consenso:
-                # Padrão CONFIRMA o pick do ML → reforça (isso é sinal real)
-                peso_extra = (self.consenso_peso_extra / 100.0) * self._fator_volatilidade()
-                if self.consenso_info['tipo'] == 'triplo': peso_extra *= 1.5
-                boost = scores[duzia_consenso] * peso_extra * conf_consenso
-                scores[duzia_consenso] = min(100, scores[duzia_consenso] + boost)
-            # Se o padrão DISCORDA do ML, não invertemos a escolha do modelo
-            # por causa de um heurístico de frequência — o pick continua
-            # sendo o do ML calibrado.
-        return scores
 
     def detectar_alerta_zero(self):
         if len(self.historico) < 2: self.alerta_zero_ativo = False; return False
@@ -2670,28 +2485,16 @@ class DuziaAI:
             else:
                 motivo = f"Aguardando ML ({len(self.historico_completo)}/{max(30, min_rodadas_fb)} rod)"
 
-        max_rep = config.get('ml_max_repeticoes_mesma_duzia', 2)
-        if pode_entrar and len(self.ultimas_previsoes) >= max_rep:
-            ultimas_n = self.ultimas_previsoes[-max_rep:]
-            if all(p == d1 for p in ultimas_n):
-                if s2 > config.get('ml_score_minimo_pos_rotacao', 18):
-                    d1, s1 = d2, s2; d2, s2 = d3, s3
-                    forcar_rotacao = True
-                    motivo = f"🔄 Rotação (>{max_rep}x D{d1}) | Score: {s1:.1f}"
-                else:
-                    pode_entrar = False
-                    motivo = f"🚫 Bloqueio repetição (>{max_rep}x)"
+        # 🆕 [REMOVIDO] Rotação forçada por repetição — o pick continua sendo
+        # sempre o de maior score do ML, mesmo que se repita várias vezes.
 
         confianca_min = config.get('confianca_minima_entrada', 1.8)
         if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
             confianca_min *= self.transicao_confianca_multiplicador
 
-        if pode_entrar and confianca < confianca_min and not forcar_rotacao:
-            if self.consenso_info['tipo'] in ('triplo',) and confianca >= 1.2:
-                motivo += " | 🔒 Exceção tripla"
-            else:
-                pode_entrar = False
-                motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
+        if pode_entrar and confianca < confianca_min:
+            pode_entrar = False
+            motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
 
         if pode_entrar and self.erros_consecutivos >= self.anti_erro_min_erros_consecutivos and confianca < (confianca_min + 0.30):
             pode_entrar = False
@@ -2705,9 +2508,6 @@ class DuziaAI:
         if confianca < 0.75: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
 
         duzia_secundaria_final = None  # 🆕 Sem cobertura: o bot opera só com a dúzia principal
-        streak_aplicado = False
-        if pode_entrar and self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
-            streak_aplicado = True
 
         previsao = {
             "entrar": pode_entrar, "motivo": motivo, "score": scores,
@@ -2715,12 +2515,14 @@ class DuziaAI:
             "gatilho_ativo": "ML" if modo_base == 'ml' else "Fallback",
             "incluir_zero": incluir_zero, "modo_anti_erro": self.erros_consecutivos > 0,
             "numeros_completos": list(self.numeros_completos), "modo_previsao": modo,
-            "rotacao_forcada": forcar_rotacao, "streak_info": streak_sinal if streak_sinal else None,
+            "rotacao_forcada": False, "streak_info": streak_sinal if streak_sinal else None,
             "prob_ml_bruta": round(prob_bruta_d1 * 100, 1) if prob_bruta_d1 is not None else None,
         }
-        
-        if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
-            previsao = self._aplicar_regras_transicao(previsao)
+
+        # 🆕 [REMOVIDO] _aplicar_regras_transicao — não altera mais a dúzia
+        # escolhida nem a confiança; o único efeito de regime que resta é a
+        # barreira de confiança mínima acima (confianca_min), que é uma regra
+        # de risco (entra ou não), não uma heurística de previsão.
 
         info_padrao = {
             'tam2': self.padrao_stats_ui.get('tam2'), 'tam3': self.padrao_stats_ui.get('tam3'),
