@@ -738,8 +738,8 @@ SETUP_XXXTREME = {
     'vies_dinamico_janela': 12,
     'vies_dinamico_limiar': 0.14,
     'vies_dinamico_penalidade': 0.80,
-    'ml_janela_treino': 10,
-    'ml_atualizar_a_cada': 5,
+    'ml_janela_treino': 50,
+    'ml_atualizar_a_cada': 10,
     'alerta_peso_adaptativo_off': True,
     'drift_janela': 12,
     'drift_taxa_minima': 0.25,
@@ -808,7 +808,7 @@ _SETUP_IMMERSIVE_PRE_AJUSTE = {
     'score_markov_peso': 8,
     'score_ml_peso': 55,
     'score_anti_erro_peso': 20,
-    'ml_janela_treino': 10,
+    'ml_janela_treino': 60,
     'ml_atualizar_a_cada': 5,
     'ml_score_minimo_entrada': 18,
     'ml_score_minimo_fallback': 26,
@@ -944,6 +944,13 @@ def get_modelo_ml_path(api_name):
     criar_pasta_modelos_ml()
     return os.path.join(PASTA_MODELOS_ML, f"modelo_ml_{api_name.lower().replace(' ', '_')}.joblib")
 
+# 🆕 Versão do "esquema" de treino do modelo. Sempre que uma mudança no
+# pipeline de treino tornar um modelo salvo em disco desatualizado/inválido
+# (ex.: correção de bug no peso de recência), incremente este número — o
+# carregador vai descartar automaticamente qualquer modelo salvo com versão
+# diferente e forçar um retreino do zero, já com a lógica corrigida.
+_TREINO_SCHEMA_VERSION = 2  # v2: corrigido sample_weight ignorado na calibração
+
 # =============================
 # 🆕 _EnsembleManual COM SERIALIZAÇÃO CORRIGIDA
 # =============================
@@ -974,6 +981,7 @@ class _EnsembleManual:
         
         self._modelo_tipo = "EnsembleManual"
         self._data_criacao = datetime.now().isoformat()
+        self._schema_version = _TREINO_SCHEMA_VERSION
     
     def __getstate__(self):
         """Prepara o estado para serialização - CORRIGIDO"""
@@ -1088,6 +1096,19 @@ def carregar_modelo_ml(api_name):
         
         if not hasattr(modelo, 'predict_proba'):
             logging.error("❌ Modelo carregado não tem predict_proba")
+            return None
+
+        # 🆕 Descarta automaticamente modelos salvos com pipeline de treino
+        # desatualizado (ex.: de antes da correção do sample_weight ignorado
+        # na calibração) — força um retreino do zero com a lógica corrigida.
+        versao_salva = getattr(modelo, '_schema_version', 1)
+        if versao_salva != _TREINO_SCHEMA_VERSION:
+            logging.warning(f"♻️ Modelo salvo é da versão {versao_salva} (atual: {_TREINO_SCHEMA_VERSION}). "
+                             f"Descartando e forçando retreino do zero.")
+            try:
+                os.remove(caminho)
+            except Exception:
+                pass
             return None
             
         logging.info(f"✅ Modelo carregado com sucesso! Tamanho: {tamanho/1024:.1f} KB")
