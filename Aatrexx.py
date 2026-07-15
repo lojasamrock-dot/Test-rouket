@@ -1,3425 +1,1099 @@
 import streamlit as st
+import requests
+import random
+import pandas as pd
+import numpy as np
 import json
 import os
-import requests
-import logging
-from collections import Counter, deque, defaultdict
-from streamlit_autorefresh import st_autorefresh
-import pickle
-from datetime import datetime, timezone, timedelta
-import numpy as np
-import plotly.graph_objects as plt
-import csv
-import base64
-from io import StringIO, BytesIO
+import uuid
 import math
+from collections import Counter
+from datetime import datetime
+from scipy.stats import norm, binom
+from itertools import combinations
+import warnings
+warnings.filterwarnings("ignore")
 
 try:
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.pipeline import make_pipeline
-    from sklearn.model_selection import train_test_split
-    from sklearn.calibration import CalibratedClassifierCV
-    import joblib
-    ML_DISPONIVEL = True
+    from ortools.linear_solver import pywraplp
+    ORTOOLS_AVAILABLE = True
 except ImportError:
-    ML_DISPONIVEL = False
+    ORTOOLS_AVAILABLE = False
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler('roleta_bot.log'), logging.StreamHandler()]
+st.set_page_config(
+    page_title="🎯 MEGA-SENA - Análise e Geração",
+    layout="centered",
+    initial_sidebar_state="collapsed"
 )
 
-BRT = timezone(timedelta(hours=-3))
+st.markdown("""
+<style>
+.block-container { padding-top: 1rem; padding-bottom: 2rem; }
+h1,h2,h3 { text-align: center; }
+.card { background: #0e1117; border-radius: 14px; padding: 16px; margin-bottom: 12px; border: 1px solid #262730; color: white; }
+.stButton>button { width: 100%; height: 3.2em; border-radius: 14px; font-size: 1.05em; }
+input, textarea { border-radius: 12px !important; }
+.p12 { color: #4cc9f0; font-weight: bold; }
+.p13 { color: #4ade80; font-weight: bold; }
+.p14 { color: gold; font-weight: bold; }
+.p15 { color: #f97316; font-weight: bold; }
+.concurso-info { background: #1e1e2e; padding: 10px; border-radius: 10px; margin: 10px 0; }
+.metric-card { background: #16213e; padding: 10px; border-radius: 10px; text-align: center; }
+.cover-stats { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 15px; border-radius: 12px; margin: 10px 0; border: 1px solid #00ffaa20; }
+.highlight { background: #00ffaa20; border-left: 4px solid #00ffaa; padding: 10px; border-radius: 8px; margin: 10px 0; }
+.ilp-highlight { background: linear-gradient(135deg, #ff00ff20 0%, #aa00ff20 100%); border: 2px solid #ff00ff; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.ia7-highlight { background: linear-gradient(135deg, #ff880020 0%, #ff440020 100%); border: 2px solid #ff8800; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.nash-highlight { background: linear-gradient(135deg, #9b59b620 0%, #6c348320 100%); border: 2px solid #9b59b6; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.ev-highlight { background: linear-gradient(135deg, #00ff8820 0%, #00cc6620 100%); border: 2px solid #00ff88; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.img-analysis-highlight { background: linear-gradient(135deg, #ffd70020 0%, #ff8c0020 100%); border: 2px solid #ffd700; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.elite-master-highlight { background: linear-gradient(135deg, #ff880030 0%, #ff440030 100%); border: 2px solid #ff8800; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.regras-especiais-highlight { background: linear-gradient(135deg, #4cc9f030 0%, #f9731630 100%); border: 2px solid #4cc9f0; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.abc-highlight { background: linear-gradient(135deg, #4cc9f030 0%, #f9731630 50%, #00ff8830 100%); border: 2px solid #4cc9f0; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.v4-highlight { background: linear-gradient(135deg, #ff6b6b30 0%, #4ecdc430 50%, #45b7d130 100%); border: 2px solid #ff6b6b; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.download-section { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 20px; border-radius: 15px; margin: 20px 0; border: 2px solid #00ffaa; text-align: center; }
+.download-btn { background: linear-gradient(90deg, #00ffaa, #00cc88); color: #000; padding: 12px 30px; border-radius: 25px; font-weight: bold; border: none; cursor: pointer; }
+.jogo-v4-principal { border-left: 5px solid #4cc9f0; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
+.jogo-v4-protecao { border-left: 5px solid #f97316; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
+.jogo-v4-destaque { border-left: 5px solid #ffd700; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
+</style>
+""", unsafe_allow_html=True)
 
-def hora_brasilia():
-    return datetime.now(BRT)
+st.title("📊🎯 MEGA-SENA - Análise e Geração")
+st.caption("Análise Estatística e Geração de Jogos com Filtros Matemáticos")
 
-def formatar_hora_brasilia(dt=None):
-    if dt is None: dt = hora_brasilia()
-    return dt.strftime('%H:%M:%S')
+# =====================================================
+# FUNÇÕES AUXILIARES
+# =====================================================
 
-def timestamp_brasilia():
-    return hora_brasilia().isoformat()
+def garantir_jogos_como_listas(jogos_entrada):
+    if jogos_entrada is None:
+        return []
+    if isinstance(jogos_entrada, list) and len(jogos_entrada) > 0:
+        if isinstance(jogos_entrada[0], list) and all(isinstance(n, int) for n in jogos_entrada[0]):
+            return jogos_entrada
+    jogos_normalizados = []
+    if isinstance(jogos_entrada, pd.DataFrame):
+        for _, row in jogos_entrada.iterrows():
+            for col in row.index:
+                valor = row[col]
+                if isinstance(valor, str) and ("," in valor or " " in valor):
+                    if "," in valor:
+                        dezenas = [int(d.strip()) for d in valor.split(",")]
+                    else:
+                        dezenas = [int(d) for d in valor.split()]
+                    jogos_normalizados.append(sorted(dezenas))
+                    break
+                elif isinstance(valor, list):
+                    jogos_normalizados.append(sorted([int(x) for x in valor]))
+                    break
+        return jogos_normalizados
+    if isinstance(jogos_entrada, list):
+        for item in jogos_entrada:
+            if isinstance(item, dict):
+                for chave in ["Dezenas", "dezenas", "Jogo", "jogo"]:
+                    if chave in item:
+                        valor = item[chave]
+                        if isinstance(valor, str):
+                            if "," in valor:
+                                dezenas = [int(d.strip()) for d in valor.split(",")]
+                            else:
+                                dezenas = [int(d) for d in valor.split()]
+                        elif isinstance(valor, list):
+                            dezenas = [int(x) for x in valor]
+                        else:
+                            continue
+                        jogos_normalizados.append(sorted(dezenas))
+                        break
+            elif isinstance(item, str):
+                if "," in item:
+                    dezenas = [int(d.strip()) for d in item.split(",")]
+                else:
+                    dezenas = [int(d) for d in item.split()]
+                jogos_normalizados.append(sorted(dezenas))
+            elif isinstance(item, (list, tuple)):
+                jogos_normalizados.append(sorted([int(x) for x in item]))
+    return jogos_normalizados
 
-def data_brasilia():
-    return hora_brasilia().strftime('%Y-%m-%d')
+def convert_numpy_types(obj):
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_numpy_types(item) for item in obj)
+    elif isinstance(obj, Counter):
+        return dict(obj)
+    else:
+        return obj
 
-
-# =============================
-# 🆕 DETECTOR DE MUDANÇA DE REGIME (TRANSIÇÃO)
-# =============================
-
-class DetectorRegime:
-    """Detecta mudanças de regime (transições) usando múltiplos indicadores"""
-    
-    def __init__(self, window=10, limiar_transicao=0.35, limiar_instavel=0.50):
-        self.window = window
-        self.limiar_transicao = limiar_transicao
-        self.limiar_instavel = limiar_instavel
-        self.historico_features = []
-        self.regime_atual = 'estavel'
-        self.historico_regime = []
-        self._ultima_mudanca = 0
-        self._rodadas_no_regime = 0
-        
-        # CUSUM para detecção de mudança abrupta
-        self.cusum_pos = 0
-        self.cusum_neg = 0
-        self.cusum_limiar = 2.0
-        self.cusum_drift = 0.3
-        
-    def atualizar(self, features_atuais, duzias_recentes=None):
-        """Atualiza o detector com novas features"""
-        self.historico_features.append(features_atuais)
-        if len(self.historico_features) > 100:
-            self.historico_features = self.historico_features[-100:]
-
-        # 🆕 Verificação suplementar e direta (não depende de ter acumulado
-        # janela+3 vetores de features): taxa de alternância real das dúzias
-        # nas últimas rodadas. Serve para pegar transições logo no começo de
-        # uma sessão, quando ainda não há histórico de features suficiente.
-        if duzias_recentes:
-            recentes_validas = [d for d in duzias_recentes if d != 0][-8:]
-            if len(recentes_validas) >= 6:
-                trocas = sum(1 for i in range(1, len(recentes_validas)) if recentes_validas[i] != recentes_validas[i-1])
-                taxa_troca = trocas / (len(recentes_validas) - 1)
-                if taxa_troca >= 0.75:
-                    self.regime_atual = 'instavel'
-                    self._rodadas_no_regime += 1
-                    self.historico_regime.append((len(self.historico_features), self.regime_atual))
-                    return self.regime_atual
-                elif taxa_troca >= 0.60:
-                    self.regime_atual = 'transicao'
-                    self._ultima_mudanca = len(self.historico_features)
-                    self._rodadas_no_regime = 0
-                    self.historico_regime.append((len(self.historico_features), self.regime_atual))
-                    return self.regime_atual
-
-        if len(self.historico_features) < self.window + 3:
-            self.regime_atual = 'estavel'
-            return 'estavel'
-        
-        # Extrair indicadores das features
-        entropia_idx = 28
-        alt_idx = 41
-        fadiga_idx = len(features_atuais) - 20
-        
-        entropia_atuais = [f[entropia_idx] if len(f) > entropia_idx else 0.5 for f in self.historico_features[-self.window:]]
-        alt_atuais = [f[alt_idx] if len(f) > alt_idx else 0.5 for f in self.historico_features[-self.window:]]
-        
-        variancia_entropia = np.var(entropia_atuais) if len(entropia_atuais) > 1 else 0
-        variancia_alt = np.var(alt_atuais) if len(alt_atuais) > 1 else 0
-        
-        entropia_media = np.mean(entropia_atuais)
-        alt_media = np.mean(alt_atuais)
-        
-        if len(self.historico_features) >= self.window * 2:
-            entropia_anterior = np.mean([f[entropia_idx] if len(f) > entropia_idx else 0.5 
-                                         for f in self.historico_features[-self.window*2:-self.window]])
-            alt_anterior = np.mean([f[alt_idx] if len(f) > alt_idx else 0.5 
-                                    for f in self.historico_features[-self.window*2:-self.window]])
-            
-            delta_entropia = abs(entropia_media - entropia_anterior)
-            delta_alt = abs(alt_media - alt_anterior)
-        else:
-            delta_entropia = 0
-            delta_alt = 0
-        
-        # CUSUM para detecção de mudança abrupta
-        erro_entropia = entropia_media - 0.7
-        self.cusum_pos = max(0, self.cusum_pos + erro_entropia - self.cusum_drift)
-        self.cusum_neg = max(0, self.cusum_neg - erro_entropia - self.cusum_drift)
-        cusum_alerta = self.cusum_pos > self.cusum_limiar or self.cusum_neg > self.cusum_limiar
-        
-        # CLASSIFICAR REGIME
-        if (variancia_entropia > self.limiar_transicao or variancia_alt > self.limiar_transicao) and \
-           (delta_entropia > 0.15 or delta_alt > 0.20 or cusum_alerta):
-            self.regime_atual = 'transicao'
-            self._ultima_mudanca = len(self.historico_features)
-            self._rodadas_no_regime = 0
-        elif variancia_entropia > self.limiar_instavel or variancia_alt > self.limiar_instavel:
-            self.regime_atual = 'instavel'
-            self._rodadas_no_regime += 1
-        else:
-            self.regime_atual = 'estavel'
-            self._rodadas_no_regime += 1
-            if self._rodadas_no_regime > 5:
-                self.cusum_pos = 0
-                self.cusum_neg = 0
-        
-        self.historico_regime.append((len(self.historico_features), self.regime_atual))
-        if len(self.historico_regime) > 50:
-            self.historico_regime = self.historico_regime[-50:]
-        
-        return self.regime_atual
-    
-    def get_estatisticas(self):
-        """Retorna estatísticas do regime atual"""
-        return {
-            'regime': self.regime_atual,
-            'rodadas_no_regime': self._rodadas_no_regime,
-            'tempo_desde_mudanca': len(self.historico_features) - self._ultima_mudanca if self._ultima_mudanca > 0 else 0,
-            'cusum_pos': round(self.cusum_pos, 3),
-            'cusum_neg': round(self.cusum_neg, 3),
+def salvar_jogos_gerados(jogos, fechamento, dna_params, numero_concurso_atual, data_concurso_atual, estatisticas=None):
+    try:
+        if not os.path.exists("jogos_salvos"):
+            os.makedirs("jogos_salvos")
+        jogo_id = str(uuid.uuid4())[:8]
+        data_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nome_arquivo = f"jogos_salvos/jogos_{data_hora}_{jogo_id}.json"
+        jogos_convertidos = convert_numpy_types(jogos)
+        dados = {
+            "id": jogo_id,
+            "data_geracao": datetime.now().isoformat(),
+            "concurso_base": {"numero": int(numero_concurso_atual), "data": str(data_concurso_atual)},
+            "jogos": jogos_convertidos,
+            "estatisticas": convert_numpy_types(estatisticas) if estatisticas else {},
+            "schema_version": "2.0"
         }
+        with open(nome_arquivo, 'w', encoding='utf-8') as f:
+            json.dump(dados, f, indent=2, ensure_ascii=False)
+        return nome_arquivo, jogo_id
+    except Exception as e:
+        st.error(f"Erro ao salvar jogos: {e}")
+        return None, None
 
+def carregar_jogos_salvos():
+    jogos_salvos = []
+    try:
+        if os.path.exists("jogos_salvos"):
+            for arquivo in os.listdir("jogos_salvos"):
+                if arquivo.endswith(".json"):
+                    try:
+                        with open(f"jogos_salvos/{arquivo}", 'r', encoding='utf-8') as f:
+                            dados = json.load(f)
+                            if "concurso_base" not in dados:
+                                dados["concurso_base"] = {"numero": 0, "data": "Desconhecido"}
+                            dados["arquivo"] = arquivo
+                            jogos_salvos.append(dados)
+                    except Exception:
+                        continue
+            jogos_salvos.sort(key=lambda x: x.get("data_geracao", ""), reverse=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar jogos salvos: {e}")
+    return jogos_salvos
 
-# =============================
-# VIÉS DINÂMICO
-# =============================
-def detectar_vies_dinamico(historico_completo, janela=30, limiar_excesso=0.15):
-    duzias = [d for d in historico_completo[-janela:] if d != 0]
-    if len(duzias) < 15:
-        return None, 0.0
-    total = len(duzias)
-    freq = Counter(duzias)
-    max_excesso = 0.0
-    duzia_vies = None
-    for d in [1, 2, 3]:
-        excesso = (freq.get(d, 0) / total) - (1 / 3.0)
-        if excesso > limiar_excesso and excesso > max_excesso:
-            max_excesso = excesso
-            duzia_vies = d
-    return duzia_vies, round(max_excesso, 4)
-
-# =============================
-# DECAIMENTO DE PADRÕES
-# =============================
-def aplicar_decaimento_padroes(tabela, fator=0.97):
-    chaves_remover = []
-    for chave, counter in tabela.items():
-        novas_contagens = {}
-        for k, v in counter.items():
-            novo_v = v * fator
-            if novo_v >= 0.5:
-                novas_contagens[k] = novo_v
-        if novas_contagens:
-            tabela[chave] = Counter(novas_contagens)
+def formatar_jogo_html(jogo, destaque_primos=True):
+    primos = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59]
+    if isinstance(jogo, dict):
+        dezenas = []
+        for chave in ["dezenas", "Dezenas", "jogo", "Jogo"]:
+            if chave in jogo:
+                val = jogo[chave]
+                if isinstance(val, str):
+                    dezenas = [int(d.strip()) for d in val.split(",") if d.strip()]
+                elif isinstance(val, list):
+                    dezenas = [int(d) for d in val]
+                break
+    elif isinstance(jogo, str):
+        if "," in jogo:
+            dezenas = [int(d.strip()) for d in jogo.split(",")]
         else:
-            chaves_remover.append(chave)
-    for chave in chaves_remover:
-        del tabela[chave]
+            dezenas = [int(d) for d in jogo.split()]
+    else:
+        dezenas = jogo
+    if not dezenas:
+        return "Jogo inválido"
+    html = ""
+    for num in dezenas:
+        if num in primos and destaque_primos:
+            html += f"<span style='background:#4cc9f020; border:1px solid #4cc9f0; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block; font-weight:bold;'>{num:02d}</span>"
+        else:
+            html += f"<span style='background:#0e1117; border:1px solid #262730; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block;'>{num:02d}</span>"
+    return html
 
-# =============================
-# FEATURES DE STREAK
-# =============================
-def extrair_features_streak(historico_duzias):
-    duzias = [d for d in historico_duzias if d != 0]
-    resultado = {
-        'streak_atual_duzia': 0, 'streak_atual_len': 0,
-        'streak_duzia1_len': 0, 'streak_duzia2_len': 0, 'streak_duzia3_len': 0,
-        'prob_continua_streak2': 0.5, 'prob_continua_streak3': 0.5,
-        'prob_quebra_streak2': 0.5, 'prob_quebra_streak3': 0.5,
-        'streak_max_recente': 0, 'entrada_streak_duzia': 0, 'cobertura_streak_duzia': 0,
-        'streak_quebra_iminente': 0, 'streak_forca': 0.0,
-        'streak_saturado': 0, 'streak_taxa_quebra_real': 0.0,
-    }
-    if len(duzias) < 3:
-        return resultado
+def contar_pares(jogo):
+    return sum(1 for d in jogo if d % 2 == 0)
 
-    streak_atual_len = 1
-    streak_atual_duzia = duzias[-1]
-    for d in reversed(duzias[:-1]):
-        if d == streak_atual_duzia: streak_atual_len += 1
-        else: break
+def contar_primos(jogo):
+    primos = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59}
+    return sum(1 for d in jogo if d in primos)
 
-    resultado['streak_atual_duzia'] = streak_atual_duzia
-    resultado['streak_atual_len'] = streak_atual_len
+def contar_consecutivos(jogo):
+    jogo = sorted(jogo)
+    return sum(1 for i in range(len(jogo)-1) if jogo[i+1] == jogo[i] + 1)
 
-    for alvo in [1, 2, 3]:
-        comprimento = 0
-        for d in reversed(duzias):
-            if d == alvo: comprimento += 1
-            else: break
-        resultado[f'streak_duzia{alvo}_len'] = comprimento
+def contar_por_faixa(jogo, faixa_limites):
+    contagem = []
+    for inicio, fim in faixa_limites:
+        contagem.append(sum(1 for n in jogo if inicio <= n <= fim))
+    return contagem
 
-    recentes = duzias[-30:]
-    max_streak = 1; cur_streak = 1
-    for i in range(1, len(recentes)):
-        if recentes[i] == recentes[i-1]: cur_streak += 1; max_streak = max(max_streak, cur_streak)
-        else: cur_streak = 1
-    resultado['streak_max_recente'] = max_streak
-
-    continua2 = quebra2 = continua3 = quebra3 = 0
-    for i in range(len(duzias) - 3):
-        if duzias[i] == duzias[i+1]:
-            if duzias[i+2] == duzias[i]: continua2 += 1
-            else: quebra2 += 1
-        if i + 3 < len(duzias) and duzias[i] == duzias[i+1] == duzias[i+2]:
-            if duzias[i+3] == duzias[i]: continua3 += 1
-            else: quebra3 += 1
-
-    if continua2 + quebra2 > 0:
-        resultado['prob_continua_streak2'] = round(continua2 / (continua2 + quebra2), 4)
-        resultado['prob_quebra_streak2'] = round(quebra2 / (continua2 + quebra2), 4)
-    if continua3 + quebra3 > 0:
-        resultado['prob_continua_streak3'] = round(continua3 / (continua3 + quebra3), 4)
-        resultado['prob_quebra_streak3'] = round(quebra3 / (continua3 + quebra3), 4)
-
-    resultado['streak_forca'] = round(min(1.0, streak_atual_len / 5.0), 4)
-
-    if streak_atual_len >= 3:
-        sl = sb = 0
-        for i in range(len(duzias) - 4):
-            if duzias[i] == duzias[i+1] == duzias[i+2]:
-                sl += 1
-                if duzias[i+3] != duzias[i]: sb += 1
-        if sl > 0:
-            taxa = sb / sl
-            resultado['streak_taxa_quebra_real'] = round(taxa, 4)
-            if taxa > 0.65:
-                resultado['streak_quebra_iminente'] = 1
-                resultado['streak_forca'] = 0.2
-                resultado['streak_saturado'] = 1
-
-    if streak_atual_len >= 3 and resultado['prob_quebra_streak3'] > 0.60:
-        if resultado['streak_quebra_iminente'] == 0:
-            resultado['streak_quebra_iminente'] = 1
-
-    if streak_atual_len >= 2:
-        outras = [d for d in [1, 2, 3] if d != streak_atual_duzia]
-        freq_outras = Counter(duzias[-10:])
-        cobertura = max(outras, key=lambda d: freq_outras.get(d, 0))
-        if streak_atual_len == 2:
-            resultado['entrada_streak_duzia'] = streak_atual_duzia if resultado['prob_continua_streak2'] >= 0.45 else cobertura
-        elif streak_atual_len >= 3:
-            taxa = resultado.get('streak_taxa_quebra_real', resultado['prob_quebra_streak3'])
-            resultado['entrada_streak_duzia'] = cobertura if taxa > 0.55 else streak_atual_duzia
-            if taxa > 0.55: resultado['streak_quebra_iminente'] = 1
-        resultado['cobertura_streak_duzia'] = cobertura
-
+def distribuir_por_linhas(jogo, linhas=6):
+    resultado = [0] * linhas
+    for n in jogo:
+        resultado[(n-1)//10] += 1
     return resultado
 
-
-# =============================
-# NOVAS FEATURES PARA ML V14.1 - OTIMIZADO
-# =============================
-
-def extrair_features_pos_zero(historico_numeros, historico_duzias):
-    indices_zero = [i for i, n in enumerate(historico_numeros) if n == 0]
-    if not indices_zero:
-        return [0, 0, 0, 0, 0]
-    
-    ultimo_zero = indices_zero[-1]
-    rodadas_desde_zero = len(historico_numeros) - ultimo_zero - 1
-    
-    proximas_duzias = []
-    for i in range(ultimo_zero + 1, min(ultimo_zero + 6, len(historico_numeros))):
-        if i < len(historico_duzias):
-            proximas_duzias.append(historico_duzias[i] if historico_duzias[i] != 0 else 0)
-        else:
-            proximas_duzias.append(0)
-    
-    while len(proximas_duzias) < 5:
-        proximas_duzias.append(0)
-    
-    duzias_pos_zero = [d for d in proximas_duzias if d != 0]
-    duzia_mais_comum = Counter(duzias_pos_zero).most_common(1)[0][0] if duzias_pos_zero else 0
-    
-    freq = {1: 0, 2: 0, 3: 0}
-    for d in duzias_pos_zero:
-        if d in freq:
-            freq[d] += 1
-    total = max(1, len(duzias_pos_zero))
-    
-    return [rodadas_desde_zero, duzia_mais_comum, freq[1]/total, freq[2]/total, freq[3]/total]
-
-
-def extrair_features_numero_duzia(historico_numeros, historico_duzias):
-    if len(historico_numeros) < 5:
-        return [0.33, 0.33, 0.34]
-    
-    mapa_numero_proxima = {}
-    for i in range(len(historico_numeros) - 1):
-        num_atual = historico_numeros[i]
-        if i + 1 < len(historico_duzias):
-            prox_duzia = historico_duzias[i + 1]
-            if num_atual != 0 and prox_duzia != 0:
-                if num_atual not in mapa_numero_proxima:
-                    mapa_numero_proxima[num_atual] = []
-                mapa_numero_proxima[num_atual].append(prox_duzia)
-    
-    ultimo_numero = historico_numeros[-1] if historico_numeros else 0
-    
-    if ultimo_numero == 0 or ultimo_numero not in mapa_numero_proxima:
-        return [0.33, 0.33, 0.34]
-    
-    proximas = mapa_numero_proxima[ultimo_numero]
-    freq = Counter(proximas)
-    total = len(proximas)
-    return [freq.get(1, 0)/total, freq.get(2, 0)/total, freq.get(3, 0)/total]
-
-
-def extrair_features_fadiga(historico_duzias, janela=15):
-    duzias_rec = [d for d in historico_duzias[-janela:] if d != 0]
-    if len(duzias_rec) < 5:
-        return [0, 0, 0, 0, 0, 0]
-    
-    freq = Counter(duzias_rec)
-    total = len(duzias_rec)
-    esperado = total / 3
-    
-    excesso_d1 = max(0, (freq.get(1, 0) - esperado) / max(1, esperado))
-    excesso_d2 = max(0, (freq.get(2, 0) - esperado) / max(1, esperado))
-    excesso_d3 = max(0, (freq.get(3, 0) - esperado) / max(1, esperado))
-    
-    reversao_d1 = 1 if excesso_d1 > 0.3 else 0
-    reversao_d2 = 1 if excesso_d2 > 0.3 else 0
-    reversao_d3 = 1 if excesso_d3 > 0.3 else 0
-    
-    return [excesso_d1, excesso_d2, excesso_d3, reversao_d1, reversao_d2, reversao_d3]
-
-
-def extrair_features_alternancia(historico_duzias):
-    duzias = [d for d in historico_duzias if d != 0]
-    if len(duzias) < 5:
-        return [0, 0, 0, 0, 0]
-    
-    padrao_ciclico = 0
-    for i in range(len(duzias) - 5):
-        if duzias[i] == 1 and duzias[i+1] == 2 and duzias[i+2] == 3 and \
-           duzias[i+3] == 1 and duzias[i+4] == 2:
-            padrao_ciclico += 1
-    
-    padrao_alternado_extremo = 0
-    for i in range(len(duzias) - 3):
-        if duzias[i] == 1 and duzias[i+1] == 3 and duzias[i+2] == 1 and duzias[i+3] == 3:
-            padrao_alternado_extremo += 1
-        if duzias[i] == 3 and duzias[i+1] == 1 and duzias[i+2] == 3 and duzias[i+3] == 1:
-            padrao_alternado_extremo += 1
-    
-    padrao_alternado_central = 0
-    for i in range(len(duzias) - 3):
-        if duzias[i] == 2 and duzias[i+1] == 1 and duzias[i+2] == 2 and duzias[i+3] == 1:
-            padrao_alternado_central += 1
-        if duzias[i] == 1 and duzias[i+1] == 2 and duzias[i+2] == 1 and duzias[i+3] == 2:
-            padrao_alternado_central += 1
-    
-    em_alternancia = 0
-    padrao_tipo = 0
-    if len(duzias) >= 4:
-        e1, e2, e3, e4 = duzias[-4], duzias[-3], duzias[-2], duzias[-1]
-        if e1 == e3 and e2 == e4 and e1 != e2:
-            em_alternancia = 1
-            padrao_tipo = e1
-    
-    return [padrao_ciclico, padrao_alternado_extremo, padrao_alternado_central, em_alternancia, padrao_tipo]
-
-
-def extrair_features_ciclos(historico_duzias, max_lag=6):
-    duzias = [d for d in historico_duzias if d != 0]
-    if len(duzias) < max_lag * 2:
-        return [0] * max_lag + [0]
-    
-    scores_autocorrelacao = []
-    for lag in range(1, max_lag + 1):
-        if len(duzias) >= lag * 2:
-            seq1 = duzias[:-lag]
-            seq2 = duzias[lag:]
-            matches = sum(1 for a, b in zip(seq1, seq2) if a == b)
-            score = matches / len(seq1) if seq1 else 0
-            scores_autocorrelacao.append(score)
-        else:
-            scores_autocorrelacao.append(0)
-    
-    melhor_lag = scores_autocorrelacao.index(max(scores_autocorrelacao)) + 1 if max(scores_autocorrelacao) > 0.4 else 0
-    
-    return scores_autocorrelacao + [melhor_lag]
-
-
-def extrair_features_entropia_local(historico_duzias, janela=10):
-    duzias = [d for d in historico_duzias if d != 0]
-    if len(duzias) < janela:
-        return [1.0, 1.0]
-    
-    freq_total = Counter(duzias[-janela:])
-    total = len(duzias[-janela:])
-    entropia_total = 0
-    for v in freq_total.values():
-        p = v / total
-        entropia_total -= p * math.log2(p) if p > 0 else 0
-    entropia_max = math.log2(3)
-    entropia_normalizada = entropia_total / entropia_max if entropia_max > 0 else 1
-    
-    esperado = total / 3
-    variancia = sum((freq_total.get(d, 0) - esperado) ** 2 for d in [1,2,3]) / 3
-    variabilidade_normalizada = min(1.0, variancia / esperado)
-    
-    return [entropia_normalizada, variabilidade_normalizada]
-
-
-def extrair_features_vies_curto_prazo(historico_duzias, janela_curta=5, janela_longa=20):
-    duzias = [d for d in historico_duzias if d != 0]
-    if len(duzias) < janela_longa:
-        return [0, 0, 0, 0, 0, 0]
-    
-    curtas = duzias[-janela_curta:] if len(duzias) >= janela_curta else duzias
-    longas = duzias[-janela_longa:] if len(duzias) >= janela_longa else duzias
-    
-    freq_curta = Counter(curtas)
-    freq_longa = Counter(longas)
-    
-    tendencia_1 = (freq_curta.get(1, 0) / max(1, len(curtas))) - (freq_longa.get(1, 0) / max(1, len(longas)))
-    tendencia_2 = (freq_curta.get(2, 0) / max(1, len(curtas))) - (freq_longa.get(2, 0) / max(1, len(longas)))
-    tendencia_3 = (freq_curta.get(3, 0) / max(1, len(curtas))) - (freq_longa.get(3, 0) / max(1, len(longas)))
-    
-    alta = 1 if tendencia_1 > tendencia_2 and tendencia_1 > tendencia_3 else (2 if tendencia_2 > tendencia_1 and tendencia_2 > tendencia_3 else (3 if tendencia_3 > 0 else 0))
-    
-    return [tendencia_1, tendencia_2, tendencia_3, alta, max(tendencia_1, tendencia_2, tendencia_3), min(tendencia_1, tendencia_2, tendencia_3)]
-
-
-def extrair_features_raio(historico_raios, janela=20):
-    if not historico_raios or len(historico_raios) < 3:
-        return [0, 0, 0, 0, 0]
-    
-    raios_recentes = historico_raios[-janela:] if len(historico_raios) >= janela else historico_raios
-    raios_duzias = [r[2] for r in raios_recentes if r[2] != 0]
-    raios_mult = [r[1] for r in raios_recentes if r[1] > 0]
-    
-    freq_duzias = Counter(raios_duzias)
-    total = max(1, len(raios_duzias))
-    
-    duzia_mais_raios = freq_duzias.most_common(1)[0][0] if freq_duzias else 0
-    prob_d1_raio = freq_duzias.get(1, 0) / total
-    prob_d2_raio = freq_duzias.get(2, 0) / total
-    prob_d3_raio = freq_duzias.get(3, 0) / total
-    
-    raio_recente = 1 if raios_recentes and raios_recentes[-1][1] > 0 else 0
-    mult_medio = sum(raios_mult) / max(1, len(raios_mult))
-    
-    return [duzia_mais_raios, prob_d1_raio, prob_d2_raio, prob_d3_raio, raio_recente, mult_medio]
-
-
-def extrair_features_consenso(consenso_info):
-    if not consenso_info or consenso_info.get('tipo') == 'nenhum':
-        return [0, 0, 0]
-    
-    tipo_peso = {'triplo': 1.0, 'duplo': 0.7, 'simples': 0.4}
-    conf = consenso_info.get('conf', 0)
-    tipo = consenso_info.get('tipo', 'nenhum')
-    duzia = consenso_info.get('duzia', 0)
-    
-    return [conf, tipo_peso.get(tipo, 0), duzia]
-
-
-# =============================
-# 🆕 MODO ALTA PRECISÃO (V15.1) — 1 DÚZIA, FOCO NA QUALIDADE DO ML
-# =============================
-# Em vez de travar a entrada com vários limiares estruturais (que geravam
-# poucas entradas e demora), o filtro de qualidade principal passa a ser
-# a PROBABILIDADE BRUTA do modelo de ML (calibrada). Os demais limiares
-# ficam próximos do padrão, apenas com um leve reforço, para não travar
-# o ritmo de entradas.
-
-def _aplicar_ajuste_meio_termo(config):
-    cfg = config.copy()
-
-    def blend(chave, delta_pct, minimo=None):
-        if chave in cfg and cfg[chave] is not None:
-            novo = cfg[chave] * (1 + delta_pct)
-            if minimo is not None:
-                novo = max(minimo, novo)
-            cfg[chave] = novo
-
-    # --- Barreira de entrada (score/confiança) - quase neutra ---
-    blend('ml_score_minimo_entrada', 0.0, minimo=18)
-    blend('ml_score_minimo_fallback', 0.0, minimo=25)
-    blend('confianca_minima_entrada', -0.05, minimo=1.3)
-    blend('filtro_conf_baixa', -0.05, minimo=1.0)
-    blend('confianca_maxima_segura', 0.0)
-    blend('ml_score_minimo_pos_rotacao', 0.0, minimo=12)
-    cfg['ml_min_rodadas_fallback'] = max(5, int(round(cfg.get('ml_min_rodadas_fallback', 6) * 0.95)))
-
-    # --- Transição: penalidade moderada (não trava tudo durante instabilidade) ---
-    cfg['transicao_penalidade_conf'] = min(0.80, cfg.get('transicao_penalidade_conf', 0.70) + 0.05)
-    blend('transicao_score_minimo_extra', -0.20, minimo=5)
-
-    # --- Drift: detecção responsiva, reage rápido a sequência de erros reais ---
-    blend('drift_janela', -0.20, minimo=6)
-    blend('drift_taxa_minima', 0.05, minimo=0.24)
-    cfg['drift_alertar_apos'] = max(4, int(round(cfg.get('drift_alertar_apos', 5) * 0.8)))
-    cfg['drift_rodadas_auto_reset'] = max(10, int(round(cfg.get('drift_rodadas_auto_reset', 20) * 0.7)))
-
-    # --- Threshold adaptativo: pode afrouxar/apertar de forma equilibrada ---
-    blend('threshold_adaptativo_janela', -0.10, minimo=15)
-    blend('threshold_adaptativo_alvo', -0.05, minimo=0.30)
-    blend('threshold_adaptativo_passo', 0.0, minimo=1.0)
-    cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -10.0) * 0.9
-    cfg['threshold_adaptativo_max'] = cfg.get('threshold_adaptativo_max', 15.0) * 1.05
-
-    # --- Padrões/streak: qualidade normal, sem exigir demais ---
-    blend('padrao_min_ocorrencias', 0.0, minimo=3)
-    blend('padrao_conf_minima_tam2', 0.0, minimo=1.3)
-    blend('padrao_conf_minima_tam4', 0.0, minimo=2.5)
-    blend('padrao_consenso_min_conf', 0.0, minimo=0.20)
-    blend('padrao_qualidade_min_p2', 0.0, minimo=9)
-    blend('padrao_qualidade_min_p3', 0.0, minimo=6)
-    blend('padrao_qualidade_min_p4', 0.0, minimo=4)
-    blend('streak_conf_min_reforco', 0.0, minimo=1.7)
-
-    # --- ML treina com janela padrão e atualiza com frequência normal ---
-    blend('ml_janela_treino', 0.0, minimo=60)
-    cfg['ml_atualizar_a_cada'] = max(6, int(round(cfg.get('ml_atualizar_a_cada', 10) * 1.0)))
-
-    # --- Probabilidade bruta mínima do ML: ESTE é o filtro principal de qualidade ---
-    cfg['ml_prob_bruta_minima'] = max(cfg.get('ml_prob_bruta_minima', 0.38), 0.38)
-
-    # --- Zero/viés dinâmico permanecem como estavam ---
-    blend('zero_termometro_max', 0.10)
-    blend('vies_dinamico_janela', -0.10, minimo=15)
-    blend('vies_dinamico_limiar', 0.10)
-
-    return cfg
-
-
-def _aplicar_ajuste_fino_immersive(config, original):
-    cfg = config.copy()
-
-    def blend_mais_solto(chave, delta_pct_extra, minimo=None):
-        if chave in cfg and cfg[chave] is not None:
-            novo = cfg[chave] * (1 + delta_pct_extra)
-            if minimo is not None:
-                novo = max(minimo, novo)
-            cfg[chave] = novo
-
-    def puxar_para_original(chave, peso_original=0.45, minimo=None):
-        if chave in cfg and chave in original and original[chave] is not None:
-            novo = cfg[chave] + peso_original * (original[chave] - cfg[chave])
-            if minimo is not None:
-                novo = max(minimo, novo)
-            cfg[chave] = novo
-
-    # --- 1) Destrava temporizadores, mas sem enfraquecer demais a rede de segurança ---
-    cfg['drift_rodadas_auto_reset'] = max(6, int(round(cfg.get('drift_rodadas_auto_reset', 10) * 0.75)))
-    blend_mais_solto('drift_janela', -0.05, minimo=6)
-    cfg['drift_taxa_minima'] = max(cfg.get('drift_taxa_minima', 0.22), 0.22)
-    cfg['drift_alertar_apos'] = max(3, cfg.get('drift_alertar_apos', 4))
-    blend_mais_solto('threshold_adaptativo_janela', -0.15, minimo=12)
-    cfg['threshold_adaptativo_max'] = cfg.get('threshold_adaptativo_max', 11) * 0.85
-    cfg['threshold_adaptativo_min'] = cfg.get('threshold_adaptativo_min', -7) * 0.85
-    blend_mais_solto('zero_termometro_max', 0.10)
-
-    # --- 2) Mantém barreira de qualidade em nível normal (não sufoca entrada) ---
-    cfg['confianca_minima_entrada'] = max(cfg.get('confianca_minima_entrada', 1.3), 1.3)
-    cfg['filtro_conf_baixa'] = max(cfg.get('filtro_conf_baixa', 1.0), 1.0)
-    cfg['ml_score_minimo_entrada'] = max(cfg.get('ml_score_minimo_entrada', 14), 14)
-    cfg['ml_score_minimo_fallback'] = max(cfg.get('ml_score_minimo_fallback', 24), 24)
-    cfg['padrao_qualidade_min_p2'] = max(cfg.get('padrao_qualidade_min_p2', 8), 8)
-    cfg['padrao_qualidade_min_p3'] = max(cfg.get('padrao_qualidade_min_p3', 5), 5)
-    cfg['padrao_qualidade_min_p4'] = max(cfg.get('padrao_qualidade_min_p4', 4), 4)
-    cfg['padrao_conf_minima_tam2'] = max(cfg.get('padrao_conf_minima_tam2', 1.2), 1.2)
-    cfg['padrao_conf_minima_tam4'] = max(cfg.get('padrao_conf_minima_tam4', 2.5), 2.5)
-    cfg['streak_conf_min_reforco'] = max(cfg.get('streak_conf_min_reforco', 1.6), 1.6)
-
-    # --- 3) Qualidade da previsão do ML ---
-    puxar_para_original('ml_janela_treino', 0.6, minimo=45)
-    puxar_para_original('ml_atualizar_a_cada', 0.5, minimo=6)
-
-    return cfg
-
-
-# Chaves que representam "quantidade de rodadas"
-_CHAVES_INTEIRAS_DE_JANELA = [
-    'drift_janela', 'drift_alertar_apos', 'drift_rodadas_auto_reset',
-    'threshold_adaptativo_janela', 'vies_dinamico_janela', 'ml_janela_treino',
-    'ml_atualizar_a_cada', 'ml_min_rodadas_fallback', 'zero_termometro_max',
-    'padrao_min_ocorrencias', 'streak_min_len', 'peso_adaptativo_janela',
-]
-
-def _forcar_inteiros_de_janela(config):
-    cfg = config.copy()
-    for chave in _CHAVES_INTEIRAS_DE_JANELA:
-        if chave in cfg and cfg[chave] is not None:
-            cfg[chave] = int(round(cfg[chave]))
-    return cfg
-
-
-# =============================
-# SETUPS — V14.1 COM DETECTOR DE TRANSIÇÃO
-# =============================
-SETUP_BASE = {
-    'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'confianca_minima_entrada': 1.6,
-    'embalo_peso': 9, 'embalo_reforco': 5,
-    'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 1.3,
-    'fadiga_duzia': 4, 'ritmo_alternado_peso': 10, 'ritmo_alternado_forca': 10,
-    'max_repeticoes_embalo': 4, 'confianca_maxima_segura': 3.3,
-    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 1, 'raio_alto_minimo': 100,
-    'zero_termometro_max': 15, 'anti_erro_skip_discordancia': True,
-    'ritmo_v_peso': 9, 'ritmo_v_forca': 9, 'ritmo_v_confirmacoes': 2,
-    'ml_janela_treino': 80,
-    'ml_atualizar_a_cada': 10,
-    'score_ml_peso': 55,
-    'ml_score_minimo_entrada': 22,
-    'ml_score_minimo_fallback': 30,
-    'ml_min_rodadas_fallback': 6,
-    'ml_max_repeticoes_mesma_duzia': 2,
-    'ml_score_minimo_pos_rotacao': 14,
-    'ml_prob_bruta_minima': 0.38,
-    'padrao_min_ocorrencias': 3,
-    'padrao_conf_minima_tam2': 1.5,
-    'padrao_conf_minima_tam4': 3,
-    'padrao_consenso_min_conf': 0.20,
-    'anti_vies_ativo': False, 'anti_vies_duzia': None,
-    'anti_vies_penalidade': 1.0, 'anti_vies_gatilho_p2': False, 'anti_vies_p4_isolado_extra': 1.0,
-    'peso_adaptativo_ativo': False, 'peso_adaptativo_janela': 10, 'peso_adaptativo_boost': 1.0,
-    'vies_dinamico_ativo': True, 'vies_dinamico_janela': 30,
-    'vies_dinamico_limiar': 0.15, 'vies_dinamico_penalidade': 0.80,
-    'decaimento_padroes_ativo': True, 'decaimento_fator': 0.97, 'decaimento_a_cada': 5,
-    'drift_janela': 15, 'drift_taxa_minima': 0.30,
-    'drift_alertar_apos': 5,
-    'drift_rodadas_auto_reset': 20,
-    'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 1.0,
-    'padrao_qualidade_min_p2': 15,
-    'padrao_qualidade_min_p3': 10,
-    'padrao_qualidade_min_p4': 8,
-    'usar_features_ml_avancadas': True,
-    'ml_features_pos_zero_peso': 1.2,
-    'ml_features_numero_duzia_peso': 1.0,
-    'ml_features_fadiga_peso': 1.5,
-    'ml_features_alternancia_peso': 1.0,
-    'ml_features_ciclos_peso': 0.9,
-    'ml_features_entropia_peso': 0.8,
-    'ml_features_vies_curto_peso': 1.2,
-    'ml_features_raio_peso': 1.3,
-    'ml_features_consenso_peso': 1.4,
-    'streak_reforca_ml': True,
-    'streak_conf_min_reforco': 2.5,
-    'detector_regime_ativo': True,
-    'detector_janela': 10,
-    'detector_limiar_transicao': 0.35,
-    'detector_limiar_instavel': 0.50,
-    'transicao_penalidade_conf': 0.75,
-    'transicao_aumentar_cobertura': False,
-    'transicao_evitar_dominante': True,
-    'transicao_score_minimo_extra': 8,
-    'threshold_adaptativo_ativo': True,
-    'threshold_adaptativo_janela': 30,
-    'threshold_adaptativo_alvo': 0.40,
-    'threshold_adaptativo_passo': 2.0,
-    'threshold_adaptativo_min': -9.0,
-    'threshold_adaptativo_max': 16.0,
-    'anti_erro_min_erros_consecutivos': 2,
-    'transicao_confianca_multiplicador': 1.10,
-}
-
-SETUP_XXXTREME = {
-    **SETUP_BASE,
-    'pagamento_numero': 20, 'pagamento_zero': 20, 'pagamento_duzia': 3,
-    'peso_adaptativo_ativo': True,
-    'peso_adaptativo_janela': 12,
-    'peso_adaptativo_boost': 1.4,
-    'confianca_minima_entrada': 1.5,
-    'filtro_conf_baixa': 1.4,
-    'confianca_maxima_segura': 3.2,
-    'streak_ativo': True,
-    'streak_min_len': 2,
-    'streak_peso_feature': 0.7,
-    'streak_reforca_ml': True,
-    'streak_conf_min_reforco': 1.8,
-    'ml_max_repeticoes_mesma_duzia': 1,
-    'padrao_consenso_min_conf': 0.22,
-    'ml_ignorar_consenso_conf_min': 2.8,
-    'ml_score_minimo_entrada': 15,
-    'ml_score_minimo_fallback': 32,
-    'ml_min_rodadas_fallback': 8,
-    'ml_prob_bruta_minima': 0.38,
-    'padrao_min_ocorrencias': 4,
-    'padrao_conf_minima_tam2': 2.5,
-    'padrao_conf_minima_tam4': 5,
-    'max_repeticoes_embalo': 2,
-    'embalo_consecutivas_min': 2,
-    'pausa_pos_raio': 1,
-    'vies_dinamico_ativo': True,
-    'vies_dinamico_janela': 12,
-    'vies_dinamico_limiar': 0.14,
-    'vies_dinamico_penalidade': 0.80,
-    'ml_janela_treino': 50,
-    'ml_atualizar_a_cada': 10,
-    'alerta_peso_adaptativo_off': True,
-    'drift_janela': 12,
-    'drift_taxa_minima': 0.25,
-    'drift_alertar_apos': 3,
-    'drift_rodadas_auto_reset': 15,
-    'decaimento_fator': 0.95,
-    'decaimento_a_cada': 4,
-    'score_frequencia_peso': 40,
-    'score_ml_peso': 55,
-    'padrao_qualidade_min_p2': 18,
-    'padrao_qualidade_min_p3': 12,
-    'padrao_qualidade_min_p4': 8,
-    'bloquear_anti_erro_zero_conf_baixa': True,
-    'anti_erro_skip_discordancia': True,
-    'zero_termometro_max': 18,
-    'usar_embalo': True,
-    'usar_ritmo_alternado': True,
-    'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': True,
-    'usar_ritmo_binario': True,
-    'usar_quebra_pos_zero': False,
-    'usar_exaustao_dominancia': True,
-    'usar_mudanca_velocidade': False,
-    'transicao_penalidade_conf': 0.72,
-    'transicao_aumentar_cobertura': False,
-    'transicao_evitar_dominante': True,
-    'transicao_score_minimo_extra': 10,
-}
-SETUP_XXXTREME = _aplicar_ajuste_meio_termo(SETUP_XXXTREME)
-SETUP_XXXTREME = _forcar_inteiros_de_janela(SETUP_XXXTREME)
-
-_SETUP_IMMERSIVE_PRE_AJUSTE = {
-    **SETUP_BASE,
-    'pagamento_numero': 35, 'pagamento_zero': 35, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.5,
-    'filtro_conf_baixa': 1.1,
-    'confianca_maxima_segura': 3.0,
-    'rodadas_verificacao_conf_alta': 5,
-    'embalo_peso': 6,
-    'embalo_reforco': 1,
-    'embalo_consecutivas_min': 2,
-    'embalo_janela': 4,
-    'max_repeticoes_embalo': 3,
-    'ritmo_alternado_peso': 6,
-    'ritmo_alternado_forca': 8,
-    'ritmo_v_peso': 6,
-    'ritmo_v_forca': 8,
-    'ritmo_v_confirmacoes': 2,
-    'bloquear_alerta_zero_conf_alta': True,
-    'bloquear_anti_erro_zero_conf_baixa': True,
-    'anti_erro_skip_discordancia': True,
-    'zero_termometro_max': 12,
-    'fadiga_duzia': 3,
-    'pausa_pos_raio': 0,
-    'raio_alto_minimo': 0,
-    'usar_embalo': True,
-    'usar_ritmo_alternado': True,
-    'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': False,
-    'usar_ritmo_binario': True,
-    'usar_quebra_pos_zero': True,
-    'usar_exaustao_dominancia': False,
-    'usar_mudanca_velocidade': False,
-    'score_frequencia_peso': 45,
-    'score_streak_peso': 6,
-    'score_markov_peso': 8,
-    'score_ml_peso': 55,
-    'score_anti_erro_peso': 20,
-    'ml_janela_treino': 60,
-    'ml_atualizar_a_cada': 5,
-    'ml_score_minimo_entrada': 18,
-    'ml_score_minimo_fallback': 26,
-    'ml_min_rodadas_fallback': 6,
-    'ml_max_repeticoes_mesma_duzia': 2,
-    'ml_score_minimo_pos_rotacao': 14,
-    'ml_prob_bruta_minima': 0.37,
-    'ml_ignorar_consenso_conf_min': 2.5,
-    'padrao_min_ocorrencias': 3,
-    'padrao_peso_tam2': 42,
-    'padrao_peso_tam3': 25,
-    'padrao_peso_tam4': 33,
-    'padrao_conf_minima_tam2': 2,
-    'padrao_conf_minima_tam4': 3.5,
-    'padrao_consenso_peso_extra': 12,
-    'padrao_consenso_min_conf': 0.20,
-    'anti_vies_ativo': False,
-    'anti_vies_duzia': None,
-    'anti_vies_penalidade': 1.0,
-    'anti_vies_gatilho_p2': False,
-    'anti_vies_p4_isolado_extra': 1.0,
-    'peso_adaptativo_ativo': True,
-    'peso_adaptativo_janela': 10,
-    'peso_adaptativo_boost': 1.3,
-    'vies_dinamico_ativo': True,
-    'vies_dinamico_janela': 12,
-    'vies_dinamico_limiar': 0.09,
-    'vies_dinamico_penalidade': 0.65,
-    'decaimento_padroes_ativo': True,
-    'decaimento_fator': 0.93,
-    'decaimento_a_cada': 5,
-    'drift_janela': 12,
-    'drift_taxa_minima': 0.22,
-    'drift_alertar_apos': 5,
-    'drift_rodadas_auto_reset': 18,
-    'streak_ativo': True,
-    'streak_min_len': 2,
-    'streak_peso_feature': 1.0,
-    'streak_reforca_ml': True,
-    'streak_conf_min_reforco': 2.0,
-    'padrao_qualidade_min_p2': 10,
-    'padrao_qualidade_min_p3': 6,
-    'padrao_qualidade_min_p4': 4,
-    'transicao_penalidade_conf': 0.68,
-    'transicao_aumentar_cobertura': False,
-    'transicao_evitar_dominante': True,
-    'transicao_score_minimo_extra': 8,
-}
-SETUP_IMMERSIVE = _aplicar_ajuste_meio_termo(_SETUP_IMMERSIVE_PRE_AJUSTE)
-SETUP_IMMERSIVE = _aplicar_ajuste_fino_immersive(SETUP_IMMERSIVE, _SETUP_IMMERSIVE_PRE_AJUSTE)
-SETUP_IMMERSIVE = _forcar_inteiros_de_janela(SETUP_IMMERSIVE)
-
-SETUP_MEGA = {
-    **SETUP_BASE,
-    'pagamento_numero': 24, 'pagamento_zero': 24, 'pagamento_duzia': 2,
-    'confianca_minima_entrada': 1.5,
-    'embalo_peso': 5, 'embalo_reforco': 2,
-    'bloquear_alerta_zero_conf_alta': True, 'bloquear_anti_erro_zero_conf_baixa': True,
-    'filtro_conf_baixa': 1.3, 'fadiga_duzia': 3,
-    'ritmo_alternado_peso': 8, 'ritmo_alternado_forca': 8,
-    'max_repeticoes_embalo': 3, 'confianca_maxima_segura': 3.1,
-    'rodadas_verificacao_conf_alta': 5, 'pausa_pos_raio': 2, 'raio_alto_minimo': 150,
-    'zero_termometro_max': 12, 'anti_erro_skip_discordancia': True,
-    'ritmo_v_peso': 7, 'ritmo_v_forca': 7, 'ritmo_v_confirmacoes': 2,
-    'usar_embalo': True, 'embalo_consecutivas_min': 2, 'embalo_janela': 4,
-    'usar_ritmo_alternado': True, 'usar_ritmo_v': True,
-    'usar_ritmo_ping_pong': False, 'usar_ritmo_binario': True,
-    'usar_quebra_pos_zero': False, 'usar_exaustao_dominancia': False,
-    'usar_mudanca_velocidade': False,
-    'score_frequencia_peso': 45, 'score_streak_peso': 6,
-    'score_markov_peso': 8, 'score_ml_peso': 55,
-    'score_anti_erro_peso': 20,
-    'ml_janela_treino': 80, 'ml_atualizar_a_cada': 8,
-    'ml_score_minimo_entrada': 22,
-    'ml_score_minimo_fallback': 30,
-    'ml_min_rodadas_fallback': 8,
-    'ml_max_repeticoes_mesma_duzia': 2,
-    'ml_score_minimo_pos_rotacao': 14,
-    'ml_prob_bruta_minima': 0.38,
-    'padrao_min_ocorrencias': 3,
-    'padrao_peso_tam2': 20, 'padrao_peso_tam3': 50, 'padrao_peso_tam4': 30,
-    'padrao_conf_minima_tam2': 2, 'padrao_conf_minima_tam4': 4,
-    'padrao_consenso_peso_extra': 15, 'padrao_consenso_min_conf': 0.20,
-    'ml_ignorar_consenso_conf_min': 2.5,
-    'anti_vies_ativo': True, 'anti_vies_duzia': None,
-    'anti_vies_penalidade': 0.82, 'anti_vies_gatilho_p2': True, 'anti_vies_p4_isolado_extra': 0.75,
-    'peso_adaptativo_ativo': True, 'peso_adaptativo_janela': 10, 'peso_adaptativo_boost': 1.2,
-    'vies_dinamico_ativo': True, 'vies_dinamico_janela': 20,
-    'vies_dinamico_limiar': 0.12, 'vies_dinamico_penalidade': 0.70,
-    'decaimento_padroes_ativo': True, 'decaimento_fator': 0.94, 'decaimento_a_cada': 3,
-    'drift_janela': 15, 'drift_taxa_minima': 0.28, 'drift_alertar_apos': 5,
-    'drift_rodadas_auto_reset': 20,
-    'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 1.0,
-    'streak_reforca_ml': True,
-    'streak_conf_min_reforco': 2.0,
-    'padrao_qualidade_min_p2': 11, 'padrao_qualidade_min_p3': 7, 'padrao_qualidade_min_p4': 5,
-    'transicao_penalidade_conf': 0.65,
-    'transicao_aumentar_cobertura': False,
-    'transicao_evitar_dominante': True,
-    'transicao_score_minimo_extra': 10,
-}
-SETUP_MEGA = _aplicar_ajuste_meio_termo(SETUP_MEGA)
-SETUP_MEGA = _forcar_inteiros_de_janela(SETUP_MEGA)
-
-ROLETA_CONFIGS = {
-    'XXXtreme Lightning': SETUP_XXXTREME,
-    'Immersive Roulette': SETUP_IMMERSIVE,
-    'Mega Roulette': SETUP_MEGA,
-}
-
-CONFIG_GLOBAL_PATH = "config_global.json"
-PASTA_SESSOES = "sessoes_salvas"
-PASTA_MODELOS_ML = "modelos_ml"
-
-
-# =============================
-# FUNÇÕES DE PERSISTÊNCIA - CORRIGIDAS
-# =============================
-
-def criar_pasta_modelos_ml():
-    if not os.path.exists(PASTA_MODELOS_ML): os.makedirs(PASTA_MODELOS_ML)
-
-def criar_pasta_sessoes():
-    if not os.path.exists(PASTA_SESSOES): os.makedirs(PASTA_SESSOES)
-    for roleta in ['xxxtreme_lightning', 'immersive_roulette', 'mega_roulette']:
-        pasta = os.path.join(PASTA_SESSOES, roleta)
-        if not os.path.exists(pasta): os.makedirs(pasta)
-
-def get_pasta_sessao(api_name):
-    return os.path.join(PASTA_SESSOES, api_name.lower().replace(' ', '_'))
-
-def get_modelo_ml_path(api_name):
-    criar_pasta_modelos_ml()
-    return os.path.join(PASTA_MODELOS_ML, f"modelo_ml_{api_name.lower().replace(' ', '_')}.joblib")
-
-# 🆕 Versão do "esquema" de treino do modelo. Sempre que uma mudança no
-# pipeline de treino tornar um modelo salvo em disco desatualizado/inválido
-# (ex.: correção de bug no peso de recência), incremente este número — o
-# carregador vai descartar automaticamente qualquer modelo salvo com versão
-# diferente e forçar um retreino do zero, já com a lógica corrigida.
-_TREINO_SCHEMA_VERSION = 2  # v2: corrigido sample_weight ignorado na calibração
-
-# =============================
-# 🆕 _EnsembleManual COM SERIALIZAÇÃO CORRIGIDA
-# =============================
-
-class _EnsembleManual:
-    """Ensemble manual de RandomForest + GradientBoosting (+ Regressão Logística opcional)."""
-    
-    def __init__(self, rf, gbt, peso_rf=0.5, peso_gbt=0.5, lr=None, peso_lr=0.0):
-        self.rf = rf
-        self.gbt = gbt
-        self.lr = lr
-        self.classes_ = rf.classes_
-
-        # Pesos por submodelo
-        soma = max(1e-6, peso_rf + peso_gbt + (peso_lr if lr is not None else 0.0))
-        self.peso_rf = peso_rf / soma
-        self.peso_gbt = peso_gbt / soma
-        self.peso_lr = (peso_lr / soma) if lr is not None else 0.0
-        
-        # Obtém n_features_in_ de forma segura
-        try:
-            self.n_features_in_ = rf.n_features_in_
-        except AttributeError:
-            try:
-                self.n_features_in_ = gbt.n_features_in_
-            except AttributeError:
-                self.n_features_in_ = None
-        
-        self._modelo_tipo = "EnsembleManual"
-        self._data_criacao = datetime.now().isoformat()
-        self._schema_version = _TREINO_SCHEMA_VERSION
-    
-    def __getstate__(self):
-        """Prepara o estado para serialização - CORRIGIDO"""
-        state = self.__dict__.copy()
-        return state
-    
-    def __setstate__(self, state):
-        """Restaura o estado após desserialização - CORRIGIDO"""
-        self.__dict__.update(state)
-        
-    def predict_proba(self, X):
-        """Prediz probabilidades usando ensemble ponderado (RF + GBT + LR opcional)"""
-        try:
-            p_rf = self.rf.predict_proba(X)
-            p_gbt = self.gbt.predict_proba(X)
-            lr = getattr(self, 'lr', None)
-            peso_lr = getattr(self, 'peso_lr', 0.0)
-
-            if lr is not None and peso_lr > 0:
-                p_lr = lr.predict_proba(X)
-                total = p_rf * self.peso_rf + p_gbt * self.peso_gbt + p_lr * peso_lr
-                return total, self.classes_
-
-            if self.peso_rf == 0.5 and self.peso_gbt == 0.5:
-                return (p_rf + p_gbt) / 2, self.classes_
-            return (p_rf * self.peso_rf + p_gbt * self.peso_gbt), self.classes_
-        except Exception as e:
-            logging.error(f"❌ Erro no predict_proba: {e}")
-            p_rf = self.rf.predict_proba(X)
-            return p_rf, self.classes_
-
-    def predict(self, X):
-        """Prediz classes usando ensemble"""
-        try:
-            proba, classes = self.predict_proba(X)
-            return classes[np.argmax(proba, axis=1)]
-        except Exception as e:
-            logging.error(f"❌ Erro no predict: {e}")
-            return self.rf.predict(X)
-
-
-def salvar_modelo_ml(modelo, api_name):
-    """Salva o modelo ML com verificação de integridade e serialização correta"""
-    if modelo is None:
-        logging.warning("⚠️ Tentativa de salvar modelo None")
-        return False
-    
+def distribuir_por_colunas(jogo):
+    colunas = [0] * 10
+    for n in jogo:
+        colunas[(n-1)%10] += 1
+    return colunas
+
+# =====================================================
+# FUNÇÃO PARA BUSCAR DADOS DA API COMPLETA
+# =====================================================
+
+def buscar_dados_loterias():
+    """
+    Busca todos os dados das loterias da API
+    Retorna os dados da Mega-Sena especificamente
+    """
     try:
-        criar_pasta_modelos_ml()
-        caminho = get_modelo_ml_path(api_name)
+        url = "https://loteriascaixa-api.herokuapp.com/api/v1/loterias"
+        response = requests.get(url, timeout=10)
         
-        # Verifica se o modelo tem os atributos necessários
-        if not hasattr(modelo, 'predict_proba'):
-            logging.error("❌ Modelo não tem método predict_proba")
-            return False
-        
-        # Salva em arquivo temporário e só substitui o definitivo no final
-        caminho_tmp = caminho + ".tmp"
-        joblib.dump(modelo, caminho_tmp, compress=3)
-        os.replace(caminho_tmp, caminho)
-        
-        # Verifica se salvou corretamente
-        if os.path.exists(caminho):
-            tamanho = os.path.getsize(caminho)
-            if tamanho > 1000:
-                logging.info(f"✅ Modelo salvo com sucesso! Tamanho: {tamanho/1024:.1f} KB")
-                return True
+        if response.status_code == 200:
+            dados_completos = response.json()
+            
+            # Verifica se a Mega-Sena está nos dados
+            if 'megasena' in dados_completos:
+                dados_mega = dados_completos['megasena']
+                
+                # Converte para o formato esperado (lista de concursos)
+                # A API retorna o último concurso, precisamos buscar o histórico
+                return buscar_historico_megasena()
             else:
-                logging.error(f"❌ Modelo salvo com tamanho suspeito: {tamanho} bytes")
-                os.remove(caminho)
-                return False
+                st.warning("⚠️ Mega-Sena não encontrada na resposta da API")
+                return None
         else:
-            logging.error("❌ Arquivo do modelo não foi criado")
-            return False
-            
+            st.error(f"❌ Erro ao buscar dados: {response.status_code}")
+            return None
     except Exception as e:
-        logging.error(f"❌ Erro ao salvar modelo ML: {e}")
-        import traceback
-        logging.error(traceback.format_exc())
-        try:
-            caminho_tmp = get_modelo_ml_path(api_name) + ".tmp"
-            if os.path.exists(caminho_tmp):
-                os.remove(caminho_tmp)
-        except:
-            pass
-        return False
-
-def invalidar_modelo_ml(api_name):
-    """Remove o arquivo do modelo salvo em disco"""
-    try:
-        caminho = get_modelo_ml_path(api_name)
-        if os.path.exists(caminho):
-            os.remove(caminho)
-            logging.info(f"🗑️ Modelo ML inválido removido do disco para {api_name}")
-    except Exception as e:
-        logging.error(f"❌ Erro ao invalidar modelo: {e}")
-
-def carregar_modelo_ml(api_name):
-    """Carrega o modelo ML com verificação de integridade"""
-    try:
-        caminho = get_modelo_ml_path(api_name)
-        if not os.path.exists(caminho):
-            return None
-        
-        tamanho = os.path.getsize(caminho)
-        if tamanho < 1000:
-            logging.warning(f"⚠️ Arquivo do modelo muito pequeno ({tamanho} bytes). Ignorando.")
-            os.remove(caminho)
-            return None
-        
-        modelo = joblib.load(caminho)
-        
-        if not hasattr(modelo, 'predict_proba'):
-            logging.error("❌ Modelo carregado não tem predict_proba")
-            return None
-
-        # 🆕 Descarta automaticamente modelos salvos com pipeline de treino
-        # desatualizado (ex.: de antes da correção do sample_weight ignorado
-        # na calibração) — força um retreino do zero com a lógica corrigida.
-        versao_salva = getattr(modelo, '_schema_version', 1)
-        if versao_salva != _TREINO_SCHEMA_VERSION:
-            logging.warning(f"♻️ Modelo salvo é da versão {versao_salva} (atual: {_TREINO_SCHEMA_VERSION}). "
-                             f"Descartando e forçando retreino do zero.")
-            try:
-                os.remove(caminho)
-            except Exception:
-                pass
-            return None
-            
-        logging.info(f"✅ Modelo carregado com sucesso! Tamanho: {tamanho/1024:.1f} KB")
-        return modelo
-        
-    except Exception as e:
-        logging.error(f"❌ Erro ao carregar modelo ML: {e}")
-        try:
-            if os.path.exists(caminho):
-                os.remove(caminho)
-                logging.info("🗑️ Arquivo corrompido removido")
-        except:
-            pass
+        st.error(f"❌ Erro na requisição: {e}")
         return None
 
-
-# =============================
-# GERENCIADOR DE SESSÕES
-# =============================
-
-class GerenciadorSessoes:
-    def __init__(self, api_name):
-        self.api_name = api_name
-        self.pasta_sessao = get_pasta_sessao(api_name)
-        criar_pasta_sessoes()
-
-    def salvar_sessao_encerrada(self, numero_sessao, dados_sessao, historico_entradas):
-        try:
-            data = data_brasilia(); hora = formatar_hora_brasilia()
-            nome = f"sessao_{numero_sessao:03d}_{data}_{hora.replace(':', '-')}.json"
-            caminho = os.path.join(self.pasta_sessao, nome)
-            with open(caminho, 'w', encoding='utf-8') as f:
-                json.dump({'numero_sessao': numero_sessao, 'data': data, 'hora_encerramento': hora,
-                           'roleta': self.api_name, 'estatisticas': dados_sessao,
-                           'entradas': historico_entradas, 'timestamp': timestamp_brasilia()}, f, indent=2, ensure_ascii=False)
-            self._atualizar_historico_sessoes(numero_sessao, dados_sessao, nome)
-            return caminho
-        except Exception as e:
-            logging.error(f"Erro ao salvar sessão: {e}"); return None
-
-    def _atualizar_historico_sessoes(self, numero_sessao, dados_sessao, nome_arquivo):
-        paths = get_session_paths(self.api_name)
-        historico = []
-        if os.path.exists(paths['historico_sessoes']):
-            try:
-                with open(paths['historico_sessoes'], 'r') as f: historico = json.load(f)
-            except: pass
-        historico.append({'numero_sessao': numero_sessao, 'data': data_brasilia(),
-                          'hora': formatar_hora_brasilia(), 'arquivo': nome_arquivo,
-                          'acertos': dados_sessao.get('acertos', 0), 'erros': dados_sessao.get('erros', 0),
-                          'taxa_acerto': dados_sessao.get('taxa_acerto', 0),
-                          'total_rodadas': dados_sessao.get('total_rodadas', 0)})
-        if len(historico) > 100: historico = historico[-100:]
-        try:
-            with open(paths['historico_sessoes'], 'w') as f: json.dump(historico, f, indent=2)
-        except: pass
-
-    def listar_sessoes(self):
-        sessoes = []
-        if os.path.exists(self.pasta_sessao):
-            for arquivo in sorted(os.listdir(self.pasta_sessao), reverse=True):
-                if arquivo.endswith('.json') and arquivo.startswith('sessao_'):
-                    caminho = os.path.join(self.pasta_sessao, arquivo)
-                    try:
-                        with open(caminho, 'r') as f:
-                            dados = json.load(f); dados['arquivo'] = arquivo; dados['caminho'] = caminho
-                            sessoes.append(dados)
-                    except: pass
-        return sessoes
-
-    def listar_sessoes_do_dia(self, data=None):
-        if data is None: data = data_brasilia()
-        return [s for s in self.listar_sessoes() if s.get('data') == data]
-
-    def consolidar_sessoes_dia(self, data=None):
-        if data is None: data = data_brasilia()
-        sessoes_dia = self.listar_sessoes_do_dia(data)
-        if not sessoes_dia: return None
-        consolidado = {'data': data, 'roleta': self.api_name, 'total_sessoes': len(sessoes_dia),
-                       'sessoes': [], 'resumo_geral': {'total_acertos': 0, 'total_erros': 0, 'total_rodadas': 0}}
-        for sessao in sessoes_dia:
-            stats = sessao.get('estatisticas', {})
-            consolidado['sessoes'].append({'numero': sessao.get('numero_sessao'), 'hora': sessao.get('hora_encerramento'),
-                                           'acertos': stats.get('acertos', 0), 'erros': stats.get('erros', 0),
-                                           'taxa': stats.get('taxa_acerto', 0), 'entradas': sessao.get('entradas', [])})
-            consolidado['resumo_geral']['total_acertos'] += stats.get('acertos', 0)
-            consolidado['resumo_geral']['total_erros'] += stats.get('erros', 0)
-            consolidado['resumo_geral']['total_rodadas'] += stats.get('total_rodadas', 0)
-        total = consolidado['resumo_geral']['total_acertos'] + consolidado['resumo_geral']['total_erros']
-        consolidado['resumo_geral']['taxa_geral'] = round((consolidado['resumo_geral']['total_acertos'] / max(1, total)) * 100, 1)
-        nome = f"consolidado_{data}_{self.api_name.lower().replace(' ', '_')}.json"
-        caminho = os.path.join(self.pasta_sessao, nome)
-        with open(caminho, 'w', encoding='utf-8') as f: json.dump(consolidado, f, indent=2, ensure_ascii=False)
-        return caminho
-
-    def gerar_csv_sessao(self, dados_sessao):
-        output = StringIO(); writer = csv.writer(output)
-        writer.writerow(['Rodada','Hora','Número','Raio','Dúzia Real','Dúzia Prevista',
-                         'Confiança','Gatilho','Zero','Anti-Erro','Acerto Dúzia','Acerto Número','Acerto Zero','Status','Streak'])
-        for e in dados_sessao.get('entradas', []):
-            real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0) != 0 else "0"
-            writer.writerow([e.get('rodada'), e.get('hora'), e.get('numero', 0),
-                             f"{e.get('multiplicador',0)}x" if e.get('eh_raio') else '-',
-                             real, f"D{e.get('duzia_prevista','?')}",
-                             f"{e.get('confianca',0):.1f}", e.get('gatilho','-'),
-                             'Sim' if e.get('incluir_zero') else 'Não',
-                             'Sim' if e.get('modo_anti_erro') else 'Não',
-                             'Sim' if e.get('acerto_duzia') else 'Não',
-                             'Sim' if e.get('acerto_numero') else 'Não',
-                             'Sim' if e.get('acerto_zero') else 'Não',
-                             e.get('status','?'), str(e.get('streak_info', '-'))])
-        return output.getvalue()
-
-    def get_download_link(self, conteudo, nome_arquivo, tipo='json'):
-        b64 = base64.b64encode(conteudo.encode()).decode()
-        mime = 'text/csv' if tipo == 'csv' else 'application/json'
-        return f'<a href="data:{mime};base64,{b64}" download="{nome_arquivo}">📥 Baixar {nome_arquivo}</a>'
-
-
-def salvar_sessao():
+def buscar_historico_megasena(quantidade=100):
+    """
+    Busca o histórico de concursos da Mega-Sena
+    """
     try:
-        if 'sistema' not in st.session_state or st.session_state.sistema is None: return False
-        sis = st.session_state.sistema
-        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-        paths = get_session_paths(api_name)
-        with open(paths['performance'], 'w') as f:
-            json.dump({'acertos_duzia': sis.acertos_duzia, 'erros_duzia': sis.erros_duzia,
-                       'acertos_numero': sis.acertos_numero, 'erros_numero': sis.erros_numero,
-                       'acertos_zero': sis.acertos_zero, 'erros_zero': sis.erros_zero}, f)
-        with open(paths['entradas'], 'w') as f: json.dump(sis.historico_entradas, f)
-        with open(paths['performance_mesa'], 'w') as f: json.dump(dict(sis.performance_por_mesa), f)
-        with open(paths['performance_horario'], 'w') as f: json.dump(dict(sis.performance_por_horario), f)
-        sis.duzia_ai._salvar_padroes_hibridos()
-        with open(paths['sessao_controle'], 'w') as f:
-            json.dump({'rodadas_na_sessao': sis.rodadas_na_sessao, 'sessao_ativa': sis.sessao_ativa,
-                       'sessao_pausa_ate': sis.sessao_pausa_ate.isoformat() if sis.sessao_pausa_ate else None,
-                       'total_sessoes': sis.total_sessoes, 'acertos_sessao': sis.acertos_sessao,
-                       'erros_sessao': sis.erros_sessao}, f)
-        with open(paths['session'], 'wb') as f:
-            pickle.dump({'historico_numeros': list(sis.historico_numeros),
-                         'entrada_ativa': sis.entrada_ativa,
-                         'acertos_duzia': sis.acertos_duzia, 'erros_duzia': sis.erros_duzia,
-                         'acertos_numero': sis.acertos_numero, 'erros_numero': sis.erros_numero,
-                         'acertos_zero': sis.acertos_zero, 'erros_zero': sis.erros_zero,
-                         'numero_rodada': sis.numero_rodada,
-                         'rodadas_na_sessao': sis.rodadas_na_sessao, 'sessao_ativa': sis.sessao_ativa,
-                         'sessao_pausa_ate': sis.sessao_pausa_ate.isoformat() if sis.sessao_pausa_ate else None,
-                         'total_sessoes': sis.total_sessoes,
-                         'acertos_sessao': sis.acertos_sessao, 'erros_sessao': sis.erros_sessao,
-                         'ultimo_treino_ml': sis.duzia_ai.ultimo_treino_ml,
-                         'acertos_primaria': sis.acertos_primaria, 'acertos_secundaria': sis.acertos_secundaria}, f)
-        if sis.duzia_ai.modelo_ml is not None:
-            salvar_modelo_ml(sis.duzia_ai.modelo_ml, api_name)
-        salvar_config_global()
-        return True
-    except Exception as e:
-        logging.error(f"Erro ao salvar: {e}")
-        return False
-
-def carregar_dados_persistidos(api_name):
-    paths = get_session_paths(api_name)
-    dados = {}
-    try:
-        if os.path.exists(paths['session']):
-            with open(paths['session'], 'rb') as f: dados = pickle.load(f)
-            if os.path.exists(paths['entradas']):
-                with open(paths['entradas'], 'r') as f2: dados['historico_entradas'] = json.load(f2)
-            if os.path.exists(paths['performance_mesa']):
-                with open(paths['performance_mesa'], 'r') as f3: dados['performance_por_mesa'] = json.load(f3)
-            if os.path.exists(paths['performance_horario']):
-                with open(paths['performance_horario'], 'r') as f4: dados['performance_por_horario'] = json.load(f4)
-            if os.path.exists(paths['sessao_controle']):
-                with open(paths['sessao_controle'], 'r') as f5: dados.update(json.load(f5))
-    except: pass
-    return dados
-
-def nova_sessao():
-    try:
-        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-        paths = get_session_paths(api_name)
-        for path in paths.values():
-            if isinstance(path, str) and os.path.exists(path): os.remove(path)
-        modelo_path = get_modelo_ml_path(api_name)
-        if os.path.exists(modelo_path): os.remove(modelo_path)
-        if 'sistema' in st.session_state: st.session_state.sistema.zerar()
-        st.session_state.historico = []
-        return True
-    except Exception as e:
-        logging.error(f"Erro: {e}")
-        return False
-
-def _selecionar_melhores_numeros(duzia, numeros_completos, quantidade=6):
-    if duzia == 1: nums = list(range(1, 13))
-    elif duzia == 2: nums = list(range(13, 25))
-    else: nums = list(range(25, 37))
-    recentes = numeros_completos[-20:] if len(numeros_completos) >= 20 else numeros_completos
-    freq = Counter([n for n in recentes if n in nums])
-    termos = [n % 10 for n in recentes[-15:] if n != 0]
-    terminais_quentes = [t for t, f in Counter(termos).most_common(3) if f >= 2]
-    pontuacao = {}
-    for num in nums:
-        score = freq.get(num, 0) * 3
-        if num % 10 in terminais_quentes: score += 2
-        if num in recentes[-5:]: score += 1
-        pontuacao[num] = score
-    melhores = [n for n, s in sorted(pontuacao.items(), key=lambda x: x[1], reverse=True)[:quantidade] if s > 0]
-    if len(melhores) < quantidade:
-        for num in nums:
-            if num not in melhores: melhores.append(num)
-            if len(melhores) >= quantidade: break
-    return sorted(melhores[:quantidade])
-
-def enviar_previsao_auto(previsao):
-    try:
-        numeros = sorted(previsao.get('numeros_apostar', []))
-        incluir_zero = previsao.get('incluir_zero', False)
-        duzia_principal = previsao.get('duzia', 0)
-        streak_info = previsao.get('streak_info', None)
-        d1n = [n for n in numeros if 1 <= n <= 12]
-        d2n = [n for n in numeros if 13 <= n <= 24]
-        d3n = [n for n in numeros if 25 <= n <= 36]
-        prefixo = "⚠️🎯 " if incluir_zero else "🎯 "
-        if d1n: msg = f"{prefixo}Entrada: D1 (1-12)"
-        elif d2n: msg = f"{prefixo}Entrada: D2 (13-24)"
-        elif d3n: msg = f"{prefixo}Entrada: D3 (25-36)"
-        else: msg = f"{prefixo}Entrada: {numeros}"
-        if incluir_zero: msg += " + 🟢 ZERO"
-        if streak_info: msg += f" | 🔥 Streak: {streak_info}"
-        numeros_completos = previsao.get('numeros_completos', [])
-        melhores_principal = _selecionar_melhores_numeros(duzia_principal, numeros_completos, 6)
-        melhores_str = " ".join(map(str, melhores_principal))
-        st.toast(msg)
-        if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
-            enviar_telegram(f"🔔 {msg}\n🔢 {melhores_str}", st.session_state.telegram_token, st.session_state.telegram_chat_id)
-        if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
-            enviar_telegram(f"🎯: {melhores_str}" + (" + 🟢 ZERO" if incluir_zero else ""),
-                           st.session_state.telegram_token_alt, st.session_state.telegram_chat_id_alt)
-        salvar_sessao()
-    except Exception as e: logging.error(f"Erro enviar previsão: {e}")
-
-def enviar_resultado_auto(numero_real, acerto_duzia, acerto_numero, acerto_zero, eh_raio=False, multiplicador=0):
-    try:
-        partes = []
-        if acerto_zero: partes.append("✅ ZERO!")
-        elif numero_real == 0: partes.append("🟢 ZERO (não apostado)")
+        # Busca lista de concursos
+        url_lista = "https://loteriascaixa-api.herokuapp.com/api/megasena"
+        response = requests.get(url_lista, timeout=10)
+        
+        if response.status_code == 200:
+            dados = response.json()
+            
+            # Se for uma lista, retorna os últimos 'quantidade'
+            if isinstance(dados, list):
+                return dados[:quantidade]
+            # Se for um único concurso, retorna como lista
+            elif isinstance(dados, dict):
+                return [dados]
+            else:
+                return None
         else:
-            duzia_real = get_duzia(numero_real)
-            if acerto_numero:
-                partes.append(f"⚡ RAIO {multiplicador}X! Nº {numero_real}" if eh_raio else f"🎯 Nº EXATO {numero_real}!")
-            elif acerto_duzia: partes.append(f"✅ Green - D{duzia_real}")
-            else: partes.append(f"❌ Nº {numero_real} (D{duzia_real})")
-        msg = " | ".join(partes)
-        st.toast(msg)
-        if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
-            enviar_telegram(f"📢 Resultado: {msg}", st.session_state.telegram_token, st.session_state.telegram_chat_id)
-        if st.session_state.get('telegram_token_alt') and st.session_state.get('telegram_chat_id_alt'):
-            if acerto_duzia or acerto_zero:
-                if acerto_numero and eh_raio: msg_alt = f"⚡ GREEN RAIO {multiplicador}X! Nº {numero_real}"
-                elif acerto_numero: msg_alt = f"🎯 GREEN! Nº {numero_real}"
-                elif acerto_zero: msg_alt = "🟢 GREEN ZERO!"
-                else: msg_alt = f"✅ GREEN - D{get_duzia(numero_real)}"
-            else: msg_alt = f"❌ RED - Nº {numero_real}"
-            enviar_telegram(msg_alt, st.session_state.telegram_token_alt, st.session_state.telegram_chat_id_alt)
-        salvar_sessao()
-    except Exception as e: logging.error(f"Erro resultado: {e}")
+            # Fallback: busca concurso específico
+            return buscar_concurso_especifico()
+    except Exception as e:
+        st.error(f"❌ Erro ao buscar histórico: {e}")
+        return None
 
-def enviar_telegram(mensagem, token, chat_id):
+def buscar_concurso_especifico(numero=None):
+    """
+    Busca um concurso específico da Mega-Sena
+    """
     try:
-        if not token or not chat_id: return
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                     json={"chat_id": chat_id, "text": mensagem, "parse_mode": "HTML"}, timeout=10)
-    except Exception as e: logging.error(f"Erro Telegram: {e}")
-
-API_URLS = {
-    'XXXtreme Lightning': "https://api.casinoscores.com/svc-evolution-game-events/api/xxxtremelightningroulette/latest",
-    'Immersive Roulette': "https://api.casinoscores.com/svc-evolution-game-events/api/immersiveroulette/latest",
-    'Mega Roulette': "https://api.casinoscores.com/svc-evolution-game-events/api/megaroulette/latest",
-}
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-def get_duzia(numero):
-    if numero == 0: return 0
-    elif 1 <= numero <= 12: return 1
-    elif 13 <= numero <= 24: return 2
-    else: return 3
-
-def validar_numero(valor):
-    try: num = int(valor); return 0 <= num <= 36
-    except: return False
-
-def fetch_XXXtreme_Lightning():
-    try:
-        r = requests.get(API_URLS['XXXtreme Lightning'], headers=HEADERS, timeout=5); r.raise_for_status()
-        d = r.json(); gd = d.get("data", {}); rs = gd.get("result", {})
-        nm = rs.get("outcome", {}).get("number"); ts = gd.get("startedAt")
-        ti = gd.get("table", {}); ln = []; lm = {}
-        for item in rs.get('luckyNumbersList', []):
-            n = item.get('number')
-            if n is not None:
-                ln.append(n)
-                m = item.get('roundedMultiplier')
-                if m is not None: lm[n] = m
-        return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm,
-                "table_id": ti.get("id", "unknown"), "table_name": ti.get("name", "Desconhecida")}
-    except Exception as e: logging.warning(f"❌ Erro XXXtreme: {e}"); return None
-
-def fetch_Immersive_Roulette():
-    try:
-        r = requests.get(API_URLS['Immersive Roulette'], headers=HEADERS, timeout=5); r.raise_for_status()
-        d = r.json(); data = d.get("data", {}); outcome = data.get("result", {}).get("outcome", {})
-        ti = data.get("table", {})
-        return {"number": outcome.get("number"), "timestamp": data.get("startedAt"),
-                "luckyNumbers": [], "luckyMultipliers": {},
-                "table_id": ti.get("id", "unknown"), "table_name": ti.get("name", "Desconhecida")}
-    except Exception as e: logging.warning(f"❌ Erro Immersive: {e}"); return None
-
-def fetch_Mega_Roulette():
-    try:
-        r = requests.get(API_URLS['Mega Roulette'], headers=HEADERS, timeout=5); r.raise_for_status()
-        d = r.json(); gd = d.get("data", {}); rs = gd.get("result", {})
-        nm = rs.get("outcome", {}).get("number"); ts = gd.get("startedAt")
-        ti = gd.get("table", {}); ln = []; lm = {}
-        for item in rs.get('luckyNumbersList', []):
-            n = item.get('number')
-            if n is not None:
-                ln.append(n)
-                m = item.get('roundedMultiplier')
-                if m is not None: lm[n] = m
-        return {"number": nm, "timestamp": ts, "luckyNumbers": ln, "luckyMultipliers": lm,
-                "table_id": ti.get("id", "unknown"), "table_name": ti.get("name", "Desconhecida")}
-    except Exception as e: logging.warning(f"❌ Erro Mega: {e}"); return None
-
-FETCH_FUNCTIONS = {
-    'XXXtreme Lightning': fetch_XXXtreme_Lightning,
-    'Immersive Roulette': fetch_Immersive_Roulette,
-    'Mega Roulette': fetch_Mega_Roulette,
-}
-
-def fetch_latest_result():
-    api = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-    return FETCH_FUNCTIONS.get(api, fetch_XXXtreme_Lightning)()
-
-
-# =============================
-# FUNÇÕES AUXILIARES
-# =============================
-def _calcular_entropia(duzias):
-    if not duzias: return 0.0
-    freq = Counter(duzias); total = len(duzias); entropia = 0.0
-    for v in freq.values():
-        p = v / total
-        if p > 0: entropia -= p * np.log2(p)
-    return round(entropia, 4)
-
-def _calcular_gap_duzia(numeros, duzia):
-    for i, n in enumerate(reversed(numeros)):
-        if get_duzia(n) == duzia: return i
-    return len(numeros)
-
-def _calcular_autocorrelacao(serie, lag=3):
-    if len(serie) < lag + 4: return 0.0
-    try:
-        s = np.array(serie, dtype=float); s1 = s[:-lag]; s2 = s[lag:]
-        if np.std(s1) < 1e-9 or np.std(s2) < 1e-9: return 0.0
-        corr = np.corrcoef(s1, s2)[0, 1]
-        return float(corr) if not np.isnan(corr) else 0.0
-    except: return 0.0
-
-
-# =============================
-# 🧠 DUZIA AI V14.1 — COM DETECTOR DE TRANSIÇÃO
-# =============================
-
-class DuziaAI:
-    def __init__(self, window=30, api_name='XXXtreme Lightning'):
-        self.historico = deque(maxlen=window)
-        self.historico_completo = []
-        self.numeros_completos = []
-        self.historico_raios = []
-        self.ultimas_previsoes = []
-        self.ultimos_resultados = []
-        self.transicoes = defaultdict(Counter)
-        self.erros_por_duzia = {1: 0, 2: 0, 3: 0}
-        self.erros_consecutivos = 0
-        self.ultima_duzia_errada = None
-        self.entradas_consecutivas = 0
-        self.streak_ativo = None
-        self.alerta_zero_ativo = False
-        self.pausa_ate = None
-        self.modo_anti_erro = False
-        self.duzias_que_sairam = []
-        self.ultimo_resultado_duzia = None
-        self.ultimo_resultado_numero = None
-        self.ultima_confianca = 0
-        self._ml_scores_brutos = None
-        self.ultima_previsao_duzia = None
-        self.alertas_zero_disparados = 0
-        self.zeros_previstos = 0
-        self.acertos_consecutivos_mesma_duzia = 0
-        self.ultima_duzia_acertada = None
-        self.rodadas_desde_zero = 0
-        self.ultimo_raio_alto = 0
-        self.rodadas_pos_raio = 0
-        self.em_pausa_pos_raio = False
-        self.modelo_ml = None
-        self.ultimo_treino_ml = 0
-        self.mesa_atual = None
-        self.api_name = api_name
-        self.performance_por_mesa = defaultdict(lambda: {'acertos': 0, 'erros': 0})
-        self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
-        self.contagem_repeticoes_mesma_duzia = 0
-        self.padroes_tam2 = defaultdict(Counter)
-        self.padroes_tam3 = defaultdict(Counter)
-        self.padroes_tam4 = defaultdict(Counter)
-        self._rodadas_desde_decaimento = 0
-        self._streak_info_atual = {}
-        self._rodadas_sem_entrada = 0
-        self._ultimo_modelo_accuracy = 0.0
-        self._melhor_modelo = None
-        self._melhor_accuracy = 0.0
-        self._tentativas_sem_melhora = 0
-        self._ultimos_lucky_numbers = []
-        self._ultimo_multiplicador = 0
-
-        # THRESHOLD ADAPTATIVO
-        self.historico_confianca_resultado = deque(maxlen=100)
-        self._threshold_ajuste = 0.0
-
-        # DETECTOR DE TRANSIÇÃO
-        self.detector_regime = DetectorRegime(
-            window=10,
-            limiar_transicao=0.35,
-            limiar_instavel=0.50
-        )
-        self.regime_atual = 'estavel'
-        self._ultimo_features = None
-
-        config = self._get_config()
-        self.padrao_min_ocorrencias = config.get('padrao_min_ocorrencias', 3)
-        self.peso_tam2 = config.get('padrao_peso_tam2', 20)
-        self.peso_tam3 = config.get('padrao_peso_tam3', 50)
-        self.peso_tam4 = config.get('padrao_peso_tam4', 30)
-        self.conf_min_tam2 = config.get('padrao_conf_minima_tam2', 2)
-        self.conf_min_tam4 = config.get('padrao_conf_minima_tam4', 4)
-        self.consenso_peso_extra = config.get('padrao_consenso_peso_extra', 15)
-        self.historico_consenso_acertos = deque(maxlen=20)
-        self.consenso_confianca_dinamica = 1.0
-        self.consenso_min_conf = config.get('padrao_consenso_min_conf', 0.20)
-        self.ml_ignorar_consenso_conf_min = config.get('ml_ignorar_consenso_conf_min', 2.5)
-        self.padrao_qualidade_min_p2 = config.get('padrao_qualidade_min_p2', 15)
-        self.padrao_qualidade_min_p3 = config.get('padrao_qualidade_min_p3', 10)
-        self.padrao_qualidade_min_p4 = config.get('padrao_qualidade_min_p4', 8)
-        self.anti_vies_ativo = config.get('anti_vies_ativo', False)
-        self.anti_vies_duzia = config.get('anti_vies_duzia', None)
-        self.anti_vies_penalidade = config.get('anti_vies_penalidade', 1.0)
-        self.anti_vies_gatilho_p2 = config.get('anti_vies_gatilho_p2', False)
-        self.anti_vies_p4_isolado_extra = config.get('anti_vies_p4_isolado_extra', 1.0)
-        self.peso_adaptativo_ativo = config.get('peso_adaptativo_ativo', False)
-        self.peso_adaptativo_janela = config.get('peso_adaptativo_janela', 10)
-        self.peso_adaptativo_boost = config.get('peso_adaptativo_boost', 1.0)
-        self.vies_dinamico_ativo = config.get('vies_dinamico_ativo', True)
-        self.vies_dinamico_janela = config.get('vies_dinamico_janela', 30)
-        self.vies_dinamico_limiar = config.get('vies_dinamico_limiar', 0.15)
-        self.vies_dinamico_penalidade = config.get('vies_dinamico_penalidade', 0.80)
-        self._vies_dinamico_atual = None
-        self._vies_dinamico_intensidade = 0.0
-        self.decaimento_padroes_ativo = config.get('decaimento_padroes_ativo', True)
-        self.decaimento_fator = config.get('decaimento_fator', 0.97)
-        self.decaimento_a_cada = config.get('decaimento_a_cada', 5)
-        self.drift_janela = config.get('drift_janela', 15)
-        self.drift_taxa_minima = config.get('drift_taxa_minima', 0.30)
-        self.drift_alertar_apos = config.get('drift_alertar_apos', 5)
-        self.drift_rodadas_auto_reset = config.get('drift_rodadas_auto_reset', 20)
-        self._drift_ativo = False
-        self._drift_erros_consecutivos_entrada = 0
-        self.streak_config_ativo = config.get('streak_ativo', True)
-        self.streak_min_len = config.get('streak_min_len', 2)
-        self.streak_peso_feature = config.get('streak_peso_feature', 1.0)
-        self.streak_reforca_ml = config.get('streak_reforca_ml', True)
-        self.streak_conf_min_reforco = config.get('streak_conf_min_reforco', 2.5)
+        if numero:
+            url = f"https://loteriascaixa-api.herokuapp.com/api/megasena/{numero}"
+        else:
+            # Busca o último concurso
+            url = "https://loteriascaixa-api.herokuapp.com/api/megasena/latest"
         
-        # Configurações V14.1
-        self.usar_features_ml_avancadas = config.get('usar_features_ml_avancadas', True)
-        self.ml_features_raio_peso = config.get('ml_features_raio_peso', 1.3)
-        self.ml_features_consenso_peso = config.get('ml_features_consenso_peso', 1.4)
+        response = requests.get(url, timeout=10)
         
-        # Configurações de transição
-        self.detector_ativo = config.get('detector_regime_ativo', True)
-        self.transicao_penalidade_conf = config.get('transicao_penalidade_conf', 0.70)
-        self.transicao_aumentar_cobertura = config.get('transicao_aumentar_cobertura', True)
-        self.transicao_evitar_dominante = config.get('transicao_evitar_dominante', True)
-        self.transicao_score_minimo_extra = config.get('transicao_score_minimo_extra', 10)
+        if response.status_code == 200:
+            dados = response.json()
+            if isinstance(dados, dict):
+                return [dados]
+        return None
+    except Exception as e:
+        st.error(f"❌ Erro ao buscar concurso específico: {e}")
+        return None
 
-        # Configurações do threshold adaptativo
-        self.threshold_adaptativo_ativo = config.get('threshold_adaptativo_ativo', True)
-        self.threshold_adaptativo_janela = config.get('threshold_adaptativo_janela', 30)
-        self.threshold_adaptativo_alvo = config.get('threshold_adaptativo_alvo', 0.40)
-        self.threshold_adaptativo_passo = config.get('threshold_adaptativo_passo', 2.0)
-        self.threshold_adaptativo_min = config.get('threshold_adaptativo_min', -10.0)
-        self.threshold_adaptativo_max = config.get('threshold_adaptativo_max', 15.0)
+# =====================================================
+# MEGA-SENA VERSÃO 4 - GERADOR INTELIGENTE
+# =====================================================
 
-        self.anti_erro_min_erros_consecutivos = config.get('anti_erro_min_erros_consecutivos', 2)
-        self.transicao_confianca_multiplicador = config.get('transicao_confianca_multiplicador', 1.12)
-
-        self.padrao_ativo_ui = {'tam2': None, 'tam3': None, 'tam4': None}
-        self.padrao_stats_ui = {'tam2': None, 'tam3': None, 'tam4': None}
-        self.consenso_info = {'tipo': 'nenhum', 'duzia': None, 'conf': 0.0}
-
-        self._carregar_modelo_salvo()
-        self._carregar_padroes_hibridos()
-
-    def _carregar_modelo_salvo(self):
-        if not ML_DISPONIVEL: return
-        modelo = carregar_modelo_ml(self.api_name)
-        if modelo is None:
-            return
-        try:
-            n_features_salvo = getattr(modelo, 'n_features_in_', None)
-            features_teste = self._extrair_features_ml_completas(
-                historico_duzias=[1, 2, 3, 1, 2, 3, 1, 2],
-                historico_numeros=[1, 13, 25, 2, 14, 26, 3, 15],
-                erros_consec=0, rodadas_zero=0, repeticoes_duzia=0,
-                janela=20, modo_treino=True
-            )
-            n_features_atual = len(features_teste) if features_teste else None
-            if n_features_salvo is not None and n_features_atual is not None and n_features_salvo != n_features_atual:
-                logging.warning(
-                    f"⚠️ Modelo salvo incompatível ({n_features_salvo} vs {n_features_atual} features). "
-                    f"Descartando e invalidando arquivo em disco."
-                )
-                invalidar_modelo_ml(self.api_name)
-                return
-        except Exception as e:
-            logging.warning(f"⚠️ Não foi possível validar modelo salvo, descartando: {e}")
-            invalidar_modelo_ml(self.api_name)
-            return
-
-        self.modelo_ml = modelo
-        self.ultimo_treino_ml = 1
-        self._melhor_modelo = modelo
-        logging.info(f"🧠 Modelo ML carregado do disco para {self.api_name}")
-
-    def _salvar_padroes_hibridos(self):
-        paths = get_session_paths(self.api_name)
-        caminho = paths.get('padroes_hibridos', '')
-        if not caminho: return
-        try:
-            dados = {
-                'tam2': {str(k): dict(v) for k, v in self.padroes_tam2.items()},
-                'tam3': {str(k): dict(v) for k, v in self.padroes_tam3.items()},
-                'tam4': {str(k): dict(v) for k, v in self.padroes_tam4.items()},
-            }
-            with open(caminho, 'w') as f: json.dump(dados, f)
-        except Exception as e: logging.error(f"❌ Erro ao salvar padrões: {e}")
-
-    def _carregar_padroes_hibridos(self):
-        paths = get_session_paths(self.api_name)
-        caminho = paths.get('padroes_hibridos', '')
-        if caminho and os.path.exists(caminho):
-            try:
-                import ast
-                with open(caminho, 'r') as f: dados = json.load(f)
-                for k, v in dados.get('tam2', {}).items():
-                    try: self.padroes_tam2[int(k)] = Counter({int(dk): dv for dk, dv in v.items()})
-                    except: pass
-                for k, v in dados.get('tam3', {}).items():
-                    try: self.padroes_tam3[tuple(ast.literal_eval(k))] = Counter({int(dk): dv for dk, dv in v.items()})
-                    except: pass
-                for k, v in dados.get('tam4', {}).items():
-                    try: self.padroes_tam4[tuple(ast.literal_eval(k))] = Counter({int(dk): dv for dk, dv in v.items()})
-                    except: pass
-            except Exception as e: logging.error(f"❌ Erro ao carregar padrões: {e}")
-
-    def _atualizar_padroes_hibridos(self, historico_duzias):
-        duzias = [d for d in historico_duzias if d != 0]
-        if len(duzias) >= 2:
-            for i in range(len(duzias) - 1): self.padroes_tam2[duzias[i]][duzias[i+1]] += 1
-        if len(duzias) >= 3:
-            for i in range(len(duzias) - 2): self.padroes_tam3[(duzias[i], duzias[i+1])][duzias[i+2]] += 1
-        if len(duzias) >= 4:
-            for i in range(len(duzias) - 3): self.padroes_tam4[(duzias[i], duzias[i+1], duzias[i+2])][duzias[i+3]] += 1
-        if self.decaimento_padroes_ativo:
-            self._rodadas_desde_decaimento += 1
-            if self._rodadas_desde_decaimento >= self.decaimento_a_cada:
-                self._rodadas_desde_decaimento = 0
-                aplicar_decaimento_padroes(self.padroes_tam2, self.decaimento_fator)
-                aplicar_decaimento_padroes(self.padroes_tam3, self.decaimento_fator)
-                aplicar_decaimento_padroes(self.padroes_tam4, self.decaimento_fator)
-
-    def _get_qualidade_min_dinamica(self):
-        n = len(self.historico_completo)
-        fator = min(1.0, n / 80.0)
-        q_p2 = max(5, int(self.padrao_qualidade_min_p2 * fator))
-        q_p3 = max(4, int(self.padrao_qualidade_min_p3 * fator))
-        q_p4 = max(3, int(self.padrao_qualidade_min_p4 * fator))
-        return q_p2, q_p3, q_p4
-
-    def _verificar_qualidade_padroes(self):
-        q_p2, q_p3, q_p4 = self._get_qualidade_min_dinamica()
-        p2_stats = self.padrao_stats_ui.get('tam2')
-        p3_stats = self.padrao_stats_ui.get('tam3')
-        p4_stats = self.padrao_stats_ui.get('tam4')
-        p2_total = p2_stats.get('total', 0) if p2_stats else 0
-        p3_total = p3_stats.get('total', 0) if p3_stats else 0
-        p4_total = p4_stats.get('total', 0) if p4_stats else 0
-        p2_ok = p2_total > q_p2
-        p3_ok = p3_total > q_p3
-        p4_ok = p4_total > q_p4
-        return sum([p2_ok, p3_ok, p4_ok]), {'p2': p2_ok, 'p3': p3_ok, 'p4': p4_ok}
-
-    def _detectar_consenso(self, scores_p2, scores_p3, scores_p4, conf_p2, conf_p3, conf_p4):
-        padroes_validos, qualidade = self._verificar_qualidade_padroes()
-        if padroes_validos < 1:
-            return 'nenhum', None, 0.0
-        preferencias = []; confs = []
-        if scores_p2 and conf_p2 >= self.consenso_min_conf and qualidade['p2']:
-            preferencias.append(max(scores_p2, key=scores_p2.get)); confs.append(conf_p2)
-        if scores_p3 and conf_p3 >= self.consenso_min_conf and qualidade['p3']:
-            preferencias.append(max(scores_p3, key=scores_p3.get)); confs.append(conf_p3)
-        if scores_p4 and conf_p4 >= self.consenso_min_conf and qualidade['p4']:
-            preferencias.append(max(scores_p4, key=scores_p4.get)); confs.append(conf_p4)
-        if len(preferencias) < 1: return 'nenhum', None, 0.0
-        contagem = Counter(preferencias); mais_comum = contagem.most_common(1)[0]
-        if mais_comum[1] >= 3: return 'triplo', mais_comum[0], sum(confs) / len(confs)
-        elif mais_comum[1] >= 2: return 'duplo', mais_comum[0], sum(confs) / len(confs)
-        elif len(preferencias) == 1: return 'simples', preferencias[0], confs[0]
-        return 'nenhum', None, 0.0
-
-    def _get_config(self):
-        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-        return ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME).copy()
-
-    # 🆕 [REMOVIDO] _aplicar_peso_adaptativo (heurística de reforço por
-    # frequência dominante) — não é mais chamada; a previsão vem só do ML.
-
-    def _extrair_features_temporais(self, historico_duzias):
-        agora = hora_brasilia(); hora = agora.hour; minuto = agora.minute
-        turno = 0 if 6 <= hora < 12 else (1 if 12 <= hora < 18 else 2)
-        duzias = [d for d in historico_duzias if d != 0]
-        tendencia = {1: 0.0, 2: 0.0, 3: 0.0}
-        if len(duzias) >= 15:
-            rec5 = Counter(duzias[-5:]); rec15 = Counter(duzias[-15:])
-            for d in [1, 2, 3]: tendencia[d] = round((rec5.get(d, 0) / 5.0) - (rec15.get(d, 0) / 15.0), 4)
-        return [hora / 23.0, minuto / 59.0, float(turno) / 2.0, tendencia[1], tendencia[2], tendencia[3]]
-
-    def _extrair_features_padroes_hibridos(self, historico_duzias, modo_treino=False):
-        duzias = [d for d in historico_duzias if d != 0]
-        features = {}
-        for prefixo in ['p2', 'p3', 'p4']:
-            for k in ['d1', 'd2', 'd3', 'conf', 'total', 'dom']: features[f'{prefixo}_{k}'] = 0.0
-        features.update({'combo_d1': 0.0, 'combo_d2': 0.0, 'combo_d3': 0.0, 'combo_conf': 0.0})
-        if len(duzias) < 1: return features
-
-        combo_scores = {1: 0.0, 2: 0.0, 3: 0.0}; combo_conf_total = 0.0; soma_pesos = 0.0
-        scores_p2 = scores_p3 = scores_p4 = None
-        conf_p2 = conf_p3 = conf_p4 = 0.0
-        q_p2, q_p3, q_p4 = self._get_qualidade_min_dinamica()
-
-        # Padrão 2
-        if len(duzias) >= 1:
-            d1 = duzias[-1]
-            if d1 in self.padroes_tam2:
-                dist = self.padroes_tam2[d1]; total = sum(dist.values())
-                if total >= self.conf_min_tam2:
-                    scores = {k: dist.get(k, 0)/total for k in [1,2,3]}
-                    max_s = max(scores.values()); seg_s = sorted(scores.values(), reverse=True)[1]
-                    features['p2_d1'] = scores.get(1, 0.0); features['p2_d2'] = scores.get(2, 0.0)
-                    features['p2_d3'] = scores.get(3, 0.0)
-                    features['p2_conf'] = round((max_s - seg_s) * min(1.0, total/20), 4)
-                    features['p2_total'] = float(total); features['p2_dom'] = round(max_s - seg_s, 4)
-                    if total > q_p2:
-                        peso = self.peso_tam2 / 100.0
-                        for k in [1,2,3]: combo_scores[k] += scores[k] * features['p2_conf'] * peso
-                        combo_conf_total += features['p2_conf'] * peso; soma_pesos += peso
-                    scores_p2 = scores; conf_p2 = features['p2_conf']
-                    if not modo_treino:
-                        self.padrao_stats_ui['tam2'] = {'gatilho': f"D{d1}", 'total': total, 'scores': scores, 'conf': features['p2_conf']}
-                        self.padrao_ativo_ui['tam2'] = d1
-                else:
-                    if not modo_treino: self.padrao_stats_ui['tam2'] = None; self.padrao_ativo_ui['tam2'] = None
-
-        # Padrão 3
-        if len(duzias) >= 2:
-            d1, d2 = duzias[-2], duzias[-1]; par = (d1, d2)
-            if par in self.padroes_tam3:
-                dist = self.padroes_tam3[par]; total = sum(dist.values())
-                if total >= self.padrao_min_ocorrencias:
-                    scores = {k: dist.get(k, 0)/total for k in [1,2,3]}
-                    max_s = max(scores.values()); seg_s = sorted(scores.values(), reverse=True)[1]
-                    features['p3_d1'] = scores.get(1, 0.0); features['p3_d2'] = scores.get(2, 0.0)
-                    features['p3_d3'] = scores.get(3, 0.0)
-                    features['p3_conf'] = round((max_s - seg_s) * (1 + np.log1p(total)/5), 4)
-                    features['p3_total'] = float(total); features['p3_dom'] = round(max_s - seg_s, 4)
-                    if total > q_p3:
-                        peso = self.peso_tam3 / 100.0
-                        for k in [1,2,3]: combo_scores[k] += scores[k] * features['p3_conf'] * peso
-                        combo_conf_total += features['p3_conf'] * peso; soma_pesos += peso
-                    scores_p3 = scores; conf_p3 = features['p3_conf']
-                    if not modo_treino:
-                        self.padrao_stats_ui['tam3'] = {'gatilho': f"D{d1}→D{d2}", 'total': total, 'scores': scores, 'conf': features['p3_conf']}
-                        self.padrao_ativo_ui['tam3'] = par
-                else:
-                    if not modo_treino: self.padrao_stats_ui['tam3'] = None; self.padrao_ativo_ui['tam3'] = None
-
-        # Padrão 4
-        if len(duzias) >= 3:
-            d1, d2, d3 = duzias[-3], duzias[-2], duzias[-1]; trio = (d1, d2, d3)
-            if trio in self.padroes_tam4:
-                dist = self.padroes_tam4[trio]; total = sum(dist.values())
-                if total >= self.conf_min_tam4:
-                    scores = {k: dist.get(k, 0)/total for k in [1,2,3]}
-                    max_s = max(scores.values()); seg_s = sorted(scores.values(), reverse=True)[1]
-                    features['p4_d1'] = scores.get(1, 0.0); features['p4_d2'] = scores.get(2, 0.0)
-                    features['p4_d3'] = scores.get(3, 0.0)
-                    features['p4_conf'] = round((max_s - seg_s) * (1 + np.log1p(total)/3), 4)
-                    features['p4_total'] = float(total); features['p4_dom'] = round(max_s - seg_s, 4)
-                    if total > q_p4:
-                        peso = self.peso_tam4 / 100.0
-                        for k in [1,2,3]: combo_scores[k] += scores[k] * features['p4_conf'] * peso
-                        combo_conf_total += features['p4_conf'] * peso; soma_pesos += peso
-                    scores_p4 = scores; conf_p4 = features['p4_conf']
-                    if not modo_treino:
-                        self.padrao_stats_ui['tam4'] = {'gatilho': f"D{d1}→D{d2}→D{d3}", 'total': total, 'scores': scores, 'conf': features['p4_conf']}
-                        self.padrao_ativo_ui['tam4'] = trio
-                else:
-                    if not modo_treino: self.padrao_stats_ui['tam4'] = None; self.padrao_ativo_ui['tam4'] = None
-
-        if soma_pesos > 0:
-            for k in [1,2,3]: features[f'combo_d{k}'] = round(combo_scores[k] / soma_pesos, 4)
-            features['combo_conf'] = round(combo_conf_total / soma_pesos, 4)
-
-        if not modo_treino:
-            tipo, duzia, conf = self._detectar_consenso(scores_p2, scores_p3, scores_p4, conf_p2, conf_p3, conf_p4)
-            self.consenso_info = {'tipo': tipo, 'duzia': duzia, 'conf': conf}
-
-        return features
-
-    def _extrair_features_streak_ml(self, historico_duzias):
-        st_info = extrair_features_streak(historico_duzias)
-        self._streak_info_atual = st_info
-        return [
-            float(st_info['streak_atual_duzia']), float(st_info['streak_atual_len']),
-            float(st_info['streak_duzia1_len']), float(st_info['streak_duzia2_len']), float(st_info['streak_duzia3_len']),
-            float(st_info['prob_continua_streak2']), float(st_info['prob_continua_streak3']),
-            float(st_info['prob_quebra_streak2']), float(st_info['prob_quebra_streak3']),
-            float(st_info['streak_max_recente']), float(st_info['entrada_streak_duzia']),
-            float(st_info['cobertura_streak_duzia']), float(st_info['streak_quebra_iminente']),
-            float(st_info['streak_forca']), float(st_info.get('streak_saturado', 0)),
-            float(st_info.get('streak_taxa_quebra_real', 0.0)),
+class GeradorMegaSenaV4:
+    """
+    Versão 4 do gerador da Mega-Sena
+    Baseado em análise de colunas e padrões históricos
+    """
+    
+    def __init__(self, dados_api, qtd_concursos=50):
+        self.dados_api = dados_api
+        self.qtd_concursos = min(qtd_concursos, len(dados_api))
+        
+        # Definição das colunas (6 colunas de 10 números cada)
+        self.colunas = {
+            'C1': list(range(1, 11)),
+            'C2': list(range(11, 21)),
+            'C3': list(range(21, 31)),
+            'C4': list(range(31, 41)),
+            'C5': list(range(41, 51)),
+            'C6': list(range(51, 61))
+        }
+        
+        # Lista de números primos para destaque
+        self.primos = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59}
+        
+        # Processa concursos
+        self.concursos = []
+        for concurso in dados_api[:self.qtd_concursos]:
+            if 'dezenas' in concurso:
+                dezenas = sorted(map(int, concurso['dezenas']))
+                self.concursos.append(dezenas)
+        
+        self.ultimo_concurso = self.concursos[0] if self.concursos else []
+        
+        # Calcula frequências e análises
+        self.frequencias = self._calcular_frequencias()
+        self.atrasos = self._calcular_atrasos()
+        self.analise_colunas = self._analisar_colunas()
+        
+    def _calcular_frequencias(self):
+        freq = Counter()
+        for concurso in self.concursos:
+            freq.update(concurso)
+        return freq
+    
+    def _calcular_atrasos(self):
+        atrasos = {i: 0 for i in range(1, 61)}
+        if not self.concursos:
+            return atrasos
+        for dezena in range(1, 61):
+            atraso = 0
+            for concurso in self.concursos:
+                if dezena in concurso:
+                    break
+                atraso += 1
+            atrasos[dezena] = atraso
+        return atrasos
+    
+    def _analisar_colunas(self):
+        """Analisa frequência de cada coluna nos últimos concursos"""
+        contagem = {col: 0 for col in self.colunas}
+        for concurso in self.concursos[:20]:  # Últimos 20 concursos
+            for dezena in concurso:
+                for col, intervalo in self.colunas.items():
+                    if dezena in intervalo:
+                        contagem[col] += 1
+                        break
+        
+        # Ordena colunas por frequência
+        colunas_ordenadas = sorted(contagem.items(), key=lambda x: x[1], reverse=True)
+        
+        return {
+            'contagem': contagem,
+            'colunas_mais_frequentes': colunas_ordenadas,
+            'coluna_principal': colunas_ordenadas[0][0] if colunas_ordenadas else 'C3',
+            'coluna_apoio1': colunas_ordenadas[1][0] if len(colunas_ordenadas) > 1 else 'C4',
+            'coluna_apoio2': colunas_ordenadas[2][0] if len(colunas_ordenadas) > 2 else 'C6'
+        }
+    
+    def get_dezenas_por_coluna(self, coluna, quantidade, usar_frequentes=True):
+        """Retorna dezenas específicas de uma coluna"""
+        if coluna not in self.colunas:
+            return []
+        
+        numeros_coluna = self.colunas[coluna]
+        
+        if usar_frequentes:
+            # Pega números mais frequentes nesta coluna
+            numeros_com_freq = [(n, self.frequencias.get(n, 0)) for n in numeros_coluna]
+            numeros_com_freq.sort(key=lambda x: x[1], reverse=True)
+            numeros_ordenados = [n for n, _ in numeros_com_freq]
+        else:
+            numeros_ordenados = numeros_coluna.copy()
+            random.shuffle(numeros_ordenados)
+        
+        # Seleciona os primeiros 'quantidade' números
+        selecionados = numeros_ordenados[:min(quantidade, len(numeros_ordenados))]
+        
+        # Se não tiver números suficientes, completa com aleatórios
+        if len(selecionados) < quantidade:
+            disponiveis = [n for n in numeros_coluna if n not in selecionados]
+            if disponiveis:
+                extras = random.sample(disponiveis, min(quantidade - len(selecionados), len(disponiveis)))
+                selecionados.extend(extras)
+        
+        return sorted(selecionados)
+    
+    def criar_jogo(self, configuracao_colunas, usar_frequentes=True):
+        """Cria um jogo baseado na configuração de colunas"""
+        dezenas = []
+        
+        for coluna, quantidade in configuracao_colunas:
+            numeros = self.get_dezenas_por_coluna(coluna, quantidade, usar_frequentes)
+            dezenas.extend(numeros)
+        
+        # Remove duplicatas e ordena
+        dezenas = sorted(list(set(dezenas)))
+        
+        # Se tiver mais de 6, corta
+        if len(dezenas) > 6:
+            dezenas = dezenas[:6]
+        # Se tiver menos de 6, completa
+        elif len(dezenas) < 6:
+            todos_numeros = set(range(1, 61))
+            usados = set(dezenas)
+            disponiveis = list(todos_numeros - usados)
+            if disponiveis:
+                extras = random.sample(disponiveis, min(6 - len(dezenas), len(disponiveis)))
+                dezenas.extend(extras)
+                dezenas.sort()
+        
+        return dezenas
+    
+    def gerar_jogos_principais(self, qtd=10):
+        """Gera os 10 jogos principais baseados na Versão 4"""
+        coluna_principal = self.analise_colunas['coluna_principal']
+        coluna_apoio1 = self.analise_colunas['coluna_apoio1']
+        coluna_apoio2 = self.analise_colunas['coluna_apoio2']
+        
+        # Configuração dos jogos principais
+        configs = [
+            # Jogo 1: Base C3 + C6
+            [(coluna_principal, 2), (coluna_apoio1, 1), (coluna_apoio2, 2), ('C1', 1)],
+            # Jogo 2: Base C3 + C4
+            [('C1', 1), (coluna_apoio1, 2), (coluna_principal, 2), ('C5', 1)],
+            # Jogo 3: Base C3 + C4 + C6
+            [(coluna_principal, 2), (coluna_apoio1, 2), (coluna_apoio2, 1), ('C1', 1)],
+            # Jogo 4: Equilibrado
+            [('C1', 2), (coluna_apoio2, 2), (coluna_principal, 1), (coluna_apoio1, 1)],
+            # Jogo 5: Reforço C3
+            [('C1', 1), (coluna_principal, 2), (coluna_apoio1, 1), (coluna_apoio2, 1), ('C5', 1)],
+            # Jogo 6: Reforço C6
+            [(coluna_principal, 1), (coluna_apoio2, 2), ('C1', 1), (coluna_apoio1, 1), ('C5', 1)],
+            # Jogo 7: Miolo
+            [('C5', 1), (coluna_apoio2, 1), (coluna_principal, 2), (coluna_apoio1, 1), ('C1', 1)],
+            # Jogo 8: C1 + C6
+            [(coluna_apoio2, 2), ('C1', 2), (coluna_apoio1, 1), (coluna_principal, 1)],
+            # Jogo 9: Diversificado
+            [('C5', 1), (coluna_apoio1, 1), (coluna_principal, 1), (coluna_apoio2, 2), ('C1', 1)],
+            # Jogo 10: Fechamento
+            [(coluna_apoio2, 1), ('C5', 1), ('C1', 1), (coluna_principal, 2), (coluna_apoio1, 1)]
         ]
-
-    def _extrair_features_ml_completas(self, historico_duzias, historico_numeros,
-                                         erros_consec, rodadas_zero, repeticoes_duzia, janela=20, modo_treino=False):
-        features_base = self._extrair_features_core(
-            historico_duzias, historico_numeros,
-            erros_consec, rodadas_zero, repeticoes_duzia, janela,
-            modo_treino=modo_treino
-        )
         
-        if features_base is None:
+        jogos = []
+        for config in configs[:qtd]:
+            jogo = self.criar_jogo(config, usar_frequentes=True)
+            jogos.append(jogo)
+        
+        return jogos
+    
+    def gerar_jogos_protecao(self, qtd=5):
+        """Gera os 5 jogos de proteção"""
+        coluna_principal = self.analise_colunas['coluna_principal']
+        coluna_apoio1 = self.analise_colunas['coluna_apoio1']
+        coluna_apoio2 = self.analise_colunas['coluna_apoio2']
+        
+        configs = [
+            # Proteção 1: C2
+            [(coluna_principal, 2), ('C2', 1), ('C5', 1), (coluna_apoio1, 1), (coluna_apoio2, 1)],
+            # Proteção 2: C2 + C5
+            [('C2', 1), (coluna_principal, 2), (coluna_apoio1, 1), ('C5', 1), (coluna_apoio2, 1)],
+            # Proteção 3: Cobertura total
+            [('C2', 1), (coluna_principal, 1), (coluna_apoio1, 1), ('C1', 1), (coluna_apoio2, 1), ('C5', 1)],
+            # Proteção 4: Reforço C2
+            [(coluna_apoio1, 1), (coluna_apoio2, 1), ('C5', 1), ('C2', 2), (coluna_principal, 1)],
+            # Proteção 5: Cobertura ampla
+            [('C1', 1), ('C2', 1), (coluna_principal, 1), (coluna_apoio1, 1), ('C5', 1), (coluna_apoio2, 1)]
+        ]
+        
+        jogos = []
+        for config in configs[:qtd]:
+            jogo = self.criar_jogo(config, usar_frequentes=True)
+            jogos.append(jogo)
+        
+        return jogos
+    
+    def gerar_todos_jogos(self):
+        """Gera todos os 15 jogos (10 principais + 5 proteção)"""
+        principais = self.gerar_jogos_principais(10)
+        protecao = self.gerar_jogos_protecao(5)
+        
+        return {
+            'principais': principais,
+            'protecao': protecao,
+            'todos': principais + protecao
+        }
+    
+    def analisar_jogo(self, jogo):
+        """Analisa um jogo e retorna estatísticas"""
+        if not jogo or len(jogo) != 6:
             return None
         
-        if not self.usar_features_ml_avancadas:
-            return features_base
+        # Contagem por coluna
+        colunas_contagem = {col: 0 for col in self.colunas}
+        for num in jogo:
+            for col, intervalo in self.colunas.items():
+                if num in intervalo:
+                    colunas_contagem[col] += 1
+                    break
         
-        features_pos_zero = extrair_features_pos_zero(historico_numeros, historico_duzias)
-        features_numero_duzia = extrair_features_numero_duzia(historico_numeros, historico_duzias)
-        features_fadiga = extrair_features_fadiga(historico_duzias)
-        features_alternancia = extrair_features_alternancia(historico_duzias)
-        features_ciclos = extrair_features_ciclos(historico_duzias)
-        features_entropia = extrair_features_entropia_local(historico_duzias)
-        features_vies_curto = extrair_features_vies_curto_prazo(historico_duzias)
-        features_raio = extrair_features_raio(self.historico_raios)
-        features_consenso = extrair_features_consenso(self.consenso_info)
+        colunas_ativas = [col for col, qtd in colunas_contagem.items() if qtd > 0]
         
-        config = self._get_config()
-        peso_zero = config.get('ml_features_pos_zero_peso', 1.2)
-        peso_numero = config.get('ml_features_numero_duzia_peso', 1.0)
-        peso_fadiga = config.get('ml_features_fadiga_peso', 1.5)
-        peso_alternancia = config.get('ml_features_alternancia_peso', 1.0)
-        peso_ciclos = config.get('ml_features_ciclos_peso', 0.9)
-        peso_entropia = config.get('ml_features_entropia_peso', 0.8)
-        peso_vies = config.get('ml_features_vies_curto_peso', 1.2)
-        peso_raio = config.get('ml_features_raio_peso', 1.3)
-        peso_consenso = config.get('ml_features_consenso_peso', 1.4)
-        
-        features_pos_zero = [f * peso_zero for f in features_pos_zero]
-        features_numero_duzia = [f * peso_numero for f in features_numero_duzia]
-        features_fadiga = [f * peso_fadiga for f in features_fadiga]
-        features_alternancia = [f * peso_alternancia for f in features_alternancia]
-        features_ciclos = [f * peso_ciclos for f in features_ciclos]
-        features_entropia = [f * peso_entropia for f in features_entropia]
-        features_vies_curto = [f * peso_vies for f in features_vies_curto]
-        features_raio = [f * peso_raio for f in features_raio]
-        features_consenso = [f * peso_consenso for f in features_consenso]
-        
-        return features_base + features_pos_zero + features_numero_duzia + features_fadiga + \
-               features_alternancia + features_ciclos + features_entropia + features_vies_curto + \
-               features_raio + features_consenso
-
-    def _extrair_features_core(self, historico_duzias, historico_numeros,
-                                erros_consec, rodadas_zero, repeticoes_duzia, janela=20, modo_treino=False):
-        numeros_janela = historico_numeros[-janela:] if len(historico_numeros) >= janela else historico_numeros
-        duzias_janela = [d for d in historico_duzias[-janela:] if d != 0]
-        if not duzias_janela or len(historico_duzias) < 5: return None
-
-        ultimas_4_raw = list(historico_duzias[-4:])
-        while len(ultimas_4_raw) < 4: ultimas_4_raw = [0] + ultimas_4_raw
-        ultimas_4 = ultimas_4_raw[:4]
-
-        terminais = [n % 10 for n in numeros_janela if n != 0]
-        contagem_terminais = Counter(terminais).most_common(3)
-        t1_quente = contagem_terminais[0][0] if contagem_terminais else -1
-        t2_quente = contagem_terminais[1][0] if len(contagem_terminais) > 1 else -1
-        freq_terminal_zero = terminais.count(0)
-
-        try: rodadas_sem_zero = list(reversed(numeros_janela)).index(0)
-        except ValueError: rodadas_sem_zero = janela
-        contagem_zeros_janela = numeros_janela.count(0)
-
-        freq_total = Counter(duzias_janela)
-        freq_recente = Counter(duzias_janela[-8:]) if len(duzias_janela) >= 8 else Counter(duzias_janela)
-        freq_d1 = freq_total.get(1, 0); freq_d2 = freq_total.get(2, 0); freq_d3 = freq_total.get(3, 0)
-        freq_d1_rec = freq_recente.get(1, 0); freq_d2_rec = freq_recente.get(2, 0); freq_d3_rec = freq_recente.get(3, 0)
-        duzia_dominante = freq_total.most_common(1)[0][0] if freq_total else -1
-        duzia_recente = freq_recente.most_common(1)[0][0] if freq_recente else -1
-
-        streak_count = 1
-        for i in range(len(duzias_janela) - 1, 0, -1):
-            if duzias_janela[i] == duzias_janela[i - 1]: streak_count += 1
-            else: break
-
-        max_streak = 1; cur_streak = 1
-        for i in range(1, len(duzias_janela)):
-            if duzias_janela[i] == duzias_janela[i - 1]: cur_streak += 1; max_streak = max(max_streak, cur_streak)
-            else: cur_streak = 1
-
-        transicoes_recentes = sum(1 for i in range(1, min(10, len(duzias_janela))) if duzias_janela[-i] != duzias_janela[-i-1])
-
-        aba_pattern = 0
-        if len(duzias_janela) >= 3 and duzias_janela[-1] == duzias_janela[-3] and duzias_janela[-1] != duzias_janela[-2]:
-            aba_pattern = 1
-
-        gap_d1 = next((i for i, n in enumerate(reversed(historico_numeros)) if get_duzia(n) == 1), len(historico_numeros))
-        gap_d2 = next((i for i, n in enumerate(reversed(historico_numeros)) if get_duzia(n) == 2), len(historico_numeros))
-        gap_d3 = next((i for i, n in enumerate(reversed(historico_numeros)) if get_duzia(n) == 3), len(historico_numeros))
-
-        n_total = max(1, len(duzias_janela)); esperado = n_total / 3
-        volatilidade = abs(freq_d1 - esperado) + abs(freq_d2 - esperado) + abs(freq_d3 - esperado)
-        nums_nao_zero = [n for n in numeros_janela if n != 0]
-        paridade = sum(1 for n in nums_nao_zero if n % 2 == 0) / max(1, len(nums_nao_zero))
-        entropia = _calcular_entropia(duzias_janela)
-        gaps = {1: gap_d1, 2: gap_d2, 3: gap_d3}; duzia_mais_ausente = max(gaps, key=gaps.get)
-
-        seq_recente = [get_duzia(n) for n in historico_numeros[-5:] if n != 0]
-        mono_up = 1 if len(seq_recente) >= 3 and all(seq_recente[i] <= seq_recente[i+1] for i in range(len(seq_recente)-1)) else 0
-        mono_down = 1 if len(seq_recente) >= 3 and all(seq_recente[i] >= seq_recente[i+1] for i in range(len(seq_recente)-1)) else 0
-
-        autocorr_lag2 = _calcular_autocorrelacao(duzias_janela, lag=2)
-        autocorr_lag3 = _calcular_autocorrelacao(duzias_janela, lag=3)
-
-        ultimas5 = [d for d in historico_duzias[-5:] if d != 0]
-        prop_d1_rec5 = ultimas5.count(1) / max(1, len(ultimas5))
-        prop_d2_rec5 = ultimas5.count(2) / max(1, len(ultimas5))
-        prop_d3_rec5 = ultimas5.count(3) / max(1, len(ultimas5))
-
-        abab_pattern = 0
-        if len(duzias_janela) >= 4 and duzias_janela[-1] == duzias_janela[-3] and duzias_janela[-2] == duzias_janela[-4] and duzias_janela[-1] != duzias_janela[-2]:
-            abab_pattern = 1
-
-        ultimas3 = [d for d in historico_duzias[-3:] if d != 0]
-        duzia_dom_3 = Counter(ultimas3).most_common(1)[0][0] if ultimas3 else 0
-        ultimas6 = [d for d in historico_duzias[-6:] if d != 0]
-        diversidade_6 = len(set(ultimas6)) if ultimas6 else 0
-        ultima_duzia = historico_duzias[-1] if historico_duzias else 0
-        penultima_duzia = historico_duzias[-2] if len(historico_duzias) >= 2 else 0
-        diff_ultimas2 = abs(ultima_duzia - penultima_duzia) if (ultima_duzia != 0 and penultima_duzia != 0) else 0
-
-        features_base = [
-            float(ultimas_4[0]), float(ultimas_4[1]), float(ultimas_4[2]), float(ultimas_4[3]),
-            float(t1_quente), float(t2_quente), float(freq_terminal_zero),
-            float(rodadas_sem_zero), float(contagem_zeros_janela),
-            float(duzia_dominante), float(duzia_recente), float(streak_count), float(max_streak),
-            float(transicoes_recentes), float(aba_pattern),
-            float(freq_d1), float(freq_d2), float(freq_d3),
-            float(freq_d1_rec), float(freq_d2_rec), float(freq_d3_rec),
-            float(gap_d1), float(gap_d2), float(gap_d3),
-            float(erros_consec), float(rodadas_zero), float(volatilidade),
-            float(paridade), float(entropia), float(duzia_mais_ausente),
-            float(mono_up), float(mono_down), float(repeticoes_duzia),
-            float(autocorr_lag2), float(autocorr_lag3),
-            float(prop_d1_rec5), float(prop_d2_rec5), float(prop_d3_rec5),
-            float(abab_pattern), float(duzia_dom_3), float(diversidade_6),
-            float(ultima_duzia), float(penultima_duzia), float(diff_ultimas2),
-        ]
-
-        pf = self._extrair_features_padroes_hibridos(historico_duzias, modo_treino=modo_treino)
-        features_padroes = [
-            pf['p2_d1'], pf['p2_d2'], pf['p2_d3'], pf['p2_conf'], pf['p2_total'], pf['p2_dom'],
-            pf['p3_d1'], pf['p3_d2'], pf['p3_d3'], pf['p3_conf'], pf['p3_total'], pf['p3_dom'],
-            pf['p4_d1'], pf['p4_d2'], pf['p4_d3'], pf['p4_conf'], pf['p4_total'], pf['p4_dom'],
-            pf['combo_d1'], pf['combo_d2'], pf['combo_d3'], pf['combo_conf'],
-        ]
-
-        features_temporais = self._extrair_features_temporais(historico_duzias)
-        features_streak = self._extrair_features_streak_ml(historico_duzias)
-
-        return features_base + features_padroes + features_temporais + features_streak
-
-    def extrair_features_estado(self, janela=20):
-        features = self._extrair_features_ml_completas(
-            historico_duzias=self.historico_completo, 
-            historico_numeros=self.numeros_completos,
-            erros_consec=self.erros_consecutivos, 
-            rodadas_zero=self.rodadas_desde_zero,
-            repeticoes_duzia=self.contagem_repeticoes_mesma_duzia, 
-            janela=janela,
-            modo_treino=False
-        )
-        
-        if features is not None and self.detector_ativo:
-            self.regime_atual = self.detector_regime.atualizar(features, duzias_recentes=self.historico_completo[-12:])
-            self._ultimo_features = features
-        
-        return features
-
-    def _extrair_features_historico(self, historico_duzias, historico_numeros, janela=20):
-        erros_consec = 0; rodadas_zero = 0
-        for n in reversed(historico_numeros):
-            if n == 0: break
-            rodadas_zero += 1
-        repeticoes = 0
-        duzias_hist = [d for d in historico_duzias if d != 0]
-        if duzias_hist:
-            ultima = duzias_hist[-1]
-            for d in reversed(duzias_hist[:-1]):
-                if d == ultima: repeticoes += 1
-                else: break
-        return self._extrair_features_ml_completas(
-            historico_duzias=historico_duzias, 
-            historico_numeros=historico_numeros,
-            erros_consec=erros_consec, 
-            rodadas_zero=rodadas_zero,
-            repeticoes_duzia=repeticoes, 
-            janela=janela,
-            modo_treino=True
-        )
-
-    def _calcular_pesos_treino(self, n_amostras, fator_decaimento=0.97):
-        indices = np.arange(n_amostras)
-        pesos = fator_decaimento ** (n_amostras - 1 - indices)
-        return pesos / pesos.mean()
-
-    def _treinar_ml_online(self):
-        if not ML_DISPONIVEL: return False
-        config = self._get_config()
-        janela_treino = config.get('ml_janela_treino', 80)
-        atualizar_a_cada = config.get('ml_atualizar_a_cada', 10)
-        rodada_atual = len(self.historico_completo)
-
-        if self.modelo_ml is not None and self.ultimo_treino_ml > 0:
-            if rodada_atual - self.ultimo_treino_ml < atualizar_a_cada: return False
-        else:
-            if len(self.historico_completo) < 30: return False
-
-        try:
-            X, y = [], []
-            inicio = max(0, len(self.historico_completo) - janela_treino)
-            limite_amostras = min(len(self.historico_completo), inicio + janela_treino)
-
-            for i in range(inicio + 8, limite_amostras):
-                hist_duzias = self.historico_completo[max(0, i-janela_treino):i]
-                hist_nums = self.numeros_completos[max(0, i-janela_treino):i]
-                if len(hist_duzias) < 8: continue
-                features = self._extrair_features_historico(hist_duzias, hist_nums, min(janela_treino, 20))
-                if features is None: continue
-                target = self.historico_completo[i]
-                if target in [1, 2, 3]: X.append(features); y.append(target)
-
-            if len(X) < 12: 
-                logging.info(f"⚠️ Poucas amostras para treino: {len(X)}")
-                self.ultimo_treino_ml = max(self.ultimo_treino_ml, rodada_atual - atualizar_a_cada + 1)
-                return False
-
-            X_arr = np.array(X)
-            y_arr = np.array(y)
-            n = len(X_arr)
-
-            # SPLIT CRONOLÓGICO
-            corte = max(8, int(n * 0.75))
-            X_train, y_train = X_arr[:corte], y_arr[:corte]
-            X_val, y_val = X_arr[corte:], y_arr[corte:]
-            tem_validacao = len(X_val) >= 4 and len(set(y_val.tolist())) >= 2
-
-            sample_weights = self._calcular_pesos_treino(len(X_train))
-
-            # 🆕 RF/GBT mais regularizados: com poucas amostras (30-90) e ~50
-            # features, árvores profundas memorizam ruído. Profundidade e
-            # folha mínima maiores reduzem variância sem perder muito viés.
-            rf_base = RandomForestClassifier(n_estimators=150, max_depth=7, random_state=42,
-                                              n_jobs=1, class_weight='balanced', min_samples_leaf=3,
-                                              max_features='sqrt')
-            gbt_base = GradientBoostingClassifier(n_estimators=80, max_depth=3, learning_rate=0.07,
-                                                   subsample=0.85, min_samples_leaf=3, random_state=42)
-            # 🆕 Terceiro modelo, de perfil bem diferente das árvores: Regressão
-            # Logística regularizada (com padronização de features). É um
-            # modelo linear e de baixa variância — quando as árvores
-            # "inventam" padrões espúrios em pouca amostra, a LR tende a ficar
-            # mais perto da distribuição real, dando um contrapeso ao ensemble.
-            lr_base = make_pipeline(
-                StandardScaler(),
-                LogisticRegression(C=0.5, max_iter=1000, class_weight='balanced', random_state=42)
-            )
-
-            # CALIBRAÇÃO DE PROBABILIDADE
-            calibrado = False
-            try:
-                n_classes_train = len(set(y_train.tolist()))
-                cv_calib = max(2, min(3, len(y_train) // 6))
-                if n_classes_train >= 2 and len(y_train) >= 12:
-                    rf_calib = CalibratedClassifierCV(rf_base, method='sigmoid', cv=cv_calib)
-                    gbt_calib = CalibratedClassifierCV(gbt_base, method='sigmoid', cv=cv_calib)
-
-                    # 🆕 CORREÇÃO: antes o fit calibrado ignorava os pesos de
-                    # recência (sample_weight), então o modelo tratava uma
-                    # rodada de dezenas de jogadas atrás com o mesmo peso de
-                    # uma rodada recente — isso o deixava "preso" em padrões
-                    # antigos e lento pra reagir a uma virada real de dúzia.
-                    try:
-                        rf_calib.fit(X_train, y_train, sample_weight=sample_weights)
-                        gbt_calib.fit(X_train, y_train, sample_weight=sample_weights)
-                    except TypeError:
-                        # versões antigas do sklearn podem não aceitar sample_weight aqui
-                        rf_calib.fit(X_train, y_train)
-                        gbt_calib.fit(X_train, y_train)
-                    
-                    rf = rf_calib
-                    gbt = gbt_calib
-                    calibrado = True
-                else:
-                    raise ValueError("amostras insuficientes para calibração")
-            except Exception as e:
-                logging.info(f"ℹ️ Calibração não aplicada ({e}), usando modelos sem calibrar")
-                rf, gbt = rf_base, gbt_base
-                rf.fit(X_train, y_train, sample_weight=sample_weights)
-                gbt.fit(X_train, y_train, sample_weight=sample_weights)
-
-            lr = None
-            try:
-                lr = lr_base
-                lr.fit(X_train, y_train, logisticregression__sample_weight=sample_weights)
-            except Exception as e:
-                logging.info(f"ℹ️ LR não treinada nesta rodada ({e})")
-                lr = None
-
-            # PESO POR SUBMODELO
-            peso_rf, peso_gbt, peso_lr = 0.5, 0.5, 0.0
-            if tem_validacao:
-                try:
-                    p_rf_val = rf.predict_proba(X_val)
-                    p_gbt_val = gbt.predict_proba(X_val)
-                    preds_rf = rf.classes_[np.argmax(p_rf_val, axis=1)] if hasattr(rf, 'classes_') else None
-                    preds_gbt = gbt.classes_[np.argmax(p_gbt_val, axis=1)] if hasattr(gbt, 'classes_') else None
-                    if preds_rf is not None and preds_gbt is not None:
-                        acc_rf = sum(1 for p, t in zip(preds_rf, y_val) if p == t) / len(y_val)
-                        acc_gbt = sum(1 for p, t in zip(preds_gbt, y_val) if p == t) / len(y_val)
-                        peso_rf = max(0.15, acc_rf)
-                        peso_gbt = max(0.15, acc_gbt)
-                        if lr is not None:
-                            try:
-                                p_lr_val = lr.predict_proba(X_val)
-                                preds_lr = lr.classes_[np.argmax(p_lr_val, axis=1)]
-                                acc_lr = sum(1 for p, t in zip(preds_lr, y_val) if p == t) / len(y_val)
-                                # Só entra no blend se performar pelo menos perto do acaso;
-                                # caso contrário, mantém peso 0 (não participa).
-                                peso_lr = max(0.0, acc_lr - 0.05) if acc_lr >= 0.30 else 0.0
-                            except Exception:
-                                peso_lr = 0.0
-                except Exception as e:
-                    logging.info(f"ℹ️ Não foi possível pesar submodelos individualmente ({e}), usando 50/50")
-
-            novo_modelo = _EnsembleManual(rf, gbt, peso_rf=peso_rf, peso_gbt=peso_gbt, lr=lr, peso_lr=peso_lr)
-
-            self.ultimo_treino_ml = rodada_atual
-
-            if tem_validacao:
-                try:
-                    proba, classes = novo_modelo.predict_proba(X_val)
-                    preds = classes[np.argmax(proba, axis=1)]
-                    accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
-                    
-                    if accuracy >= self._melhor_accuracy:
-                        self._melhor_accuracy = accuracy
-                        self._melhor_modelo = novo_modelo
-                        self.modelo_ml = novo_modelo
-                        self._tentativas_sem_melhora = 0
-                        
-                        if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logging.info(f"🧠 ML V15.2 Treinado! Acc: {accuracy:.2%} (RF:{peso_rf:.2f}/GBT:{peso_gbt:.2f}/LR:{peso_lr:.2f}) | Amostras: {len(X)} | Calibrado: {calibrado}")
-                            return True
-                        else:
-                            logging.error("❌ Falha ao salvar modelo!")
-                            return False
-                    else:
-                        self._tentativas_sem_melhora += 1
-                        if self._tentativas_sem_melhora >= 3:
-                            self._melhor_accuracy = max(0.36, self._melhor_accuracy * 0.985)
-                            self._tentativas_sem_melhora = 0
-                        logging.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%}) — mantendo modelo atual")
-                        return False
-                except Exception as e:
-                    logging.error(f"❌ Erro na validação ML: {e}")
-                    if self.modelo_ml is None:
-                        self.modelo_ml = novo_modelo
-                        if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logging.info(f"🧠 ML V14.2.2 Treinado (sem validação, sem modelo prévio)! Amostras: {len(X)}")
-                            return True
-                    return False
-            
-            if self.modelo_ml is None:
-                self.modelo_ml = novo_modelo
-                if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                    logging.info(f"🧠 ML V14.2.2 Treinado (amostra pequena, sem validação)! Amostras: {len(X)}")
-                    return True
-                else:
-                    logging.error("❌ Falha ao salvar modelo!")
-            return False
-                
-        except Exception as e:
-            logging.error(f"❌ Erro no treino ML: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
-            self.ultimo_treino_ml = rodada_atual
-            return False
-
-    def adicionar(self, numero):
-        d = get_duzia(numero)
-        self.historico.append(d)
-        self.historico_completo.append(d)
-        self.numeros_completos.append(numero)
-        
-        if numero != 0 and numero in getattr(self, '_ultimos_lucky_numbers', []):
-            mult = getattr(self, '_ultimo_multiplicador', 0)
-            self.historico_raios.append((numero, mult, d))
-            if len(self.historico_raios) > 50:
-                self.historico_raios = self.historico_raios[-50:]
-        
-        if numero == 0: self.rodadas_desde_zero = 0
-        else: self.rodadas_desde_zero += 1
-        if d != 0:
-            self.duzias_que_sairam.append(d)
-            if len(self.duzias_que_sairam) > 10: self.duzias_que_sairam = self.duzias_que_sairam[-10:]
-        if numero == 0 and self.alerta_zero_ativo: self.zeros_previstos += 1
-        if len(self.historico_completo) >= 4:
-            padrao = tuple(self.historico_completo[-4:-1])
-            self.transicoes[padrao][d] += 1
-        self._atualizar_padroes_hibridos(self.historico_completo)
-        if len(self.historico_completo) > 1000: self.historico_completo = self.historico_completo[-1000:]
-        if len(self.numeros_completos) > 1000: self.numeros_completos = self.numeros_completos[-1000:]
-        if self.em_pausa_pos_raio:
-            self.rodadas_pos_raio += 1
-            pausa_pos_raio = self._get_config().get('pausa_pos_raio', 1)
-            if self.rodadas_pos_raio >= pausa_pos_raio: self.em_pausa_pos_raio = False
-        if self.vies_dinamico_ativo:
-            self._vies_dinamico_atual, self._vies_dinamico_intensidade = detectar_vies_dinamico(
-                self.historico_completo, janela=self.vies_dinamico_janela, limiar_excesso=self.vies_dinamico_limiar)
-        if self.streak_config_ativo and len(self.historico_completo) >= 3:
-            self._streak_info_atual = extrair_features_streak(self.historico_completo)
-        self._rodadas_sem_entrada += 1
-        if self._drift_ativo and self._rodadas_sem_entrada >= self.drift_rodadas_auto_reset:
-            self._drift_ativo = False
-            self._rodadas_sem_entrada = 0
-            logging.info("🔄 Drift resetado automaticamente após rodadas sem entrada")
-        self._treinar_ml_online()
-
-    def registrar_previsao(self, duzia, confianca):
-        self.ultimas_previsoes.append(duzia)
-        self.ultima_previsao_duzia = duzia
-        self.ultima_confianca = confianca
-        if len(self.ultimas_previsoes) >= 2:
-            self.contagem_repeticoes_mesma_duzia = (self.contagem_repeticoes_mesma_duzia + 1
-                                                     if self.ultimas_previsoes[-1] == self.ultimas_previsoes[-2] else 1)
-        else: self.contagem_repeticoes_mesma_duzia = 1
-        if len(self.ultimas_previsoes) > 10: self.ultimas_previsoes = self.ultimas_previsoes[-10:]
-        self._rodadas_sem_entrada = 0
-
-    def registrar_resultado(self, duzia_real, acertou_duzia, acertou_numero, acertou_zero, mesa_id=None, eh_raio=False, multiplicador=0):
-        self.ultimos_resultados.append({'duzia': duzia_real, 'acertou_duzia': acertou_duzia,
-                                        'acertou_numero': acertou_numero, 'acertou_zero': acertou_zero})
-        self.ultimo_resultado_duzia = acertou_duzia
-        self.ultimo_resultado_numero = acertou_numero
-
-        acertou_entrada = acertou_duzia or acertou_zero
-        self.historico_confianca_resultado.append((self.ultima_confianca, acertou_entrada))
-        self._atualizar_threshold_adaptativo()
-
-        config = self._get_config()
-        if eh_raio and multiplicador >= config.get('raio_alto_minimo', 100) and config.get('pausa_pos_raio', 1) > 0:
-            self.em_pausa_pos_raio = True; self.rodadas_pos_raio = 0; self.ultimo_raio_alto = multiplicador
-        if mesa_id:
-            self.mesa_atual = mesa_id
-            if acertou_duzia or acertou_zero: self.performance_por_mesa[mesa_id]['acertos'] += 1
-            else: self.performance_por_mesa[mesa_id]['erros'] += 1
-        hora = datetime.now().hour
-        turno = "manhã" if 6 <= hora < 12 else "tarde" if 12 <= hora < 18 else "noite"
-        if acertou_duzia or acertou_zero: self.performance_por_horario[turno]['acertos'] += 1
-        else: self.performance_por_horario[turno]['erros'] += 1
-        if len(self.ultimos_resultados) > 50: self.ultimos_resultados = self.ultimos_resultados[-50:]
-
-        if acertou_duzia and duzia_real != 0:
-            if duzia_real == self.ultima_duzia_acertada: self.acertos_consecutivos_mesma_duzia += 1
-            else: self.acertos_consecutivos_mesma_duzia = 1; self.ultima_duzia_acertada = duzia_real
-        else: self.acertos_consecutivos_mesma_duzia = 0; self.ultima_duzia_acertada = None
-
-        if not acertou_duzia and not acertou_zero:
-            self.erros_consecutivos += 1
-            if duzia_real != 0: self.erros_por_duzia[duzia_real] += 1
-            self.modo_anti_erro = True
-            self._drift_erros_consecutivos_entrada += 1
-        else:
-            self.erros_consecutivos = 0
-            self.modo_anti_erro = False
-            self.erros_por_duzia = {1: 0, 2: 0, 3: 0}
-            self.entradas_consecutivas += 1
-            self.pausa_ate = None
-            self._drift_erros_consecutivos_entrada = 0
-
-        if len(self.ultimos_resultados) >= self.drift_alertar_apos:
-            recentes = self.ultimos_resultados[-self.drift_janela:]
-            acertos_rec = sum(1 for r in recentes if r['acertou_duzia'] or r['acertou_zero'])
-            taxa_rec = acertos_rec / len(recentes)
-            self._drift_ativo = taxa_rec < self.drift_taxa_minima and len(recentes) >= self.drift_alertar_apos
-        else:
-            self._drift_ativo = False
-
-    def _atualizar_threshold_adaptativo(self):
-        """CORRIGIDO: tratamento de tipos e limites"""
-        if not self.threshold_adaptativo_ativo:
-            self._threshold_ajuste = 0.0
-            return
-
-        janela = list(self.historico_confianca_resultado)[-self.threshold_adaptativo_janela:]
-        if len(janela) < 10:
-            return
-
-        acertos = sum(1 for _, acertou in janela if acertou)
-        taxa = acertos / len(janela)
-
-        # Garante que os valores são float
-        passo = float(self.threshold_adaptativo_passo)
-        max_ajuste = float(self.threshold_adaptativo_max)
-        min_ajuste = float(self.threshold_adaptativo_min)
-
-        if taxa < float(self.threshold_adaptativo_alvo):
-            self._threshold_ajuste = min(
-                max_ajuste,
-                self._threshold_ajuste + passo
-            )
-        elif taxa > float(self.threshold_adaptativo_alvo) + 0.10:
-            self._threshold_ajuste = max(
-                min_ajuste,
-                self._threshold_ajuste - (passo * 0.8)
-            )
-
-    def _prever_ml(self):
-        if not ML_DISPONIVEL or self.modelo_ml is None: return {1: 0.0, 2: 0.0, 3: 0.0}
-        if len(self.historico_completo) < 8: return {1: 0.0, 2: 0.0, 3: 0.0}
-        try:
-            features = self.extrair_features_estado(janela=20)
-            if features is None: return {1: 0.0, 2: 0.0, 3: 0.0}
-            try: n_features_modelo = self.modelo_ml.n_features_in_
-            except: n_features_modelo = None
-            if n_features_modelo is not None and len(features) != n_features_modelo:
-                logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Retreinando...")
-                self.modelo_ml = None; self.ultimo_treino_ml = 0; self._melhor_accuracy = 0.0
-                invalidar_modelo_ml(self.api_name)
-                return {1: 0.0, 2: 0.0, 3: 0.0}
-            probabilidades, classes = self.modelo_ml.predict_proba([features])
-            ml_scores = {1: 0.0, 2: 0.0, 3: 0.0}
-            for classe, prob in zip(classes, probabilidades[0]):
-                if classe in ml_scores: ml_scores[classe] = float(prob) * 100
-            return ml_scores
-        except Exception as e:
-            logging.error(f"❌ Erro na inferência ML: {e}")
-            if "feature" in str(e).lower() or "shape" in str(e).lower():
-                self.modelo_ml = None; self.ultimo_treino_ml = 0; self._melhor_accuracy = 0.0
-                invalidar_modelo_ml(self.api_name)
-            return {1: 0.0, 2: 0.0, 3: 0.0}
-
-    def _prever_fallback_frequencia(self):
-        if len(self.historico_completo) < 5: return {1: 33.3, 2: 33.3, 3: 33.3}
-        janela = min(20, len(self.historico_completo))
-        duzias_rec = [d for d in self.historico_completo[-janela:] if d != 0]
-        total = max(1, len(duzias_rec))
-        freq = {1: duzias_rec.count(1)/total, 2: duzias_rec.count(2)/total, 3: duzias_rec.count(3)/total}
-        gap_d1 = _calcular_gap_duzia(self.numeros_completos, 1)
-        gap_d2 = _calcular_gap_duzia(self.numeros_completos, 2)
-        gap_d3 = _calcular_gap_duzia(self.numeros_completos, 3)
-        gap_max = max(gap_d1, gap_d2, gap_d3, 1)
-        return {1: freq[1]*60 + (gap_d1/gap_max)*40, 2: freq[2]*60 + (gap_d2/gap_max)*40, 3: freq[3]*60 + (gap_d3/gap_max)*40}
-
-    # 🆕 [REMOVIDO] As funções heurísticas de pós-processamento do score
-    # (_aplicar_anti_vies, _aplicar_vies_dinamico, _aplicar_streak_reforco,
-    # _aplicar_regras_transicao, _fator_volatilidade, _aplicar_reforco_consenso,
-    # _aplicar_peso_adaptativo) foram removidas por pedido explícito. A
-    # previsão agora vem 100% do score bruto do modelo de ML (ou do fallback
-    # de frequência quando o ML ainda não tem dados suficientes), sem nenhuma
-    # camada manual de reforço/penalidade sobreposta.
-
-    def calcular_score(self):
-        ml_scores = self._prever_ml()
-        ml_ativo = not all(v == 0.0 for v in ml_scores.values())
-        # Guarda a probabilidade BRUTA do ML — agora é também a probabilidade
-        # FINAL usada para a previsão. Nenhuma heurística pós-processa o score.
-        self._ml_scores_brutos = ml_scores.copy() if ml_ativo else None
-
-        if ml_ativo:
-            modo = 'ml_disco' if self.ultimo_treino_ml <= 1 else 'ml'
-            return ml_scores, modo
-        else:
-            scores = self._prever_fallback_frequencia()
-            return scores, 'fallback'
-
-    def detectar_alerta_zero(self):
-        if len(self.historico) < 2: self.alerta_zero_ativo = False; return False
-        u = list(self.historico)[-10:]
-        nums = self.numeros_completos[-8:] if len(self.numeros_completos) >= 8 else self.numeros_completos
-        if len(nums) >= 2 and nums[-1] == 0: self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
-        if len(u) >= 3:
-            u3 = u[-3:]
-            if len(set(u3)) == 1 and u3[0] != 0: self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
-        if len(u) >= 5:
-            u5 = u[-5:]
-            trocas = sum(1 for i in range(1, len(u5)) if u5[i] != u5[i-1] and u5[i] != 0 and u5[i-1] != 0)
-            if trocas >= 4: self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
-        config = self._get_config()
-        limiar_gap = max(8, config.get('zero_termometro_max', 15) - 3)
-        if self.rodadas_desde_zero >= limiar_gap: self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
-        duzias_rec = [d for d in list(self.historico)[-5:] if d != 0]
-        if len(duzias_rec) >= 3 and duzias_rec[-1] == duzias_rec[-3] and duzias_rec[-1] != duzias_rec[-2]:
-            self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
-        terminais_recentes = [n % 10 for n in nums if n != 0]
-        if terminais_recentes.count(0) >= 2: self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
-        bordas = [n for n in nums if n in (1, 3, 12, 13, 24, 25, 36)]
-        if len(bordas) >= 3: self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
-        if len(duzias_rec) >= 4 and len([d for d in duzias_rec[-4:] if d in (1, 3)]) == 4:
-            self.alerta_zero_ativo = True; self.alertas_zero_disparados += 1; return True
-        self.alerta_zero_ativo = False; return False
-
-    def _get_outras_duzias(self, duzia):
-        return [d for d in [1, 2, 3] if d != duzia]
-
-    def prever(self):
-        if self.pausa_ate and hora_brasilia() < self.pausa_ate:
-            return {"entrar": False, "motivo": "⏸️ Pausa"}
-        config = self._get_config()
-        hora_atual = datetime.now().hour
-        if 'horario_bloqueio_inicio' in config and 'horario_bloqueio_fim' in config:
-            if config['horario_bloqueio_inicio'] <= hora_atual < config['horario_bloqueio_fim']:
-                return {"entrar": False, "motivo": f"⏸️ Horário bloqueado"}
-        if self.em_pausa_pos_raio:
-            return {"entrar": False, "motivo": f"⏸️ Pausa pós-raio ({self.ultimo_raio_alto}x)"}
-        if self._drift_ativo:
-            return {"entrar": False, "motivo": f"⚠️ DRIFT — Aguardando recuperação. ({self._rodadas_sem_entrada}/{self.drift_rodadas_auto_reset} rod)"}
-
-        scores, modo = self.calcular_score()
-        ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        d1, s1 = ranking[0]
-        d2, s2 = ranking[1] if len(ranking) > 1 else (self._get_outras_duzias(d1)[0], 0)
-        d3, s3 = ranking[2] if len(ranking) > 2 else (self._get_outras_duzias(d1)[-1], 0)
-
-        self.detectar_alerta_zero()
-
-        modo_base = 'ml' if 'ml' in modo else 'fallback'
-
-        # 🆕 Barreira de assertividade: a probabilidade BRUTA do modelo (antes
-        # de bônus de consenso/streak/viés) para a dúzia escolhida precisa
-        # superar um mínimo. Isso evita que reforços artificiais empurrem
-        # uma previsão fraca do ML para cima do threshold de score.
-        prob_bruta_d1 = None
-        if modo_base == 'ml' and self._ml_scores_brutos:
-            total_bruto = sum(self._ml_scores_brutos.values()) or 1.0
-            prob_bruta_d1 = self._ml_scores_brutos.get(d1, 0) / total_bruto
-
-        divisor = 20 if modo_base == 'ml' else 15
-        confianca = min(3.5, max(0.5, (s1 - s2) / divisor))
-
-        if self.alerta_zero_ativo and confianca >= 3.0: confianca = min(2.8, confianca)
-
-        pode_entrar = False; motivo = ""; forcar_rotacao = False
-
-        streak_info = self._streak_info_atual
-        streak_len = streak_info.get('streak_atual_len', 0)
-        streak_duzia = streak_info.get('streak_atual_duzia', 0)
-        streak_cobertura = streak_info.get('cobertura_streak_duzia', 0)
-
-        streak_sinal = ""
-        if self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0:
-            streak_sinal = f"🔥 STK D{streak_duzia}({streak_len}x)"
-
-        score_min_extra = 0
-        if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
-            score_min_extra = config.get('transicao_score_minimo_extra', 10)
-            motivo_transicao = f"🔄 {self.regime_atual.upper()}"
-
-        if modo_base == 'ml':
-            score_minimo = config.get('ml_score_minimo_entrada', 28) + score_min_extra + self._threshold_ajuste
-            pode_entrar = s1 > score_minimo
-            if pode_entrar:
-                treino_info = "do Disco 💾" if self.ultimo_treino_ml <= 1 else f"R{self.ultimo_treino_ml}"
-                partes = []
-                for t, nome in [('tam2','P2'),('tam3','P3'),('tam4','P4')]:
-                    if self.padrao_stats_ui.get(t): partes.append(f"{nome}:{self.padrao_stats_ui[t]['gatilho']}")
-                info_consenso = ""
-                if self.consenso_info['tipo'] in ('duplo', 'triplo', 'simples'):
-                    icones = {'triplo': '🔒', 'duplo': '🔗', 'simples': '💡'}
-                    info_consenso = f" | {icones[self.consenso_info['tipo']]} D{self.consenso_info['duzia']}"
-                motivo = f"🟢 ML ({treino_info}) | Score: {s1:.1f}"
-                if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
-                    motivo = f"🔄 {self.regime_atual.upper()} " + motivo
-                if partes: motivo += f" | 🧩 {' | '.join(partes)}"
-                if info_consenso: motivo += info_consenso
-                if self.vies_dinamico_ativo and self._vies_dinamico_atual:
-                    motivo += f" | 🔍 VD-D{self._vies_dinamico_atual}({self._vies_dinamico_intensidade*100:.0f}%)"
-                if streak_sinal: motivo += f" | {streak_sinal}"
-                if abs(self._threshold_ajuste) >= 1:
-                    motivo += f" | 🎚️ ajuste:{self._threshold_ajuste:+.1f}"
-            else:
-                motivo = f"Score ML baixo ({s1:.1f} < {score_minimo:.1f})" + (f" +{score_min_extra} transição" if score_min_extra else "")
-
-            prob_minima = config.get('ml_prob_bruta_minima', 0.42)
-            if pode_entrar and prob_bruta_d1 is not None and prob_bruta_d1 < prob_minima:
-                pode_entrar = False
-                motivo = f"🚫 Probabilidade bruta do ML insuficiente ({prob_bruta_d1*100:.1f}% < {prob_minima*100:.0f}%)"
-        else:
-            score_min_fb = config.get('ml_score_minimo_fallback', 35) + score_min_extra + self._threshold_ajuste
-            min_rodadas_fb = config.get('ml_min_rodadas_fallback', 6)
-            if len(self.historico_completo) >= min_rodadas_fb and s1 > score_min_fb:
-                pode_entrar = True
-                motivo = f"🟡 Fallback | Score: {s1:.1f}"
-                if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
-                    motivo = f"🔄 {self.regime_atual.upper()} " + motivo
-                if streak_sinal: motivo += f" | {streak_sinal}"
-                if abs(self._threshold_ajuste) >= 1:
-                    motivo += f" | 🎚️ ajuste:{self._threshold_ajuste:+.1f}"
-            else:
-                motivo = f"Aguardando ML ({len(self.historico_completo)}/{max(30, min_rodadas_fb)} rod)"
-
-        # 🆕 [REMOVIDO] Rotação forçada por repetição — o pick continua sendo
-        # sempre o de maior score do ML, mesmo que se repita várias vezes.
-
-        confianca_min = config.get('confianca_minima_entrada', 1.8)
-        if self.detector_ativo and self.regime_atual in ('transicao', 'instavel'):
-            confianca_min *= self.transicao_confianca_multiplicador
-
-        if pode_entrar and confianca < confianca_min:
-            pode_entrar = False
-            motivo = f"Confiança baixa ({confianca:.2f} < {confianca_min:.2f})"
-
-        if pode_entrar and self.erros_consecutivos >= self.anti_erro_min_erros_consecutivos and confianca < (confianca_min + 0.30):
-            pode_entrar = False
-            motivo = f"🚫 Anti-Erro: conf {confianca:.2f} insuficiente (erros: {self.erros_consecutivos})"
-
-        incluir_zero = self.alerta_zero_ativo
-        if self.rodadas_desde_zero >= config.get('zero_termometro_max', 15):
-            incluir_zero = True
-            if pode_entrar: motivo += " | 🌡️ Zero"
-
-        if confianca < 0.75: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
-
-        duzia_secundaria_final = None  # 🆕 Sem cobertura: o bot opera só com a dúzia principal
-        # Apenas informativo (exibição) — não influencia mais a previsão/score.
-        streak_aplicado = bool(self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0)
-
-        previsao = {
-            "entrar": pode_entrar, "motivo": motivo, "score": scores,
-            "confianca": round(confianca, 2), "duzia": d1, "duzia_secundaria": duzia_secundaria_final,
-            "gatilho_ativo": "ML" if modo_base == 'ml' else "Fallback",
-            "incluir_zero": incluir_zero, "modo_anti_erro": self.erros_consecutivos > 0,
-            "numeros_completos": list(self.numeros_completos), "modo_previsao": modo,
-            "rotacao_forcada": False, "streak_info": streak_sinal if streak_sinal else None,
-            "prob_ml_bruta": round(prob_bruta_d1 * 100, 1) if prob_bruta_d1 is not None else None,
+        return {
+            'jogo': jogo,
+            'pares': contar_pares(jogo),
+            'impares': 6 - contar_pares(jogo),
+            'primos': contar_primos(jogo),
+            'soma': sum(jogo),
+            'consecutivos': contar_consecutivos(jogo),
+            'colunas_ativas': colunas_ativas,
+            'quantidade_colunas': len(colunas_ativas),
+            'colunas_contagem': colunas_contagem,
+            'repetidas_ultimo': len(set(jogo) & set(self.ultimo_concurso)) if self.ultimo_concurso else 0
+        }
+    
+    def get_recomendacoes_prioridade(self):
+        """Retorna recomendações de prioridade dos jogos"""
+        return {
+            'prioridade_maxima': [0, 1, 2, 3, 7, 9],  # Jogos 1,2,3,4,8,10
+            'prioridade_media': [4, 5, 6, 8],  # Jogos 5,6,7,9
+            'protecao': [10, 11, 12, 13, 14]  # Proteções 1-5
+        }
+    
+    def get_planos_jogo(self):
+        """Retorna planos de jogo"""
+        return {
+            'economico': ['Jogo 1', 'Jogo 2', 'Jogo 3', 'Jogo 8'],
+            'intermediario': ['Jogo 1', 'Jogo 2', 'Jogo 3', 'Jogo 4', 'Jogo 5', 'Jogo 8', 'Jogo 10', 'Proteção 1'],
+            'completo': 'Todos os 15 jogos'
         }
 
-        # 🆕 [REMOVIDO] _aplicar_regras_transicao — não altera mais a dúzia
-        # escolhida nem a confiança; o único efeito de regime que resta é a
-        # barreira de confiança mínima acima (confianca_min), que é uma regra
-        # de risco (entra ou não), não uma heurística de previsão.
+# =====================================================
+# FUNÇÕES DE DOWNLOAD
+# =====================================================
 
-        info_padrao = {
-            'tam2': self.padrao_stats_ui.get('tam2'), 'tam3': self.padrao_stats_ui.get('tam3'),
-            'tam4': self.padrao_stats_ui.get('tam4'), 'consenso': self.consenso_info,
-            'anti_vies': self.anti_vies_ativo, 'peso_adaptativo': self.peso_adaptativo_ativo,
-            'vies_dinamico': self._vies_dinamico_atual, 'drift_ativo': self._drift_ativo,
-            'regime': self.regime_atual,
-            'streak': streak_info, 'streak_sinal': streak_sinal, 'streak_aplicado': streak_aplicado, 'resumo': []
+def gerar_csv_download_mega(jogos, scores=None, estrategia="Padrão"):
+    dados_export = []
+    for i, jogo in enumerate(jogos):
+        linha = {
+            "Jogo": i + 1,
+            "Dezenas": ", ".join(f"{n:02d}" for n in sorted(jogo)),
+            "Pares": contar_pares(jogo),
+            "Ímpares": 6 - contar_pares(jogo),
+            "Primos": contar_primos(jogo),
+            "Soma": sum(jogo),
+            "Consecutivos": contar_consecutivos(jogo)
         }
-        for t, nome in [('tam2','P2'),('tam3','P3'),('tam4','P4')]:
-            if info_padrao[t]: info_padrao['resumo'].append(f"{nome}:{info_padrao[t]['gatilho']}")
-        if self.consenso_info['tipo'] in ('duplo','triplo','simples'):
-            info_padrao['resumo'].append(f"{'🔒' if self.consenso_info['tipo']=='triplo' else '🔗'}D{self.consenso_info['duzia']}")
-        if self.vies_dinamico_ativo and self._vies_dinamico_atual:
-            info_padrao['resumo'].append(f"🔍VD-D{self._vies_dinamico_atual}")
-        if streak_sinal: info_padrao['resumo'].append(streak_sinal)
-        if self.regime_atual in ('transicao', 'instavel'):
-            info_padrao['resumo'].append(f"🔄{self.regime_atual}")
-        info_padrao['resumo'] = " | ".join(info_padrao['resumo']) if info_padrao['resumo'] else "-"
-        
-        previsao['padrao_ativo'] = info_padrao
-
-        return previsao
-
-
-# =============================
-# SISTEMA PRINCIPAL
-# =============================
-
-class SistemaBot:
-    def __init__(self):
-        janela = st.session_state.get('janela_duzia_ai', 30)
-        api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-        self.duzia_ai = DuziaAI(window=janela, api_name=api_name)
-        self.historico_numeros = deque(maxlen=500)
-        self.entrada_ativa = None
-        self.historico_entradas = []
-        self.acertos_duzia = 0; self.erros_duzia = 0
-        self.acertos_numero = 0; self.erros_numero = 0
-        self.acertos_zero = 0; self.erros_zero = 0
-        self.acertos_primaria = 0; self.acertos_secundaria = 0
-        self.ultimo_numero = None; self.sinais_grafico = []; self.numero_rodada = 0
-        self.performance_por_mesa = defaultdict(lambda: {'acertos': 0, 'erros': 0})
-        self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
-        self.rodadas_por_sessao = st.session_state.get('rodadas_por_sessao', 10)
-        self.pausa_entre_sessoes = st.session_state.get('pausa_entre_sessoes', 5)
-        self.rodadas_na_sessao = 0; self.sessao_ativa = False
-        self.sessao_pausa_ate = None; self.total_sessoes = 0
-        self.acertos_sessao = 0; self.erros_sessao = 0
-        self.gerenciador_sessoes = GerenciadorSessoes(api_name)
-
-    def iniciar_sessao(self):
-        if self.sessao_pausa_ate and hora_brasilia() < self.sessao_pausa_ate: return False
-        self.sessao_ativa = True; self.rodadas_na_sessao = 0
-        self.acertos_sessao = 0; self.erros_sessao = 0
-        self.total_sessoes += 1; self.sessao_pausa_ate = None
-        salvar_sessao(); return True
-
-    def _encerrar_sessao(self):
-        self.sessao_ativa = False
-        self.sessao_pausa_ate = hora_brasilia() + timedelta(minutes=self.pausa_entre_sessoes)
-        taxa = (self.acertos_sessao / max(1, self.acertos_sessao + self.erros_sessao)) * 100
-        if st.session_state.get('salvar_sessoes_auto', True):
-            inicio = max(0, len(self.historico_entradas) - self.rodadas_na_sessao)
-            self.gerenciador_sessoes.salvar_sessao_encerrada(
-                self.total_sessoes,
-                {'acertos': self.acertos_sessao, 'erros': self.erros_sessao,
-                 'taxa_acerto': round(taxa, 1), 'total_rodadas': self.rodadas_na_sessao,
-                 'rodadas_por_sessao': self.rodadas_por_sessao},
-                self.historico_entradas[inicio:])
-        self.entrada_ativa = None; salvar_sessao()
-
-    def pode_processar(self):
-        if not self.sessao_ativa:
-            if self.sessao_pausa_ate and hora_brasilia() >= self.sessao_pausa_ate:
-                self.sessao_pausa_ate = None; self.sessao_ativa = False; salvar_sessao()
-            return False
-        if self.rodadas_na_sessao >= self.rodadas_por_sessao:
-            self._encerrar_sessao(); return False
-        return True
-
-    def processar_novo_numero(self, numero_data):
-        if isinstance(numero_data, dict):
-            nr = numero_data.get('number'); lucky_numbers = numero_data.get('luckyNumbers', [])
-            lucky_multipliers = numero_data.get('luckyMultipliers', {}); table_id = numero_data.get('table_id', 'unknown')
-            table_name = numero_data.get('table_name', 'Desconhecida')
-            self.duzia_ai._ultimos_lucky_numbers = lucky_numbers
-            self.duzia_ai._ultimo_multiplicador = lucky_multipliers.get(nr, 0) if nr else 0
-        else:
-            nr = numero_data; lucky_numbers = []; lucky_multipliers = {}
-            table_id = 'unknown'; table_name = 'Desconhecida'
-
-        if nr is None or not validar_numero(nr): return
-
-        self.numero_rodada += 1
-        self.duzia_ai.adicionar(nr)
-        self.historico_numeros.append(nr)
-        self.ultimo_numero = nr
-
-        if not self.pode_processar(): salvar_sessao(); return
-
-        eh_raio = nr in lucky_numbers
-        multiplicador = lucky_multipliers.get(nr, 0) if eh_raio else 0
-
-        if self.entrada_ativa:
-            duzia_real = get_duzia(nr)
-            duzia_prevista = self.entrada_ativa.get('duzia_prevista')
-            numeros_apostados = self.entrada_ativa.get('numeros_apostar', [])
-            incluir_zero = self.entrada_ativa.get('incluir_zero', False)
-
-            acerto_primaria = (duzia_real == duzia_prevista) if duzia_prevista and nr != 0 else False
-            acerto_numero_exato = nr in numeros_apostados if nr != 0 else False
-            acerto_zero = (nr == 0 and incluir_zero)
-            if acerto_zero: acerto_primaria = True
-
-            if acerto_numero_exato: self.acertos_numero += 1
-            elif nr != 0: self.erros_numero += 1
-            if acerto_zero: self.acertos_zero += 1
-            elif nr == 0: self.erros_zero += 1
-
-            if acerto_primaria or acerto_zero: self.acertos_primaria += 1; self.acertos_duzia += 1
-            elif nr != 0: self.erros_duzia += 1
-
-            acertou_duzia = acerto_primaria
-
-            self.rodadas_na_sessao += 1
-            if acertou_duzia or acerto_zero: self.acertos_sessao += 1
-            else: self.erros_sessao += 1
-
-            self.duzia_ai.registrar_resultado(duzia_real, acertou_duzia, acerto_numero_exato, acerto_zero, table_id, eh_raio, multiplicador)
-
-            if acertou_duzia or acerto_zero: self.performance_por_mesa[table_id]['acertos'] += 1
-            else: self.performance_por_mesa[table_id]['erros'] += 1
-            hora = datetime.now().hour
-            turno = "manhã" if 6 <= hora < 12 else "tarde" if 12 <= hora < 18 else "noite"
-            if acertou_duzia or acerto_zero: self.performance_por_horario[turno]['acertos'] += 1
-            else: self.performance_por_horario[turno]['erros'] += 1
-
-            if acerto_zero: status_visual = '🟢'
-            elif acerto_numero_exato and eh_raio: status_visual = '⚡'
-            elif acerto_numero_exato: status_visual = '🎯'
-            elif acerto_primaria: status_visual = '✅'
-            else: status_visual = '❌'
-
-            self.historico_entradas.append({
-                'rodada': self.numero_rodada, 'hora': formatar_hora_brasilia(), 'numero': nr,
-                'duzia_real': duzia_real if nr != 0 else 0,
-                'duzia_prevista': duzia_prevista, 'duzia_sec_prevista': None,
-                'acerto_duzia': acertou_duzia, 'acerto_primaria': acerto_primaria,
-                'acerto_secundaria': False, 'acerto_numero': acerto_numero_exato,
-                'acerto_zero': acerto_zero, 'eh_raio': eh_raio, 'multiplicador': multiplicador,
-                'status': status_visual, 'confianca': self.entrada_ativa.get('confianca', 0),
-                'prob_ml_bruta': self.entrada_ativa.get('prob_ml_bruta'),
-                'gatilho': self.entrada_ativa.get('gatilho_ativo', 'ML'),
-                'modo_anti_erro': self.entrada_ativa.get('modo_anti_erro', False),
-                'incluir_zero': incluir_zero, 'table_id': table_id, 'table_name': table_name,
-                'padrao_info': self.entrada_ativa.get('padrao_ativo'),
-                'streak_info': self.entrada_ativa.get('streak_info'),
-                'regime': self.entrada_ativa.get('regime', self.duzia_ai.regime_atual),
-            })
-            if len(self.historico_entradas) > 100: self.historico_entradas = self.historico_entradas[-100:]
-
-            enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, eh_raio, multiplicador)
-            self.entrada_ativa = None
-
-            if not self.pode_processar(): salvar_sessao(); return
-
-        if self.sessao_ativa and self.rodadas_na_sessao < self.rodadas_por_sessao:
-            previsao = self.duzia_ai.prever()
-            if previsao['entrar']:
-                duzia_map = {1: list(range(1,13)), 2: list(range(13,25)), 3: list(range(25,37))}
-                numeros_apostar = list(duzia_map.get(previsao['duzia'], []))
-
-                if previsao.get('incluir_zero', False) and 0 not in numeros_apostar:
-                    numeros_apostar = [0] + numeros_apostar
-
-                self.entrada_ativa = {
-                    'numeros_apostar': numeros_apostar,
-                    'duzia_prevista': previsao['duzia'],
-                    'duzia_sec_prevista': None,
-                    'confianca': previsao.get('confianca', 0),
-                    'prob_ml_bruta': previsao.get('prob_ml_bruta'),
-                    'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
-                    'modo_anti_erro': previsao.get('modo_anti_erro', False),
-                    'incluir_zero': previsao.get('incluir_zero', False),
-                    'padrao_ativo': previsao.get('padrao_ativo'),
-                    'streak_info': previsao.get('streak_info'),
-                    'regime': self.duzia_ai.regime_atual,
-                }
-                self.duzia_ai.registrar_previsao(previsao['duzia'], previsao['confianca'])
-                self.sinais_grafico.append((len(self.historico_numeros) - 1, previsao['duzia']))
-                enviar_previsao_auto({
-                    'numeros_apostar': numeros_apostar,
-                    'incluir_zero': previsao.get('incluir_zero', False),
-                    'duzia': previsao['duzia'],
-                    'duzia_secundaria': None,
-                    'numeros_completos': list(self.historico_numeros),
-                    'streak_info': previsao.get('streak_info'),
-                })
-
-    def zerar(self):
-        self.acertos_duzia = self.erros_duzia = 0
-        self.acertos_numero = self.erros_numero = 0
-        self.acertos_zero = self.erros_zero = 0
-        self.acertos_primaria = self.acertos_secundaria = 0
-        self.historico_entradas = []; self.historico_numeros.clear()
-        self.entrada_ativa = None; self.ultimo_numero = None
-        self.sinais_grafico = []; self.numero_rodada = 0
-        self.rodadas_na_sessao = 0; self.sessao_ativa = False
-        self.sessao_pausa_ate = None; self.total_sessoes = 0
-        self.acertos_sessao = self.erros_sessao = 0
-        self.duzia_ai = DuziaAI(window=st.session_state.get('janela_duzia_ai', 30),
-                                api_name=st.session_state.get('api_selecionada', 'XXXtreme Lightning'))
-        salvar_sessao()
-
-
-def salvar_resultado_em_arquivo(historico, caminho):
-    try:
-        with open(caminho, "w", encoding='utf-8') as f: json.dump(historico, f, indent=2)
-    except Exception as e: logging.error(f"Erro: {e}")
-
-def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
-    try:
-        with open(caminho, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Conf','ProbML','Gat','Z','🔄','Mesa','Duz','P1','Num','Zer','St','Regime','Padrões','Streak'])
-            for e in historico_entradas:
-                real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0) != 0 else "0"
-                ns = e.get('numero', 0)
-                nd = f"⚡{ns} ({e.get('multiplicador',0)}x)" if e.get('eh_raio') else ("0" if ns == 0 else str(ns))
-                writer.writerow([e.get('rodada'), e.get('hora'), nd,
-                                  f"⚡{e.get('multiplicador',0)}x" if e.get('eh_raio') else '-',
-                                  real, f"D{e.get('duzia_prevista','?')}",
-                                  f"{e.get('confianca',0):.1f}",
-                                  f"{e.get('prob_ml_bruta'):.0f}%" if e.get('prob_ml_bruta') is not None else '-',
-                                  e.get('gatilho','ML'),
-                                  '🟢' if e.get('incluir_zero') else '-', '🔄' if e.get('modo_anti_erro') else '-',
-                                  e.get('table_name', '?')[:15] if e.get('table_name') else '?',
-                                  '✅' if e.get('acerto_duzia') else '❌', '✅' if e.get('acerto_primaria') else '-',
-                                  '✅' if e.get('acerto_numero') else '-',
-                                  '✅' if e.get('acerto_zero') else '-', e.get('status','?'),
-                                  e.get('regime', 'estavel')[:8],
-                                  str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-',
-                                  str(e.get('streak_info', '-')) if e.get('streak_info') else '-'])
-        return True
-    except Exception as e:
-        logging.error(f"Erro CSV: {e}")
-        return False
-
-
-# =============================
-# FUNÇÃO get_session_paths
-# =============================
-
-def get_session_paths(api_name):
-    safe = api_name.lower().replace(' ', '_')
-    return {
-        'session': f"session_data_{safe}.pkl",
-        'historico': f"historico_roleta_{safe}.json",
-        'performance': f"performance_bot_{safe}.json",
-        'entradas': f"historico_entradas_{safe}.json",
-        'performance_mesa': f"performance_mesa_{safe}.json",
-        'performance_horario': f"performance_horario_{safe}.json",
-        'sessao_controle': f"sessao_controle_{safe}.json",
-        'historico_sessoes': f"historico_sessoes_{safe}.json",
-        'padroes_hibridos': f"padroes_hibridos_{safe}.json",
-    }
-
-
-# =============================
-# SALVAR CONFIG GLOBAL
-# =============================
-
-def salvar_config_global():
-    config = {
-        'telegram_token': st.session_state.get('telegram_token', ''),
-        'telegram_chat_id': st.session_state.get('telegram_chat_id', ''),
-        'telegram_token_alt': st.session_state.get('telegram_token_alt', ''),
-        'telegram_chat_id_alt': st.session_state.get('telegram_chat_id_alt', ''),
-        'modo_automatico': st.session_state.get('modo_automatico', True),
-        'modo_agressivo': st.session_state.get('modo_agressivo', False),
-        'janela_duzia_ai': st.session_state.get('janela_duzia_ai', 30),
-        'api_selecionada': st.session_state.get('api_selecionada', 'XXXtreme Lightning'),
-        'rodadas_por_sessao': st.session_state.get('rodadas_por_sessao', 10),
-        'pausa_entre_sessoes': st.session_state.get('pausa_entre_sessoes', 5),
-        'salvar_sessoes_auto': st.session_state.get('salvar_sessoes_auto', True),
-    }
-    try:
-        with open(CONFIG_GLOBAL_PATH, 'w') as f: json.dump(config, f)
-    except Exception as e: logging.error(f"Erro ao salvar config global: {e}")
-
-def carregar_config_global():
-    try:
-        if os.path.exists(CONFIG_GLOBAL_PATH):
-            with open(CONFIG_GLOBAL_PATH, 'r') as f: return json.load(f)
-    except: pass
-    return {}
-
-
-# =============================
-# APLICAÇÃO STREAMLIT
-# =============================
-st.set_page_config(page_title="🎰 DuziaAI V15 - Alta Precisão (1 Dúzia)", layout="wide")
-st.title("🎰 DuziaAI V15 — Alta Precisão | 1 Dúzia, sem cobertura, só entradas de alta confiança")
-
-config_global = carregar_config_global()
-
-for key, default in [
-    ("api_selecionada", config_global.get('api_selecionada', 'XXXtreme Lightning')),
-    ("ultima_api", config_global.get('api_selecionada', 'XXXtreme Lightning')),
-    ("telegram_token", config_global.get('telegram_token', '')),
-    ("telegram_chat_id", config_global.get('telegram_chat_id', '')),
-    ("telegram_token_alt", config_global.get('telegram_token_alt', '')),
-    ("telegram_chat_id_alt", config_global.get('telegram_chat_id_alt', '')),
-    ("rodadas_por_sessao", config_global.get('rodadas_por_sessao', 10)),
-    ("pausa_entre_sessoes", config_global.get('pausa_entre_sessoes', 5)),
-    ("salvar_sessoes_auto", config_global.get('salvar_sessoes_auto', True)),
-    ("modo_automatico", config_global.get('modo_automatico', True)),
-    ("modo_agressivo", config_global.get('modo_agressivo', False)),
-    ("janela_duzia_ai", config_global.get('janela_duzia_ai', 30)),
-    ("historico", []),
-]:
-    if key not in st.session_state: st.session_state[key] = default
-
-def _carregar_sistema(api_name):
-    sis = st.session_state.sistema
-    dados = carregar_dados_persistidos(api_name)
-    if dados:
-        for n in dados.get('historico_numeros', []):
-            sis.duzia_ai.adicionar(n); sis.historico_numeros.append(n)
-        sis.numero_rodada = dados.get('numero_rodada', len(dados.get('historico_numeros', [])))
-        for campo in ['acertos_duzia','erros_duzia','acertos_numero','erros_numero','acertos_zero','erros_zero','acertos_primaria','acertos_secundaria']:
-            setattr(sis, campo, dados.get(campo, 0))
-        sis.entrada_ativa = dados.get('entrada_ativa', None)
-        sis.historico_entradas = dados.get('historico_entradas', [])
-        sis.rodadas_na_sessao = dados.get('rodadas_na_sessao', 0)
-        sis.sessao_ativa = dados.get('sessao_ativa', False)
-        sis.total_sessoes = dados.get('total_sessoes', 0)
-        sis.acertos_sessao = dados.get('acertos_sessao', 0)
-        sis.erros_sessao = dados.get('erros_sessao', 0)
-        if dados.get('sessao_pausa_ate'): sis.sessao_pausa_ate = datetime.fromisoformat(dados['sessao_pausa_ate'])
-        if dados.get('ultimo_treino_ml'): sis.duzia_ai.ultimo_treino_ml = dados['ultimo_treino_ml']
-        for campo in ['performance_por_mesa', 'performance_por_horario']:
-            if campo in dados:
-                for k, v in dados[campo].items(): getattr(sis, campo)[k] = v; getattr(sis.duzia_ai, campo)[k] = v
-        sis.duzia_ai._carregar_padroes_hibridos()
-        paths = get_session_paths(api_name)
-        if os.path.exists(paths['historico']):
-            with open(paths['historico'], 'r') as f: st.session_state.historico = json.load(f)
-
-if st.session_state.api_selecionada != st.session_state.ultima_api:
-    st.session_state.ultima_api = st.session_state.api_selecionada
-    st.session_state.sistema = SistemaBot()
-    _carregar_sistema(st.session_state.api_selecionada)
-    st.rerun()
-
-if "sistema" not in st.session_state:
-    st.session_state.sistema = SistemaBot()
-    _carregar_sistema(st.session_state.api_selecionada)
-
-
-# =============================
-# SIDEBAR
-# =============================
-with st.sidebar:
-    st.markdown("## ⚙️ V15 — Modo Alta Precisão (1 Dúzia) ✅")
-    sis = st.session_state.sistema
-
-    st.markdown("### 📊 Status da Sessão")
-    if sis.sessao_ativa:
-        st.success(f"🟢 Sessão #{sis.total_sessoes} ATIVA")
-        st.progress(sis.rodadas_na_sessao / max(1, sis.rodadas_por_sessao))
-        st.caption(f"Rodadas: {sis.rodadas_na_sessao}/{sis.rodadas_por_sessao}")
-        st.caption(f"Acertos: {sis.acertos_sessao} | Erros: {sis.erros_sessao}")
-        if sis.acertos_sessao + sis.erros_sessao > 0:
-            taxa = (sis.acertos_sessao / (sis.acertos_sessao + sis.erros_sessao)) * 100
-            st.caption(f"Taxa: {taxa:.0f}%")
-    elif sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
-        tempo_restante = (sis.sessao_pausa_ate - hora_brasilia()).seconds
-        st.warning(f"⏸️ Pausa: {tempo_restante//60:02d}:{tempo_restante%60:02d}")
-    else:
-        st.info("⚪ Nenhuma sessão ativa")
-
-    st.markdown("---")
-    st.markdown("### 🔄 Regime Atual")
-    
-    regime_atual = getattr(sis.duzia_ai, 'regime_atual', 'estavel')
-    
-    if regime_atual == 'transicao':
-        st.error("⚠️ **TRANSIÇÃO DETECTADA**")
-        st.caption("• Alta variância")
-        st.caption("• Padrões mudando")
-        st.caption("• ⚠️ REDUZIR APOSTAS")
-        if hasattr(sis.duzia_ai, 'detector_regime'):
-            stats = sis.duzia_ai.detector_regime.get_estatisticas()
-            st.caption(f"• CUSUM: +{stats['cusum_pos']:.2f}/-{stats['cusum_neg']:.2f}")
-            st.caption(f"• Rodadas no regime: {stats['rodadas_no_regime']}")
-    elif regime_atual == 'instavel':
-        st.warning("⚡ **INSTÁVEL**")
-        st.caption("• Aguardar estabilização")
-        if hasattr(sis.duzia_ai, 'detector_regime'):
-            stats = sis.duzia_ai.detector_regime.get_estatisticas()
-            st.caption(f"• CUSUM: +{stats['cusum_pos']:.2f}/-{stats['cusum_neg']:.2f}")
-    else:
-        st.success("✅ **ESTÁVEL**")
-        st.caption("• Padrões consolidados")
-        st.caption("• ✅ APOSTAR NORMAL")
-
-    botao_desabilitado = sis.sessao_ativa or (sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate)
-    if botao_desabilitado:
-        st.button("🚀 INICIAR SESSÃO", width='stretch', disabled=True)
-    else:
-        if st.button("🚀 INICIAR SESSÃO", width='stretch', type="primary"):
-            if sis.iniciar_sessao(): st.success(f"✅ Sessão #{sis.total_sessoes} iniciada!"); st.rerun()
-
-    st.markdown("---")
-    if st.button("🆕 RESET TOTAL", width='stretch'):
-        if nova_sessao(): st.success("✅ Reset completo!"); st.rerun()
-
-    st.markdown("---")
-    st.markdown("### ⏱️ Configurações da Sessão")
-    rodadas = st.number_input("Rodadas por sessão:", min_value=5, max_value=30, value=st.session_state.rodadas_por_sessao, step=5)
-    pausa = st.number_input("Pausa entre sessões (min):", min_value=1, max_value=30, value=st.session_state.pausa_entre_sessoes, step=1)
-    if rodadas != st.session_state.rodadas_por_sessao:
-        st.session_state.rodadas_por_sessao = rodadas; sis.rodadas_por_sessao = rodadas; salvar_sessao()
-    if pausa != st.session_state.pausa_entre_sessoes:
-        st.session_state.pausa_entre_sessoes = pausa; sis.pausa_entre_sessoes = pausa; salvar_sessao()
-
-    st.markdown("---")
-    st.session_state.salvar_sessoes_auto = st.checkbox("💾 Salvar sessões automaticamente", value=st.session_state.salvar_sessoes_auto)
-    with st.expander("📥 BAIXAR SESSÕES", expanded=False):
-        api_name_dl = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-        ger = GerenciadorSessoes(api_name_dl)
-        sessoes = ger.listar_sessoes()
-        if sessoes:
-            st.caption(f"📂 {len(sessoes)} sessões disponíveis")
-            sessao_opcoes = [f"Sessão #{s.get('numero_sessao', '?')} - {s.get('data', '?')} {s.get('hora_encerramento', '?')}" for s in sessoes[:20]]
-            if sessao_opcoes:
-                sel = st.selectbox("Selecionar sessão:", sessao_opcoes, key="select_sessao")
-                if sel:
-                    idx = sessao_opcoes.index(sel)
-                    if idx < len(sessoes):
-                        s = sessoes[idx]; col1, col2 = st.columns(2)
-                        with col1:
-                            st.markdown(ger.get_download_link(json.dumps(s, indent=2, ensure_ascii=False), f"sessao_{s.get('numero_sessao','?')}.json", 'json'), unsafe_allow_html=True)
-                        with col2:
-                            st.markdown(ger.get_download_link(ger.gerar_csv_sessao(s), f"sessao_{s.get('numero_sessao','?')}.csv", 'csv'), unsafe_allow_html=True)
-                        stats = s.get('estatisticas', {})
-                        st.caption(f"✅ {stats.get('acertos', 0)} | ❌ {stats.get('erros', 0)} | 📊 {stats.get('taxa_acerto', 0)}%")
-            if st.button("📦 Baixar Todas (JSON)", width='stretch'):
-                todas = ger.listar_sessoes()
-                if todas:
-                    conteudo = json.dumps({'total_sessoes': len(todas), 'sessoes': todas}, indent=2, ensure_ascii=False)
-                    st.markdown(ger.get_download_link(conteudo, f"todas_sessoes_{api_name_dl.lower().replace(' ','_')}.json", 'json'), unsafe_allow_html=True)
-        else:
-            st.info("Nenhuma sessão salva ainda.")
-
-    st.markdown("---")
-    st.markdown("### 🎰 Selecione a Roleta")
-    api_opcoes = list(API_URLS.keys())
-    api_index = api_opcoes.index(st.session_state.api_selecionada) if st.session_state.api_selecionada in api_opcoes else 0
-    st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
-    api_name = st.session_state.api_selecionada
-    config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
-
-    if hasattr(sis.duzia_ai, 'modelo_ml') and sis.duzia_ai.modelo_ml is not None:
-        acc = getattr(sis.duzia_ai, '_melhor_accuracy', 0)
-        st.success(f"🧠 ML V15 | Acc: {acc:.1%}" if acc > 0 else f"🧠 ML CARREGADO 💾 | R{sis.duzia_ai.ultimo_treino_ml}")
-    else:
-        n = len(sis.historico_numeros)
-        st.info(f"🧠 Aguardando... ({n}/30 rod)")
-
-    if sis.duzia_ai._drift_ativo:
-        reset_em = sis.duzia_ai.drift_rodadas_auto_reset - sis.duzia_ai._rodadas_sem_entrada
-        st.error(f"⚠️ DRIFT! Reset em {max(0,reset_em)} rodadas sem entrada.")
-    if sis.duzia_ai._vies_dinamico_atual:
-        st.warning(f"🔍 Viés: D{sis.duzia_ai._vies_dinamico_atual} ({sis.duzia_ai._vies_dinamico_intensidade*100:.0f}%)")
-
-    stk = sis.duzia_ai._streak_info_atual
-    if stk and stk.get('streak_atual_len', 0) >= 2:
-        stk_len = stk['streak_atual_len']; stk_duzia = stk['streak_atual_duzia']
-        stk_cont = stk.get('prob_continua_streak2' if stk_len == 2 else 'prob_continua_streak3', 0.5)
-        if stk.get('streak_saturado'): st.error(f"⚠️ STK SATURADO D{stk_duzia}×{stk_len} | Quebra: {stk.get('streak_taxa_quebra_real', 0)*100:.0f}%")
-        elif stk.get('streak_quebra_iminente'): st.warning(f"⚡ Quebra iminente D{stk_duzia}!")
-        else: st.info(f"🔥 STK D{stk_duzia}×{stk_len} | P(cont)={stk_cont*100:.0f}%")
-
-    padroes_validos, qualidade = sis.duzia_ai._verificar_qualidade_padroes()
-    if padroes_validos < 1:
-        st.warning(f"⚠️ Padrões: P2:{'✅' if qualidade['p2'] else '❌'} P3:{'✅' if qualidade['p3'] else '❌'} P4:{'✅' if qualidade['p4'] else '❌'}")
-
-    consenso = sis.duzia_ai.consenso_info
-    if consenso['tipo'] == 'triplo': st.success(f"🔒 CONSENSO TRIPLO: D{consenso['duzia']}")
-    elif consenso['tipo'] == 'duplo': st.info(f"🔗 CONSENSO DUPLO: D{consenso['duzia']}")
-    elif consenso['tipo'] == 'simples': st.info(f"💡 Sinal: D{consenso['duzia']}")
-
-    st.markdown("---")
-    st.caption(f"🔧 **{api_name} V15 (alta precisão · 1 dúzia)**")
-    st.caption(f"• Conf mín: {config_ativa.get('confianca_minima_entrada', 1.8):.2f}")
-    st.caption(f"• Score mín ML: {config_ativa.get('ml_score_minimo_entrada', 28):.1f}")
-    st.caption(f"• Score mín Fallback: {config_ativa.get('ml_score_minimo_fallback', 35):.1f}")
-    st.caption(f"• Prob. bruta mín ML: {config_ativa.get('ml_prob_bruta_minima', 0.42)*100:.0f}%")
-    st.caption(f"• Drift reset em: {config_ativa.get('drift_rodadas_auto_reset', 20)} rodadas")
-    st.caption(f"• Transição penalidade: {config_ativa.get('transicao_penalidade_conf', 0.70)*100:.0f}%")
-    st.caption(f"• Transição score +{config_ativa.get('transicao_score_minimo_extra', 10):.1f}")
-    st.caption(f"• ML Avançado: {'✅' if config_ativa.get('usar_features_ml_avancadas', True) else '❌'}")
-
-    st.markdown("---")
-    st.session_state.janela_duzia_ai = st.slider("📏 Janela de Análise", 10, 50, st.session_state.janela_duzia_ai, 5)
-    st.session_state.modo_automatico = st.checkbox("🤖 Modo Automático", value=st.session_state.modo_automatico)
-
-    st.markdown("---")
-    with st.expander("🔔 Telegram", expanded=False):
-        st.session_state.telegram_token = st.text_input("Token Principal", value=st.session_state.telegram_token, type="password")
-        st.session_state.telegram_chat_id = st.text_input("Chat ID Principal", value=st.session_state.telegram_chat_id)
-        st.session_state.telegram_token_alt = st.text_input("Token Alternativo", value=st.session_state.telegram_token_alt, type="password")
-        st.session_state.telegram_chat_id_alt = st.text_input("Chat ID Alternativo", value=st.session_state.telegram_chat_id_alt)
-
-    # 🔧 DIAGNÓSTICO ML
-    st.markdown("---")
-    with st.expander("🔧 Diagnóstico ML", expanded=False):
-        if st.button("🔍 Verificar Modelo", width='stretch'):
-            api_name_diag = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-            caminho = get_modelo_ml_path(api_name_diag)
-            
-            if os.path.exists(caminho):
-                tamanho = os.path.getsize(caminho)
-                st.write(f"📁 Arquivo: {caminho}")
-                st.write(f"📦 Tamanho: {tamanho} bytes ({tamanho/1024:.1f} KB)")
-                
-                if tamanho < 1000:
-                    st.error("⚠️ ARQUIVO CORROMPIDO! Tamanho muito pequeno.")
-                    if st.button("🗑️ Remover arquivo corrompido"):
-                        os.remove(caminho)
-                        st.success("✅ Arquivo removido!")
-                        st.rerun()
-                else:
-                    st.success("✅ Arquivo com tamanho OK")
-                    
-                    try:
-                        modelo = joblib.load(caminho)
-                        st.success("✅ Modelo carregado com sucesso!")
-                        if hasattr(modelo, 'predict_proba'):
-                            st.success("✅ predict_proba disponível")
-                        if hasattr(modelo, 'rf') and hasattr(modelo, 'gbt'):
-                            st.success("✅ RandomForest e GradientBoosting disponíveis")
-                    except Exception as e:
-                        st.error(f"❌ Erro ao carregar: {e}")
+        if scores and i < len(scores):
+            if isinstance(scores[i], dict):
+                linha["Score"] = scores[i].get("score_ajustado", scores[i].get("score", 0))
             else:
-                st.warning("❌ Nenhum modelo salvo ainda")
+                linha["Score"] = scores[i]
+        dados_export.append(linha)
+    return pd.DataFrame(dados_export)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("💾 Salvar", width='stretch'):
-            salvar_resultado_em_arquivo(st.session_state.historico, get_session_paths(st.session_state.api_selecionada)['historico'])
-            salvar_sessao(); st.success("✅ Salvo!")
-    with c2:
-        if st.button("📥 CSV", width='stretch'):
-            if exportar_historico_csv(st.session_state.sistema.historico_entradas): st.success("✅ CSV!")
+def detectar_estrategia_ativa_mega():
+    if "v4_jogos" in st.session_state and st.session_state.v4_jogos:
+        return "Mega-Sena V4"
+    return "Padrão"
 
-
-# =============================
-# CONTEÚDO PRINCIPAL
-# =============================
-st.subheader("🎲 Inserir Números")
-c1, c2, c3 = st.columns([3, 1, 1])
-with c1:
-    entrada = st.text_input("Número (0-36):", key="entrada_numero")
-with c2:
-    if st.button("🎯 Enviar", width='stretch', type="primary"):
-        if validar_numero(entrada):
-            nr = int(entrada)
-            st.session_state.historico.append({"number": nr, "timestamp": timestamp_brasilia(),
-                                                "luckyNumbers": [], "luckyMultipliers": {},
-                                                "table_id": "manual", "table_name": "Entrada Manual"})
-            st.session_state.sistema.processar_novo_numero(nr)
-            salvar_resultado_em_arquivo(st.session_state.historico, get_session_paths(st.session_state.api_selecionada)['historico'])
-            salvar_sessao(); st.rerun()
-        else: st.error("Número entre 0 e 36")
-with c3:
-    if st.button("🔄 Auto", width='stretch'):
-        st.session_state.modo_automatico = not st.session_state.modo_automatico; st.rerun()
-
-if st.session_state.modo_automatico:
-    st_autorefresh(interval=3000, key="auto_refresh")
-    r = fetch_latest_result()
-    if r and r.get("number") is not None:
-        if not st.session_state.historico or r.get("timestamp") != st.session_state.historico[-1].get("timestamp"):
-            st.session_state.historico.append(r)
-            st.session_state.sistema.processar_novo_numero(r)
-            salvar_resultado_em_arquivo(st.session_state.historico, get_session_paths(st.session_state.api_selecionada)['historico'])
-            salvar_sessao(); st.rerun()
-
-st.markdown("---")
-sis = st.session_state.sistema
-api_name = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
-
-# BANNER DE REGIME
-regime_atual = getattr(sis.duzia_ai, 'regime_atual', 'estavel')
-if regime_atual == 'transicao':
-    st.error("⚠️ **TRANSIÇÃO DETECTADA** — Entradas com confiança reduzida. Aumentando cobertura.")
-elif regime_atual == 'instavel':
-    st.warning("⚡ **REGIME INSTÁVEL** — Aguardando estabilização.")
-else:
-    st.success("✅ **REGIME ESTÁVEL** — Padrões consolidados. Operação normal.")
-
-if sis.duzia_ai._drift_ativo:
-    reset_em = sis.duzia_ai.drift_rodadas_auto_reset - sis.duzia_ai._rodadas_sem_entrada
-    st.error(f"⚠️ **DRIFT DETECTADO** — Entradas suspensas. Reset automático em {max(0,reset_em)} rodadas.")
-if sis.duzia_ai._vies_dinamico_atual:
-    st.warning(f"🔍 **Viés dinâmico:** D{sis.duzia_ai._vies_dinamico_atual} — {sis.duzia_ai._vies_dinamico_intensidade*100:.0f}% acima do esperado.")
-
-stk = sis.duzia_ai._streak_info_atual
-if stk and stk.get('streak_atual_len', 0) >= 2:
-    stk_len = stk['streak_atual_len']; stk_duzia = stk['streak_atual_duzia']
-    if stk.get('streak_saturado'): st.error(f"⚠️ **Streak D{stk_duzia}×{stk_len} SATURADO**")
-    elif stk.get('streak_quebra_iminente'): st.error(f"⚡ **Streak D{stk_duzia}×{stk_len}** — Quebra iminente!")
-    else: st.info(f"🔥 **Streak: D{stk_duzia}×{stk_len}**")
-
-padroes_validos, qualidade = sis.duzia_ai._verificar_qualidade_padroes()
-
-st.subheader(f"📊 ESTATÍSTICAS — {api_name}")
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-total_duzias = int(sis.acertos_duzia + sis.erros_duzia)
-tx_duzias = (sis.acertos_duzia / total_duzias * 100) if total_duzias > 0 else 0
-total_numeros = sis.acertos_numero + sis.erros_numero
-tx_numeros = (sis.acertos_numero / total_numeros * 100) if total_numeros > 0 else 0
-c1.metric("🎯 Nº Exato", sis.acertos_numero, f"{tx_numeros:.0f}%")
-c2.metric("✅ Acertos", int(sis.acertos_duzia), f"{tx_duzias:.0f}%")
-c3.metric("🎯 Dúzia", sis.acertos_primaria)
-c4.metric("❌ Erros", sis.erros_duzia)
-c5.metric("🟢 Zeros", f"{sis.acertos_zero}/{sis.acertos_zero + sis.erros_zero}")
-c6.metric("📦 Total", total_duzias)
-
-if sis.total_sessoes > 0:
-    st.markdown("---")
-    st.subheader(f"📈 Sessão #{sis.total_sessoes}")
-    sc1, sc2, sc3, sc4 = st.columns(4)
-    sc1.metric("🔄 Rodadas", f"{sis.rodadas_na_sessao}/{sis.rodadas_por_sessao}")
-    sc2.metric("✅ Acertos", sis.acertos_sessao)
-    sc3.metric("❌ Erros", sis.erros_sessao)
-    taxa_sessao = (sis.acertos_sessao / max(1, sis.acertos_sessao + sis.erros_sessao)) * 100
-    sc4.metric("📊 Taxa", f"{taxa_sessao:.0f}%")
-    if sis.sessao_ativa: st.progress(sis.rodadas_na_sessao / max(1, sis.rodadas_por_sessao))
-
-st.markdown("---")
-cg, ce = st.columns([3, 2])
-
-with cg:
-    st.subheader("📈 Scores do ML")
-    if len(sis.historico_numeros) >= 3:
-        score, modo_atual = sis.duzia_ai.calcular_score()
-        max_score = max(score.values())
-        fig = plt.Figure(data=[plt.Bar(
-            x=['D1 (1-12)', 'D2 (13-24)', 'D3 (25-36)'],
-            y=[score[1], score[2], score[3]],
-            marker_color=['#FF6B6B' if score[d]==max_score else '#4ECDC4' for d in [1,2,3]],
-            text=[f'{score[d]:.1f}' for d in [1,2,3]], textposition='auto'
-        )])
-        titulo = f"🎯 ML V15 ({api_name}) | {modo_atual.upper()}"
-        if sis.duzia_ai.alerta_zero_ativo: titulo += " | 🟢 ZERO"
-        if sis.duzia_ai._drift_ativo: titulo += " | ⚠️ DRIFT"
-        if hasattr(sis.duzia_ai, 'regime_atual') and sis.duzia_ai.regime_atual in ('transicao', 'instavel'):
-            titulo += f" | 🔄 {sis.duzia_ai.regime_atual.upper()}"
-        stk = sis.duzia_ai._streak_info_atual
-        if stk and stk.get('streak_atual_len', 0) >= 2:
-            titulo += f" | 🔥STK D{stk['streak_atual_duzia']}×{stk['streak_atual_len']}"
-        fig.update_layout(title=titulo, height=300, showlegend=False, yaxis_title="Score")
-        st.plotly_chart(fig, width='stretch')
-
-        if len(sis.historico_numeros) >= 8:
-            ult = list(sis.historico_numeros)[-20:]
-            dz_hist = [get_duzia(n) for n in ult]
-            fig2 = plt.Figure()
-            fig2.add_trace(plt.Scatter(x=list(range(len(dz_hist))), y=dz_hist,
-                                        mode='lines+markers', line=dict(color='#FFD700', width=2), marker=dict(size=10)))
-            if sis.sinais_grafico:
-                sx, sy = [], []; off = len(dz_hist) - 20
-                for idx, dz in sis.sinais_grafico:
-                    pos = idx - off
-                    if 0 <= pos < 20: sx.append(pos); sy.append(dz)
-                if sx:
-                    fig2.add_trace(plt.Scatter(x=sx, y=sy, mode='markers', name='Sinal',
-                                                marker=dict(symbol='star', size=15, color='red')))
-            fig2.update_layout(title="📉 Histórico", yaxis=dict(tickvals=[0,1,2,3], ticktext=['0','D1','D2','D3'], range=[-0.5,3.5]), height=300)
-            st.plotly_chart(fig2, width='stretch')
-    else:
-        st.info(f"Aguardando dados... ({len(sis.historico_numeros)}/3 números)")
-
-with ce:
-    st.subheader("🎰 Entrada Atual")
-    
-    regime_atual = getattr(sis.duzia_ai, 'regime_atual', 'estavel')
-    if regime_atual == 'transicao':
-        st.error("⚠️ **TRANSIÇÃO** — Reduzindo confiança")
-    elif regime_atual == 'instavel':
-        st.warning("⚡ **INSTÁVEL**")
-    else:
-        st.success("✅ **ESTÁVEL**")
-    
-    if sis.duzia_ai._drift_ativo:
-        reset_em = sis.duzia_ai.drift_rodadas_auto_reset - sis.duzia_ai._rodadas_sem_entrada
-        st.error(f"⚠️ DRIFT — Reset em {max(0,reset_em)} rodadas")
-    if sis.duzia_ai.alerta_zero_ativo: st.warning("⚠️ ALERTA ZERO! 🟢")
-    if sis.duzia_ai.em_pausa_pos_raio: st.warning(f"⏸️ Pausa pós-raio ({sis.duzia_ai.ultimo_raio_alto}x)")
-    if sis.duzia_ai.anti_vies_ativo:
-        duzia_av = sis.duzia_ai.anti_vies_duzia or sis.duzia_ai._vies_dinamico_atual
-        if duzia_av: st.info(f"🛡️ Anti-viés D{duzia_av} ({sis.duzia_ai.anti_vies_penalidade*100:.0f}%)")
-    if sis.duzia_ai._vies_dinamico_atual:
-        st.info(f"🔍 Viés dinâmico: D{sis.duzia_ai._vies_dinamico_atual} ({sis.duzia_ai._vies_dinamico_intensidade*100:.0f}%)")
-    if sis.duzia_ai.peso_adaptativo_ativo: st.info("🔥 Peso adaptativo ativo")
-
-    stk = sis.duzia_ai._streak_info_atual
-    if stk and stk.get('streak_atual_len', 0) >= 2:
-        stk_len = stk['streak_atual_len']; stk_duzia = stk['streak_atual_duzia']; stk_cob = stk.get('cobertura_streak_duzia', '?')
-        if stk.get('streak_saturado'): st.error(f"⚠️ STK SATURADO D{stk_duzia}×{stk_len}")
-        elif stk.get('streak_quebra_iminente'): st.error(f"⚡ STK D{stk_duzia}×{stk_len} → QUEBRA | Cob: D{stk_cob}")
-        else: st.success(f"🔥 STK D{stk_duzia}×{stk_len} | Cob: D{stk_cob}")
-
-    consenso = sis.duzia_ai.consenso_info
-    if consenso['tipo'] == 'triplo': st.success(f"🔒 CONSENSO TRIPLO: D{consenso['duzia']}")
-    elif consenso['tipo'] == 'duplo': st.info(f"🔗 CONSENSO DUPLO: D{consenso['duzia']}")
-    elif consenso['tipo'] == 'simples': st.info(f"💡 Sinal único: D{consenso['duzia']}")
-
-    for t, nome in [('tam2','P2'),('tam3','P3'),('tam4','P4')]:
-        if sis.duzia_ai.padrao_stats_ui.get(t):
-            s = sis.duzia_ai.padrao_stats_ui[t]; melhor = max(s['scores'], key=s['scores'].get)
-            qual_ok = qualidade.get(t, False)
-            st.caption(f"{'✅' if qual_ok else '⚠️'} 🧩 {nome}: {s['gatilho']} → D{melhor} ({s['total']:.0f}x)")
-
-    if not sis.sessao_ativa:
-        if sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate:
-            tempo_restante = (sis.sessao_pausa_ate - hora_brasilia()).seconds
-            st.info(f"⏸️ Próxima sessão em: {tempo_restante//60:02d}:{tempo_restante%60:02d}")
+def conferir_jogos_mega(jogos, resultado_set):
+    resultados = []
+    for i, jogo in enumerate(jogos):
+        if isinstance(jogo, str):
+            dezenas = set(map(int, jogo.replace('"', '').replace(' ', '').split(',')))
         else:
-            st.info("🔴 Clique 'INICIAR SESSÃO' para começar")
-
-    if sis.entrada_ativa and sis.sessao_ativa:
-        e = sis.entrada_ativa
-        conf = e.get('confianca', 0); dz_princ = e.get('duzia_prevista', 0)
-        prob_ml = e.get('prob_ml_bruta')
-        gatilho = e.get('gatilho_ativo', 'ML')
-        padrao_info = e.get('padrao_ativo', {}); streak_ent = e.get('streak_info', None)
-        regime_ent = e.get('regime', 'estavel')
-        melhores_principal = _selecionar_melhores_numeros(dz_princ, list(sis.historico_numeros), 6)
-        cor = "#FF6347" if e.get('modo_anti_erro') else "#00CED1"
-        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V15 (1 Dúzia) ✅"
-        if regime_ent in ('transicao', 'instavel'):
-            icone_modo += f" 🔄{regime_ent}"
-        padrao_html = f'<p style="text-align:center; color:#FFD700; font-size:0.8em;">🧩 {padrao_info["resumo"]}</p>' if padrao_info.get('resumo') else ""
-        streak_html = f'<p style="text-align:center; color:#FF8C00; font-size:0.85em;">{streak_ent}</p>' if streak_ent else ""
-        st.markdown(f"""
-        <div style="background-color:{cor}15; border:2px solid {cor}; border-radius:15px; padding:15px;">
-            <h2 style="color:{cor}; text-align:center;">🎯 Dúzia {dz_princ}</h2>
-            <p style="text-align:center;">Confiança: {conf:.2f}{f' | ProbML: {prob_ml:.0f}%' if prob_ml is not None else ''}</p>
-            <p style="text-align:center;">{icone_modo}</p>
-            {padrao_html}{streak_html}
-        </div>""", unsafe_allow_html=True)
-        st.write(f"**🎲 D{dz_princ}:** {', '.join(map(str, melhores_principal))}")
-        st.progress(min(1.0, max(0.0, conf / 5.0)))
-    else:
-        st.info("🔍 Aguardando sinal...")
-
-    if sis.ultimo_numero is not None:
-        st.markdown("---")
-        st.write(f"**🔄 Último:** {'🟢 ZERO' if sis.ultimo_numero==0 else f'#{sis.ultimo_numero} (D{get_duzia(sis.ultimo_numero)})'}")
-
-st.markdown("---")
-st.subheader("📝 Histórico")
-if sis.historico_entradas:
-    dados = []
-    for e in reversed(sis.historico_entradas[-15:]):
-        real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0) != 0 else "0"
-        ns = e.get('numero', 0)
-        nd = f"⚡{ns} ({e.get('multiplicador',0)}x)" if e.get('eh_raio') else ("0" if ns == 0 else str(ns))
-        dados.append({
-            "Rod": e.get('rodada'), "Hora": e.get('hora'), "🎲": nd, "Real": real,
-            "Prev": f"D{e.get('duzia_prevista','?')}",
-            "Conf": f"{e.get('confianca',0):.1f}",
-            "ProbML": f"{e.get('prob_ml_bruta'):.0f}%" if e.get('prob_ml_bruta') is not None else "-",
-            "Gat": e.get('gatilho','ML'),
-            "Z": '🟢' if e.get('incluir_zero') else '-', "🔄": '🔄' if e.get('modo_anti_erro') else '-',
-            "Regime": e.get('regime', 'estavel')[:8],
-            "🧩": str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-',
-            "STK": str(e.get('streak_info', '-')) if e.get('streak_info') else '-',
-            "Duz": '✅' if e.get('acerto_duzia') else '❌',
-            "P1": '✅' if e.get('acerto_primaria') else '-',
-            "Nº": '🎯' if e.get('acerto_numero') else '-',
-            "Zer": '🟢' if e.get('acerto_zero') else '-',
+            dezenas = set(jogo)
+        acertos = dezenas.intersection(resultado_set)
+        resultados.append({
+            "Jogo": i + 1,
+            "Acertos": len(acertos),
+            "Acertos_Dezenas": sorted(acertos),
+            "Dezenas": sorted(dezenas)
         })
-    st.dataframe(dados, width='stretch', height=300)
-    if st.button("📥 Exportar CSV", width='stretch'):
-        if exportar_historico_csv(sis.historico_entradas): st.success("✅ CSV exportado!")
-else:
-    st.info("Nenhuma entrada ainda.")
+    df = pd.DataFrame(resultados)
+    return df.sort_values(by="Acertos", ascending=False).reset_index(drop=True)
 
-st.markdown("---")
+# =====================================================
+# INTERFACE PRINCIPAL
+# =====================================================
 
-# =============================
-# RODAPÉ E STATUS
-# =============================
+def main():
+    if "analise" not in st.session_state: st.session_state.analise = None
+    if "jogos" not in st.session_state: st.session_state.jogos = []
+    if "dados_api" not in st.session_state: st.session_state.dados_api = None
+    if "jogos_salvos" not in st.session_state: st.session_state.jogos_salvos = []
+    if "v4_jogos" not in st.session_state: st.session_state.v4_jogos = None
+    if "v4_gerador" not in st.session_state: st.session_state.v4_gerador = None
+    if "v4_scores" not in st.session_state: st.session_state.v4_scores = []
+    if "v4_analise_detalhada" not in st.session_state: st.session_state.v4_analise_detalhada = []
+    if "ultimo_concurso_info" not in st.session_state: st.session_state.ultimo_concurso_info = None
 
-col_t1, col_t2 = st.columns(2)
+    with st.sidebar:
+        st.header("⚙️ Configurações")
+        
+        # Opção para carregar dados
+        qtd = st.slider("Qtd concursos históricos", 20, 200, 100)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📥 Carregar Mega-Sena", use_container_width=True):
+                with st.spinner("Carregando dados da Mega-Sena..."):
+                    # Tenta carregar da API completa primeiro
+                    dados = buscar_historico_megasena(qtd)
+                    
+                    if dados is None:
+                        # Fallback: tenta carregar da API específica
+                        st.info("Tentando carregar da API específica...")
+                        try:
+                            url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
+                            response = requests.get(url, timeout=10)
+                            if response.status_code == 200:
+                                dados = response.json()
+                                if isinstance(dados, list):
+                                    dados = dados[:qtd]
+                                elif isinstance(dados, dict):
+                                    dados = [dados]
+                        except Exception as e:
+                            st.error(f"Erro ao carregar: {e}")
+                    
+                    if dados and len(dados) > 0:
+                        st.session_state.dados_api = dados
+                        
+                        # Extrai informações do último concurso
+                        ultimo = dados[0] if isinstance(dados, list) else dados
+                        st.session_state.ultimo_concurso_info = {
+                            'numero': ultimo.get('concurso', ultimo.get('numeroDoConcurso', 'N/A')),
+                            'data': ultimo.get('data', ultimo.get('dataApuracao', 'N/A')),
+                            'dezenas': ultimo.get('dezenas', [])
+                        }
+                        
+                        # Inicializa gerador
+                        st.session_state.v4_gerador = GeradorMegaSenaV4(dados, qtd)
+                        st.success(f"✅ Carregados {len(dados)} concursos!")
+                        st.success(f"📅 Último: #{st.session_state.ultimo_concurso_info['numero']} - {st.session_state.ultimo_concurso_info['data']}")
+                    else:
+                        st.error("❌ Não foi possível carregar os dados")
+        
+        with col2:
+            if st.button("🔄 Atualizar Dados", use_container_width=True):
+                with st.spinner("Atualizando dados..."):
+                    try:
+                        url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
+                        response = requests.get(url, timeout=10)
+                        if response.status_code == 200:
+                            dados = response.json()
+                            if isinstance(dados, list):
+                                dados = dados[:qtd]
+                            elif isinstance(dados, dict):
+                                dados = [dados]
+                            
+                            if dados and len(dados) > 0:
+                                st.session_state.dados_api = dados
+                                st.session_state.v4_gerador = GeradorMegaSenaV4(dados, qtd)
+                                st.success(f"✅ Dados atualizados! {len(dados)} concursos")
+                    except Exception as e:
+                        st.error(f"Erro ao atualizar: {e}")
 
-with col_t1:
-    if st.session_state.telegram_token and st.session_state.telegram_chat_id:
-        st.success("🔔 Telegram Principal OK")
-    else:
-        st.warning("🔔 Telegram Principal NÃO")
+    # Exibe informações do último concurso se disponível
+    if st.session_state.ultimo_concurso_info:
+        info = st.session_state.ultimo_concurso_info
+        st.sidebar.markdown("---")
+        st.sidebar.markdown(f"**📅 Último Concurso:** #{info['numero']}")
+        st.sidebar.markdown(f"**📆 Data:** {info['data']}")
+        if info['dezenas']:
+            dezenas = sorted(map(int, info['dezenas']))
+            st.sidebar.markdown(f"**🎯 Resultado:** {', '.join(f'{d:02d}' for d in dezenas)}")
 
-with col_t2:
-    if st.session_state.telegram_token_alt and st.session_state.telegram_chat_id_alt:
-        st.success("📢 Telegram Alt OK")
-    else:
-        st.warning("📢 Telegram Alt NÃO")
+    if not st.session_state.dados_api:
+        st.info("👈 Carregue os dados da Mega-Sena na barra lateral para começar.")
+        return
 
-config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
-st.caption(f"🤖 DuziaAI V15 | {api_name} | ✅ Alta Precisão · 1 Dúzia · sem cobertura | {formatar_hora_brasilia()}")
+    st.subheader("🎯 Análise e Geração de Jogos")
 
-modelo_path = get_modelo_ml_path(api_name)
-if os.path.exists(modelo_path):
-    tamanho = os.path.getsize(modelo_path) / 1024
-    st.caption(f"💾 Modelo: {modelo_path} ({tamanho:.1f} KB)")
-else:
-    st.caption("⚠️ Modelo não salvo ainda")
+    # Criar abas
+    tabs = st.tabs([
+        "📊 Análise",
+        "🎲 Gerador",
+        "🔍 Conferência",
+        "📈 Avaliação",
+        "✅ Salvos",
+        "🎯 V4 MEGA-SENA"
+    ])
 
-salvar_sessao()
+    # ================= TAB 1: ANÁLISE =================
+    with tabs[0]:
+        if st.session_state.dados_api:
+            ultimo = st.session_state.dados_api[0]
+            numeros_ultimo = sorted(map(int, ultimo['dezenas']))
+            st.markdown(f"""
+            <div class='concurso-info'>
+                <strong>Concurso #{ultimo.get('concurso', ultimo.get('numeroDoConcurso', 'N/A'))}</strong> - {ultimo.get('data', ultimo.get('dataApuracao', 'N/A'))}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("**Dezenas sorteadas:**")
+                st.markdown(formatar_jogo_html(numeros_ultimo), unsafe_allow_html=True)
+            with col2:
+                pares = contar_pares(numeros_ultimo)
+                st.metric("Pares/Ímpares", f"{pares}×{6-pares}")
+            with col3:
+                st.metric("Soma total", sum(numeros_ultimo))
+            
+            st.markdown("### 📊 Estatísticas do Último Concurso")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Primos", contar_primos(numeros_ultimo))
+            with col2:
+                st.metric("Consecutivos", contar_consecutivos(numeros_ultimo))
+            with col3:
+                faixas = [(1, 20), (21, 40), (41, 60)]
+                contagem = contar_por_faixa(numeros_ultimo, faixas)
+                st.metric("Distribuição (B/M/A)", f"{contagem[0]}/{contagem[1]}/{contagem[2]}")
+            with col4:
+                linhas = distribuir_por_linhas(numeros_ultimo, 6)
+                st.metric("Linhas (0-5)", f"{linhas[0]}-{linhas[1]}-{linhas[2]}-{linhas[3]}-{linhas[4]}-{linhas[5]}")
+
+    # ================= TAB 2: GERADOR =================
+    with tabs[1]:
+        st.markdown("### 🎲 Gerador de Jogos da Mega-Sena")
+        st.caption("Geração aleatória com filtros básicos")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            qtd_jogos = st.slider("Quantidade de jogos", 1, 20, 5)
+        with col2:
+            if st.button("🚀 GERAR JOGOS", use_container_width=True):
+                with st.spinner(f"Gerando {qtd_jogos} jogos..."):
+                    jogos = []
+                    for _ in range(qtd_jogos * 3):
+                        jogo = sorted(random.sample(range(1, 61), 6))
+                        if jogo not in jogos:
+                            jogos.append(jogo)
+                        if len(jogos) >= qtd_jogos:
+                            break
+                    st.session_state.jogos = jogos
+                    st.success(f"✅ {len(jogos)} jogos gerados!")
+        
+        if st.session_state.jogos:
+            st.markdown(f"### 📋 Jogos Gerados ({len(st.session_state.jogos)})")
+            for i, jogo in enumerate(st.session_state.jogos):
+                st.markdown(f"""
+                <div style='border-left: 5px solid #4cc9f0; background:#0e1117; border-radius:10px; padding:15px; margin-bottom:10px;'>
+                    <strong>Jogo {i+1:2d}</strong><br>
+                    {formatar_jogo_html(jogo)}
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ================= TAB 3: CONFERÊNCIA =================
+    with tabs[2]:
+        st.markdown("### 🔍 Conferência de Jogos")
+        
+        if st.session_state.dados_api:
+            concurso_resultado = st.selectbox(
+                "Selecione o concurso para conferência", 
+                st.session_state.dados_api, 
+                format_func=lambda c: f"#{c.get('concurso', c.get('numeroDoConcurso', 'N/A'))} - {c.get('data', c.get('dataApuracao', 'N/A'))}"
+            )
+            if concurso_resultado:
+                resultado_oficial = set(map(int, concurso_resultado["dezenas"]))
+                st.markdown(f"""<div class="highlight"><strong>🎯 Resultado #{concurso_resultado.get('concurso', concurso_resultado.get('numeroDoConcurso', 'N/A'))}:</strong><br>{formatar_jogo_html(sorted(resultado_oficial))}</div>""", unsafe_allow_html=True)
+        
+        opcao_jogos = st.radio("Origem dos jogos:", ["Jogos gerados na sessão atual", "Carregar de arquivo CSV", "Digitar manualmente"], horizontal=True)
+        jogos_para_conferir = []
+        
+        if opcao_jogos == "Jogos gerados na sessão atual":
+            if st.session_state.jogos:
+                jogos_para_conferir = st.session_state.jogos
+                st.info(f"{len(jogos_para_conferir)} jogos carregados da sessão atual")
+        elif opcao_jogos == "Carregar de arquivo CSV":
+            uploaded_file = st.file_uploader("Escolha um arquivo CSV", type="csv")
+            if uploaded_file:
+                df_carregado = pd.read_csv(uploaded_file)
+                if "Dezenas" in df_carregado.columns:
+                    jogos_para_conferir = df_carregado["Dezenas"].tolist()
+        else:
+            jogos_texto = st.text_area("Digite os jogos (um por linha, números separados por vírgula)", placeholder="1,2,3,4,5,6")
+            if jogos_texto:
+                for linha in jogos_texto.strip().split('\n'):
+                    if linha.strip():
+                        try:
+                            dezenas = [int(n.strip()) for n in linha.split(',')]
+                            if len(dezenas) == 6 and all(1 <= n <= 60 for n in dezenas):
+                                jogos_para_conferir.append(sorted(dezenas))
+                        except:
+                            pass
+        
+        if jogos_para_conferir and 'resultado_oficial' in locals():
+            if st.button("🔍 CONFERIR JOGOS", use_container_width=True, type="primary"):
+                df_conferencia = conferir_jogos_mega(jogos_para_conferir, resultado_oficial)
+                st.markdown("### 📊 Resultados da Conferência")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1: st.metric("Total Jogos", len(df_conferencia))
+                with col2: st.metric("Melhor Acerto", df_conferencia.iloc[0]["Acertos"])
+                with col3: st.metric("Média Acertos", round(df_conferencia["Acertos"].mean(), 1))
+                with col4: st.metric("Jogos com 4+", len(df_conferencia[df_conferencia["Acertos"] >= 4]))
+                
+                for i, row in df_conferencia.head(20).iterrows():
+                    medalha = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "📌"
+                    st.markdown(f"""
+                    <div style='border-left: 5px solid {"#ffd700" if i == 0 else "#c0c0c0" if i == 1 else "#cd7f32" if i == 2 else "#4cc9f0"}; background:#0e1117; border-radius:10px; padding:12px; margin-bottom:8px;'>
+                        {medalha} <strong>Jogo {row['Jogo']}</strong> — <span style='color:#00ffaa;'>{row['Acertos']} acertos</span><br>
+                        {formatar_jogo_html(row['Dezenas'])}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    # ================= TAB 4: AVALIAÇÃO =================
+    with tabs[3]:
+        st.markdown("### 📈 Avaliação Estatística dos Jogos")
+        if st.session_state.jogos:
+            avaliacao = []
+            for i, jogo in enumerate(st.session_state.jogos):
+                avaliacao.append({
+                    "Jogo": i+1,
+                    "Pares": contar_pares(jogo),
+                    "Ímpares": 6 - contar_pares(jogo),
+                    "Primos": contar_primos(jogo),
+                    "Soma": sum(jogo),
+                    "Consecutivos": contar_consecutivos(jogo)
+                })
+            df_avaliacao = pd.DataFrame(avaliacao)
+            st.dataframe(df_avaliacao, use_container_width=True, hide_index=True)
+        else:
+            st.info("Gere jogos primeiro na aba 'Gerador'")
+
+    # ================= TAB 5: SALVOS =================
+    with tabs[4]:
+        st.markdown("### ✅ Jogos Salvos")
+        st.session_state.jogos_salvos = carregar_jogos_salvos()
+        if not st.session_state.jogos_salvos:
+            st.warning("Nenhum jogo salvo encontrado.")
+        else:
+            for jogo_salvo in st.session_state.jogos_salvos[:10]:
+                st.markdown(f"""
+                <div style='background:#0e1117; border:1px solid #262730; border-radius:10px; padding:10px; margin-bottom:8px;'>
+                    <strong>ID:</strong> {jogo_salvo['id']} | <strong>Concurso:</strong> #{jogo_salvo['concurso_base']['numero']}
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ================= TAB 6: V4 MEGA-SENA =================
+    with tabs[5]:
+        st.markdown("### 🎯 MEGA-SENA V4 - Fechamento Inteligente")
+        st.markdown("""
+        <div class="v4-highlight">
+            <strong>🎯 ESTRATÉGIA V4:</strong><br>
+            • 10 jogos principais seguindo o padrão de colunas<br>
+            • 5 jogos de proteção para cobertura de viradas<br>
+            • Baseado em análise de frequência e colunas<br>
+            • Foco em C3, C4 e C6 como colunas principais
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Inicializa gerador se necessário
+        if st.session_state.v4_gerador is None and st.session_state.dados_api:
+            st.session_state.v4_gerador = GeradorMegaSenaV4(st.session_state.dados_api, 50)
+        
+        with st.expander("📊 Análise de Colunas", expanded=True):
+            if st.session_state.v4_gerador:
+                analise = st.session_state.v4_gerador.analise_colunas
+                st.markdown("**Frequência das Colunas nos Últimos 20 Concursos:**")
+                cols = st.columns(6)
+                for i, (col, qtd) in enumerate(analise['colunas_mais_frequentes']):
+                    with cols[i]:
+                        st.metric(col, f"{qtd}x")
+                
+                st.markdown(f"""
+                <div style='background:#0e1117; border-radius:10px; padding:15px; margin-top:10px;'>
+                    <strong>🎯 Coluna Principal:</strong> {analise['coluna_principal']}<br>
+                    <strong>🔧 Colunas de Apoio:</strong> {analise['coluna_apoio1']}, {analise['coluna_apoio2']}
+                </div>
+                """, unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🚀 GERAR V4 - 15 JOGOS", use_container_width=True, type="primary"):
+                with st.spinner("Gerando 15 jogos com a estratégia V4..."):
+                    if st.session_state.v4_gerador:
+                        resultado = st.session_state.v4_gerador.gerar_todos_jogos()
+                        st.session_state.v4_jogos = resultado
+                        st.session_state.jogos = resultado['todos']
+                        
+                        # Calcula scores
+                        scores = []
+                        analises = []
+                        for jogo in resultado['todos']:
+                            analise = st.session_state.v4_gerador.analisar_jogo(jogo)
+                            analises.append(analise)
+                            score = 0
+                            if analise:
+                                if analise['quantidade_colunas'] >= 4:
+                                    score += 3
+                                if 2 <= analise['pares'] <= 4:
+                                    score += 2
+                                if 2 <= analise['primos'] <= 4:
+                                    score += 2
+                                if 180 <= analise['soma'] <= 220:
+                                    score += 1
+                                if analise['repetidas_ultimo'] in [2, 3, 4]:
+                                    score += 2
+                            scores.append(score)
+                        
+                        st.session_state.v4_scores = scores
+                        st.session_state.v4_analise_detalhada = analises
+                        st.success("✅ 15 jogos gerados com sucesso!")
+        
+        with col2:
+            if st.button("🎲 GERAR SÓ PRINCIPAIS", use_container_width=True):
+                with st.spinner("Gerando 10 jogos principais..."):
+                    if st.session_state.v4_gerador:
+                        principais = st.session_state.v4_gerador.gerar_jogos_principais(10)
+                        st.session_state.v4_jogos = {'principais': principais, 'protecao': [], 'todos': principais}
+                        st.session_state.jogos = principais
+                        st.success("✅ 10 jogos principais gerados!")
+        
+        # Exibe jogos gerados
+        if st.session_state.v4_jogos:
+            jogos = st.session_state.v4_jogos
+            scores = st.session_state.v4_scores if st.session_state.v4_scores else []
+            analises = st.session_state.v4_analise_detalhada if st.session_state.v4_analise_detalhada else []
+            
+            st.markdown("### 📋 Jogos Gerados")
+            
+            # Bloco A - Jogos Principais
+            st.markdown("#### 🔵 BLOCO A - 10 Jogos Principais")
+            for i, jogo in enumerate(jogos['principais']):
+                score = scores[i] if i < len(scores) else 0
+                analise = analises[i] if i < len(analises) else None
+                medalha = "🏆" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "📌"
+                
+                stats = ""
+                if analise:
+                    stats = f"⚖️ {analise['pares']}p/{analise['impares']}i | 🔢 {analise['primos']} primos | ➕ {analise['soma']} | 🔁 {analise['repetidas_ultimo']} rep | 📊 {analise['quantidade_colunas']} colunas"
+                
+                st.markdown(f"""
+                <div class='jogo-v4-principal'>
+                    {medalha} <strong>Jogo {i+1:2d}</strong> — Score: {score}<br>
+                    {formatar_jogo_html(jogo)}<br>
+                    <small style='color:#aaa;'>{stats}</small>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Bloco B - Jogos de Proteção
+            if jogos['protecao']:
+                st.markdown("#### 🟢 BLOCO B - 5 Jogos de Proteção")
+                for i, jogo in enumerate(jogos['protecao']):
+                    idx = 10 + i
+                    score = scores[idx] if idx < len(scores) else 0
+                    analise = analises[idx] if idx < len(analises) else None
+                    
+                    stats = ""
+                    if analise:
+                        stats = f"⚖️ {analise['pares']}p/{analise['impares']}i | 🔢 {analise['primos']} primos | ➕ {analise['soma']} | 🔁 {analise['repetidas_ultimo']} rep | 📊 {analise['quantidade_colunas']} colunas"
+                    
+                    st.markdown(f"""
+                    <div class='jogo-v4-protecao'>
+                        🛡️ <strong>Proteção {i+1}</strong> — Score: {score}<br>
+                        {formatar_jogo_html(jogo)}<br>
+                        <small style='color:#aaa;'>{stats}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            # Recomendações
+            st.markdown("### 📊 Recomendações de Prioridade")
+            
+            if st.session_state.v4_gerador:
+                recomendacoes = st.session_state.v4_gerador.get_recomendacoes_prioridade()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.markdown("**🔥 Prioridade Máxima (6 jogos)**")
+                    for idx in recomendacoes['prioridade_maxima']:
+                        if idx < len(jogos['principais']):
+                            st.markdown(f"Jogo {idx+1}")
+                
+                with col2:
+                    st.markdown("**📊 Prioridade Média (4 jogos)**")
+                    for idx in recomendacoes['prioridade_media']:
+                        if idx < len(jogos['principais']):
+                            st.markdown(f"Jogo {idx+1}")
+                
+                with col3:
+                    st.markdown("**🛡️ Proteção (5 jogos)**")
+                    for idx in range(len(jogos['protecao'])):
+                        st.markdown(f"Proteção {idx+1}")
+            
+            # Planos de Jogo
+            st.markdown("### 💰 Planos de Jogo")
+            
+            planos = st.session_state.v4_gerador.get_planos_jogo() if st.session_state.v4_gerador else {}
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("**📌 Econômico (4 jogos)**")
+                st.markdown("Jogos 1, 2, 3, 8")
+            with col2:
+                st.markdown("**📌 Intermediário (8 jogos)**")
+                st.markdown("Jogos 1, 2, 3, 4, 5, 8, 10, Proteção 1")
+            with col3:
+                st.markdown("**📌 Completo (15 jogos)**")
+                st.markdown("Todos os 15 jogos")
+            
+            # Botões de ação
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("💾 Salvar Jogos V4", key="salvar_v4", use_container_width=True):
+                    ultimo = st.session_state.dados_api[0]
+                    jogos_para_salvar = st.session_state.v4_jogos['todos']
+                    arquivo, jogo_id = salvar_jogos_gerados(
+                        jogos_para_salvar, [], 
+                        {"versao": "Mega-Sena V4", "estrategia": "Colunas"},
+                        ultimo.get('concurso', ultimo.get('numeroDoConcurso', 0)),
+                        ultimo.get('data', ultimo.get('dataApuracao', '')),
+                        {"scores": st.session_state.v4_scores}
+                    )
+                    if arquivo:
+                        st.success(f"✅ Jogos salvos! ID: {jogo_id}")
+                        st.session_state.jogos_salvos = carregar_jogos_salvos()
+            
+            with col2:
+                df_export = gerar_csv_download_mega(st.session_state.v4_jogos['todos'], st.session_state.v4_scores, "Mega-Sena V4")
+                st.download_button(
+                    label="📥 Exportar CSV",
+                    data=df_export.to_csv(index=False),
+                    file_name=f"megasena_v4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            
+            with col3:
+                json_data = json.dumps({
+                    "versao": "Mega-Sena V4",
+                    "data_geracao": datetime.now().isoformat(),
+                    "total_jogos": len(st.session_state.v4_jogos['todos']),
+                    "jogos_principais": st.session_state.v4_jogos['principais'],
+                    "jogos_protecao": st.session_state.v4_jogos['protecao'],
+                    "scores": st.session_state.v4_scores,
+                    "analises": convert_numpy_types(st.session_state.v4_analise_detalhada)
+                }, indent=2, ensure_ascii=False, default=str)
+                
+                st.download_button(
+                    label="📦 Exportar JSON",
+                    data=json_data,
+                    file_name=f"megasena_v4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+
+if __name__ == "__main__":
+    main()
+
+st.markdown("""
+<style>
+.footer-premium{width:100%;text-align:center;padding:22px 10px;margin-top:40px;background:linear-gradient(180deg,#0b0b0b,#050505);color:#ffffff;border-top:1px solid #222;position:relative;}
+.footer-premium::before{content:"";position:absolute;top:0;left:0;width:100%;height:2px;background:linear-gradient(90deg,#ff6b6b,#4ecdc4,#45b7d1,#ff6b6b);box-shadow:0 0 10px #ff6b6b;}
+.footer-title{font-size:16px;font-weight:800;letter-spacing:3px;text-transform:uppercase;text-shadow:0 0 6px rgba(255,107,107,0.6);}
+.footer-sub{font-size:11px;color:#bfbfbf;margin-top:4px;letter-spacing:1.5px;}
+</style>
+<div class="footer-premium"><div class="footer-title">MEGA-SENA ELITE SYSTEM</div><div class="footer-sub">SAMUCJ TECNOLOGIA © 2026</div></div>
+""", unsafe_allow_html=True)
