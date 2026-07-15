@@ -2109,7 +2109,7 @@ class DuziaAI:
             # features, árvores profundas memorizam ruído. Profundidade e
             # folha mínima maiores reduzem variância sem perder muito viés.
             rf_base = RandomForestClassifier(n_estimators=150, max_depth=7, random_state=42,
-                                              n_jobs=-1, class_weight='balanced', min_samples_leaf=3,
+                                              n_jobs=1, class_weight='balanced', min_samples_leaf=3,
                                               max_features='sqrt')
             gbt_base = GradientBoostingClassifier(n_estimators=80, max_depth=3, learning_rate=0.07,
                                                    subsample=0.85, min_samples_leaf=3, random_state=42)
@@ -3007,13 +3007,13 @@ with st.sidebar:
 
     botao_desabilitado = sis.sessao_ativa or (sis.sessao_pausa_ate and hora_brasilia() < sis.sessao_pausa_ate)
     if botao_desabilitado:
-        st.button("🚀 INICIAR SESSÃO", use_container_width=True, disabled=True)
+        st.button("🚀 INICIAR SESSÃO", width='stretch', disabled=True)
     else:
-        if st.button("🚀 INICIAR SESSÃO", use_container_width=True, type="primary"):
+        if st.button("🚀 INICIAR SESSÃO", width='stretch', type="primary"):
             if sis.iniciar_sessao(): st.success(f"✅ Sessão #{sis.total_sessoes} iniciada!"); st.rerun()
 
     st.markdown("---")
-    if st.button("🆕 RESET TOTAL", use_container_width=True):
+    if st.button("🆕 RESET TOTAL", width='stretch'):
         if nova_sessao(): st.success("✅ Reset completo!"); st.rerun()
 
     st.markdown("---")
@@ -3046,7 +3046,7 @@ with st.sidebar:
                             st.markdown(ger.get_download_link(ger.gerar_csv_sessao(s), f"sessao_{s.get('numero_sessao','?')}.csv", 'csv'), unsafe_allow_html=True)
                         stats = s.get('estatisticas', {})
                         st.caption(f"✅ {stats.get('acertos', 0)} | ❌ {stats.get('erros', 0)} | 📊 {stats.get('taxa_acerto', 0)}%")
-            if st.button("📦 Baixar Todas (JSON)", use_container_width=True):
+            if st.button("📦 Baixar Todas (JSON)", width='stretch'):
                 todas = ger.listar_sessoes()
                 if todas:
                     conteudo = json.dumps({'total_sessoes': len(todas), 'sessoes': todas}, indent=2, ensure_ascii=False)
@@ -3117,7 +3117,7 @@ with st.sidebar:
     # 🔧 DIAGNÓSTICO ML
     st.markdown("---")
     with st.expander("🔧 Diagnóstico ML", expanded=False):
-        if st.button("🔍 Verificar Modelo", use_container_width=True):
+        if st.button("🔍 Verificar Modelo", width='stretch'):
             api_name_diag = st.session_state.get('api_selecionada', 'XXXtreme Lightning')
             caminho = get_modelo_ml_path(api_name_diag)
             
@@ -3149,11 +3149,11 @@ with st.sidebar:
 
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("💾 Salvar", use_container_width=True):
+        if st.button("💾 Salvar", width='stretch'):
             salvar_resultado_em_arquivo(st.session_state.historico, get_session_paths(st.session_state.api_selecionada)['historico'])
             salvar_sessao(); st.success("✅ Salvo!")
     with c2:
-        if st.button("📥 CSV", use_container_width=True):
+        if st.button("📥 CSV", width='stretch'):
             if exportar_historico_csv(st.session_state.sistema.historico_entradas): st.success("✅ CSV!")
 
 
@@ -3165,7 +3165,7 @@ c1, c2, c3 = st.columns([3, 1, 1])
 with c1:
     entrada = st.text_input("Número (0-36):", key="entrada_numero")
 with c2:
-    if st.button("🎯 Enviar", use_container_width=True, type="primary"):
+    if st.button("🎯 Enviar", width='stretch', type="primary"):
         if validar_numero(entrada):
             nr = int(entrada)
             st.session_state.historico.append({"number": nr, "timestamp": timestamp_brasilia(),
@@ -3176,7 +3176,7 @@ with c2:
             salvar_sessao(); st.rerun()
         else: st.error("Número entre 0 e 36")
 with c3:
-    if st.button("🔄 Auto", use_container_width=True):
+    if st.button("🔄 Auto", width='stretch'):
         st.session_state.modo_automatico = not st.session_state.modo_automatico; st.rerun()
 
 if st.session_state.modo_automatico:
@@ -3264,7 +3264,7 @@ with cg:
         if stk and stk.get('streak_atual_len', 0) >= 2:
             titulo += f" | 🔥STK D{stk['streak_atual_duzia']}×{stk['streak_atual_len']}"
         fig.update_layout(title=titulo, height=300, showlegend=False, yaxis_title="Score")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
         if len(sis.historico_numeros) >= 8:
             ult = list(sis.historico_numeros)[-20:]
@@ -3281,7 +3281,7 @@ with cg:
                     fig2.add_trace(plt.Scatter(x=sx, y=sy, mode='markers', name='Sinal',
                                                 marker=dict(symbol='star', size=15, color='red')))
             fig2.update_layout(title="📉 Histórico", yaxis=dict(tickvals=[0,1,2,3], ticktext=['0','D1','D2','D3'], range=[-0.5,3.5]), height=300)
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width='stretch')
     else:
         st.info(f"Aguardando dados... ({len(sis.historico_numeros)}/3 números)")
 
@@ -3386,8 +3386,8 @@ if sis.historico_entradas:
             "Nº": '🎯' if e.get('acerto_numero') else '-',
             "Zer": '🟢' if e.get('acerto_zero') else '-',
         })
-    st.dataframe(dados, use_container_width=True, height=300)
-    if st.button("📥 Exportar CSV", use_container_width=True):
+    st.dataframe(dados, width='stretch', height=300)
+    if st.button("📥 Exportar CSV", width='stretch'):
         if exportar_historico_csv(sis.historico_entradas): st.success("✅ CSV exportado!")
 else:
     st.info("Nenhuma entrada ainda.")
