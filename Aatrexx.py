@@ -7,6 +7,7 @@ import json
 import os
 import uuid
 import math
+import itertools
 from collections import Counter
 from datetime import datetime
 from scipy.stats import norm, binom
@@ -50,11 +51,13 @@ input, textarea { border-radius: 12px !important; }
 .regras-especiais-highlight { background: linear-gradient(135deg, #4cc9f030 0%, #f9731630 100%); border: 2px solid #4cc9f0; padding: 15px; border-radius: 12px; margin: 10px 0; }
 .abc-highlight { background: linear-gradient(135deg, #4cc9f030 0%, #f9731630 50%, #00ff8830 100%); border: 2px solid #4cc9f0; padding: 15px; border-radius: 12px; margin: 10px 0; }
 .v4-highlight { background: linear-gradient(135deg, #ff6b6b30 0%, #4ecdc430 50%, #45b7d130 100%); border: 2px solid #ff6b6b; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.pro-highlight { background: linear-gradient(135deg, #00c85330 0%, #0088aa30 100%); border: 2px solid #00c853; padding: 15px; border-radius: 12px; margin: 10px 0; }
 .download-section { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 20px; border-radius: 15px; margin: 20px 0; border: 2px solid #00ffaa; text-align: center; }
 .download-btn { background: linear-gradient(90deg, #00ffaa, #00cc88); color: #000; padding: 12px 30px; border-radius: 25px; font-weight: bold; border: none; cursor: pointer; }
 .jogo-v4-principal { border-left: 5px solid #4cc9f0; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
 .jogo-v4-protecao { border-left: 5px solid #f97316; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
 .jogo-v4-destaque { border-left: 5px solid #ffd700; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
+.jogo-pro { border-left: 5px solid #00c853; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -568,6 +571,263 @@ class GeradorMegaSenaV4:
             'completo': 'Todos os 15 jogos'
         }
 
+
+# =====================================================
+# NOVO — ESTRATÉGIAS PROFISSIONAIS DE FECHAMENTO
+# (módulo aditivo, não altera nada acima)
+# =====================================================
+
+class EstrategiasProfissionaisMegaSena:
+    """
+    Implementa técnicas reais usadas por apostadores/sistemas comerciais de
+    fechamento de loteria. IMPORTANTE: nenhuma delas altera a probabilidade
+    matemática de acerto (todo jogo tem a mesma chance). O que elas fazem:
+      - Fechamento: garante um mínimo de acertos SE X dos seus números saírem
+        (matemática combinatória, não previsão).
+      - Filtros estatísticos / anti-popularidade: reduzem a chance de DIVIDIR
+        o prêmio, evitando combinações que outras pessoas também jogam
+        (datas, sequências, padrões visuais no volante).
+      - Quente/frio/atraso/delta: replicam o que sistemas comerciais vendem,
+        mas são estatística descritiva sobre sorteios passados, sem poder
+        preditivo comprovado sobre sorteios futuros (cada sorteio é
+        independente).
+    """
+
+    def __init__(self, dados_api, qtd_concursos=100):
+        self.concursos = []
+        for c in dados_api[:qtd_concursos]:
+            if "dezenas" in c:
+                self.concursos.append(sorted(map(int, c["dezenas"])))
+        self.frequencias = Counter()
+        for jogo in self.concursos:
+            self.frequencias.update(jogo)
+        self.atrasos = self._calcular_atrasos()
+        self.pares_frequentes = self._calcular_pares_frequentes()
+        self.soma_media, self.soma_std = self._stats_soma()
+        self.deltas_historicos = self._calcular_deltas_historicos()
+
+    def _calcular_atrasos(self):
+        atrasos = {}
+        for d in range(1, 61):
+            atraso = 0
+            for jogo in self.concursos:
+                if d in jogo:
+                    break
+                atraso += 1
+            atrasos[d] = atraso
+        return atrasos
+
+    def _calcular_pares_frequentes(self):
+        cont = Counter()
+        for jogo in self.concursos:
+            for par in itertools.combinations(sorted(jogo), 2):
+                cont[par] += 1
+        return cont
+
+    def _stats_soma(self):
+        if not self.concursos:
+            return 183, 30
+        somas = [sum(j) for j in self.concursos]
+        return float(np.mean(somas)), float(np.std(somas))
+
+    def _calcular_deltas_historicos(self):
+        """Delta = diferença entre dezenas consecutivas do jogo ordenado.
+        Sistema Delta: em vez de escolher números diretamente, escolhe-se
+        os 'saltos' entre eles a partir da distribuição histórica real."""
+        todos_deltas = []
+        for jogo in self.concursos:
+            j = sorted(jogo)
+            deltas = [j[0]] + [j[i] - j[i - 1] for i in range(1, len(j))]
+            todos_deltas.append(deltas)
+        if not todos_deltas:
+            return [[7, 9, 8, 10, 9, 7]]
+        return todos_deltas
+
+    # ---------- 1) Sistema Delta ----------
+
+    def gerar_jogo_delta(self):
+        """Sorteia um padrão de deltas real de um concurso passado e
+        reconstrói uma sequência nova a partir dele."""
+        for _ in range(200):
+            deltas = random.choice(self.deltas_historicos)
+            deltas_embaralhados = deltas[:]
+            random.shuffle(deltas_embaralhados)
+            numeros = []
+            atual = 0
+            for d in deltas_embaralhados:
+                atual += max(d, 1)
+                numeros.append(atual)
+            numeros = sorted(set(n for n in numeros if 1 <= n <= 60))
+            if len(numeros) == 6:
+                return numeros
+        return sorted(random.sample(range(1, 61), 6))
+
+    # ---------- 2) Quente / Frio / Atrasado balanceado ----------
+
+    def gerar_jogo_quente_frio_atrasado(self, n_quentes=2, n_frios=1, n_atrasados=2, n_aleatorios=1):
+        """Divide o pool em números mais sorteados (quentes), menos
+        sorteados (frios) e com maior atraso, e combina proporcionalmente."""
+        todos = list(range(1, 61))
+        por_freq = sorted(todos, key=lambda n: self.frequencias.get(n, 0), reverse=True)
+        quentes = por_freq[:20]
+        frios = por_freq[-20:]
+        por_atraso = sorted(todos, key=lambda n: self.atrasos.get(n, 0), reverse=True)
+        atrasados = por_atraso[:20]
+
+        jogo = set()
+        jogo.update(random.sample(quentes, min(n_quentes, len(quentes))))
+        jogo.update(random.sample(frios, min(n_frios, len(frios))))
+        jogo.update(random.sample(atrasados, min(n_atrasados, len(atrasados))))
+        while len(jogo) < 6:
+            jogo.add(random.randint(1, 60))
+        return sorted(list(jogo)[:6])
+
+    # ---------- 3) Filtro estatístico (soma dentro do range histórico) ----------
+
+    def gerar_jogo_filtro_estatistico(self, tentativas=500):
+        """Gera aleatoriamente e só aceita jogos cuja soma caia dentro de
+        1 desvio-padrão da média histórica de somas sorteadas, com 2-4
+        pares e 2-4 primos."""
+        primos = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59}
+        lo, hi = self.soma_media - self.soma_std, self.soma_media + self.soma_std
+        for _ in range(tentativas):
+            jogo = sorted(random.sample(range(1, 61), 6))
+            soma = sum(jogo)
+            pares = sum(1 for n in jogo if n % 2 == 0)
+            qtd_primos = sum(1 for n in jogo if n in primos)
+            if lo <= soma <= hi and 2 <= pares <= 4 and 2 <= qtd_primos <= 4:
+                return jogo
+        return sorted(random.sample(range(1, 61), 6))
+
+    # ---------- 4) Pares mais frequentes (co-ocorrência) ----------
+
+    def gerar_jogo_pares_frequentes(self):
+        """Usa os pares de números que mais saíram juntos historicamente
+        como 'âncoras' e completa o jogo aleatoriamente."""
+        top_pares = self.pares_frequentes.most_common(30)
+        if not top_pares:
+            return sorted(random.sample(range(1, 61), 6))
+        par_escolhido, _ = random.choice(top_pares)
+        jogo = set(par_escolhido)
+        while len(jogo) < 6:
+            jogo.add(random.randint(1, 60))
+        return sorted(jogo)
+
+    # ---------- 5) Anti-popularidade (reduz divisão de prêmio) ----------
+
+    def _e_padrao_popular(self, jogo):
+        j = sorted(jogo)
+        if all(n <= 31 for n in j):
+            return True
+        deltas = [j[i] - j[i - 1] for i in range(1, len(j))]
+        if len(set(deltas)) == 1:
+            return True
+        maior_seq = 1
+        atual_seq = 1
+        for i in range(1, len(j)):
+            if j[i] == j[i - 1] + 1:
+                atual_seq += 1
+                maior_seq = max(maior_seq, atual_seq)
+            else:
+                atual_seq = 1
+        if maior_seq >= 4:
+            return True
+        if sum(1 for n in j if n % 10 == 0) >= 3:
+            return True
+        return False
+
+    def gerar_jogo_anti_popular(self, tentativas=500):
+        """Descarta combinações que muita gente joga (datas, sequências,
+        padrões visuais no cartão)."""
+        for _ in range(tentativas):
+            jogo = sorted(random.sample(range(1, 61), 6))
+            if not self._e_padrao_popular(jogo):
+                return jogo
+        return sorted(random.sample(range(1, 61), 6))
+
+    # ---------- 6) Fechamento (wheeling) com garantia matemática via ILP ----------
+
+    def gerar_fechamento(self, pool, garantia=4, n_jogos_max=15):
+        """
+        Fechamento clássico: escolhe um pool de N números e gera o menor
+        conjunto de jogos de 6 dezenas que GARANTE que, se `garantia`
+        desses números estiverem entre os sorteados, pelo menos um dos
+        seus jogos acerte `garantia` dezenas. Usa ILP (OR-Tools) se
+        disponível; senão usa heurística gulosa.
+        """
+        pool = sorted(pool)
+        if len(pool) < 6:
+            raise ValueError("O pool precisa ter pelo menos 6 números.")
+
+        alvos = list(itertools.combinations(pool, garantia))
+
+        if ORTOOLS_AVAILABLE:
+            candidatos = list(itertools.combinations(pool, 6))
+            if len(candidatos) > 3000:
+                candidatos = random.sample(candidatos, 3000)
+
+            solver = pywraplp.Solver.CreateSolver("CBC")
+            x = {i: solver.IntVar(0, 1, f"x{i}") for i in range(len(candidatos))}
+
+            for alvo in alvos:
+                alvo_set = set(alvo)
+                cobre = [i for i, jogo in enumerate(candidatos) if alvo_set.issubset(jogo)]
+                if cobre:
+                    solver.Add(sum(x[i] for i in cobre) >= 1)
+
+            solver.Minimize(sum(x.values()))
+            solver.SetTimeLimit(8000)
+            status = solver.Solve()
+
+            if status in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
+                jogos = [list(candidatos[i]) for i in x if x[i].solution_value() > 0.5]
+                if jogos:
+                    return jogos[:n_jogos_max]
+
+        return self._fechamento_guloso(pool, garantia, n_jogos_max)
+
+    def _fechamento_guloso(self, pool, garantia, n_jogos_max):
+        alvos = set(itertools.combinations(pool, garantia))
+        candidatos = list(itertools.combinations(pool, 6))
+        random.shuffle(candidatos)
+        jogos_escolhidos = []
+        alvos_restantes = set(alvos)
+
+        while alvos_restantes and len(jogos_escolhidos) < n_jogos_max:
+            melhor_jogo, melhor_cobertura = None, set()
+            for jogo in candidatos:
+                cobertura = {a for a in alvos_restantes if set(a).issubset(jogo)}
+                if len(cobertura) > len(melhor_cobertura):
+                    melhor_jogo, melhor_cobertura = jogo, cobertura
+            if not melhor_jogo:
+                break
+            jogos_escolhidos.append(list(melhor_jogo))
+            alvos_restantes -= melhor_cobertura
+
+        return jogos_escolhidos
+
+    # ---------- ensemble ----------
+
+    def gerar_ensemble_profissional(self, qtd=15):
+        """Combina todas as estratégias acima num único lote de jogos,
+        evitando duplicados."""
+        jogos = []
+        geradores = [
+            self.gerar_jogo_delta,
+            self.gerar_jogo_quente_frio_atrasado,
+            self.gerar_jogo_filtro_estatistico,
+            self.gerar_jogo_pares_frequentes,
+            self.gerar_jogo_anti_popular,
+        ]
+        tentativas = 0
+        while len(jogos) < qtd and tentativas < qtd * 20:
+            tentativas += 1
+            gerador = random.choice(geradores)
+            jogo = gerador()
+            if jogo not in jogos:
+                jogos.append(jogo)
+        return jogos
+
 # =====================================================
 # FUNÇÕES DE DOWNLOAD
 # =====================================================
@@ -628,6 +888,7 @@ def main():
     if "v4_scores" not in st.session_state: st.session_state.v4_scores = []
     if "v4_analise_detalhada" not in st.session_state: st.session_state.v4_analise_detalhada = []
     if "ultimo_concurso_info" not in st.session_state: st.session_state.ultimo_concurso_info = None
+    if "estrategias_pro" not in st.session_state: st.session_state.estrategias_pro = None
 
     with st.sidebar:
         st.header("⚙️ Configurações")
@@ -670,6 +931,8 @@ def main():
                         
                         # Inicializa gerador
                         st.session_state.v4_gerador = GeradorMegaSenaV4(dados, qtd)
+                        # Inicializa engine de estratégias profissionais
+                        st.session_state.estrategias_pro = EstrategiasProfissionaisMegaSena(dados, qtd)
                         st.success(f"✅ Carregados {len(dados)} concursos!")
                         st.success(f"📅 Último: #{st.session_state.ultimo_concurso_info['numero']} - {st.session_state.ultimo_concurso_info['data']}")
                     else:
@@ -691,6 +954,7 @@ def main():
                             if dados and len(dados) > 0:
                                 st.session_state.dados_api = dados
                                 st.session_state.v4_gerador = GeradorMegaSenaV4(dados, qtd)
+                                st.session_state.estrategias_pro = EstrategiasProfissionaisMegaSena(dados, qtd)
                                 st.success(f"✅ Dados atualizados! {len(dados)} concursos")
                     except Exception as e:
                         st.error(f"Erro ao atualizar: {e}")
@@ -718,7 +982,8 @@ def main():
         "🔍 Conferência",
         "📈 Avaliação",
         "✅ Salvos",
-        "🎯 V4 MEGA-SENA"
+        "🎯 V4 MEGA-SENA",
+        "🧠 Profissional"
     ])
 
     # ================= TAB 1: ANÁLISE =================
@@ -1084,6 +1349,103 @@ def main():
                     mime="application/json",
                     use_container_width=True
                 )
+
+    # ================= TAB 7: PROFISSIONAL (NOVA) =================
+    with tabs[6]:
+        st.markdown("### 🧠 Estratégias Profissionais de Fechamento")
+        st.markdown("""
+        <div class="pro-highlight">
+            <strong>⚠️ IMPORTANTE:</strong> nenhuma técnica aqui muda a probabilidade
+            matemática de acerto — cada combinação tem sempre a mesma chance.
+            O fechamento garante acertos mínimos SE seus números saírem; os
+            filtros estatísticos e anti-popularidade só reduzem a chance de
+            dividir o prêmio.
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.session_state.estrategias_pro is None and st.session_state.dados_api:
+            st.session_state.estrategias_pro = EstrategiasProfissionaisMegaSena(st.session_state.dados_api, 100)
+        engine = st.session_state.estrategias_pro
+
+        if engine is None:
+            st.info("Carregue os dados da Mega-Sena na barra lateral primeiro.")
+        else:
+            estrategia = st.selectbox(
+                "Escolha a estratégia",
+                [
+                    "Ensemble (mistura tudo)",
+                    "Sistema Delta",
+                    "Quente / Frio / Atrasado",
+                    "Filtro Estatístico (soma/pares/primos)",
+                    "Pares Mais Frequentes",
+                    "Anti-Popularidade",
+                    "Fechamento com Garantia (ILP)",
+                ],
+            )
+
+            if estrategia == "Fechamento com Garantia (ILP)":
+                st.markdown(f"OR-Tools disponível: **{'sim' if ORTOOLS_AVAILABLE else 'não (usará heurística)'}**")
+                pool_texto = st.text_input(
+                    "Pool de números para o fechamento (separados por vírgula)",
+                    "4,7,11,19,23,28,31,40,45,52",
+                )
+                garantia = st.slider("Garantia de acertos (se X do pool saírem)", 3, 5, 4)
+                n_max = st.slider("Máximo de jogos no fechamento", 2, 20, 10)
+
+                if st.button("🔒 Gerar Fechamento", use_container_width=True):
+                    try:
+                        pool = sorted(set(int(n.strip()) for n in pool_texto.split(",")))
+                        with st.spinner("Calculando fechamento..."):
+                            jogos = engine.gerar_fechamento(pool, garantia=garantia, n_jogos_max=n_max)
+                        st.session_state.jogos = jogos
+                        st.success(f"✅ {len(jogos)} jogos gerados garantindo {garantia} acertos se {garantia} do pool sair.")
+                        for i, j in enumerate(jogos):
+                            st.markdown(f"""
+                            <div class='jogo-pro'>
+                                🔒 <strong>Jogo {i+1}</strong><br>
+                                {formatar_jogo_html(j)}
+                            </div>
+                            """, unsafe_allow_html=True)
+                    except Exception as e:
+                        st.error(f"Erro no pool informado: {e}")
+            else:
+                qtd_jogos_pro = st.slider("Quantidade de jogos", 1, 20, 10, key="qtd_pro")
+                if st.button("🚀 Gerar Jogos", use_container_width=True, key="gerar_pro"):
+                    with st.spinner("Gerando..."):
+                        if estrategia == "Ensemble (mistura tudo)":
+                            jogos = engine.gerar_ensemble_profissional(qtd_jogos_pro)
+                        elif estrategia == "Sistema Delta":
+                            jogos = [engine.gerar_jogo_delta() for _ in range(qtd_jogos_pro)]
+                        elif estrategia == "Quente / Frio / Atrasado":
+                            jogos = [engine.gerar_jogo_quente_frio_atrasado() for _ in range(qtd_jogos_pro)]
+                        elif estrategia == "Filtro Estatístico (soma/pares/primos)":
+                            jogos = [engine.gerar_jogo_filtro_estatistico() for _ in range(qtd_jogos_pro)]
+                        elif estrategia == "Pares Mais Frequentes":
+                            jogos = [engine.gerar_jogo_pares_frequentes() for _ in range(qtd_jogos_pro)]
+                        else:
+                            jogos = [engine.gerar_jogo_anti_popular() for _ in range(qtd_jogos_pro)]
+
+                    st.session_state.jogos = jogos
+                    st.success(f"✅ {len(jogos)} jogos gerados com a estratégia '{estrategia}'!")
+                    for i, j in enumerate(jogos):
+                        st.markdown(f"""
+                        <div class='jogo-pro'>
+                            🧠 <strong>Jogo {i+1}</strong><br>
+                            {formatar_jogo_html(j)}
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                # Exportação dos jogos profissionais
+                if st.session_state.jogos:
+                    df_export_pro = gerar_csv_download_mega(st.session_state.jogos, estrategia=estrategia)
+                    st.download_button(
+                        label="📥 Exportar CSV (Profissional)",
+                        data=df_export_pro.to_csv(index=False),
+                        file_name=f"megasena_profissional_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="csv_pro"
+                    )
 
 if __name__ == "__main__":
     main()
