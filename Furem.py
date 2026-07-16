@@ -1,3 +1,5 @@
+#[file name]: CVC Furem.py
+#[file content begin]
 import streamlit as st
 import json
 import os
@@ -2354,9 +2356,17 @@ class DuziaAI:
             self._threshold_ajuste = 0.0
             return
 
-        janela = list(self.historico_confianca_resultado)[-self.threshold_adaptativo_janela:]
-        if len(janela) < 10:
+        # Corrigido: converte o deque para lista e depois fatiar, 
+        # garantindo que a janela seja válida
+        janela_lista = list(self.historico_confianca_resultado)
+        if len(janela_lista) < 10:
             return  # amostra pequena demais pra confiar no ajuste
+        
+        # Pega apenas os últimos N elementos (ou todos se for menor)
+        janela = janela_lista[-self.threshold_adaptativo_janela:] if len(janela_lista) >= self.threshold_adaptativo_janela else janela_lista
+        
+        if len(janela) < 10:
+            return
 
         acertos = sum(1 for _, acertou in janela if acertou)
         taxa = acertos / len(janela)
@@ -3509,3 +3519,4 @@ else:
     st.caption("⚠️ Modelo não salvo ainda")
 
 salvar_sessao()
+#[file content end]
