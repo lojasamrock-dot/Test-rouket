@@ -794,7 +794,7 @@ class FiltrosInteligentesLF:
         }
 
 # =====================================================
-# MÓDULO 6: GERADOR PREMIUM - LOTOFÁCIL
+# MÓDULO 6: GERADOR PREMIUM - LOTOFÁCIL (CORRIGIDO)
 # =====================================================
 
 class GeradorPremiumLF:
@@ -814,7 +814,7 @@ class GeradorPremiumLF:
         
         jogos = []
         tentativas = 0
-        max_tentativas = qtd * 5000
+        max_tentativas = qtd * 10000
         
         # Obtém ranking das dezenas
         ranking = self.pontuacao.get_ranking(20)
@@ -834,10 +834,20 @@ class GeradorPremiumLF:
         while len(jogos) < qtd and tentativas < max_tentativas:
             tentativas += 1
             
+            # Gera o jogo usando a estratégia escolhida
             if dezenas_base and len(dezenas_base) >= 15:
+                # Usa dezenas base se fornecidas
                 jogo = sorted(random.sample(dezenas_base, 15))
             else:
+                # Gera jogo com a estratégia
                 jogo = gerador(dezenas_prioritarias)
+                
+                # Garante que o jogo tem 15 números
+                while len(jogo) < 15:
+                    novo = random.randint(1, 25)
+                    if novo not in jogo:
+                        jogo.append(novo)
+                jogo = sorted(jogo)
             
             # Aplica filtros
             aprovado, mensagem = self.filtros.aplicar_filtros(jogo, filtros_personalizados)
@@ -852,6 +862,29 @@ class GeradorPremiumLF:
                 )
         
         progress_bar.empty()
+        
+        # Se não gerou todos os jogos, tenta com menos filtros
+        if len(jogos) < qtd:
+            st.warning(f"⚠️ Gerados apenas {len(jogos)} de {qtd} jogos com os filtros atuais. Tentando com filtros mais flexíveis...")
+            
+            # Filtros mais flexíveis
+            filtros_flexiveis = filtros_personalizados.copy()
+            filtros_flexiveis['pares_min'] = max(4, filtros_personalizados.get('pares_min', 6) - 2)
+            filtros_flexiveis['pares_max'] = min(11, filtros_personalizados.get('pares_max', 9) + 2)
+            filtros_flexiveis['soma_min'] = max(150, filtros_personalizados.get('soma_min', 180) - 20)
+            filtros_flexiveis['soma_max'] = min(250, filtros_personalizados.get('soma_max', 210) + 20)
+            filtros_flexiveis['consecutivos_max'] = min(6, filtros_personalizados.get('consecutivos_max', 4) + 2)
+            filtros_flexiveis['faixa_min'] = max(3, filtros_personalizados.get('faixa_min', 4) - 1)
+            filtros_flexiveis['faixa_max'] = min(7, filtros_personalizados.get('faixa_max', 6) + 1)
+            
+            tentativas_extra = 0
+            while len(jogos) < qtd and tentativas_extra < 5000:
+                tentativas_extra += 1
+                jogo = sorted(random.sample(range(1, 26), 15))
+                aprovado, mensagem = self.filtros.aplicar_filtros(jogo, filtros_flexiveis)
+                if aprovado and jogo not in jogos:
+                    jogos.append(jogo)
+        
         return jogos
     
     def _gerar_conservadora(self, dezenas_prioritarias):
@@ -860,7 +893,9 @@ class GeradorPremiumLF:
         
         # Pega 10 números do top ranking
         top = dezenas_prioritarias[:15]
-        jogo.update(random.sample(top, min(10, len(top))))
+        qtd_top = min(10, len(top))
+        if qtd_top > 0:
+            jogo.update(random.sample(top, qtd_top))
         
         # Completa com números aleatórios
         while len(jogo) < 15:
@@ -868,7 +903,7 @@ class GeradorPremiumLF:
             if novo not in jogo:
                 jogo.add(novo)
         
-        return sorted(jogo)
+        return sorted(list(jogo))
     
     def _gerar_equilibrada(self, dezenas_prioritarias):
         """Estratégia Equilibrada: balanceia frequência e diversidade"""
@@ -876,20 +911,23 @@ class GeradorPremiumLF:
         
         # Pega 8 números do ranking
         top = dezenas_prioritarias[:20]
-        jogo.update(random.sample(top, min(8, len(top))))
+        qtd_top = min(8, len(top))
+        if qtd_top > 0:
+            jogo.update(random.sample(top, qtd_top))
         
         # Pega 4 números de fora do top
         fora_top = [n for n in range(1, 26) if n not in top]
         if fora_top and len(jogo) < 14:
-            jogo.update(random.sample(fora_top, min(4, len(fora_top))))
+            qtd_fora = min(4, len(fora_top), 15 - len(jogo))
+            jogo.update(random.sample(fora_top, qtd_fora))
         
-        # Completa
+        # Completa com números aleatórios
         while len(jogo) < 15:
             novo = random.randint(1, 25)
             if novo not in jogo:
                 jogo.add(novo)
         
-        return sorted(jogo)
+        return sorted(list(jogo))
     
     def _gerar_diversificada(self, dezenas_prioritarias):
         """Estratégia Diversificada: mistura diferentes tipos"""
@@ -897,21 +935,24 @@ class GeradorPremiumLF:
         
         # Pega 6 do ranking
         top = dezenas_prioritarias[:20]
-        jogo.update(random.sample(top, min(6, len(top))))
+        qtd_top = min(6, len(top))
+        if qtd_top > 0:
+            jogo.update(random.sample(top, qtd_top))
         
         # Pega 5 atrasados
         atrasados = sorted(self.estatisticas.atrasos.items(), key=lambda x: x[1], reverse=True)[:10]
         atrasados_nums = [n for n, _ in atrasados]
-        if atrasados_nums:
-            jogo.update(random.sample(atrasados_nums, min(5, len(atrasados_nums))))
+        if atrasados_nums and len(jogo) < 14:
+            qtd_atrasados = min(5, len(atrasados_nums), 15 - len(jogo))
+            jogo.update(random.sample(atrasados_nums, qtd_atrasados))
         
-        # Pega 4 aleatórios
+        # Completa com números aleatórios
         while len(jogo) < 15:
             novo = random.randint(1, 25)
             if novo not in jogo:
                 jogo.add(novo)
         
-        return sorted(jogo)
+        return sorted(list(jogo))
 
 # =====================================================
 # MÓDULO 7: BACKTESTS - LOTOFÁCIL
@@ -982,6 +1023,47 @@ class BacktestsLF:
         for estrategia in estrategias:
             resultados[estrategia] = self.testar_estrategia(estrategia, num_testes)
         return resultados
+
+# =====================================================
+# FUNÇÃO PARA TESTAR A GERAÇÃO
+# =====================================================
+
+def testar_geracao():
+    """Função de teste para verificar se os jogos estão sendo gerados corretamente"""
+    
+    # Cria dados de teste
+    dados_teste = []
+    for i in range(100):
+        dados_teste.append({
+            'concurso': i + 1,
+            'data': f'01/01/202{i}',
+            'dezenas': sorted(random.sample(range(1, 26), 15))
+        })
+    
+    # Inicializa módulos
+    banco = BancoDadosLFInteligente(dados_teste)
+    estatisticas = EstatisticasLFAvancadas(banco)
+    pontuacao = MotorPontuacaoLF(estatisticas)
+    filtros = FiltrosInteligentesLF(estatisticas)
+    
+    # Cria gerador
+    gerador = GeradorPremiumLF(banco, estatisticas, pontuacao, filtros)
+    
+    # Testa geração
+    st.write("🧪 Testando geração de jogos...")
+    
+    for estrategia in ['conservadora', 'equilibrada', 'diversificada']:
+        st.write(f"\n📊 Estratégia: {estrategia}")
+        jogos = gerador.gerar_jogos(qtd=5, estrategia=estrategia)
+        
+        if jogos:
+            st.success(f"✅ Gerados {len(jogos)} jogos")
+            for i, jogo in enumerate(jogos[:3]):
+                st.write(f"  Jogo {i+1}: {jogo} (tamanho: {len(jogo)})")
+        else:
+            st.error("❌ Nenhum jogo gerado")
+    
+    st.success("\n✅ Teste concluído!")
 
 # =====================================================
 # INTERFACE PRINCIPAL
@@ -1247,6 +1329,10 @@ def main():
         if st.session_state.gerador:
             gerador = st.session_state.gerador
             
+            # Botão de teste rápido
+            if st.button("🧪 Testar Geração", use_container_width=True):
+                testar_geracao()
+            
             with st.expander("⚙️ Configurações", expanded=True):
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -1263,6 +1349,7 @@ def main():
                         try:
                             dezenas_base = [int(x.strip()) for x in base_input.split(",") if x.strip()]
                             dezenas_base = sorted(dezenas_base)[:20]
+                            st.success(f"✅ {len(dezenas_base)} dezenas base carregadas")
                         except:
                             st.warning("Formato inválido. Use números separados por vírgula.")
                 with col3:
@@ -1315,10 +1402,19 @@ def main():
                     if jogos:
                         st.session_state.jogos_gerados = jogos
                         st.success(f"✅ {len(jogos)} jogos gerados!")
+                    else:
+                        st.error("❌ Nenhum jogo foi gerado. Tente ajustar os filtros.")
             
             if st.session_state.jogos_gerados:
                 jogos = st.session_state.jogos_gerados
                 st.markdown(f"### 📋 Jogos Gerados ({len(jogos)})")
+                
+                # Verifica tamanho dos jogos
+                tamanhos = [len(j) for j in jogos]
+                if all(t == 15 for t in tamanhos):
+                    st.success("✅ Todos os jogos têm 15 números")
+                else:
+                    st.warning(f"⚠️ Alguns jogos não têm 15 números: {tamanhos}")
                 
                 # Análise com IA se disponível
                 if st.session_state.ia and st.session_state.ia_treinada:
