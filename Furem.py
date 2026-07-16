@@ -796,7 +796,7 @@ _SETUP_IMMERSIVE_PRE_AJUSTE = {
     'score_markov_peso': 8,
     'score_ml_peso': 55,
     'score_anti_erro_peso': 20,
-    'ml_janela_treino': 60,
+    'ml_janela_treino': 25,
     'ml_atualizar_a_cada': 5,
     'ml_score_minimo_entrada': 20,
     'ml_score_minimo_fallback': 30,
