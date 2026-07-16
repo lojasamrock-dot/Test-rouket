@@ -744,7 +744,7 @@ SETUP_XXXTREME = {
     'drift_janela': 12,
     'drift_taxa_minima': 0.25,
     'drift_alertar_apos': 3,
-    'drift_rodadas_auto_reset': 15,
+    'drift_rodadas_auto_reset': 5,
     'decaimento_fator': 0.95,
     'decaimento_a_cada': 4,
     'score_frequencia_peso': 40,
