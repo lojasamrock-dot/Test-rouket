@@ -8,13 +8,22 @@ import os
 import uuid
 import math
 import warnings
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from datetime import datetime, timedelta
 from scipy.stats import norm, binom, chi2, pearsonr
 from scipy.signal import find_peaks
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.calibration import CalibratedClassifierCV
+try:
+    # sklearn >= 1.6 removed CalibratedClassifierCV(cv='prefit') in favor of FrozenEstimator
+    from sklearn.frozen import FrozenEstimator
+    def _calibrar_modelo_prefit(modelo_base):
+        return CalibratedClassifierCV(FrozenEstimator(modelo_base), method='sigmoid')
+except ImportError:
+    def _calibrar_modelo_prefit(modelo_base):
+        return CalibratedClassifierCV(modelo_base, cv='prefit', method='sigmoid')
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
@@ -539,7 +548,24 @@ class MotorPontuacaoLF:
 # =====================================================
 
 class IAEstatisticaLF:
-    """Módulo 4 - IA Estatística para Lotofácil"""
+    """Módulo 4 - IA Estatística para Lotofácil
+    
+    CORREÇÃO CRÍTICA: a versão anterior calculava features (frequência, atraso,
+    tendência) usando `self.estatisticas`, que é computada com TODO o histórico
+    carregado — incluindo concursos futuros em relação a cada linha de treino.
+    Isso é "look-ahead bias": o modelo via, indiretamente, o resultado que estava
+    tentando prever. Além de vazar informação, essas métricas eram CONSTANTES
+    (o mesmo valor de frequência/atraso era usado para todas as 500 linhas de
+    um número, não importa a época do concurso), então o modelo não tinha como
+    aprender um padrão temporal real.
+    
+    Agora cada concurso usa apenas dados anteriores a ele (walk-forward), como
+    seria em produção: no momento de prever o concurso N, só sabemos o que
+    aconteceu até o concurso N-1.
+    """
+    
+    JANELAS_TENDENCIA = [10, 20, 50, 100]
+    AQUECIMENTO_MINIMO = 30  # nº de concursos necessários antes de começar a gerar linhas de treino
     
     def __init__(self, banco_dados, estatisticas):
         self.banco = banco_dados
@@ -549,74 +575,137 @@ class IAEstatisticaLF:
         self._preparar_dados()
         
     def _preparar_dados(self):
-        """Prepara dados para treinamento"""
+        """Prepara dados de treino com features ponto-no-tempo (sem look-ahead bias)."""
+        # concursos_asc: do mais antigo para o mais recente
+        concursos_asc = list(reversed(self.banco.concursos))
+        n = len(concursos_asc)
+        
+        aquecimento = min(self.AQUECIMENTO_MINIMO, max(5, n // 4))
+        
+        freq_total = Counter()
+        janela20 = deque(maxlen=20)
+        freq_janela20 = Counter()
+        
+        janelas_dict = {w: deque(maxlen=w) for w in self.JANELAS_TENDENCIA}
+        freq_janelas_dict = {w: Counter() for w in self.JANELAS_TENDENCIA}
+        
+        ultimo_indice_visto = {num: -1 for num in range(1, 26)}
+        
         features = []
         targets = []
         
-        for concurso in self.banco.concursos:
+        for t, concurso in enumerate(concursos_asc):
             dezenas = concurso['dezenas']
+            dezenas_set = set(dezenas)
             
-            # Para cada dezena sorteada
+            if t >= aquecimento:
+                # --- Features calculadas SOMENTE com dados de t-1 e anteriores ---
+                atrasos_pt = {}
+                for num in range(1, 26):
+                    if ultimo_indice_visto[num] >= 0:
+                        atrasos_pt[num] = t - 1 - ultimo_indice_visto[num]
+                    else:
+                        atrasos_pt[num] = t
+                
+                tendencia_pt = {}
+                for num in range(1, 26):
+                    freq_j = [freq_janelas_dict[w].get(num, 0) / w for w in self.JANELAS_TENDENCIA]
+                    x = np.arange(len(freq_j))
+                    tendencia_pt[num] = np.polyfit(x, freq_j, 1)[0] if len(freq_j) > 1 else 0
+                
+                pares_prop = sum(1 for nn in dezenas if nn % 2 == 0) / 15
+                faixa_baixa_prop = sum(1 for nn in dezenas if nn <= 8) / 15
+                faixa_media_prop = sum(1 for nn in dezenas if 9 <= nn <= 16) / 15
+                soma_prop = sum(dezenas) / 25
+                
+                # "Vizinhança quente": frequência histórica média dos números
+                # próximos (num-3..num+3), calculada só com dados anteriores.
+                # IMPORTANTE: ao contrário da versão anterior, isso NÃO usa o
+                # resultado do concurso que está sendo rotulado — só estatística
+                # ponto-no-tempo — então não vaza a resposta certa (a versão
+                # antiga dava 0 para toda dezena não sorteada e >0 quase sempre
+                # para a sorteada, o que é basicamente entregar o gabarito).
+                max_freq_total = max(freq_total.values()) if freq_total else 1
+                
+                for num in range(1, 26):
+                    vizinhos = [v for v in range(max(1, num - 3), min(25, num + 3) + 1) if v != num]
+                    proximidade = (np.mean([freq_total.get(v, 0) for v in vizinhos]) / max_freq_total) if vizinhos else 0
+                    features.append([
+                        freq_total.get(num, 0),
+                        freq_janela20.get(num, 0),
+                        atrasos_pt.get(num, 0),
+                        tendencia_pt.get(num, 0),
+                        pares_prop,
+                        faixa_baixa_prop,
+                        faixa_media_prop,
+                        soma_prop,
+                        proximidade
+                    ])
+                    targets.append(1 if num in dezenas_set else 0)
+            
+            # --- Atualiza acumuladores DEPOIS de gerar as features (dados só ficam
+            # "disponíveis" para o próximo concurso) ---
+            freq_total.update(dezenas)
+            
+            if len(janela20) == 20:
+                freq_janela20.subtract(janela20[0])
+            janela20.append(dezenas)
+            freq_janela20.update(dezenas)
+            
+            for w in self.JANELAS_TENDENCIA:
+                dq = janelas_dict[w]
+                if len(dq) == w:
+                    freq_janelas_dict[w].subtract(dq[0])
+                dq.append(dezenas)
+                freq_janelas_dict[w].update(dezenas)
+            
             for num in dezenas:
-                features.append([
-                    self.estatisticas.frequencias.get(num, 0),
-                    self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0),
-                    self.estatisticas.atrasos.get(num, 0),
-                    self.estatisticas.tendencias.get(num, {}).get('inclinacao', 0),
-                    sum([1 for n in dezenas if n % 2 == 0]) / 15,
-                    sum([1 for n in dezenas if n <= 8]) / 15,
-                    sum([1 for n in dezenas if 9 <= n <= 16]) / 15,
-                    sum(dezenas) / 25,
-                    len([n for n in dezenas if abs(n - num) <= 3]) / 15
-                ])
-                targets.append(1)
-            
-            # Para dezenas não sorteadas
-            todas_dezenas = set(range(1, 26))
-            nao_sorteadas = todas_dezenas - set(dezenas)
-            for num in nao_sorteadas:
-                features.append([
-                    self.estatisticas.frequencias.get(num, 0),
-                    self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0),
-                    self.estatisticas.atrasos.get(num, 0),
-                    self.estatisticas.tendencias.get(num, {}).get('inclinacao', 0),
-                    sum([1 for n in dezenas if n % 2 == 0]) / 15,
-                    sum([1 for n in dezenas if n <= 8]) / 15,
-                    sum([1 for n in dezenas if 9 <= n <= 16]) / 15,
-                    sum(dezenas) / 25,
-                    0
-                ])
-                targets.append(0)
+                ultimo_indice_visto[num] = t
         
         self.dados_processados = {
-            'features': np.array(features),
-            'targets': np.array(targets)
+            'features': np.array(features) if features else np.empty((0, 9)),
+            'targets': np.array(targets) if targets else np.empty((0,))
         }
     
+    def _split_cronologico(self, X, y):
+        """Divide em treino/calibração/teste respeitando a ordem temporal
+        (sem embaralhar), para não misturar 'futuro' com 'passado' na avaliação."""
+        n = len(X)
+        i_train = int(n * 0.70)
+        i_calib = int(n * 0.85)
+        return (X[:i_train], y[:i_train]), (X[i_train:i_calib], y[i_train:i_calib]), (X[i_calib:], y[i_calib:])
+    
     def treinar_random_forest(self):
-        """Treina modelo Random Forest"""
+        """Treina Random Forest com split cronológico + calibração de probabilidades"""
         try:
             X = self.dados_processados['features']
             y = self.dados_processados['targets']
             
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            if len(X) < 200:
+                st.warning("⚠️ Poucos dados para treino confiável (carregue mais concursos).")
+                return False
             
-            modelo = RandomForestClassifier(
+            (X_train, y_train), (X_calib, y_calib), (X_test, y_test) = self._split_cronologico(X, y)
+            
+            modelo_base = RandomForestClassifier(
                 n_estimators=150,
                 max_depth=12,
                 min_samples_split=5,
                 random_state=42,
                 n_jobs=-1
             )
-            modelo.fit(X_train, y_train)
+            modelo_base.fit(X_train, y_train)
             
-            y_pred = modelo.predict(X_test)
+            modelo_calibrado = _calibrar_modelo_prefit(modelo_base)
+            modelo_calibrado.fit(X_calib, y_calib)
+            
+            y_pred = modelo_calibrado.predict(X_test)
             acuracia = accuracy_score(y_test, y_pred)
             
             self.modelos['random_forest'] = {
-                'modelo': modelo,
+                'modelo': modelo_calibrado,
                 'acuracia': acuracia,
-                'feature_importance': modelo.feature_importances_
+                'feature_importance': modelo_base.feature_importances_
             }
             
             return True
@@ -625,30 +714,35 @@ class IAEstatisticaLF:
             return False
     
     def treinar_xgboost(self):
-        """Treina modelo XGBoost (Gradient Boosting)"""
+        """Treina Gradient Boosting com split cronológico + calibração de probabilidades"""
         try:
-            from sklearn.ensemble import GradientBoostingClassifier
-            
             X = self.dados_processados['features']
             y = self.dados_processados['targets']
             
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            if len(X) < 200:
+                st.warning("⚠️ Poucos dados para treino confiável (carregue mais concursos).")
+                return False
             
-            modelo = GradientBoostingClassifier(
+            (X_train, y_train), (X_calib, y_calib), (X_test, y_test) = self._split_cronologico(X, y)
+            
+            modelo_base = GradientBoostingClassifier(
                 n_estimators=150,
                 learning_rate=0.1,
                 max_depth=6,
                 random_state=42
             )
-            modelo.fit(X_train, y_train)
+            modelo_base.fit(X_train, y_train)
             
-            y_pred = modelo.predict(X_test)
+            modelo_calibrado = _calibrar_modelo_prefit(modelo_base)
+            modelo_calibrado.fit(X_calib, y_calib)
+            
+            y_pred = modelo_calibrado.predict(X_test)
             acuracia = accuracy_score(y_test, y_pred)
             
             self.modelos['xgboost'] = {
-                'modelo': modelo,
+                'modelo': modelo_calibrado,
                 'acuracia': acuracia,
-                'feature_importance': modelo.feature_importances_
+                'feature_importance': modelo_base.feature_importances_
             }
             
             return True
@@ -661,8 +755,12 @@ class IAEstatisticaLF:
         if not self.modelos:
             return None
         
+        max_freq_total = max(self.estatisticas.frequencias.values()) if self.estatisticas.frequencias else 1
+        
         features = []
         for num in jogo:
+            vizinhos = [v for v in range(max(1, num - 3), min(25, num + 3) + 1) if v != num]
+            proximidade = (np.mean([self.estatisticas.frequencias.get(v, 0) for v in vizinhos]) / max_freq_total) if vizinhos else 0
             features.append([
                 self.estatisticas.frequencias.get(num, 0),
                 self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0),
@@ -672,7 +770,7 @@ class IAEstatisticaLF:
                 sum([1 for n in jogo if n <= 8]) / 15,
                 sum([1 for n in jogo if 9 <= n <= 16]) / 15,
                 sum(jogo) / 25,
-                sum([1 for n in jogo if abs(n - num) <= 3]) / 15
+                proximidade
             ])
         
         features = np.array(features)
@@ -713,10 +811,17 @@ class FiltrosInteligentesLF:
             'repetidas_max': 10,
             'primos_min': 3,
             'primos_max': 7,
-            'linhas_min': 2,
-            'linhas_max': 4,
-            'colunas_min': 2,
-            'colunas_max': 4
+            # CORREÇÃO: numa combinação de 15 dezenas em 25 (5 linhas de 5),
+            # é matematicamente quase impossível deixar mais de 1 linha vazia
+            # (>97% dos jogos ativam as 5 linhas, ~2.4% ativam 4, e ativar só
+            # 2-3 linhas é praticamente 0%). O default anterior (min:2, max:4)
+            # rejeitava >97% de QUALQUER combinação válida — inclusive sorteios
+            # reais da Lotofácil — fazendo o gerador quase sempre falhar ou cair
+            # no fallback de filtros flexíveis.
+            'linhas_min': 4,
+            'linhas_max': 5,
+            'colunas_min': 4,
+            'colunas_max': 5
         }
     
     def aplicar_filtros(self, jogo, filtros=None):
@@ -787,10 +892,10 @@ class FiltrosInteligentesLF:
             'repetidas_max': int(rep_stats.get('media', 8) + 1),
             'primos_min': 3,
             'primos_max': 7,
-            'linhas_min': 2,
-            'linhas_max': 4,
-            'colunas_min': 2,
-            'colunas_max': 4
+            'linhas_min': 4,
+            'linhas_max': 5,
+            'colunas_min': 4,
+            'colunas_max': 5
         }
 
 # =====================================================
@@ -807,14 +912,27 @@ class GeradorPremiumLF:
         self.filtros = filtros
         self.ia = ia
     
-    def gerar_jogos(self, qtd=10, estrategia='equilibrada', dezenas_base=None, filtros_personalizados=None):
+    def gerar_jogos(self, qtd=10, estrategia='equilibrada', dezenas_base=None, filtros_personalizados=None, max_tentativas=None):
         """Gera jogos baseados na estratégia escolhida"""
         if filtros_personalizados is None:
             filtros_personalizados = self.filtros.get_filtros_recomendados()
         
+        # CORREÇÃO: com exatamente 15 dezenas-base só existe 1 combinação possível.
+        # O código anterior tentava gerar `qtd` jogos amostrando 15-de-15 repetidamente,
+        # o que sempre produz o mesmo jogo — a checagem "not in jogos" bloqueava
+        # qualquer repetição e o loop rodava até `max_tentativas` sem nunca completar.
+        if dezenas_base:
+            dezenas_base = sorted(set(dezenas_base))
+            if len(dezenas_base) < 15:
+                st.warning(f"⚠️ Dezenas-base precisa ter pelo menos 15 números únicos (recebido: {len(dezenas_base)}). Ignorando dezenas-base.")
+                dezenas_base = None
+            elif len(dezenas_base) == 15:
+                st.info("ℹ️ Exatamente 15 dezenas-base: só existe 1 jogo possível com essa combinação.")
+        
         jogos = []
         tentativas = 0
-        max_tentativas = qtd * 10000
+        if max_tentativas is None:
+            max_tentativas = qtd * 10000
         
         # Obtém ranking das dezenas
         ranking = self.pontuacao.get_ranking(20)
@@ -828,6 +946,9 @@ class GeradorPremiumLF:
         }
         
         gerador = estrategias.get(estrategia, self._gerar_equilibrada)
+        
+        if dezenas_base and len(dezenas_base) == 15:
+            return [sorted(dezenas_base)]
         
         progress_bar = st.progress(0, text="Gerando jogos...")
         
@@ -876,6 +997,8 @@ class GeradorPremiumLF:
             filtros_flexiveis['consecutivos_max'] = min(6, filtros_personalizados.get('consecutivos_max', 4) + 2)
             filtros_flexiveis['faixa_min'] = max(3, filtros_personalizados.get('faixa_min', 4) - 1)
             filtros_flexiveis['faixa_max'] = min(7, filtros_personalizados.get('faixa_max', 6) + 1)
+            filtros_flexiveis['linhas_min'] = min(3, filtros_personalizados.get('linhas_min', 4))
+            filtros_flexiveis['colunas_min'] = min(3, filtros_personalizados.get('colunas_min', 4))
             
             tentativas_extra = 0
             while len(jogos) < qtd and tentativas_extra < 5000:
@@ -958,44 +1081,78 @@ class GeradorPremiumLF:
 # MÓDULO 7: BACKTESTS - LOTOFÁCIL
 # =====================================================
 
+class _BancoTemporal:
+    """Wrapper leve que expõe apenas os concursos anteriores a um certo ponto no
+    tempo, para permitir recalcular estatísticas 'como se estivéssemos naquela
+    época' — necessário para um backtest sem look-ahead bias."""
+    def __init__(self, concursos):
+        self.concursos = concursos
+    
+    def get_historico_dezenas(self):
+        return [c['dezenas'] for c in self.concursos]
+
+
 class BacktestsLF:
     """Módulo 7 - Backtests para Lotofácil"""
+    
+    AQUECIMENTO_MINIMO = 30  # concursos mínimos de histórico antes de testar um ponto
     
     def __init__(self, banco_dados, estatisticas, filtros):
         self.banco = banco_dados
         self.estatisticas = estatisticas
         self.filtros = filtros
     
-    def testar_estrategia(self, estrategia='equilibrada', num_testes=50, filtros_personalizados=None):
-        """Testa uma estratégia no histórico"""
+    def testar_estrategia(self, estrategia='equilibrada', num_testes=50, filtros_personalizados=None, jogos_por_teste=5):
+        """Testa uma estratégia no histórico.
+        
+        CORREÇÃO CRÍTICA: a versão anterior gerava os jogos de teste usando
+        `self.estatisticas`, calculada com TODOS os concursos carregados —
+        incluindo os próprios concursos que estavam sendo testados (que são
+        justamente os mais recentes). Ou seja, o "backtest" estava usando
+        frequência/atraso que já 'sabiam' o resultado que tentavam prever,
+        inflando artificialmente os acertos.
+        
+        Agora, para cada concurso testado, as estatísticas são recalculadas
+        usando apenas concursos estritamente ANTERIORES a ele — replicando o
+        que estaria disponível no momento real da aposta.
+        """
         if filtros_personalizados is None:
             filtros_personalizados = self.filtros.get_filtros_recomendados()
         
         resultados = []
-        historico = self.banco.concursos
+        historico = self.banco.concursos  # mais recente primeiro
         
-        # Seleciona concursos para teste
         testes = historico[:min(num_testes, len(historico))]
         
-        progress_bar = st.progress(0, text=f"Executando backtest - {estrategia}...")
+        progress_bar = st.progress(0, text=f"Executando backtest (ponto-no-tempo) - {estrategia}...")
+        pulados = 0
         
         for i, concurso in enumerate(testes):
             dezenas_reais = concurso['dezenas']
             
-            # Gera jogos com a estratégia
-            gerador_temp = GeradorPremiumLF(
-                self.banco, self.estatisticas, 
-                MotorPontuacaoLF(self.estatisticas),
-                self.filtros
-            )
+            # `testes` é um prefixo de `historico`, então a posição em `testes`
+            # é a mesma posição em `historico` (mais recente = índice 0)
+            concursos_anteriores = historico[i + 1:]  # apenas dados mais antigos que o teste
+            
+            if len(concursos_anteriores) < self.AQUECIMENTO_MINIMO:
+                pulados += 1
+                progress_bar.progress((i + 1) / len(testes))
+                continue
+            
+            banco_pt = _BancoTemporal(concursos_anteriores)
+            estatisticas_pt = EstatisticasLFAvancadas(banco_pt)
+            filtros_pt = FiltrosInteligentesLF(estatisticas_pt)
+            pontuacao_pt = MotorPontuacaoLF(estatisticas_pt)
+            
+            gerador_temp = GeradorPremiumLF(banco_pt, estatisticas_pt, pontuacao_pt, filtros_pt)
             
             jogos = gerador_temp.gerar_jogos(
-                qtd=10, 
+                qtd=jogos_por_teste,
                 estrategia=estrategia,
-                filtros_personalizados=filtros_personalizados
+                filtros_personalizados=filtros_personalizados,
+                max_tentativas=jogos_por_teste * 2000
             )
             
-            # Calcula acertos
             for jogo in jogos:
                 acertos = len(set(jogo) & set(dezenas_reais))
                 resultados.append(acertos)
@@ -1003,6 +1160,9 @@ class BacktestsLF:
             progress_bar.progress((i + 1) / len(testes))
         
         progress_bar.empty()
+        
+        if pulados:
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) por não terem histórico anterior suficiente ({self.AQUECIMENTO_MINIMO}+ concursos).")
         
         return {
             'estrategia': estrategia,
@@ -1360,8 +1520,8 @@ def main():
                         soma_min = st.slider("Soma Mínima", 150, 300, 180)
                         soma_max = st.slider("Soma Máxima", 150, 300, 210)
                         consec_max = st.slider("Máx. Consecutivos", 1, 10, 4)
-                        linhas_min = st.slider("Mínimo Linhas", 1, 5, 2)
-                        linhas_max = st.slider("Máximo Linhas", 1, 5, 4)
+                        linhas_min = st.slider("Mínimo Linhas ativas", 1, 5, 4, help="Em 15 dezenas de 25, quase sempre 4 ou 5 das 5 linhas ficam ativas. Valores abaixo de 4 raramente são satisfeitos.")
+                        linhas_max = st.slider("Máximo Linhas ativas", 1, 5, 5)
                     else:
                         filtros_recomendados = st.session_state.filtros.get_filtros_recomendados()
                         pares_min = filtros_recomendados['pares_min']
@@ -1372,7 +1532,12 @@ def main():
                         linhas_min = filtros_recomendados['linhas_min']
                         linhas_max = filtros_recomendados['linhas_max']
                 
-                # Monta filtros
+                # Monta filtros (corrige min/max invertidos, já que os sliders
+                # são independentes e nada impedia pares_min > pares_max etc.)
+                pares_min, pares_max = min(pares_min, pares_max), max(pares_min, pares_max)
+                soma_min, soma_max = min(soma_min, soma_max), max(soma_min, soma_max)
+                linhas_min, linhas_max = min(linhas_min, linhas_max), max(linhas_min, linhas_max)
+                
                 filtros = {
                     'pares_min': pares_min,
                     'pares_max': pares_max,
