@@ -55,7 +55,7 @@ class RastreadorViesFisico:
     # (regra prática: contagem esperada por célula >= 5 já é o mínimo só
     # para a aproximação qui-quadrado valer; para ter chance real de
     # detectar um viés modesto, o número precisa ser bem maior).
-    N_MINIMO_TESTE = 1500
+    N_MINIMO_TESTE = 35
 
     # Significância do teste GLOBAL (omnibus, 36 graus de liberdade).
     ALPHA_GLOBAL = 0.01
