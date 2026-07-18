@@ -2966,7 +2966,8 @@ class SistemaBot:
             if acertou_duzia or acerto_zero: self.acertos_sessao += 1
             else: self.erros_sessao += 1
 
-            self.duzia_ai.registrar_resultado(duzia_real, acertou_duzia, acerto_numero_exato, acerto_zero, table_id, eh_raio, multiplicador)
+            if self.entrada_ativa.get('fonte', 'ml') == 'ml':
+                self.duzia_ai.registrar_resultado(duzia_real, acertou_duzia, acerto_numero_exato, acerto_zero, table_id, eh_raio, multiplicador)
 
             if acertou_duzia or acerto_zero: self.performance_por_mesa[table_id]['acertos'] += 1
             else: self.performance_por_mesa[table_id]['erros'] += 1
@@ -2991,6 +2992,7 @@ class SistemaBot:
                 'status': status_visual, 'confianca': self.entrada_ativa.get('confianca', 0),
                 'prob_ml_bruta': self.entrada_ativa.get('prob_ml_bruta'),
                 'gatilho': self.entrada_ativa.get('gatilho_ativo', 'ML'),
+                'fonte': self.entrada_ativa.get('fonte', 'ml'),
                 'modo_anti_erro': self.entrada_ativa.get('modo_anti_erro', False),
                 'incluir_zero': incluir_zero, 'table_id': table_id, 'table_name': table_name,
                 'padrao_info': self.entrada_ativa.get('padrao_ativo'),
@@ -3005,37 +3007,81 @@ class SistemaBot:
             if not self.pode_processar(): salvar_sessao(); return
 
         if self.sessao_ativa and self.rodadas_na_sessao < self.rodadas_por_sessao:
-            previsao = self.duzia_ai.prever()
-            if previsao['entrar']:
-                duzia_map = {1: list(range(1,13)), 2: list(range(13,25)), 3: list(range(25,37))}
-                numeros_apostar = list(duzia_map.get(previsao['duzia'], []))
+            fonte_entrada = st.session_state.get('fonte_entrada', 'ml')
 
-                if previsao.get('incluir_zero', False) and 0 not in numeros_apostar:
-                    numeros_apostar = [0] + numeros_apostar
+            if fonte_entrada == 'gatilhos':
+                entrada_gatilho = None
+                if st.session_state.get('modo_gatilho', 'automatico') == 'automatico':
+                    escolha = self.gatilhos_numericos.escolher_automatico(self.gatilhos_resultado_atual)
+                    if escolha: entrada_gatilho = escolha
+                else:
+                    nome_sel = st.session_state.get('gatilho_manual_escolhido')
+                    info_sel = self.gatilhos_resultado_atual.get(nome_sel)
+                    if info_sel and info_sel.get('disparou'): entrada_gatilho = (nome_sel, info_sel)
 
-                self.entrada_ativa = {
-                    'numeros_apostar': numeros_apostar,
-                    'duzia_prevista': previsao['duzia'],
-                    'duzia_sec_prevista': None,
-                    'confianca': previsao.get('confianca', 0),
-                    'prob_ml_bruta': previsao.get('prob_ml_bruta'),
-                    'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
-                    'modo_anti_erro': previsao.get('modo_anti_erro', False),
-                    'incluir_zero': previsao.get('incluir_zero', False),
-                    'padrao_ativo': previsao.get('padrao_ativo'),
-                    'streak_info': previsao.get('streak_info'),
-                    'regime': self.duzia_ai.regime_atual,
-                }
-                self.duzia_ai.registrar_previsao(previsao['duzia'], previsao['confianca'])
-                self.sinais_grafico.append((len(self.historico_numeros) - 1, previsao['duzia']))
-                enviar_previsao_auto({
-                    'numeros_apostar': numeros_apostar,
-                    'incluir_zero': previsao.get('incluir_zero', False),
-                    'duzia': previsao['duzia'],
-                    'duzia_secundaria': None,
-                    'numeros_completos': list(self.historico_numeros),
-                    'streak_info': previsao.get('streak_info'),
-                })
+                if entrada_gatilho:
+                    nome_g, info_g = entrada_gatilho
+                    numeros_apostar = sorted(info_g['numeros_sugeridos'])
+                    contagem_duzia = Counter(get_duzia(n) for n in numeros_apostar if n != 0)
+                    duzia_predominante = contagem_duzia.most_common(1)[0][0] if contagem_duzia else 0
+                    incluir_zero = 0 in numeros_apostar
+
+                    self.entrada_ativa = {
+                        'numeros_apostar': numeros_apostar,
+                        'duzia_prevista': duzia_predominante,
+                        'duzia_sec_prevista': None,
+                        'confianca': info_g.get('taxa_acerto_historica') or 0,
+                        'prob_ml_bruta': None,
+                        'gatilho_ativo': info_g['nome_exibicao'],
+                        'modo_anti_erro': False,
+                        'incluir_zero': incluir_zero,
+                        'padrao_ativo': {'resumo': info_g['detalhe']},
+                        'streak_info': None,
+                        'regime': self.duzia_ai.regime_atual,
+                        'fonte': 'gatilhos',
+                    }
+                    self.sinais_grafico.append((len(self.historico_numeros) - 1, duzia_predominante))
+                    enviar_previsao_auto({
+                        'numeros_apostar': numeros_apostar,
+                        'incluir_zero': incluir_zero,
+                        'duzia': duzia_predominante,
+                        'duzia_secundaria': None,
+                        'numeros_completos': list(self.historico_numeros),
+                        'streak_info': None,
+                    })
+            else:
+                previsao = self.duzia_ai.prever()
+                if previsao['entrar']:
+                    duzia_map = {1: list(range(1,13)), 2: list(range(13,25)), 3: list(range(25,37))}
+                    numeros_apostar = list(duzia_map.get(previsao['duzia'], []))
+
+                    if previsao.get('incluir_zero', False) and 0 not in numeros_apostar:
+                        numeros_apostar = [0] + numeros_apostar
+
+                    self.entrada_ativa = {
+                        'numeros_apostar': numeros_apostar,
+                        'duzia_prevista': previsao['duzia'],
+                        'duzia_sec_prevista': None,
+                        'confianca': previsao.get('confianca', 0),
+                        'prob_ml_bruta': previsao.get('prob_ml_bruta'),
+                        'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
+                        'modo_anti_erro': previsao.get('modo_anti_erro', False),
+                        'incluir_zero': previsao.get('incluir_zero', False),
+                        'padrao_ativo': previsao.get('padrao_ativo'),
+                        'streak_info': previsao.get('streak_info'),
+                        'regime': self.duzia_ai.regime_atual,
+                        'fonte': 'ml',
+                    }
+                    self.duzia_ai.registrar_previsao(previsao['duzia'], previsao['confianca'])
+                    self.sinais_grafico.append((len(self.historico_numeros) - 1, previsao['duzia']))
+                    enviar_previsao_auto({
+                        'numeros_apostar': numeros_apostar,
+                        'incluir_zero': previsao.get('incluir_zero', False),
+                        'duzia': previsao['duzia'],
+                        'duzia_secundaria': None,
+                        'numeros_completos': list(self.historico_numeros),
+                        'streak_info': previsao.get('streak_info'),
+                    })
 
     def zerar(self):
         self.acertos_duzia = self.erros_duzia = 0
@@ -3225,6 +3271,17 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 🎯 Gatilhos Numéricos")
+    st.session_state.setdefault('fonte_entrada', 'ml')
+    usar_gatilhos_para_entrada = st.checkbox(
+        "Usar Gatilhos Numéricos para gerar as entradas (em vez do ML de dúzias)",
+        value=(st.session_state['fonte_entrada'] == 'gatilhos'),
+        key='checkbox_fonte_entrada'
+    )
+    st.session_state['fonte_entrada'] = 'gatilhos' if usar_gatilhos_para_entrada else 'ml'
+    st.caption(
+        "🤖 Sistema ativo: **Gatilhos Numéricos**" if st.session_state['fonte_entrada'] == 'gatilhos'
+        else "🤖 Sistema ativo: **ML V15 (dúzias)**"
+    )
     st.session_state.setdefault('modo_gatilho', 'automatico')
     st.session_state['modo_gatilho'] = st.radio(
         "Modo", ['automatico', 'manual'],
@@ -3609,6 +3666,8 @@ with ce:
         melhores_principal = _selecionar_melhores_numeros(dz_princ, list(sis.historico_numeros), 6)
         cor = "#FF6347" if e.get('modo_anti_erro') else "#00CED1"
         icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V15 (1 Dúzia) ✅"
+        if e.get('fonte') == 'gatilhos':
+            icone_modo = f"🧮 Gatilho Numérico: {gatilho}"
         if regime_ent in ('transicao', 'instavel'):
             icone_modo += f" 🔄{regime_ent}"
         padrao_html = f'<p style="text-align:center; color:#FFD700; font-size:0.8em;">🧩 {padrao_info["resumo"]}</p>' if padrao_info.get('resumo') else ""
@@ -3620,7 +3679,10 @@ with ce:
             <p style="text-align:center;">{icone_modo}</p>
             {padrao_html}{streak_html}
         </div>""", unsafe_allow_html=True)
-        st.write(f"**🎲 D{dz_princ}:** {', '.join(map(str, melhores_principal))}")
+        if e.get('fonte') == 'gatilhos':
+            st.write(f"**🎲 Números do gatilho:** {', '.join(map(str, e.get('numeros_apostar', [])))}")
+        else:
+            st.write(f"**🎲 D{dz_princ}:** {', '.join(map(str, melhores_principal))}")
         st.progress(min(1.0, max(0.0, conf / 5.0)))
     else:
         st.info("🔍 Aguardando sinal...")
