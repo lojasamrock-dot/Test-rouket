@@ -8,6 +8,7 @@ import os
 import uuid
 import math
 import warnings
+import pickle
 from collections import Counter, defaultdict, deque
 from datetime import datetime, timedelta
 from scipy.stats import norm, binom, chi2, pearsonr
@@ -16,6 +17,7 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.calibration import CalibratedClassifierCV
+from pathlib import Path
 try:
     # sklearn >= 1.6 removed CalibratedClassifierCV(cv='prefit') in favor of FrozenEstimator
     from sklearn.frozen import FrozenEstimator
@@ -34,7 +36,7 @@ from plotly.subplots import make_subplots
 warnings.filterwarnings("ignore")
 
 st.set_page_config(
-    page_title="🎯 LOTOFÁCIL - DS Elite 3.0",
+    page_title="🎯 LOTOFÁCIL - DS Elite 4.0",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -71,8 +73,65 @@ input, textarea { border-radius: 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 LOTOFÁCIL - DS Elite 3.0")
-st.caption("Sistema Avançado de Análise Estatística, IA e Geração Inteligente")
+st.title("🎯 LOTOFÁCIL - DS Elite 4.0")
+st.caption("Sistema Avançado de Análise Estatística, IA e Geração Inteligente - Estratégias Aprimoradas")
+
+# =====================================================
+# CACHE PARA API
+# =====================================================
+
+CACHE_FILE = "lotofacil_cache.pkl"
+CACHE_EXPIRY = timedelta(hours=6)
+
+def buscar_historico_lotofacil_com_cache(quantidade=300, forcar_atualizacao=False):
+    """Busca histórico com cache local para evitar dependência da API"""
+    
+    # Tenta carregar do cache
+    if not forcar_atualizacao and Path(CACHE_FILE).exists():
+        try:
+            with open(CACHE_FILE, 'rb') as f:
+                cache_data = pickle.load(f)
+                if isinstance(cache_data, dict):
+                    dados_cached = cache_data.get('dados', [])
+                    timestamp = cache_data.get('timestamp', datetime.min)
+                    
+                    # Verifica se o cache é recente
+                    if datetime.now() - timestamp < CACHE_EXPIRY and len(dados_cached) >= quantidade:
+                        return dados_cached[:quantidade]
+        except Exception:
+            pass
+    
+    # Busca da API
+    try:
+        url_lista = "https://loteriascaixa-api.herokuapp.com/api/lotofacil"
+        response = requests.get(url_lista, timeout=10)
+        
+        if response.status_code == 200:
+            dados = response.json()
+            if isinstance(dados, list) and len(dados) > 0:
+                # Salva em cache
+                cache_data = {
+                    'dados': dados,
+                    'timestamp': datetime.now(),
+                    'quantidade': len(dados)
+                }
+                with open(CACHE_FILE, 'wb') as f:
+                    pickle.dump(cache_data, f)
+                return dados[:quantidade]
+        return None
+    except Exception as e:
+        st.warning(f"⚠️ Erro na API: {e}. Usando cache local...")
+        # Tenta usar cache mesmo que expirado
+        if Path(CACHE_FILE).exists():
+            try:
+                with open(CACHE_FILE, 'rb') as f:
+                    cache_data = pickle.load(f)
+                    dados_cached = cache_data.get('dados', [])
+                    if dados_cached:
+                        return dados_cached[:quantidade]
+            except Exception:
+                pass
+        return None
 
 # =====================================================
 # FUNÇÕES AUXILIARES
@@ -98,8 +157,14 @@ def convert_numpy_types(obj):
 
 def salvar_jogos_lf_elite(jogos, parametros, estatisticas=None):
     try:
-        if not os.path.exists("jogos_salvos_lf_elite"):
-            os.makedirs("jogos_salvos_lf_elite")
+        from pathlib import Path
+        base_dir = Path("jogos_salvos_lf_elite")
+        base_dir.mkdir(exist_ok=True)
+        
+        # Verifica se o diretório é seguro
+        if not base_dir.resolve().is_relative_to(Path.cwd()):
+            raise ValueError("Diretório de salvamento inválido")
+        
         jogo_id = str(uuid.uuid4())[:8]
         data_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
         nome_arquivo = f"jogos_salvos_lf_elite/jogos_{data_hora}_{jogo_id}.json"
@@ -110,7 +175,7 @@ def salvar_jogos_lf_elite(jogos, parametros, estatisticas=None):
             "jogos": jogos_convertidos,
             "parametros": convert_numpy_types(parametros),
             "estatisticas": convert_numpy_types(estatisticas) if estatisticas else {},
-            "schema_version": "3.0"
+            "schema_version": "4.0"
         }
         with open(nome_arquivo, 'w', encoding='utf-8') as f:
             json.dump(dados, f, indent=2, ensure_ascii=False)
@@ -192,20 +257,7 @@ def distribuir_colunas_lf(jogo):
 # =====================================================
 
 def buscar_historico_lotofacil(quantidade=300):
-    try:
-        url_lista = "https://loteriascaixa-api.herokuapp.com/api/lotofacil"
-        response = requests.get(url_lista, timeout=10)
-        
-        if response.status_code == 200:
-            dados = response.json()
-            if isinstance(dados, list):
-                return dados[:quantidade]
-            elif isinstance(dados, dict):
-                return [dados]
-        return None
-    except Exception as e:
-        st.error(f"❌ Erro na requisição: {e}")
-        return None
+    return buscar_historico_lotofacil_com_cache(quantidade)
 
 # =====================================================
 # MÓDULO 1: BANCO DE DADOS INTELIGENTE - LOTOFÁCIL
@@ -291,6 +343,9 @@ class EstatisticasLFAvancadas:
         self.std_soma = np.std([c['soma'] for c in self.banco.concursos])
         self.media_pares = np.mean([c['pares'] for c in self.banco.concursos])
         self.media_linhas = np.mean([len([l for l in c['linhas'] if l > 0]) for c in self.banco.concursos])
+        
+        # Estatísticas sazonais
+        self.estatisticas_sazonais = self._calcular_estatisticas_sazonais(historico)
         
     def _calcular_frequencias(self, historico):
         freq = Counter()
@@ -436,6 +491,33 @@ class EstatisticasLFAvancadas:
             }
         return {'media': 0, 'std': 0, 'max': 0, 'min': 0, 'distribuicao': {}}
     
+    def _calcular_estatisticas_sazonais(self, historico):
+        """Calcula estatísticas sazonais por mês e dia da semana"""
+        resultado = {}
+        
+        # Por mês
+        concursos_por_mes = defaultdict(list)
+        for concurso in self.banco.concursos:
+            if concurso.get('data'):
+                try:
+                    data = datetime.strptime(concurso['data'], '%d/%m/%Y')
+                    mes = data.month
+                    concursos_por_mes[mes].append(concurso['dezenas'])
+                except:
+                    pass
+        
+        for mes, concursos in concursos_por_mes.items():
+            if len(concursos) >= 5:
+                freq = Counter()
+                for c in concursos:
+                    freq.update(c)
+                resultado[f'mes_{mes}'] = {
+                    'frequencias': freq,
+                    'total': len(concursos)
+                }
+        
+        return resultado
+    
     def get_estatisticas_dezena(self, numero):
         """Retorna todas as estatísticas de uma dezena"""
         return {
@@ -515,7 +597,6 @@ class MotorPontuacaoLF:
     
     def _calcular_equilibrio(self, numero):
         """Calcula fator de equilíbrio baseado na posição da dezena"""
-        # Verifica distribuição por faixa
         faixa = 0 if numero <= 8 else 1 if numero <= 16 else 2
         freq_faixas = self.estatisticas.distribuicao_faixas
         
@@ -576,7 +657,6 @@ class IAEstatisticaLF:
         
     def _preparar_dados(self):
         """Prepara dados de treino com features ponto-no-tempo (sem look-ahead bias)."""
-        # concursos_asc: do mais antigo para o mais recente
         concursos_asc = list(reversed(self.banco.concursos))
         n = len(concursos_asc)
         
@@ -599,7 +679,6 @@ class IAEstatisticaLF:
             dezenas_set = set(dezenas)
             
             if t >= aquecimento:
-                # --- Features calculadas SOMENTE com dados de t-1 e anteriores ---
                 atrasos_pt = {}
                 for num in range(1, 26):
                     if ultimo_indice_visto[num] >= 0:
@@ -618,13 +697,6 @@ class IAEstatisticaLF:
                 faixa_media_prop = sum(1 for nn in dezenas if 9 <= nn <= 16) / 15
                 soma_prop = sum(dezenas) / 25
                 
-                # "Vizinhança quente": frequência histórica média dos números
-                # próximos (num-3..num+3), calculada só com dados anteriores.
-                # IMPORTANTE: ao contrário da versão anterior, isso NÃO usa o
-                # resultado do concurso que está sendo rotulado — só estatística
-                # ponto-no-tempo — então não vaza a resposta certa (a versão
-                # antiga dava 0 para toda dezena não sorteada e >0 quase sempre
-                # para a sorteada, o que é basicamente entregar o gabarito).
                 max_freq_total = max(freq_total.values()) if freq_total else 1
                 
                 for num in range(1, 26):
@@ -643,8 +715,7 @@ class IAEstatisticaLF:
                     ])
                     targets.append(1 if num in dezenas_set else 0)
             
-            # --- Atualiza acumuladores DEPOIS de gerar as features (dados só ficam
-            # "disponíveis" para o próximo concurso) ---
+            # Atualiza acumuladores DEPOIS de gerar as features
             freq_total.update(dezenas)
             
             if len(janela20) == 20:
@@ -668,8 +739,7 @@ class IAEstatisticaLF:
         }
     
     def _split_cronologico(self, X, y):
-        """Divide em treino/calibração/teste respeitando a ordem temporal
-        (sem embaralhar), para não misturar 'futuro' com 'passado' na avaliação."""
+        """Divide em treino/calibração/teste respeitando a ordem temporal"""
         n = len(X)
         i_train = int(n * 0.70)
         i_calib = int(n * 0.85)
@@ -786,6 +856,47 @@ class IAEstatisticaLF:
             }
         
         return resultados
+    
+    def prever_probabilidades_producao(self, jogo, concursos_anteriores):
+        """Versão para produção - usa apenas dados anteriores ao último concurso"""
+        if not concursos_anteriores or len(concursos_anteriores) < 30:
+            return None
+        
+        # Cria banco temporário com dados anteriores
+        banco_pt = _BancoTemporal(concursos_anteriores)
+        estatisticas_pt = EstatisticasLFAvancadas(banco_pt)
+        
+        max_freq_total = max(estatisticas_pt.frequencias.values()) if estatisticas_pt.frequencias else 1
+        
+        features = []
+        for num in jogo:
+            vizinhos = [v for v in range(max(1, num - 3), min(25, num + 3) + 1) if v != num]
+            proximidade = (np.mean([estatisticas_pt.frequencias.get(v, 0) for v in vizinhos]) / max_freq_total) if vizinhos else 0
+            features.append([
+                estatisticas_pt.frequencias.get(num, 0),
+                estatisticas_pt.frequencias_periodos.get(20, {}).get(num, 0),
+                estatisticas_pt.atrasos.get(num, 0),
+                estatisticas_pt.tendencias.get(num, {}).get('inclinacao', 0),
+                contar_pares_lf(jogo) / 15,
+                sum([1 for n in jogo if n <= 8]) / 15,
+                sum([1 for n in jogo if 9 <= n <= 16]) / 15,
+                sum(jogo) / 25,
+                proximidade
+            ])
+        
+        features = np.array(features)
+        
+        resultados = {}
+        for nome, info in self.modelos.items():
+            modelo = info['modelo']
+            probs = modelo.predict_proba(features)
+            resultados[nome] = {
+                'probabilidades': probs[:, 1].tolist(),
+                'media': np.mean(probs[:, 1]),
+                'acuracia': info.get('acuracia', 0)
+            }
+        
+        return resultados
 
 # =====================================================
 # MÓDULO 5: FILTROS INTELIGENTES - LOTOFÁCIL
@@ -811,13 +922,6 @@ class FiltrosInteligentesLF:
             'repetidas_max': 10,
             'primos_min': 3,
             'primos_max': 7,
-            # CORREÇÃO: numa combinação de 15 dezenas em 25 (5 linhas de 5),
-            # é matematicamente quase impossível deixar mais de 1 linha vazia
-            # (>97% dos jogos ativam as 5 linhas, ~2.4% ativam 4, e ativar só
-            # 2-3 linhas é praticamente 0%). O default anterior (min:2, max:4)
-            # rejeitava >97% de QUALQUER combinação válida — inclusive sorteios
-            # reais da Lotofácil — fazendo o gerador quase sempre falhar ou cair
-            # no fallback de filtros flexíveis.
             'linhas_min': 4,
             'linhas_max': 5,
             'colunas_min': 4,
@@ -858,13 +962,13 @@ class FiltrosInteligentesLF:
         # Linhas
         linhas = distribuir_linhas_lf(jogo)
         linhas_ativas = len([l for l in linhas if l > 0])
-        if not (filtros.get('linhas_min', 2) <= linhas_ativas <= filtros.get('linhas_max', 4)):
+        if not (filtros.get('linhas_min', 4) <= linhas_ativas <= filtros.get('linhas_max', 5)):
             return False, f'{linhas_ativas} linhas ativas'
         
         # Colunas
         colunas = distribuir_colunas_lf(jogo)
         colunas_ativas = len([c for c in colunas if c > 0])
-        if not (filtros.get('colunas_min', 2) <= colunas_ativas <= filtros.get('colunas_max', 4)):
+        if not (filtros.get('colunas_min', 4) <= colunas_ativas <= filtros.get('colunas_max', 5)):
             return False, f'{colunas_ativas} colunas ativas'
         
         # Repetidas do último concurso
@@ -899,11 +1003,11 @@ class FiltrosInteligentesLF:
         }
 
 # =====================================================
-# MÓDULO 6: GERADOR PREMIUM - LOTOFÁCIL (CORRIGIDO)
+# MÓDULO 6: GERADOR PREMIUM - LOTOFÁCIL (VERSÃO MELHORADA)
 # =====================================================
 
 class GeradorPremiumLF:
-    """Módulo 6 - Gerador Premium para Lotofácil"""
+    """Módulo 6 - Gerador Premium para Lotofácil com Estratégias Aprimoradas"""
     
     def __init__(self, banco_dados, estatisticas, pontuacao, filtros, ia=None):
         self.banco = banco_dados
@@ -911,16 +1015,14 @@ class GeradorPremiumLF:
         self.pontuacao = pontuacao
         self.filtros = filtros
         self.ia = ia
+        self.historico_estrategias = defaultdict(list)  # Para estratégia adaptativa
     
-    def gerar_jogos(self, qtd=10, estrategia='equilibrada', dezenas_base=None, filtros_personalizados=None, max_tentativas=None):
+    def gerar_jogos(self, qtd=10, estrategia='equilibrada', dezenas_base=None, 
+                    filtros_personalizados=None, max_tentativas=None, combinar_estrategias=False):
         """Gera jogos baseados na estratégia escolhida"""
         if filtros_personalizados is None:
             filtros_personalizados = self.filtros.get_filtros_recomendados()
         
-        # CORREÇÃO: com exatamente 15 dezenas-base só existe 1 combinação possível.
-        # O código anterior tentava gerar `qtd` jogos amostrando 15-de-15 repetidamente,
-        # o que sempre produz o mesmo jogo — a checagem "not in jogos" bloqueava
-        # qualquer repetição e o loop rodava até `max_tentativas` sem nunca completar.
         if dezenas_base:
             dezenas_base = sorted(set(dezenas_base))
             if len(dezenas_base) < 15:
@@ -928,24 +1030,31 @@ class GeradorPremiumLF:
                 dezenas_base = None
             elif len(dezenas_base) == 15:
                 st.info("ℹ️ Exatamente 15 dezenas-base: só existe 1 jogo possível com essa combinação.")
+                return [sorted(dezenas_base)]
         
         jogos = []
         tentativas = 0
         if max_tentativas is None:
             max_tentativas = qtd * 10000
         
-        # Obtém ranking das dezenas
         ranking = self.pontuacao.get_ranking(20)
         dezenas_prioritarias = [n for n, _ in ranking]
         
-        # Estratégias
+        # Estratégias disponíveis
         estrategias = {
             'conservadora': self._gerar_conservadora,
             'equilibrada': self._gerar_equilibrada,
-            'diversificada': self._gerar_diversificada
+            'diversificada': self._gerar_diversificada,
+            'padroes': self._gerar_padroes_historicos,
+            'ia': self._gerar_com_ia,
+            'adaptativa': self._gerar_adaptativa,
+            'ensemble': self._gerar_ensemble
         }
         
-        gerador = estrategias.get(estrategia, self._gerar_equilibrada)
+        if combinar_estrategias:
+            gerador = self._gerar_ensemble
+        else:
+            gerador = estrategias.get(estrategia, self._gerar_equilibrada)
         
         if dezenas_base and len(dezenas_base) == 15:
             return [sorted(dezenas_base)]
@@ -955,22 +1064,23 @@ class GeradorPremiumLF:
         while len(jogos) < qtd and tentativas < max_tentativas:
             tentativas += 1
             
-            # Gera o jogo usando a estratégia escolhida
             if dezenas_base and len(dezenas_base) >= 15:
-                # Usa dezenas base se fornecidas
                 jogo = sorted(random.sample(dezenas_base, 15))
             else:
-                # Gera jogo com a estratégia
-                jogo = gerador(dezenas_prioritarias)
+                # Usa o gerador selecionado
+                if estrategia == 'ia' or estrategia == 'adaptativa' or estrategia == 'ensemble':
+                    jogo = gerador(dezenas_prioritarias, qtd_tentativa=len(jogos))
+                elif estrategia == 'padroes':
+                    jogo = gerador(dezenas_prioritarias)
+                else:
+                    jogo = gerador(dezenas_prioritarias)
                 
-                # Garante que o jogo tem 15 números
                 while len(jogo) < 15:
                     novo = random.randint(1, 25)
                     if novo not in jogo:
                         jogo.append(novo)
                 jogo = sorted(jogo)
             
-            # Aplica filtros
             aprovado, mensagem = self.filtros.aplicar_filtros(jogo, filtros_personalizados)
             
             if aprovado and jogo not in jogos:
@@ -984,11 +1094,10 @@ class GeradorPremiumLF:
         
         progress_bar.empty()
         
-        # Se não gerou todos os jogos, tenta com menos filtros
+        # Fallback com filtros flexíveis
         if len(jogos) < qtd:
             st.warning(f"⚠️ Gerados apenas {len(jogos)} de {qtd} jogos com os filtros atuais. Tentando com filtros mais flexíveis...")
             
-            # Filtros mais flexíveis
             filtros_flexiveis = filtros_personalizados.copy()
             filtros_flexiveis['pares_min'] = max(4, filtros_personalizados.get('pares_min', 6) - 2)
             filtros_flexiveis['pares_max'] = min(11, filtros_personalizados.get('pares_max', 9) + 2)
@@ -1010,21 +1119,39 @@ class GeradorPremiumLF:
         
         return jogos
     
+    # ==================== ESTRATÉGIAS MELHORADAS ====================
+    
     def _gerar_conservadora(self, dezenas_prioritarias):
-        """Estratégia Conservadora: prioriza números mais frequentes"""
+        """Estratégia Conservadora Melhorada: prioriza números mais frequentes com equilíbrio"""
         jogo = set()
         
-        # Pega 10 números do top ranking
-        top = dezenas_prioritarias[:15]
-        qtd_top = min(10, len(top))
-        if qtd_top > 0:
-            jogo.update(random.sample(top, qtd_top))
+        # 1. Pega 8-10 números mais frequentes
+        top_ranking = dezenas_prioritarias[:20]
+        qtd_top = random.randint(8, 10)
+        if qtd_top > 0 and top_ranking:
+            jogo.update(random.sample(top_ranking, min(qtd_top, len(top_ranking))))
         
-        # Completa com números aleatórios
+        # 2. Pega 3-4 números com bom atraso (estatisticamente tendem a sair)
+        atrasados = sorted(self.estatisticas.atrasos.items(), key=lambda x: x[1], reverse=True)[:15]
+        atrasados_nums = [n for n, _ in atrasados if n not in jogo]
+        qtd_atrasados = min(random.randint(3, 4), len(atrasados_nums))
+        if qtd_atrasados > 0 and atrasados_nums:
+            jogo.update(random.sample(atrasados_nums, qtd_atrasados))
+        
+        # 3. Completa com números que equilibram paridade
         while len(jogo) < 15:
-            novo = random.randint(1, 25)
-            if novo not in jogo:
-                jogo.add(novo)
+            pares_atuais = sum(1 for n in jogo if n % 2 == 0)
+            if pares_atuais < 7:
+                candidatos = [n for n in range(2, 26, 2) if n not in jogo]
+            elif pares_atuais > 8:
+                candidatos = [n for n in range(1, 26, 2) if n not in jogo]
+            else:
+                candidatos = [n for n in range(1, 26) if n not in jogo]
+            
+            if candidatos:
+                jogo.add(random.choice(candidatos))
+            else:
+                break
         
         return sorted(list(jogo))
     
@@ -1032,59 +1159,225 @@ class GeradorPremiumLF:
         """Estratégia Equilibrada: balanceia frequência e diversidade"""
         jogo = set()
         
-        # Pega 8 números do ranking
         top = dezenas_prioritarias[:20]
         qtd_top = min(8, len(top))
         if qtd_top > 0:
             jogo.update(random.sample(top, qtd_top))
         
-        # Pega 4 números de fora do top
         fora_top = [n for n in range(1, 26) if n not in top]
         if fora_top and len(jogo) < 14:
             qtd_fora = min(4, len(fora_top), 15 - len(jogo))
             jogo.update(random.sample(fora_top, qtd_fora))
         
-        # Completa com números aleatórios
+        # Completa com equilíbrio de paridade
         while len(jogo) < 15:
-            novo = random.randint(1, 25)
-            if novo not in jogo:
-                jogo.add(novo)
+            pares_atuais = sum(1 for n in jogo if n % 2 == 0)
+            if pares_atuais < 7:
+                candidatos = [n for n in range(2, 26, 2) if n not in jogo]
+            elif pares_atuais > 8:
+                candidatos = [n for n in range(1, 26, 2) if n not in jogo]
+            else:
+                candidatos = [n for n in range(1, 26) if n not in jogo]
+            
+            if candidatos:
+                jogo.add(random.choice(candidatos))
+            else:
+                break
         
         return sorted(list(jogo))
     
     def _gerar_diversificada(self, dezenas_prioritarias):
-        """Estratégia Diversificada: mistura diferentes tipos"""
+        """Estratégia Diversificada Melhorada: distribuição equilibrada por grupos"""
         jogo = set()
         
-        # Pega 6 do ranking
-        top = dezenas_prioritarias[:20]
-        qtd_top = min(6, len(top))
-        if qtd_top > 0:
-            jogo.update(random.sample(top, qtd_top))
+        # 1. Distribuição por grupos (faixas)
+        grupos = {
+            'baixo': list(range(1, 9)),
+            'medio': list(range(9, 17)),
+            'alto': list(range(17, 26))
+        }
         
-        # Pega 5 atrasados
-        atrasados = sorted(self.estatisticas.atrasos.items(), key=lambda x: x[1], reverse=True)[:10]
-        atrasados_nums = [n for n, _ in atrasados]
-        if atrasados_nums and len(jogo) < 14:
-            qtd_atrasados = min(5, len(atrasados_nums), 15 - len(jogo))
-            jogo.update(random.sample(atrasados_nums, qtd_atrasados))
+        distribuicao = random.choice([
+            (5, 5, 5), (6, 5, 4), (5, 6, 4), (4, 6, 5), (6, 4, 5)
+        ])
         
-        # Completa com números aleatórios
+        for (grupo_nome, numeros), qtd in zip(grupos.items(), distribuicao):
+            # Escolhe os melhores de cada grupo baseado no ranking
+            ranking_grupo = [n for n in numeros if n in dezenas_prioritarias[:15]]
+            if len(ranking_grupo) < qtd:
+                outros = [n for n in numeros if n not in ranking_grupo]
+                ranking_grupo.extend(random.sample(outros, min(qtd - len(ranking_grupo), len(outros))))
+            if ranking_grupo:
+                jogo.update(random.sample(ranking_grupo, min(qtd, len(ranking_grupo))))
+        
+        # 2. Equilibra paridade e completa
         while len(jogo) < 15:
-            novo = random.randint(1, 25)
-            if novo not in jogo:
-                jogo.add(novo)
+            pares_atuais = sum(1 for n in jogo if n % 2 == 0)
+            if pares_atuais < 7:
+                candidatos = [n for n in range(2, 26, 2) if n not in jogo]
+            elif pares_atuais > 8:
+                candidatos = [n for n in range(1, 26, 2) if n not in jogo]
+            else:
+                candidatos = [n for n in range(1, 26) if n not in jogo]
+            
+            if candidatos:
+                jogo.add(random.choice(candidatos))
+            else:
+                break
         
         return sorted(list(jogo))
+    
+    def _gerar_padroes_historicos(self, dezenas_prioritarias):
+        """Nova Estratégia: baseada em padrões históricos recorrentes"""
+        jogo = set()
+        
+        # 1. Analisa padrões de repetição do último concurso
+        if self.banco.concursos:
+            ultimo = self.banco.concursos[0]['dezenas']
+            repeticoes_esperadas = int(self.estatisticas.distribuicao_repetidas.get('media', 8))
+            repeticoes = random.sample(ultimo, min(repeticoes_esperadas, len(ultimo)))
+            jogo.update(repeticoes)
+        
+        # 2. Analisa linhas mais frequentes
+        linhas_freq = self.estatisticas.distribuicao_linhas
+        linhas_prioritarias = sorted(range(5), key=lambda i: linhas_freq[i], reverse=True)[:3]
+        
+        # 3. Completa com números das linhas prioritárias
+        for linha in linhas_prioritarias:
+            nums_linha = [n for n in range(linha*5+1, min((linha+1)*5+1, 26)) 
+                         if n not in jogo]
+            if nums_linha:
+                qtd = min(3, 15 - len(jogo), len(nums_linha))
+                jogo.update(random.sample(nums_linha, qtd))
+        
+        # 4. Completa com números aleatórios balanceados
+        while len(jogo) < 15:
+            candidatos = [n for n in range(1, 26) if n not in jogo]
+            soma_atual = sum(jogo)
+            if soma_atual < 190:
+                candidatos = sorted(candidatos, reverse=True)[:10]
+            elif soma_atual > 210:
+                candidatos = sorted(candidatos)[:10]
+            if candidatos:
+                jogo.add(random.choice(candidatos))
+            else:
+                break
+        
+        return sorted(list(jogo))
+    
+    def _gerar_com_ia(self, dezenas_prioritarias, qtd_tentativa=0):
+        """Nova Estratégia: usa IA para sugerir combinações com alta probabilidade"""
+        if not self.ia or not self.ia.modelos:
+            return self._gerar_equilibrada(dezenas_prioritarias)
+        
+        # Gera algumas combinações e avalia com IA
+        candidatos = []
+        for _ in range(50):
+            jogo = sorted(random.sample(range(1, 26), 15))
+            # Avalia com IA
+            probs = self.ia.prever_probabilidades(jogo)
+            if probs:
+                score_medio = np.mean([info['media'] for info in probs.values()])
+                # Penaliza jogos que não passam nos filtros básicos
+                aprovado, _ = self.filtros.aplicar_filtros(jogo)
+                if aprovado:
+                    score_medio *= 1.1
+                candidatos.append((jogo, score_medio))
+        
+        if candidatos:
+            candidatos.sort(key=lambda x: x[1], reverse=True)
+            return candidatos[0][0]
+        
+        return self._gerar_equilibrada(dezenas_prioritarias)
+    
+    def _gerar_adaptativa(self, dezenas_prioritarias, qtd_tentativa=0):
+        """Nova Estratégia: adapta-se baseado no histórico de acertos"""
+        # Se não tem histórico, usa equilibrada
+        if not self.historico_estrategias:
+            return self._gerar_equilibrada(dezenas_prioritarias)
+        
+        # Calcula média de acertos por estratégia
+        medias = {}
+        for estrategia, acertos in self.historico_estrategias.items():
+            if acertos:
+                medias[estrategia] = np.mean(acertos)
+        
+        if not medias:
+            return self._gerar_equilibrada(dezenas_prioritarias)
+        
+        # Escolhe a melhor estratégia baseada no histórico
+        melhor_estrategia = max(medias, key=medias.get)
+        
+        # Mapeia para os métodos
+        estrategias_map = {
+            'conservadora': self._gerar_conservadora,
+            'equilibrada': self._gerar_equilibrada,
+            'diversificada': self._gerar_diversificada,
+            'padroes': self._gerar_padroes_historicos
+        }
+        
+        gerador = estrategias_map.get(melhor_estrategia, self._gerar_equilibrada)
+        return gerador(dezenas_prioritarias)
+    
+    def _gerar_ensemble(self, dezenas_prioritarias, qtd_tentativa=0):
+        """Nova Estratégia: combina múltiplas estratégias e escolhe a melhor"""
+        estrategias = [
+            ('conservadora', self._gerar_conservadora),
+            ('equilibrada', self._gerar_equilibrada),
+            ('diversificada', self._gerar_diversificada),
+            ('padroes', self._gerar_padroes_historicos)
+        ]
+        
+        jogos_gerados = []
+        for nome, metodo in estrategias:
+            jogo = metodo(dezenas_prioritarias)
+            jogos_gerados.append((nome, jogo))
+        
+        # Avalia cada jogo
+        melhores = []
+        for nome, jogo in jogos_gerados:
+            score = self._avaliar_jogo(jogo)
+            melhores.append((score, jogo))
+        
+        melhores.sort(key=lambda x: x[0], reverse=True)
+        return melhores[0][1] if melhores else jogos_gerados[0][1]
+    
+    def _avaliar_jogo(self, jogo):
+        """Avalia um jogo baseado em múltiplos critérios"""
+        score = 0
+        
+        # 1. Paridade balanceada (6-9 pares)
+        pares = contar_pares_lf(jogo)
+        score += max(0, 10 - abs(7.5 - pares))
+        
+        # 2. Soma na faixa ideal (180-210)
+        soma = sum(jogo)
+        score += max(0, 10 - abs(195 - soma) / 5)
+        
+        # 3. Linhas ativas (4-5)
+        linhas_ativas = len([l for l in distribuir_linhas_lf(jogo) if l > 0])
+        score += max(0, 5 - abs(4.5 - linhas_ativas))
+        
+        # 4. Diversidade de faixas
+        faixas = distribuir_faixas_lf(jogo)
+        score += min(5, len([f for f in faixas if f >= 4]))
+        
+        # 5. Consecutivos (não muitos)
+        consec = contar_consecutivos_lf(jogo)
+        score += max(0, 5 - consec)
+        
+        return score
+    
+    def registrar_resultado_estrategia(self, estrategia, acertos):
+        """Registra o desempenho de uma estratégia para uso adaptativo"""
+        self.historico_estrategias[estrategia].append(acertos)
 
 # =====================================================
 # MÓDULO 7: BACKTESTS - LOTOFÁCIL
 # =====================================================
 
 class _BancoTemporal:
-    """Wrapper leve que expõe apenas os concursos anteriores a um certo ponto no
-    tempo, para permitir recalcular estatísticas 'como se estivéssemos naquela
-    época' — necessário para um backtest sem look-ahead bias."""
+    """Wrapper leve que expõe apenas os concursos anteriores a um certo ponto no tempo"""
     def __init__(self, concursos):
         self.concursos = concursos
     
@@ -1095,32 +1388,21 @@ class _BancoTemporal:
 class BacktestsLF:
     """Módulo 7 - Backtests para Lotofácil"""
     
-    AQUECIMENTO_MINIMO = 30  # concursos mínimos de histórico antes de testar um ponto
+    AQUECIMENTO_MINIMO = 30
     
     def __init__(self, banco_dados, estatisticas, filtros):
         self.banco = banco_dados
         self.estatisticas = estatisticas
         self.filtros = filtros
     
-    def testar_estrategia(self, estrategia='equilibrada', num_testes=50, filtros_personalizados=None, jogos_por_teste=5):
-        """Testa uma estratégia no histórico.
-        
-        CORREÇÃO CRÍTICA: a versão anterior gerava os jogos de teste usando
-        `self.estatisticas`, calculada com TODOS os concursos carregados —
-        incluindo os próprios concursos que estavam sendo testados (que são
-        justamente os mais recentes). Ou seja, o "backtest" estava usando
-        frequência/atraso que já 'sabiam' o resultado que tentavam prever,
-        inflando artificialmente os acertos.
-        
-        Agora, para cada concurso testado, as estatísticas são recalculadas
-        usando apenas concursos estritamente ANTERIORES a ele — replicando o
-        que estaria disponível no momento real da aposta.
-        """
+    def testar_estrategia(self, estrategia='equilibrada', num_testes=50, 
+                          filtros_personalizados=None, jogos_por_teste=5):
+        """Testa uma estratégia no histórico com correção de look-ahead bias"""
         if filtros_personalizados is None:
             filtros_personalizados = self.filtros.get_filtros_recomendados()
         
         resultados = []
-        historico = self.banco.concursos  # mais recente primeiro
+        historico = self.banco.concursos
         
         testes = historico[:min(num_testes, len(historico))]
         
@@ -1129,10 +1411,7 @@ class BacktestsLF:
         
         for i, concurso in enumerate(testes):
             dezenas_reais = concurso['dezenas']
-            
-            # `testes` é um prefixo de `historico`, então a posição em `testes`
-            # é a mesma posição em `historico` (mais recente = índice 0)
-            concursos_anteriores = historico[i + 1:]  # apenas dados mais antigos que o teste
+            concursos_anteriores = historico[i + 1:]
             
             if len(concursos_anteriores) < self.AQUECIMENTO_MINIMO:
                 pulados += 1
@@ -1162,7 +1441,7 @@ class BacktestsLF:
         progress_bar.empty()
         
         if pulados:
-            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) por não terem histórico anterior suficiente ({self.AQUECIMENTO_MINIMO}+ concursos).")
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
         
         return {
             'estrategia': estrategia,
@@ -1177,7 +1456,8 @@ class BacktestsLF:
             'percentil_25': np.percentile(resultados, 25) if resultados else 0
         }
     
-    def comparar_estrategias(self, estrategias=['conservadora', 'equilibrada', 'diversificada'], num_testes=50):
+    def comparar_estrategias(self, estrategias=['conservadora', 'equilibrada', 'diversificada', 'padroes'], 
+                            num_testes=50):
         """Compara múltiplas estratégias"""
         resultados = {}
         for estrategia in estrategias:
@@ -1191,7 +1471,6 @@ class BacktestsLF:
 def testar_geracao():
     """Função de teste para verificar se os jogos estão sendo gerados corretamente"""
     
-    # Cria dados de teste
     dados_teste = []
     for i in range(100):
         dados_teste.append({
@@ -1200,28 +1479,28 @@ def testar_geracao():
             'dezenas': sorted(random.sample(range(1, 26), 15))
         })
     
-    # Inicializa módulos
     banco = BancoDadosLFInteligente(dados_teste)
     estatisticas = EstatisticasLFAvancadas(banco)
     pontuacao = MotorPontuacaoLF(estatisticas)
     filtros = FiltrosInteligentesLF(estatisticas)
     
-    # Cria gerador
     gerador = GeradorPremiumLF(banco, estatisticas, pontuacao, filtros)
     
-    # Testa geração
     st.write("🧪 Testando geração de jogos...")
     
-    for estrategia in ['conservadora', 'equilibrada', 'diversificada']:
+    # Testa todas as estratégias
+    estrategias_teste = ['conservadora', 'equilibrada', 'diversificada', 'padroes', 'ensemble']
+    
+    for estrategia in estrategias_teste:
         st.write(f"\n📊 Estratégia: {estrategia}")
-        jogos = gerador.gerar_jogos(qtd=5, estrategia=estrategia)
+        jogos = gerador.gerar_jogos(qtd=5, estrategia=estrategia, combinar_estrategias=(estrategia=='ensemble'))
         
         if jogos:
             st.success(f"✅ Gerados {len(jogos)} jogos")
             for i, jogo in enumerate(jogos[:3]):
                 st.write(f"  Jogo {i+1}: {jogo} (tamanho: {len(jogo)})")
         else:
-            st.error("❌ Nenhum jogo gerado")
+            st.error(f"❌ Nenhum jogo gerado para {estrategia}")
     
     st.success("\n✅ Teste concluído!")
 
@@ -1230,29 +1509,24 @@ def testar_geracao():
 # =====================================================
 
 def main():
-    # Inicializa session state
-    if "dados_api" not in st.session_state:
-        st.session_state.dados_api = None
-    if "banco_dados" not in st.session_state:
-        st.session_state.banco_dados = None
-    if "estatisticas" not in st.session_state:
-        st.session_state.estatisticas = None
-    if "pontuacao" not in st.session_state:
-        st.session_state.pontuacao = None
-    if "ia" not in st.session_state:
-        st.session_state.ia = None
-    if "filtros" not in st.session_state:
-        st.session_state.filtros = None
-    if "gerador" not in st.session_state:
-        st.session_state.gerador = None
-    if "backtests" not in st.session_state:
-        st.session_state.backtests = None
-    if "jogos_gerados" not in st.session_state:
-        st.session_state.jogos_gerados = []
-    if "jogos_salvos" not in st.session_state:
-        st.session_state.jogos_salvos = []
-    if "ia_treinada" not in st.session_state:
-        st.session_state.ia_treinada = False
+    # Inicializa session state de forma organizada
+    if "app" not in st.session_state:
+        st.session_state.app = {
+            "dados_api": None,
+            "banco_dados": None,
+            "estatisticas": None,
+            "pontuacao": None,
+            "ia": None,
+            "filtros": None,
+            "gerador": None,
+            "backtests": None,
+            "jogos_gerados": [],
+            "jogos_salvos": [],
+            "ia_treinada": False,
+            "estrategia_atual": "equilibrada"
+        }
+    
+    app = st.session_state.app
 
     # Barra Lateral
     with st.sidebar:
@@ -1264,31 +1538,29 @@ def main():
         with col1:
             if st.button("📥 Carregar Lotofácil", use_container_width=True):
                 with st.spinner("Carregando dados da Lotofácil..."):
-                    dados = buscar_historico_lotofacil(qtd_concursos)
+                    dados = buscar_historico_lotofacil_com_cache(qtd_concursos)
                     if dados and len(dados) > 0:
-                        st.session_state.dados_api = dados
+                        app["dados_api"] = dados
                         
-                        # Inicializa módulos
-                        st.session_state.banco_dados = BancoDadosLFInteligente(dados)
-                        st.session_state.estatisticas = EstatisticasLFAvancadas(st.session_state.banco_dados)
-                        st.session_state.pontuacao = MotorPontuacaoLF(st.session_state.estatisticas)
-                        st.session_state.filtros = FiltrosInteligentesLF(st.session_state.estatisticas)
+                        app["banco_dados"] = BancoDadosLFInteligente(dados)
+                        app["estatisticas"] = EstatisticasLFAvancadas(app["banco_dados"])
+                        app["pontuacao"] = MotorPontuacaoLF(app["estatisticas"])
+                        app["filtros"] = FiltrosInteligentesLF(app["estatisticas"])
                         
-                        # IA
-                        st.session_state.ia = IAEstatisticaLF(st.session_state.banco_dados, st.session_state.estatisticas)
+                        app["ia"] = IAEstatisticaLF(app["banco_dados"], app["estatisticas"])
                         
-                        st.session_state.gerador = GeradorPremiumLF(
-                            st.session_state.banco_dados,
-                            st.session_state.estatisticas,
-                            st.session_state.pontuacao,
-                            st.session_state.filtros,
-                            st.session_state.ia
+                        app["gerador"] = GeradorPremiumLF(
+                            app["banco_dados"],
+                            app["estatisticas"],
+                            app["pontuacao"],
+                            app["filtros"],
+                            app["ia"]
                         )
                         
-                        st.session_state.backtests = BacktestsLF(
-                            st.session_state.banco_dados,
-                            st.session_state.estatisticas,
-                            st.session_state.filtros
+                        app["backtests"] = BacktestsLF(
+                            app["banco_dados"],
+                            app["estatisticas"],
+                            app["filtros"]
                         )
                         
                         st.success(f"✅ {len(dados)} concursos carregados!")
@@ -1297,18 +1569,18 @@ def main():
         with col2:
             if st.button("🧠 Treinar IA", use_container_width=True):
                 with st.spinner("Treinando modelos de IA..."):
-                    if st.session_state.ia:
-                        rf_ok = st.session_state.ia.treinar_random_forest()
-                        xgb_ok = st.session_state.ia.treinar_xgboost()
+                    if app["ia"]:
+                        rf_ok = app["ia"].treinar_random_forest()
+                        xgb_ok = app["ia"].treinar_xgboost()
                         if rf_ok or xgb_ok:
-                            st.session_state.ia_treinada = True
+                            app["ia_treinada"] = True
                             st.success("✅ IA treinada com sucesso!")
         
         st.markdown("---")
         
         # Informações do sistema
-        if st.session_state.banco_dados:
-            ultimo = st.session_state.banco_dados.get_ultimo_concurso()
+        if app["banco_dados"]:
+            ultimo = app["banco_dados"].get_ultimo_concurso()
             if ultimo:
                 st.markdown("### 📅 Último Concurso")
                 st.markdown(f"**#{ultimo['numero']}**")
@@ -1317,14 +1589,14 @@ def main():
                 st.markdown(f"🎯 {', '.join(f'{d:02d}' for d in dezenas)}")
         
         st.markdown("---")
-        st.caption("LOTOFÁCIL Elite 3.0 v1.0")
+        st.caption("LOTOFÁCIL Elite 4.0 v2.0")
 
     # Conteúdo Principal
-    if not st.session_state.dados_api:
+    if not app["dados_api"]:
         st.info("👈 Carregue os dados da Lotofácil na barra lateral para começar.")
         return
 
-    st.subheader("🎯 LOTOFÁCIL Elite 3.0 - Sistema Avançado")
+    st.subheader("🎯 LOTOFÁCIL Elite 4.0 - Sistema Avançado")
 
     # Tabs
     tabs = st.tabs([
@@ -1341,8 +1613,8 @@ def main():
     with tabs[0]:
         st.markdown("### 📊 Dashboard - Visão Geral")
         
-        if st.session_state.estatisticas:
-            stats = st.session_state.estatisticas
+        if app["estatisticas"]:
+            stats = app["estatisticas"]
             
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -1381,9 +1653,9 @@ def main():
     with tabs[1]:
         st.markdown("### 🏆 Ranking das Dezenas")
         
-        if st.session_state.pontuacao:
-            pontuacao = st.session_state.pontuacao
-            stats = st.session_state.estatisticas
+        if app["pontuacao"]:
+            pontuacao = app["pontuacao"]
+            stats = app["estatisticas"]
             
             col1, col2 = st.columns(2)
             with col1:
@@ -1439,8 +1711,8 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        if st.session_state.ia:
-            ia = st.session_state.ia
+        if app["ia"]:
+            ia = app["ia"]
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -1448,7 +1720,7 @@ def main():
             with col2:
                 st.metric("Dados de Treino", len(ia.dados_processados['features']) if ia.dados_processados else 0)
             with col3:
-                status = "✅ Treinada" if st.session_state.ia_treinada else "⚠️ Não treinada"
+                status = "✅ Treinada" if app["ia_treinada"] else "⚠️ Não treinada"
                 st.metric("Status", status)
             
             if ia.modelos:
@@ -1485,11 +1757,18 @@ def main():
     # ================= TAB 4: GERADOR PREMIUM =================
     with tabs[3]:
         st.markdown("### 🎲 Gerador Premium")
+        st.markdown("""
+        <div class="elite-lf-highlight">
+            <strong>🎯 NOVIDADES:</strong><br>
+            • 6 estratégias disponíveis (incluindo IA, Padrões, Ensemble e Adaptativa)<br>
+            • Combinação de estratégias para melhores resultados<br>
+            • Avaliação automática de jogos gerados
+        </div>
+        """, unsafe_allow_html=True)
         
-        if st.session_state.gerador:
-            gerador = st.session_state.gerador
+        if app["gerador"]:
+            gerador = app["gerador"]
             
-            # Botão de teste rápido
             if st.button("🧪 Testar Geração", use_container_width=True):
                 testar_geracao()
             
@@ -1497,9 +1776,19 @@ def main():
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     qtd_jogos = st.slider("Quantidade de jogos", 1, 50, 10)
-                    estrategia = st.selectbox("Estratégia", 
-                                             ['conservadora', 'equilibrada', 'diversificada'],
-                                             index=1)
+                    
+                    estrategias_disponiveis = [
+                        'conservadora', 'equilibrada', 'diversificada', 
+                        'padroes', 'ia', 'adaptativa', 'ensemble'
+                    ]
+                    estrategia = st.selectbox("Estratégia", estrategias_disponiveis, index=1)
+                    app["estrategia_atual"] = estrategia
+                    
+                    combinar_estrategias = st.checkbox("Combinar estratégias (ensemble)", 
+                                                      value=(estrategia == 'ensemble'))
+                    if combinar_estrategias:
+                        st.info("ℹ️ O modo ensemble testa múltiplas estratégias e escolhe a melhor combinação")
+                
                 with col2:
                     usar_base = st.checkbox("Usar dezenas-base")
                     dezenas_base = []
@@ -1508,10 +1797,18 @@ def main():
                                                   "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15")
                         try:
                             dezenas_base = [int(x.strip()) for x in base_input.split(",") if x.strip()]
-                            dezenas_base = sorted(dezenas_base)[:20]
-                            st.success(f"✅ {len(dezenas_base)} dezenas base carregadas")
-                        except:
+                            # Validação
+                            dezenas_base = [d for d in dezenas_base if 1 <= d <= 25]
+                            if len(dezenas_base) < 15:
+                                st.warning(f"⚠️ Dezenas-base precisa ter pelo menos 15 números (tem {len(dezenas_base)})")
+                                dezenas_base = []
+                            else:
+                                dezenas_base = sorted(set(dezenas_base))[:20]
+                                st.success(f"✅ {len(dezenas_base)} dezenas base carregadas")
+                        except ValueError:
                             st.warning("Formato inválido. Use números separados por vírgula.")
+                            dezenas_base = []
+                
                 with col3:
                     usar_filtros_personalizados = st.checkbox("Filtros personalizados")
                     if usar_filtros_personalizados:
@@ -1520,10 +1817,10 @@ def main():
                         soma_min = st.slider("Soma Mínima", 150, 300, 180)
                         soma_max = st.slider("Soma Máxima", 150, 300, 210)
                         consec_max = st.slider("Máx. Consecutivos", 1, 10, 4)
-                        linhas_min = st.slider("Mínimo Linhas ativas", 1, 5, 4, help="Em 15 dezenas de 25, quase sempre 4 ou 5 das 5 linhas ficam ativas. Valores abaixo de 4 raramente são satisfeitos.")
+                        linhas_min = st.slider("Mínimo Linhas ativas", 1, 5, 4)
                         linhas_max = st.slider("Máximo Linhas ativas", 1, 5, 5)
                     else:
-                        filtros_recomendados = st.session_state.filtros.get_filtros_recomendados()
+                        filtros_recomendados = app["filtros"].get_filtros_recomendados()
                         pares_min = filtros_recomendados['pares_min']
                         pares_max = filtros_recomendados['pares_max']
                         soma_min = filtros_recomendados['soma_min']
@@ -1532,8 +1829,7 @@ def main():
                         linhas_min = filtros_recomendados['linhas_min']
                         linhas_max = filtros_recomendados['linhas_max']
                 
-                # Monta filtros (corrige min/max invertidos, já que os sliders
-                # são independentes e nada impedia pares_min > pares_max etc.)
+                # Monta filtros com correção
                 pares_min, pares_max = min(pares_min, pares_max), max(pares_min, pares_max)
                 soma_min, soma_max = min(soma_min, soma_max), max(soma_min, soma_max)
                 linhas_min, linhas_max = min(linhas_min, linhas_max), max(linhas_min, linhas_max)
@@ -1551,8 +1847,8 @@ def main():
                     'primos_max': 7,
                     'linhas_min': linhas_min,
                     'linhas_max': linhas_max,
-                    'colunas_min': 2,
-                    'colunas_max': 4
+                    'colunas_min': 4,
+                    'colunas_max': 5
                 }
             
             if st.button("🎯 GERAR JOGOS", use_container_width=True, type="primary"):
@@ -1561,17 +1857,33 @@ def main():
                         qtd=qtd_jogos,
                         estrategia=estrategia,
                         dezenas_base=dezenas_base if usar_base else None,
-                        filtros_personalizados=filtros
+                        filtros_personalizados=filtros,
+                        combinar_estrategias=combinar_estrategias
                     )
                     
                     if jogos:
-                        st.session_state.jogos_gerados = jogos
+                        app["jogos_gerados"] = jogos
                         st.success(f"✅ {len(jogos)} jogos gerados!")
+                        
+                        # Avaliação dos jogos
+                        st.markdown("### 📊 Avaliação dos Jogos")
+                        scores = []
+                        for jogo in jogos:
+                            score = gerador._avaliar_jogo(jogo)
+                            scores.append(score)
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Score Médio", f"{np.mean(scores):.1f}")
+                        with col2:
+                            st.metric("Melhor Score", f"{max(scores):.1f}")
+                        with col3:
+                            st.metric("Pior Score", f"{min(scores):.1f}")
                     else:
                         st.error("❌ Nenhum jogo foi gerado. Tente ajustar os filtros.")
             
-            if st.session_state.jogos_gerados:
-                jogos = st.session_state.jogos_gerados
+            if app["jogos_gerados"]:
+                jogos = app["jogos_gerados"]
                 st.markdown(f"### 📋 Jogos Gerados ({len(jogos)})")
                 
                 # Verifica tamanho dos jogos
@@ -1582,10 +1894,10 @@ def main():
                     st.warning(f"⚠️ Alguns jogos não têm 15 números: {tamanhos}")
                 
                 # Análise com IA se disponível
-                if st.session_state.ia and st.session_state.ia_treinada:
+                if app["ia"] and app["ia_treinada"]:
                     st.markdown("#### 🤖 Análise IA dos Jogos")
                     for i, jogo in enumerate(jogos[:10]):
-                        probs = st.session_state.ia.prever_probabilidades(jogo)
+                        probs = app["ia"].prever_probabilidades(jogo)
                         if probs:
                             cols = st.columns([3, 2])
                             with cols[0]:
@@ -1606,7 +1918,9 @@ def main():
                     linhas = distribuir_linhas_lf(jogo)
                     linhas_ativas = len([l for l in linhas if l > 0])
                     
-                    stats = f"⚖️ {pares}p/{15-pares}i | 🔢 {primos} primos | ➕ {soma} | 🔗 {consec} consec | 📊 {linhas_ativas} linhas"
+                    score = gerador._avaliar_jogo(jogo) if app["gerador"] else 0
+                    
+                    stats = f"⚖️ {pares}p/{15-pares}i | 🔢 {primos} primos | ➕ {soma} | 🔗 {consec} consec | 📊 {linhas_ativas} linhas | ⭐ Score: {score:.1f}"
                     
                     st.markdown(f"""
                     <div class='card' style='border-left: 5px solid {"#ffd700" if i == 0 else "#4cc9f0"};'>
@@ -1623,7 +1937,8 @@ def main():
                         arquivo, jogo_id = salvar_jogos_lf_elite(jogos, {
                             'estrategia': estrategia,
                             'filtros': filtros,
-                            'qtd': qtd_jogos
+                            'qtd': qtd_jogos,
+                            'combinar_estrategias': combinar_estrategias
                         })
                         if arquivo:
                             st.success(f"✅ Jogos salvos! ID: {jogo_id}")
@@ -1634,17 +1949,18 @@ def main():
                         'Pares': [contar_pares_lf(j) for j in jogos],
                         'Soma': [sum(j) for j in jogos],
                         'Primos': [contar_primos_lf(j) for j in jogos],
-                        'Consecutivos': [contar_consecutivos_lf(j) for j in jogos]
+                        'Consecutivos': [contar_consecutivos_lf(j) for j in jogos],
+                        'Score': [gerador._avaliar_jogo(j) for j in jogos]
                     })
                     st.download_button(
                         label="📥 Exportar CSV",
                         data=df_export.to_csv(index=False),
-                        file_name=f"lotofacil_elite3_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        file_name=f"lotofacil_elite4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv",
                         use_container_width=True
                     )
                 with col3:
-                    txt_content = "LOTOFÁCIL ELITE 3.0 - JOGOS GERADOS\n"
+                    txt_content = "LOTOFÁCIL ELITE 4.0 - JOGOS GERADOS\n"
                     txt_content += "=" * 50 + "\n"
                     txt_content += f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
                     txt_content += f"Estratégia: {estrategia}\n"
@@ -1656,7 +1972,7 @@ def main():
                     st.download_button(
                         label="📝 Exportar TXT",
                         data=txt_content,
-                        file_name=f"lotofacil_elite3_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        file_name=f"lotofacil_elite4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                         mime="text/plain",
                         use_container_width=True
                     )
@@ -1671,15 +1987,15 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        if st.session_state.backtests:
-            backtests = st.session_state.backtests
+        if app["backtests"]:
+            backtests = app["backtests"]
             
             col1, col2 = st.columns(2)
             with col1:
                 estrategias_backtest = st.multiselect(
                     "Selecione estratégias para testar",
-                    ['conservadora', 'equilibrada', 'diversificada'],
-                    default=['conservadora', 'equilibrada', 'diversificada']
+                    ['conservadora', 'equilibrada', 'diversificada', 'padroes'],
+                    default=['conservadora', 'equilibrada', 'diversificada', 'padroes']
                 )
             with col2:
                 num_testes = st.slider("Número de concursos para teste", 10, 100, 50)
@@ -1731,8 +2047,8 @@ def main():
     with tabs[5]:
         st.markdown("### 📈 Análise Avançada")
         
-        if st.session_state.estatisticas:
-            stats = st.session_state.estatisticas
+        if app["estatisticas"]:
+            stats = app["estatisticas"]
             
             # Análise de Correlação
             st.markdown("### 🔗 Análise de Correlação entre Dezenas")
@@ -1805,7 +2121,7 @@ if __name__ == "__main__":
 
 st.markdown("""
 <div class="footer-premium">
-    <div class="footer-title">LOTOFÁCIL ELITE 3.0 SYSTEM</div>
-    <div class="footer-sub">SAMUCJ TECNOLOGIA © 2026</div>
+    <div class="footer-title">LOTOFÁCIL ELITE 4.0 SYSTEM</div>
+    <div class="footer-sub">SAMUCJ TECNOLOGIA © 2026 | Estratégias Avançadas com IA</div>
 </div>
 """, unsafe_allow_html=True)
