@@ -14,6 +14,10 @@ import base64
 from io import StringIO, BytesIO
 import math
 
+from modulo_vies_fisico import (
+    obter_rastreador_vies_fisico, prever_vies_fisico, renderizar_painel_vies_fisico
+)
+
 try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
     from sklearn.linear_model import LogisticRegression
@@ -2916,6 +2920,8 @@ class SistemaBot:
         self.numero_rodada += 1
         self.duzia_ai.adicionar(nr)
         self.historico_numeros.append(nr)
+        rastreador_vf = obter_rastreador_vies_fisico(st.session_state)
+        rastreador_vf.adicionar(table_id, table_name, nr)
         self.ultimo_numero = nr
 
         if not self.pode_processar(): salvar_sessao(); return
@@ -2987,7 +2993,18 @@ class SistemaBot:
             if not self.pode_processar(): salvar_sessao(); return
 
         if self.sessao_ativa and self.rodadas_na_sessao < self.rodadas_por_sessao:
-            previsao = self.duzia_ai.prever()
+            if st.session_state.get('modo_operacao', 'ml') == 'vies_fisico':
+                rastreador_vf = obter_rastreador_vies_fisico(st.session_state)
+                previsao = prever_vies_fisico(rastreador_vf, table_id)
+                previsao.setdefault('score', {})
+                previsao['confianca'] = previsao.get('confianca') or 0
+                previsao.setdefault('gatilho_ativo', 'ViesFisico')
+                previsao.setdefault('modo_anti_erro', False)
+                previsao.setdefault('padrao_ativo', None)
+                previsao.setdefault('streak_info', None)
+                previsao.setdefault('prob_ml_bruta', None)
+            else:
+                previsao = self.duzia_ai.prever()
             if previsao['entrar']:
                 duzia_map = {1: list(range(1,13)), 2: list(range(13,25)), 3: list(range(25,37))}
                 numeros_apostar = list(duzia_map.get(previsao['duzia'], []))
@@ -3140,6 +3157,7 @@ for key, default in [
     ("modo_agressivo", config_global.get('modo_agressivo', False)),
     ("janela_duzia_ai", config_global.get('janela_duzia_ai', 30)),
     ("historico", []),
+    ("modo_operacao", "ml"),  # "ml" ou "vies_fisico"
 ]:
     if key not in st.session_state: st.session_state[key] = default
 
@@ -3281,6 +3299,18 @@ with st.sidebar:
     api_opcoes = list(API_URLS.keys())
     api_index = api_opcoes.index(st.session_state.api_selecionada) if st.session_state.api_selecionada in api_opcoes else 0
     st.session_state.api_selecionada = st.radio("Roleta:", api_opcoes, index=api_index)
+
+    st.markdown("---")
+    st.markdown("### 🧭 Modo de Operação")
+    st.session_state.modo_operacao = st.radio(
+        "Modo:", ["ml", "vies_fisico"],
+        format_func=lambda x: "🧠 ML por Dúzia (padrões momentâneos)" if x == "ml" else "🎯 Viés Físico (longo prazo, por mesa)",
+        index=["ml", "vies_fisico"].index(st.session_state.get('modo_operacao', 'ml'))
+    )
+    if st.session_state.modo_operacao == 'vies_fisico':
+        rastreador_vf = obter_rastreador_vies_fisico(st.session_state)
+        table_id_atual = getattr(sis.duzia_ai, 'mesa_atual', None) or 'unknown'
+        renderizar_painel_vies_fisico(st, rastreador_vf, table_id_atual, table_id_atual)
     api_name = st.session_state.api_selecionada
     config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
 
