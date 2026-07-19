@@ -213,7 +213,7 @@ class GatilhosNumericos:
 
     def __init__(self, janela_quente=15, janela_repeticao=8, fator_soma=5,
                  fator_mult=2, distancia_vizinho=2, min_amostras_confiaveis=15,
-                 fichas_estaticas_numeros=None, janela_atraso=26,
+                 fichas_estaticas_numeros=None, janela_atraso=26, top_atrasados=5,
                  janela_cor=4, janela_paridade=4, janela_coluna=6,
                  janela_cavalo=5, janela_assinatura=40, limiar_assinatura=0.45):
         self.janela_quente = janela_quente
@@ -227,6 +227,7 @@ class GatilhosNumericos:
         self.fichas_estaticas_numeros = list(fichas_estaticas_numeros) if fichas_estaticas_numeros else \
             [7, 10, 13, 17, 20, 23, 27, 30, 33, 36, 1, 4]
         self.janela_atraso = janela_atraso
+        self.top_atrasados = top_atrasados
         self.janela_cor = janela_cor
         self.janela_paridade = janela_paridade
         self.janela_coluna = janela_coluna
@@ -234,8 +235,10 @@ class GatilhosNumericos:
         self.janela_assinatura = janela_assinatura
         self.limiar_assinatura = limiar_assinatura
 
-        # backtest[nome] = {'disparos': int, 'acertos': int}
-        self.backtest = {nome: {'disparos': 0, 'acertos': 0} for nome in self.NOMES}
+        # backtest[nome] = {'disparos': int, 'acertos': int, 'cobertura_soma': int}
+        # cobertura_soma acumula quantos números foram apostados a cada disparo,
+        # para calcular o "lift" (edge real) em vez de só a taxa de acerto bruta.
+        self.backtest = {nome: {'disparos': 0, 'acertos': 0, 'cobertura_soma': 0} for nome in self.NOMES}
         self._ultimo_resultado = {}  # cache da última avaliação, p/ conferir acerto na próxima rodada
 
     # ------------------------------------------------------------------
@@ -360,12 +363,25 @@ class GatilhosNumericos:
     def _numero_atrasado(self, hist):
         if len(hist) < self.janela_atraso:
             return False, [], ''
-        todos = set(range(0, 37))
-        vistos_recentes = set(hist[-self.janela_atraso:])
-        atrasados = sorted(todos - vistos_recentes)
-        if not atrasados:
+        # ausência real de cada número = quantas rodadas atrás ele saiu pela
+        # última vez (não apenas "saiu ou não dentro da janela")
+        ausencia = {n: None for n in range(37)}
+        for i, n in enumerate(reversed(hist)):
+            if ausencia[n] is None:
+                ausencia[n] = i
+        for n in range(37):
+            if ausencia[n] is None:
+                ausencia[n] = len(hist)  # nunca saiu no histórico observado
+
+        candidatos = [(n, a) for n, a in ausencia.items() if a >= self.janela_atraso]
+        if not candidatos:
             return False, [], ''
-        return True, atrasados, f'não saem há {self.janela_atraso}+ rodadas: {atrasados}'
+        candidatos.sort(key=lambda x: -x[1])
+        top = candidatos[:self.top_atrasados]
+        nums = [n for n, _ in top]
+        detalhe = f'top {len(nums)} mais atrasados (>={self.janela_atraso} rodadas): ' + \
+                  ', '.join(f'{n}({a}r)' for n, a in top)
+        return True, nums, detalhe
 
     def _cavalo_numeros_recentes(self, hist):
         if len(hist) < self.janela_cavalo:
@@ -513,7 +529,15 @@ class GatilhosNumericos:
     def avaliar_todos(self, historico_numeros, troca_crupie_flag=False):
         """
         Avalia os 20 gatilhos contra o histórico atual (lista/deque, mais
-        recente por último). Retorna dict: nome -> {disparou, numeros, detalhe, taxa_acerto, amostras}
+        recente por último). Retorna dict: nome -> {disparou, numeros, detalhe,
+        taxa_acerto, amostras, cobertura_media, lift, ev_por_unidade}
+
+        `lift` = taxa_acerto_historica / cobertura_esperada_pelo_acaso.
+        Um gatilho que cobre metade da mesa vai naturalmente acertar perto de
+        50% das vezes SEM ISSO SER EDGE NENHUM -- lift=1.0 é exatamente o
+        esperado pelo acaso. Só lift > 1 de forma consistente (com amostra
+        mínima) indicaria algo além do óbvio; por isso a escolha automática
+        ranqueia por lift, não pela taxa bruta.
         """
         hist = list(historico_numeros)
         resultado = {}
@@ -521,6 +545,18 @@ class GatilhosNumericos:
             disparou, numeros, detalhe = self._rodar_detector(nome, hist, troca_crupie_flag)
             bt = self.backtest[nome]
             taxa = (bt['acertos'] / bt['disparos'] * 100) if bt['disparos'] > 0 else None
+            cobertura_media = (bt['cobertura_soma'] / bt['disparos']) if bt['disparos'] > 0 else None
+
+            lift = None
+            ev_por_unidade = None
+            if taxa is not None and cobertura_media and cobertura_media > 0:
+                baseline_pct = (cobertura_media / 37) * 100
+                lift = taxa / baseline_pct if baseline_pct > 0 else None
+                # EV por unidade apostada, payout europeu padrão 35:1 (retorno 36x)
+                p = taxa / 100
+                ev_total = p * 36 - cobertura_media
+                ev_por_unidade = (ev_total / cobertura_media) * 100
+
             resultado[nome] = {
                 'nome_exibicao': self.NOMES[nome],
                 'disparou': disparou,
@@ -528,6 +564,9 @@ class GatilhosNumericos:
                 'situacao_prevista': derivar_situacao_prevista(numeros) if disparou else None,
                 'detalhe': detalhe,
                 'taxa_acerto_historica': taxa,
+                'cobertura_media': cobertura_media,
+                'lift': lift,
+                'ev_por_unidade': ev_por_unidade,
                 'amostras': bt['disparos'],
                 'confiavel': bt['disparos'] >= self.min_amostras_confiaveis,
             }
@@ -551,25 +590,28 @@ class GatilhosNumericos:
         for nome, info in self._ultimo_resultado.items():
             if info['disparou']:
                 self.backtest[nome]['disparos'] += 1
+                self.backtest[nome]['cobertura_soma'] += len(info['numeros_sugeridos'])
                 if numero_saido in info['numeros_sugeridos']:
                     self.backtest[nome]['acertos'] += 1
 
     def escolher_automatico(self, resultado_avaliacao):
         """
         Modo automático: entre os gatilhos que dispararam nesta rodada,
-        escolhe o de maior taxa de acerto histórica (exige amostra mínima).
+        escolhe o de maior LIFT histórico (não a maior taxa de acerto bruta --
+        um gatilho que cobre metade da mesa sempre teria taxa bruta alta sem
+        isso significar nada). Exige amostra mínima e lift calculável.
         Se nenhum gatilho confiável disparou, retorna None (sem entrada).
         """
         candidatos = [
             (nome, info) for nome, info in resultado_avaliacao.items()
-            if info['disparou'] and info['confiavel'] and info['taxa_acerto_historica'] is not None
+            if info['disparou'] and info['confiavel'] and info['lift'] is not None
         ]
         if not candidatos:
             return None
-        candidatos.sort(key=lambda x: x[1]['taxa_acerto_historica'], reverse=True)
+        candidatos.sort(key=lambda x: x[1]['lift'], reverse=True)
         nome_escolhido, info = candidatos[0]
         return nome_escolhido, info
 
     def resetar_backtest(self):
-        self.backtest = {nome: {'disparos': 0, 'acertos': 0} for nome in self.NOMES}
+        self.backtest = {nome: {'disparos': 0, 'acertos': 0, 'cobertura_soma': 0} for nome in self.NOMES}
         self._ultimo_resultado = {}
