@@ -3025,6 +3025,7 @@ class SistemaBot:
                     contagem_duzia = Counter(get_duzia(n) for n in numeros_apostar if n != 0)
                     duzia_predominante = contagem_duzia.most_common(1)[0][0] if contagem_duzia else 0
                     incluir_zero = 0 in numeros_apostar
+                    situacao_prevista = info_g.get('situacao_prevista') or ''
 
                     self.entrada_ativa = {
                         'numeros_apostar': numeros_apostar,
@@ -3035,10 +3036,11 @@ class SistemaBot:
                         'gatilho_ativo': info_g['nome_exibicao'],
                         'modo_anti_erro': False,
                         'incluir_zero': incluir_zero,
-                        'padrao_ativo': {'resumo': info_g['detalhe']},
+                        'padrao_ativo': {'resumo': f"{info_g['detalhe']} -> previsão p/ próxima rodada: {situacao_prevista}"},
                         'streak_info': None,
                         'regime': self.duzia_ai.regime_atual,
                         'fonte': 'gatilhos',
+                        'situacao_prevista': situacao_prevista,
                     }
                     self.sinais_grafico.append((len(self.historico_numeros) - 1, duzia_predominante))
                     enviar_previsao_auto({
@@ -3047,7 +3049,7 @@ class SistemaBot:
                         'duzia': duzia_predominante,
                         'duzia_secundaria': None,
                         'numeros_completos': list(self.historico_numeros),
-                        'streak_info': None,
+                        'streak_info': f"🧮 {info_g['nome_exibicao']} -> {situacao_prevista}" if situacao_prevista else None,
                     })
             else:
                 previsao = self.duzia_ai.prever()
@@ -3699,8 +3701,9 @@ with ce:
             escolha_auto = sis.gatilhos_numericos.escolher_automatico(res_gat)
             if escolha_auto:
                 nome_auto, info_auto = escolha_auto
-                st.success(f"🎯 {info_auto['nome_exibicao']} — {info_auto['detalhe']}")
-                st.write(f"Números: {sorted(info_auto['numeros_sugeridos'])}")
+                st.success(f"🎯 {info_auto['nome_exibicao']} disparou — {info_auto['detalhe']}")
+                st.markdown(f"### ➡️ Previsão p/ próxima rodada: **{info_auto.get('situacao_prevista', '-')}**")
+                st.caption(f"Números cobertos: {sorted(info_auto['numeros_sugeridos'])}")
                 st.caption(f"Taxa histórica: {info_auto['taxa_acerto_historica']:.1f}% ({info_auto['amostras']} amostras)")
             else:
                 st.info("Nenhum gatilho confiável disparou nesta rodada.")
@@ -3708,19 +3711,21 @@ with ce:
             nome_sel = st.session_state.get('gatilho_manual_escolhido')
             info_sel = res_gat.get(nome_sel, {})
             if info_sel.get('disparou'):
-                st.success(f"🎯 {info_sel['nome_exibicao']} — {info_sel['detalhe']}")
-                st.write(f"Números: {sorted(info_sel['numeros_sugeridos'])}")
+                st.success(f"🎯 {info_sel['nome_exibicao']} disparou — {info_sel['detalhe']}")
+                st.markdown(f"### ➡️ Previsão p/ próxima rodada: **{info_sel.get('situacao_prevista', '-')}**")
+                st.caption(f"Números cobertos: {sorted(info_sel['numeros_sugeridos'])}")
             else:
                 st.info(f"{info_sel.get('nome_exibicao','')} não disparou nesta rodada.")
             taxa_sel = info_sel.get('taxa_acerto_historica')
             if taxa_sel is not None:
                 st.caption(f"Taxa histórica: {taxa_sel:.1f}% ({info_sel['amostras']} amostras)")
 
-        with st.expander("Ver todos os 10 gatilhos"):
+        with st.expander("Ver todos os 20 gatilhos"):
             for nome_g, info_g in res_gat.items():
                 marca = "🟢" if info_g['disparou'] else "⚪"
                 taxa_txt = f"{info_g['taxa_acerto_historica']:.1f}%" if info_g['taxa_acerto_historica'] is not None else "—"
-                st.caption(f"{marca} {info_g['nome_exibicao']}: {taxa_txt} ({info_g['amostras']}x)")
+                situacao_txt = f" -> {info_g['situacao_prevista']}" if info_g.get('situacao_prevista') else ""
+                st.caption(f"{marca} {info_g['nome_exibicao']}{situacao_txt}: {taxa_txt} ({info_g['amostras']}x)")
     else:
         st.info("Aguardando rodadas para avaliar os gatilhos...")
 
