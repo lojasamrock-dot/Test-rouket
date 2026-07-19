@@ -214,7 +214,7 @@ class GatilhosNumericos:
     def __init__(self, janela_quente=15, janela_repeticao=8, fator_soma=5,
                  fator_mult=2, distancia_vizinho=2, min_amostras_confiaveis=15,
                  fichas_estaticas_numeros=None, janela_atraso=26, top_atrasados=5,
-                 janela_cor=4, janela_paridade=4, janela_coluna=6,
+                 janela_cor=4, janela_paridade=4, janela_coluna=4,
                  janela_cavalo=5, janela_assinatura=40, limiar_assinatura=0.45):
         self.janela_quente = janela_quente
         self.janela_repeticao = janela_repeticao
