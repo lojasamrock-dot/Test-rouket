@@ -4,7 +4,9 @@ gatilhos_numericos.py
 ======================
 Módulo de gatilhos de entrada baseados em números/terminais da roleta europeia.
 
-Implementa 10 gatilhos clássicos usados por jogadores que fazem "leitura de padrão":
+Implementa 20 gatilhos usados por jogadores que fazem "leitura de padrão":
+
+Grupo 1 - terminais e proximidade na roda:
   1. Repetição de número          -> repete_numero
   2. Soma de terminal              -> soma_terminal
   3. Subtração de terminal         -> subtracao_terminal
@@ -15,6 +17,18 @@ Implementa 10 gatilhos clássicos usados por jogadores que fazem "leitura de pad
   8. Número quente em streak       -> numero_quente
   9. Setor da roda (Tiers/Orph.)   -> setor_roda
  10. Vizinho físico na roda        -> vizinho_fisico
+
+Grupo 2 - relação entre números, layout da mesa e streaks de cor/paridade:
+ 11. Número espelho (dígitos invertidos) -> espelho_numero
+ 12. Fichas estáticas (conjunto fixo)     -> fichas_estaticas
+ 13. Número atrasado ("dormindo")         -> numero_atrasado
+ 14. Cavalo/split entre números recentes -> cavalo_numeros_recentes
+ 15. Quebra de sequência de cor           -> quebra_sequencia_cor
+ 16. Coluna ausente                       -> coluna_ausente
+ 17. Drift do rotor/bola                  -> drift_rotor
+ 18. Sequência par/ímpar                  -> sequencia_par_impar
+ 19. Assinatura de seção da roda (sessão) -> assinatura_secao_crupie
+ 20. Six line (linha dupla) do último nº  -> six_line_ultimo_numero
 
 IMPORTANTE (deixa isso visível na UI, não só no código):
 Em roleta com RNG cada rodada é matematicamente independente da anterior.
@@ -36,6 +50,109 @@ _IDX_RODA = {n: i for i, n in enumerate(RODA_EUROPEIA)}
 VOISINS_DU_ZERO = [22, 18, 29, 7, 28, 12, 35, 3, 26, 0, 32, 15, 19, 4, 21, 2, 25]
 TIERS_DU_CYLINDRE = [27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33]
 ORPHELINS = [17, 34, 6, 1, 20, 14, 31, 9]
+
+# Cores padrão da mesa europeia
+VERMELHOS = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+PRETOS = {n for n in range(1, 37) if n not in VERMELHOS}
+
+# As 3 arcadas físicas da roda (dividindo os 37 números em 3 blocos contíguos
+# de ~12 na ordem física, para aproximar uma "seção" da roda por sessão)
+_TERCO = len(RODA_EUROPEIA) // 3
+ARCOS_RODA = [
+    set(RODA_EUROPEIA[0:_TERCO + 1]),
+    set(RODA_EUROPEIA[_TERCO + 1:2 * _TERCO + 1]),
+    set(RODA_EUROPEIA[2 * _TERCO + 1:]),
+]
+
+
+def cor_numero(n):
+    if n == 0:
+        return None
+    return 'vermelho' if n in VERMELHOS else 'preto'
+
+
+def coluna_numero(n):
+    """Coluna da mesa (1, 2 ou 3). 0 não pertence a nenhuma coluna."""
+    if n == 0:
+        return None
+    resto = n % 3
+    return 3 if resto == 0 else resto
+
+
+def numeros_da_coluna(c):
+    return [n for n in range(1, 37) if coluna_numero(n) == c]
+
+
+def linha_numero(n):
+    """Linha (1 a 12) da mesa: 1-2-3 é linha 1, 4-5-6 é linha 2, etc."""
+    if n == 0:
+        return None
+    return (n - 1) // 3 + 1
+
+
+def six_line_do_numero(n):
+    """Bloco de 6 números (linha dupla) da mesa que contém `n`."""
+    if n == 0:
+        return []
+    linha = linha_numero(n)
+    linha_inicio = linha if linha % 2 == 1 else linha - 1
+    inicio = (linha_inicio - 1) * 3 + 1
+    return list(range(inicio, inicio + 6))
+
+
+def _duzia_numero(n):
+    if n == 0:
+        return None
+    if n <= 12:
+        return 1
+    if n <= 24:
+        return 2
+    return 3
+
+
+def derivar_situacao_prevista(numeros_sugeridos, limiar_predominancia=0.7):
+    """
+    Resume uma lista de números sugeridos por um gatilho numa "situação"
+    legível (dúzia, cor, coluna, paridade ou terminal predominante), para
+    exibir e enviar como a previsão real da PRÓXIMA rodada -- não a lista
+    crua de números. Só aponta uma característica quando ela é dominante
+    o bastante no conjunto (>= limiar_predominancia); senão descreve como
+    "números específicos".
+    """
+    nums = [n for n in numeros_sugeridos if 0 <= n <= 36]
+    if not nums:
+        return 'sem previsão'
+    total = len(nums)
+    partes = []
+
+    duzias = [d for d in (_duzia_numero(n) for n in nums) if d is not None]
+    if duzias:
+        d_predom, contagem = max(((d, duzias.count(d)) for d in set(duzias)), key=lambda x: x[1])
+        if contagem / total >= limiar_predominancia:
+            partes.append(f'Dúzia {d_predom}')
+
+    cores = [cor_numero(n) for n in nums if cor_numero(n)]
+    if cores:
+        c_predom, contagem = max(((c, cores.count(c)) for c in set(cores)), key=lambda x: x[1])
+        if contagem / len(cores) >= limiar_predominancia:
+            partes.append(c_predom.capitalize())
+
+    colunas = [coluna_numero(n) for n in nums if coluna_numero(n)]
+    if colunas:
+        c_predom, contagem = max(((c, colunas.count(c)) for c in set(colunas)), key=lambda x: x[1])
+        if contagem / len(colunas) >= limiar_predominancia:
+            partes.append(f'Coluna {c_predom}')
+
+    terminais = [terminal(n) for n in nums]
+    t_predom, contagem = max(((t, terminais.count(t)) for t in set(terminais)), key=lambda x: x[1])
+    if contagem / total >= limiar_predominancia:
+        partes.append(f'Terminal {t_predom}')
+
+    if not partes:
+        if total <= 6:
+            return f'números específicos: {sorted(nums)}'
+        return f'{total} números (sem padrão único dominante)'
+    return ' + '.join(partes)
 
 
 def terminal(n):
@@ -67,7 +184,7 @@ def vizinhos_na_roda(numero, distancia=2):
 
 class GatilhosNumericos:
     """
-    Avalia os 10 gatilhos numéricos a cada rodada e mantém um backtest
+    Avalia os 20 gatilhos numéricos a cada rodada e mantém um backtest
     (taxa de acerto real, contra o histórico já observado) por gatilho.
     """
 
@@ -82,16 +199,40 @@ class GatilhosNumericos:
         'numero_quente': 'Número quente (streak)',
         'setor_roda': 'Setor da roda',
         'vizinho_fisico': 'Vizinho físico na roda',
+        'espelho_numero': 'Número espelho',
+        'fichas_estaticas': 'Fichas estáticas (conjunto fixo)',
+        'numero_atrasado': 'Número atrasado ("dormindo")',
+        'cavalo_numeros_recentes': 'Cavalo/split entre números recentes',
+        'quebra_sequencia_cor': 'Quebra de sequência de cor',
+        'coluna_ausente': 'Coluna ausente',
+        'drift_rotor': 'Drift do rotor/bola',
+        'sequencia_par_impar': 'Sequência par/ímpar',
+        'assinatura_secao_crupie': 'Assinatura de seção da roda (sessão)',
+        'six_line_ultimo_numero': 'Six line do último número',
     }
 
     def __init__(self, janela_quente=15, janela_repeticao=8, fator_soma=5,
-                 fator_mult=2, distancia_vizinho=2, min_amostras_confiaveis=15):
+                 fator_mult=2, distancia_vizinho=2, min_amostras_confiaveis=15,
+                 fichas_estaticas_numeros=None, janela_atraso=26,
+                 janela_cor=4, janela_paridade=4, janela_coluna=6,
+                 janela_cavalo=5, janela_assinatura=40, limiar_assinatura=0.45):
         self.janela_quente = janela_quente
         self.janela_repeticao = janela_repeticao
         self.fator_soma = fator_soma
         self.fator_mult = fator_mult
         self.distancia_vizinho = distancia_vizinho
         self.min_amostras_confiaveis = min_amostras_confiaveis
+
+        # Grupo 2 - parâmetros configuráveis
+        self.fichas_estaticas_numeros = list(fichas_estaticas_numeros) if fichas_estaticas_numeros else \
+            [7, 10, 13, 17, 20, 23, 27, 30, 33, 36, 1, 4]
+        self.janela_atraso = janela_atraso
+        self.janela_cor = janela_cor
+        self.janela_paridade = janela_paridade
+        self.janela_coluna = janela_coluna
+        self.janela_cavalo = janela_cavalo
+        self.janela_assinatura = janela_assinatura
+        self.limiar_assinatura = limiar_assinatura
 
         # backtest[nome] = {'disparos': int, 'acertos': int}
         self.backtest = {nome: {'disparos': 0, 'acertos': 0} for nome in self.NOMES}
@@ -198,6 +339,130 @@ class GatilhosNumericos:
         viz = vizinhos_na_roda(ultimo, self.distancia_vizinho)
         return True, [ultimo] + viz, f'vizinhos físicos de {ultimo} (±{self.distancia_vizinho})'
 
+    # ---- Grupo 2 ----
+
+    def _espelho_numero(self, hist):
+        if not hist:
+            return False, [], ''
+        ultimo = hist[-1]
+        if ultimo < 10:
+            return False, [], ''
+        espelho = int(str(ultimo)[::-1])
+        if espelho > 36 or espelho == ultimo:
+            return False, [], ''
+        return True, [espelho], f'espelho de {ultimo} -> {espelho}'
+
+    def _fichas_estaticas(self, hist):
+        if not self.fichas_estaticas_numeros:
+            return False, [], ''
+        return True, list(self.fichas_estaticas_numeros), f'conjunto fixo ({len(self.fichas_estaticas_numeros)} números)'
+
+    def _numero_atrasado(self, hist):
+        if len(hist) < self.janela_atraso:
+            return False, [], ''
+        todos = set(range(0, 37))
+        vistos_recentes = set(hist[-self.janela_atraso:])
+        atrasados = sorted(todos - vistos_recentes)
+        if not atrasados:
+            return False, [], ''
+        return True, atrasados, f'não saem há {self.janela_atraso}+ rodadas: {atrasados}'
+
+    def _cavalo_numeros_recentes(self, hist):
+        if len(hist) < self.janela_cavalo:
+            return False, [], ''
+        recentes = hist[-self.janela_cavalo:]
+        for i in range(len(recentes) - 1):
+            a, b = recentes[i], recentes[i + 1]
+            if a == 0 or b == 0 or a == b:
+                continue
+            if abs(a - b) in (1, 3):
+                return True, [a, b], f'split válido entre {a} e {b}'
+        return False, [], ''
+
+    def _quebra_sequencia_cor(self, hist):
+        if len(hist) < self.janela_cor:
+            return False, [], ''
+        recentes = hist[-self.janela_cor:]
+        cores = [cor_numero(n) for n in recentes]
+        if None in cores:
+            return False, [], ''
+        if len(set(cores)) == 1:
+            cor_oposta = 'preto' if cores[0] == 'vermelho' else 'vermelho'
+            nums = sorted(PRETOS) if cor_oposta == 'preto' else sorted(VERMELHOS)
+            return True, nums, f'{self.janela_cor}x {cores[0]} seguidos -> aposta {cor_oposta}'
+        return False, [], ''
+
+    def _coluna_ausente(self, hist):
+        if len(hist) < self.janela_coluna:
+            return False, [], ''
+        recentes = hist[-self.janela_coluna:]
+        colunas_vistas = {coluna_numero(n) for n in recentes if n != 0}
+        ausentes = {1, 2, 3} - colunas_vistas
+        if len(ausentes) == 1:
+            c = next(iter(ausentes))
+            return True, numeros_da_coluna(c), f'coluna {c} ausente nas últimas {self.janela_coluna}'
+        return False, [], ''
+
+    def _drift_rotor(self, hist):
+        if len(hist) < 4:
+            return False, [], ''
+        recentes = hist[-4:]
+        posicoes = [_IDX_RODA[n] for n in recentes if n in _IDX_RODA]
+        if len(posicoes) < 4:
+            return False, [], ''
+        total = len(RODA_EUROPEIA)
+        passos = []
+        for i in range(len(posicoes) - 1):
+            d = (posicoes[i + 1] - posicoes[i]) % total
+            # normaliza para o menor caminho (-18..+18)
+            if d > total / 2:
+                d -= total
+            passos.append(d)
+        if len(set(1 if p > 0 else -1 if p < 0 else 0 for p in passos)) == 1 and passos[0] != 0:
+            passo_medio = round(sum(passos) / len(passos))
+            proxima_pos = (posicoes[-1] + passo_medio) % total
+            proximo_num = RODA_EUROPEIA[proxima_pos]
+            nums = [proximo_num] + vizinhos_na_roda(proximo_num, 2)
+            return True, nums, f'drift consistente (passo médio {passo_medio}) -> projeta {proximo_num}'
+        return False, [], ''
+
+    def _sequencia_par_impar(self, hist):
+        if len(hist) < self.janela_paridade:
+            return False, [], ''
+        recentes = [n for n in hist[-self.janela_paridade:] if n != 0]
+        if len(recentes) < self.janela_paridade:
+            return False, [], ''
+        paridades = [n % 2 for n in recentes]
+        if len(set(paridades)) == 1:
+            se_impar_agora = paridades[0] == 1
+            nums = [n for n in range(1, 37) if (n % 2 == 0) == se_impar_agora]
+            rotulo_atual = 'ímpares' if se_impar_agora else 'pares'
+            rotulo_alvo = 'pares' if se_impar_agora else 'ímpares'
+            return True, nums, f'{self.janela_paridade}x {rotulo_atual} seguidos -> aposta {rotulo_alvo}'
+        return False, [], ''
+
+    def _assinatura_secao_crupie(self, hist):
+        if len(hist) < self.janela_assinatura:
+            return False, [], ''
+        recentes = hist[-self.janela_assinatura:]
+        contagens = [sum(1 for n in recentes if n in arco) for arco in ARCOS_RODA]
+        total = len(recentes)
+        idx_max = contagens.index(max(contagens))
+        proporcao = contagens[idx_max] / total
+        if proporcao >= self.limiar_assinatura:
+            nums = sorted(ARCOS_RODA[idx_max])
+            return True, nums, f'seção {idx_max+1} concentrou {proporcao*100:.0f}% das últimas {total} rodadas'
+        return False, [], ''
+
+    def _six_line_ultimo_numero(self, hist):
+        if not hist:
+            return False, [], ''
+        ultimo = hist[-1]
+        if ultimo == 0:
+            return False, [], ''
+        nums = six_line_do_numero(ultimo)
+        return True, nums, f'six line de {ultimo}: {nums}'
+
     def _rodar_detector(self, nome, hist, troca_crupie_flag=False):
         if nome == 'repete_numero':
             return self._repete_numero(hist)
@@ -219,6 +484,26 @@ class GatilhosNumericos:
             return self._setor_roda(hist)
         if nome == 'vizinho_fisico':
             return self._vizinho_fisico(hist)
+        if nome == 'espelho_numero':
+            return self._espelho_numero(hist)
+        if nome == 'fichas_estaticas':
+            return self._fichas_estaticas(hist)
+        if nome == 'numero_atrasado':
+            return self._numero_atrasado(hist)
+        if nome == 'cavalo_numeros_recentes':
+            return self._cavalo_numeros_recentes(hist)
+        if nome == 'quebra_sequencia_cor':
+            return self._quebra_sequencia_cor(hist)
+        if nome == 'coluna_ausente':
+            return self._coluna_ausente(hist)
+        if nome == 'drift_rotor':
+            return self._drift_rotor(hist)
+        if nome == 'sequencia_par_impar':
+            return self._sequencia_par_impar(hist)
+        if nome == 'assinatura_secao_crupie':
+            return self._assinatura_secao_crupie(hist)
+        if nome == 'six_line_ultimo_numero':
+            return self._six_line_ultimo_numero(hist)
         return False, [], ''
 
     # ------------------------------------------------------------------
@@ -227,7 +512,7 @@ class GatilhosNumericos:
 
     def avaliar_todos(self, historico_numeros, troca_crupie_flag=False):
         """
-        Avalia os 10 gatilhos contra o histórico atual (lista/deque, mais
+        Avalia os 20 gatilhos contra o histórico atual (lista/deque, mais
         recente por último). Retorna dict: nome -> {disparou, numeros, detalhe, taxa_acerto, amostras}
         """
         hist = list(historico_numeros)
@@ -240,6 +525,7 @@ class GatilhosNumericos:
                 'nome_exibicao': self.NOMES[nome],
                 'disparou': disparou,
                 'numeros_sugeridos': numeros,
+                'situacao_prevista': derivar_situacao_prevista(numeros) if disparou else None,
                 'detalhe': detalhe,
                 'taxa_acerto_historica': taxa,
                 'amostras': bt['disparos'],
