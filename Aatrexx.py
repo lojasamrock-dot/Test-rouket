@@ -234,6 +234,88 @@ def distribuir_por_colunas(jogo):
     return colunas
 
 # =====================================================
+# FUNÇÃO PARA BUSCAR DADOS DA API COMPLETA
+# =====================================================
+
+def buscar_dados_loterias():
+    """
+    Busca todos os dados das loterias da API
+    Retorna os dados da Mega-Sena especificamente
+    """
+    try:
+        url = "https://loteriascaixa-api.herokuapp.com/api/v1/loterias"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            dados_completos = response.json()
+            
+            # Verifica se a Mega-Sena está nos dados
+            if 'megasena' in dados_completos:
+                dados_mega = dados_completos['megasena']
+                
+                # Converte para o formato esperado (lista de concursos)
+                # A API retorna o último concurso, precisamos buscar o histórico
+                return buscar_historico_megasena()
+            else:
+                st.warning("⚠️ Mega-Sena não encontrada na resposta da API")
+                return None
+        else:
+            st.error(f"❌ Erro ao buscar dados: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"❌ Erro na requisição: {e}")
+        return None
+
+def buscar_historico_megasena(quantidade=100):
+    """
+    Busca o histórico de concursos da Mega-Sena
+    """
+    try:
+        # Busca lista de concursos
+        url_lista = "https://loteriascaixa-api.herokuapp.com/api/megasena"
+        response = requests.get(url_lista, timeout=10)
+        
+        if response.status_code == 200:
+            dados = response.json()
+            
+            # Se for uma lista, retorna os últimos 'quantidade'
+            if isinstance(dados, list):
+                return dados[:quantidade]
+            # Se for um único concurso, retorna como lista
+            elif isinstance(dados, dict):
+                return [dados]
+            else:
+                return None
+        else:
+            # Fallback: busca concurso específico
+            return buscar_concurso_especifico()
+    except Exception as e:
+        st.error(f"❌ Erro ao buscar histórico: {e}")
+        return None
+
+def buscar_concurso_especifico(numero=None):
+    """
+    Busca um concurso específico da Mega-Sena
+    """
+    try:
+        if numero:
+            url = f"https://loteriascaixa-api.herokuapp.com/api/megasena/{numero}"
+        else:
+            # Busca o último concurso
+            url = "https://loteriascaixa-api.herokuapp.com/api/megasena/latest"
+        
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            dados = response.json()
+            if isinstance(dados, dict):
+                return [dados]
+        return None
+    except Exception as e:
+        st.error(f"❌ Erro ao buscar concurso específico: {e}")
+        return None
+
+# =====================================================
 # MEGA-SENA VERSÃO 4 - GERADOR INTELIGENTE
 # =====================================================
 
@@ -263,8 +345,9 @@ class GeradorMegaSenaV4:
         # Processa concursos
         self.concursos = []
         for concurso in dados_api[:self.qtd_concursos]:
-            dezenas = sorted(map(int, concurso['dezenas']))
-            self.concursos.append(dezenas)
+            if 'dezenas' in concurso:
+                dezenas = sorted(map(int, concurso['dezenas']))
+                self.concursos.append(dezenas)
         
         self.ultimo_concurso = self.concursos[0] if self.concursos else []
         
@@ -514,6 +597,23 @@ def detectar_estrategia_ativa_mega():
         return "Mega-Sena V4"
     return "Padrão"
 
+def conferir_jogos_mega(jogos, resultado_set):
+    resultados = []
+    for i, jogo in enumerate(jogos):
+        if isinstance(jogo, str):
+            dezenas = set(map(int, jogo.replace('"', '').replace(' ', '').split(',')))
+        else:
+            dezenas = set(jogo)
+        acertos = dezenas.intersection(resultado_set)
+        resultados.append({
+            "Jogo": i + 1,
+            "Acertos": len(acertos),
+            "Acertos_Dezenas": sorted(acertos),
+            "Dezenas": sorted(dezenas)
+        })
+    df = pd.DataFrame(resultados)
+    return df.sort_values(by="Acertos", ascending=False).reset_index(drop=True)
+
 # =====================================================
 # INTERFACE PRINCIPAL
 # =====================================================
@@ -527,22 +627,86 @@ def main():
     if "v4_gerador" not in st.session_state: st.session_state.v4_gerador = None
     if "v4_scores" not in st.session_state: st.session_state.v4_scores = []
     if "v4_analise_detalhada" not in st.session_state: st.session_state.v4_analise_detalhada = []
+    if "ultimo_concurso_info" not in st.session_state: st.session_state.ultimo_concurso_info = None
 
     with st.sidebar:
         st.header("⚙️ Configurações")
-        qtd = st.slider("Qtd concursos históricos", 20, 500, 100)
-        if st.button("📥 Carregar concursos", use_container_width=True):
-            with st.spinner("Carregando dados da Caixa..."):
-                try:
-                    url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
-                    response = requests.get(url)
-                    st.session_state.dados_api = response.json()
-                    st.success(f"✅ Último concurso: #{st.session_state.dados_api[0]['concurso']} - {st.session_state.dados_api[0]['data']}")
-                except Exception as e:
-                    st.error(f"Erro ao carregar: {e}")
+        
+        # Opção para carregar dados
+        qtd = st.slider("Qtd concursos históricos", 20, 200, 100)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📥 Carregar Mega-Sena", use_container_width=True):
+                with st.spinner("Carregando dados da Mega-Sena..."):
+                    # Tenta carregar da API completa primeiro
+                    dados = buscar_historico_megasena(qtd)
+                    
+                    if dados is None:
+                        # Fallback: tenta carregar da API específica
+                        st.info("Tentando carregar da API específica...")
+                        try:
+                            url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
+                            response = requests.get(url, timeout=10)
+                            if response.status_code == 200:
+                                dados = response.json()
+                                if isinstance(dados, list):
+                                    dados = dados[:qtd]
+                                elif isinstance(dados, dict):
+                                    dados = [dados]
+                        except Exception as e:
+                            st.error(f"Erro ao carregar: {e}")
+                    
+                    if dados and len(dados) > 0:
+                        st.session_state.dados_api = dados
+                        
+                        # Extrai informações do último concurso
+                        ultimo = dados[0] if isinstance(dados, list) else dados
+                        st.session_state.ultimo_concurso_info = {
+                            'numero': ultimo.get('concurso', ultimo.get('numeroDoConcurso', 'N/A')),
+                            'data': ultimo.get('data', ultimo.get('dataApuracao', 'N/A')),
+                            'dezenas': ultimo.get('dezenas', [])
+                        }
+                        
+                        # Inicializa gerador
+                        st.session_state.v4_gerador = GeradorMegaSenaV4(dados, qtd)
+                        st.success(f"✅ Carregados {len(dados)} concursos!")
+                        st.success(f"📅 Último: #{st.session_state.ultimo_concurso_info['numero']} - {st.session_state.ultimo_concurso_info['data']}")
+                    else:
+                        st.error("❌ Não foi possível carregar os dados")
+        
+        with col2:
+            if st.button("🔄 Atualizar Dados", use_container_width=True):
+                with st.spinner("Atualizando dados..."):
+                    try:
+                        url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
+                        response = requests.get(url, timeout=10)
+                        if response.status_code == 200:
+                            dados = response.json()
+                            if isinstance(dados, list):
+                                dados = dados[:qtd]
+                            elif isinstance(dados, dict):
+                                dados = [dados]
+                            
+                            if dados and len(dados) > 0:
+                                st.session_state.dados_api = dados
+                                st.session_state.v4_gerador = GeradorMegaSenaV4(dados, qtd)
+                                st.success(f"✅ Dados atualizados! {len(dados)} concursos")
+                    except Exception as e:
+                        st.error(f"Erro ao atualizar: {e}")
+
+    # Exibe informações do último concurso se disponível
+    if st.session_state.ultimo_concurso_info:
+        info = st.session_state.ultimo_concurso_info
+        st.sidebar.markdown("---")
+        st.sidebar.markdown(f"**📅 Último Concurso:** #{info['numero']}")
+        st.sidebar.markdown(f"**📆 Data:** {info['data']}")
+        if info['dezenas']:
+            dezenas = sorted(map(int, info['dezenas']))
+            st.sidebar.markdown(f"**🎯 Resultado:** {', '.join(f'{d:02d}' for d in dezenas)}")
 
     if not st.session_state.dados_api:
-        st.info("👈 Carregue os concursos na barra lateral para começar.")
+        st.info("👈 Carregue os dados da Mega-Sena na barra lateral para começar.")
         return
 
     st.subheader("🎯 Análise e Geração de Jogos")
@@ -559,37 +723,38 @@ def main():
 
     # ================= TAB 1: ANÁLISE =================
     with tabs[0]:
-        ultimo = st.session_state.dados_api[0]
-        numeros_ultimo = sorted(map(int, ultimo['dezenas']))
-        st.markdown(f"""
-        <div class='concurso-info'>
-            <strong>Concurso #{ultimo['concurso']}</strong> - {ultimo['data']}
-        </div>
-        """, unsafe_allow_html=True)
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown("**Dezenas sorteadas:**")
-            st.markdown(formatar_jogo_html(numeros_ultimo), unsafe_allow_html=True)
-        with col2:
-            pares = contar_pares(numeros_ultimo)
-            st.metric("Pares/Ímpares", f"{pares}×{6-pares}")
-        with col3:
-            st.metric("Soma total", sum(numeros_ultimo))
-        
-        st.markdown("### 📊 Estatísticas do Último Concurso")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Primos", contar_primos(numeros_ultimo))
-        with col2:
-            st.metric("Consecutivos", contar_consecutivos(numeros_ultimo))
-        with col3:
-            faixas = [(1, 20), (21, 40), (41, 60)]
-            contagem = contar_por_faixa(numeros_ultimo, faixas)
-            st.metric("Distribuição (B/M/A)", f"{contagem[0]}/{contagem[1]}/{contagem[2]}")
-        with col4:
-            linhas = distribuir_por_linhas(numeros_ultimo, 6)
-            st.metric("Linhas (0-5)", f"{linhas[0]}-{linhas[1]}-{linhas[2]}-{linhas[3]}-{linhas[4]}-{linhas[5]}")
+        if st.session_state.dados_api:
+            ultimo = st.session_state.dados_api[0]
+            numeros_ultimo = sorted(map(int, ultimo['dezenas']))
+            st.markdown(f"""
+            <div class='concurso-info'>
+                <strong>Concurso #{ultimo.get('concurso', ultimo.get('numeroDoConcurso', 'N/A'))}</strong> - {ultimo.get('data', ultimo.get('dataApuracao', 'N/A'))}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("**Dezenas sorteadas:**")
+                st.markdown(formatar_jogo_html(numeros_ultimo), unsafe_allow_html=True)
+            with col2:
+                pares = contar_pares(numeros_ultimo)
+                st.metric("Pares/Ímpares", f"{pares}×{6-pares}")
+            with col3:
+                st.metric("Soma total", sum(numeros_ultimo))
+            
+            st.markdown("### 📊 Estatísticas do Último Concurso")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Primos", contar_primos(numeros_ultimo))
+            with col2:
+                st.metric("Consecutivos", contar_consecutivos(numeros_ultimo))
+            with col3:
+                faixas = [(1, 20), (21, 40), (41, 60)]
+                contagem = contar_por_faixa(numeros_ultimo, faixas)
+                st.metric("Distribuição (B/M/A)", f"{contagem[0]}/{contagem[1]}/{contagem[2]}")
+            with col4:
+                linhas = distribuir_por_linhas(numeros_ultimo, 6)
+                st.metric("Linhas (0-5)", f"{linhas[0]}-{linhas[1]}-{linhas[2]}-{linhas[3]}-{linhas[4]}-{linhas[5]}")
 
     # ================= TAB 2: GERADOR =================
     with tabs[1]:
@@ -625,10 +790,16 @@ def main():
     # ================= TAB 3: CONFERÊNCIA =================
     with tabs[2]:
         st.markdown("### 🔍 Conferência de Jogos")
-        concurso_resultado = st.selectbox("Selecione o concurso para conferência", st.session_state.dados_api, format_func=lambda c: f"#{c['concurso']} - {c['data']}")
-        if concurso_resultado:
-            resultado_oficial = set(map(int, concurso_resultado["dezenas"]))
-            st.markdown(f"""<div class="highlight"><strong>🎯 Resultado #{concurso_resultado['concurso']}:</strong><br>{formatar_jogo_html(sorted(resultado_oficial))}</div>""", unsafe_allow_html=True)
+        
+        if st.session_state.dados_api:
+            concurso_resultado = st.selectbox(
+                "Selecione o concurso para conferência", 
+                st.session_state.dados_api, 
+                format_func=lambda c: f"#{c.get('concurso', c.get('numeroDoConcurso', 'N/A'))} - {c.get('data', c.get('dataApuracao', 'N/A'))}"
+            )
+            if concurso_resultado:
+                resultado_oficial = set(map(int, concurso_resultado["dezenas"]))
+                st.markdown(f"""<div class="highlight"><strong>🎯 Resultado #{concurso_resultado.get('concurso', concurso_resultado.get('numeroDoConcurso', 'N/A'))}:</strong><br>{formatar_jogo_html(sorted(resultado_oficial))}</div>""", unsafe_allow_html=True)
         
         opcao_jogos = st.radio("Origem dos jogos:", ["Jogos gerados na sessão atual", "Carregar de arquivo CSV", "Digitar manualmente"], horizontal=True)
         jogos_para_conferir = []
@@ -655,7 +826,7 @@ def main():
                         except:
                             pass
         
-        if jogos_para_conferir and concurso_resultado:
+        if jogos_para_conferir and 'resultado_oficial' in locals():
             if st.button("🔍 CONFERIR JOGOS", use_container_width=True, type="primary"):
                 df_conferencia = conferir_jogos_mega(jogos_para_conferir, resultado_oficial)
                 st.markdown("### 📊 Resultados da Conferência")
@@ -877,7 +1048,8 @@ def main():
                     arquivo, jogo_id = salvar_jogos_gerados(
                         jogos_para_salvar, [], 
                         {"versao": "Mega-Sena V4", "estrategia": "Colunas"},
-                        ultimo['concurso'], ultimo['data'],
+                        ultimo.get('concurso', ultimo.get('numeroDoConcurso', 0)),
+                        ultimo.get('data', ultimo.get('dataApuracao', '')),
                         {"scores": st.session_state.v4_scores}
                     )
                     if arquivo:
@@ -912,27 +1084,6 @@ def main():
                     mime="application/json",
                     use_container_width=True
                 )
-
-# =====================================================
-# FUNÇÃO DE CONFERÊNCIA MEGA-SENA
-# =====================================================
-
-def conferir_jogos_mega(jogos, resultado_set):
-    resultados = []
-    for i, jogo in enumerate(jogos):
-        if isinstance(jogo, str):
-            dezenas = set(map(int, jogo.replace('"', '').replace(' ', '').split(',')))
-        else:
-            dezenas = set(jogo)
-        acertos = dezenas.intersection(resultado_set)
-        resultados.append({
-            "Jogo": i + 1,
-            "Acertos": len(acertos),
-            "Acertos_Dezenas": sorted(acertos),
-            "Dezenas": sorted(dezenas)
-        })
-    df = pd.DataFrame(resultados)
-    return df.sort_values(by="Acertos", ascending=False).reset_index(drop=True)
 
 if __name__ == "__main__":
     main()
