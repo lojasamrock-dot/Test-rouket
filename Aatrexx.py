@@ -7,25 +7,41 @@ import json
 import os
 import uuid
 import math
-import itertools
-from collections import Counter
-from datetime import datetime
-from scipy.stats import norm, binom
-from itertools import combinations
 import warnings
+from collections import Counter, defaultdict, deque
+from datetime import datetime, timedelta
+from scipy.stats import norm, binom, chi2, pearsonr
+from scipy.signal import find_peaks
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.calibration import CalibratedClassifierCV
+try:
+    # sklearn >= 1.6 removed CalibratedClassifierCV(cv='prefit') em favor de FrozenEstimator
+    from sklearn.frozen import FrozenEstimator
+    def _calibrar_modelo_prefit(modelo_base):
+        return CalibratedClassifierCV(FrozenEstimator(modelo_base), method='sigmoid')
+except ImportError:
+    def _calibrar_modelo_prefit(modelo_base):
+        return CalibratedClassifierCV(modelo_base, cv='prefit', method='sigmoid')
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+
 warnings.filterwarnings("ignore")
 
-try:
-    from ortools.linear_solver import pywraplp
-    ORTOOLS_AVAILABLE = True
-except ImportError:
-    ORTOOLS_AVAILABLE = False
-
 st.set_page_config(
-    page_title="🎯 MEGA-SENA - Análise e Geração",
-    layout="centered",
-    initial_sidebar_state="collapsed"
+    page_title="🎯 MEGA-SENA Elite 3.0",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# =====================================================
+# CSS PERSONALIZADO
+# =====================================================
 
 st.markdown("""
 <style>
@@ -34,88 +50,33 @@ h1,h2,h3 { text-align: center; }
 .card { background: #0e1117; border-radius: 14px; padding: 16px; margin-bottom: 12px; border: 1px solid #262730; color: white; }
 .stButton>button { width: 100%; height: 3.2em; border-radius: 14px; font-size: 1.05em; }
 input, textarea { border-radius: 12px !important; }
-.p12 { color: #4cc9f0; font-weight: bold; }
-.p13 { color: #4ade80; font-weight: bold; }
-.p14 { color: gold; font-weight: bold; }
-.p15 { color: #f97316; font-weight: bold; }
 .concurso-info { background: #1e1e2e; padding: 10px; border-radius: 10px; margin: 10px 0; }
 .metric-card { background: #16213e; padding: 10px; border-radius: 10px; text-align: center; }
-.cover-stats { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 15px; border-radius: 12px; margin: 10px 0; border: 1px solid #00ffaa20; }
 .highlight { background: #00ffaa20; border-left: 4px solid #00ffaa; padding: 10px; border-radius: 8px; margin: 10px 0; }
-.ilp-highlight { background: linear-gradient(135deg, #ff00ff20 0%, #aa00ff20 100%); border: 2px solid #ff00ff; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.ia7-highlight { background: linear-gradient(135deg, #ff880020 0%, #ff440020 100%); border: 2px solid #ff8800; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.nash-highlight { background: linear-gradient(135deg, #9b59b620 0%, #6c348320 100%); border: 2px solid #9b59b6; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.ev-highlight { background: linear-gradient(135deg, #00ff8820 0%, #00cc6620 100%); border: 2px solid #00ff88; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.img-analysis-highlight { background: linear-gradient(135deg, #ffd70020 0%, #ff8c0020 100%); border: 2px solid #ffd700; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.elite-master-highlight { background: linear-gradient(135deg, #ff880030 0%, #ff440030 100%); border: 2px solid #ff8800; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.regras-especiais-highlight { background: linear-gradient(135deg, #4cc9f030 0%, #f9731630 100%); border: 2px solid #4cc9f0; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.abc-highlight { background: linear-gradient(135deg, #4cc9f030 0%, #f9731630 50%, #00ff8830 100%); border: 2px solid #4cc9f0; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.v4-highlight { background: linear-gradient(135deg, #ff6b6b30 0%, #4ecdc430 50%, #45b7d130 100%); border: 2px solid #ff6b6b; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.pro-highlight { background: linear-gradient(135deg, #00c85330 0%, #0088aa30 100%); border: 2px solid #00c853; padding: 15px; border-radius: 12px; margin: 10px 0; }
-.download-section { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 20px; border-radius: 15px; margin: 20px 0; border: 2px solid #00ffaa; text-align: center; }
-.download-btn { background: linear-gradient(90deg, #00ffaa, #00cc88); color: #000; padding: 12px 30px; border-radius: 25px; font-weight: bold; border: none; cursor: pointer; }
-.jogo-v4-principal { border-left: 5px solid #4cc9f0; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
-.jogo-v4-protecao { border-left: 5px solid #f97316; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
-.jogo-v4-destaque { border-left: 5px solid #ffd700; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
-.jogo-pro { border-left: 5px solid #00c853; background: #0e1117; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
+.mega-highlight { background: linear-gradient(135deg, #ff6b6b30 0%, #ffd93d30 50%, #6bcb7730 100%); border: 2px solid #ff6b6b; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.elite-mega-highlight { background: linear-gradient(135deg, #9b59b630 0%, #ffd93d30 50%, #6bcb7730 100%); border: 2px solid #9b59b6; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.ia-mega-highlight { background: linear-gradient(135deg, #ff6b6b30 0%, #6bcb7730 50%, #9b59b630 100%); border: 2px solid #ff6b6b; padding: 15px; border-radius: 12px; margin: 10px 0; }
+.download-section { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 20px; border-radius: 15px; margin: 20px 0; border: 2px solid #ffd93d; text-align: center; }
+.ranking-card { background: #0e1117; border: 1px solid #262730; border-radius: 10px; padding: 10px; margin: 5px 0; }
+.pos-1 { color: #ffd700; font-weight: bold; }
+.pos-2 { color: #c0c0c0; font-weight: bold; }
+.pos-3 { color: #cd7f32; font-weight: bold; }
+.tendencia-up { color: #4ade80; }
+.tendencia-down { color: #ff6b6b; }
+.tendencia-stable { color: #ffd93d; }
+.footer-premium{width:100%;text-align:center;padding:22px 10px;margin-top:40px;background:linear-gradient(180deg,#0b0b0b,#050505);color:#ffffff;border-top:1px solid #222;position:relative;}
+.footer-premium::before{content:"";position:absolute;top:0;left:0;width:100%;height:2px;background:linear-gradient(90deg,#ff6b6b,#ffd93d,#6bcb77,#ff6b6b);box-shadow:0 0 10px #ff6b6b;}
+.footer-title{font-size:16px;font-weight:800;letter-spacing:3px;text-transform:uppercase;text-shadow:0 0 6px rgba(255,107,107,0.6);}
+.footer-sub{font-size:11px;color:#bfbfbf;margin-top:4px;letter-spacing:1.5px;}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊🎯 MEGA-SENA - Análise e Geração")
-st.caption("Análise Estatística e Geração de Jogos com Filtros Matemáticos")
+st.title("🎯 MEGA-SENA Elite 3.0")
+st.caption("Sistema Avançado de Análise Estatística, IA e Geração Inteligente")
 
 # =====================================================
 # FUNÇÕES AUXILIARES
 # =====================================================
-
-def garantir_jogos_como_listas(jogos_entrada):
-    if jogos_entrada is None:
-        return []
-    if isinstance(jogos_entrada, list) and len(jogos_entrada) > 0:
-        if isinstance(jogos_entrada[0], list) and all(isinstance(n, int) for n in jogos_entrada[0]):
-            return jogos_entrada
-    jogos_normalizados = []
-    if isinstance(jogos_entrada, pd.DataFrame):
-        for _, row in jogos_entrada.iterrows():
-            for col in row.index:
-                valor = row[col]
-                if isinstance(valor, str) and ("," in valor or " " in valor):
-                    if "," in valor:
-                        dezenas = [int(d.strip()) for d in valor.split(",")]
-                    else:
-                        dezenas = [int(d) for d in valor.split()]
-                    jogos_normalizados.append(sorted(dezenas))
-                    break
-                elif isinstance(valor, list):
-                    jogos_normalizados.append(sorted([int(x) for x in valor]))
-                    break
-        return jogos_normalizados
-    if isinstance(jogos_entrada, list):
-        for item in jogos_entrada:
-            if isinstance(item, dict):
-                for chave in ["Dezenas", "dezenas", "Jogo", "jogo"]:
-                    if chave in item:
-                        valor = item[chave]
-                        if isinstance(valor, str):
-                            if "," in valor:
-                                dezenas = [int(d.strip()) for d in valor.split(",")]
-                            else:
-                                dezenas = [int(d) for d in valor.split()]
-                        elif isinstance(valor, list):
-                            dezenas = [int(x) for x in valor]
-                        else:
-                            continue
-                        jogos_normalizados.append(sorted(dezenas))
-                        break
-            elif isinstance(item, str):
-                if "," in item:
-                    dezenas = [int(d.strip()) for d in item.split(",")]
-                else:
-                    dezenas = [int(d) for d in item.split()]
-                jogos_normalizados.append(sorted(dezenas))
-            elif isinstance(item, (list, tuple)):
-                jogos_normalizados.append(sorted([int(x) for x in item]))
-    return jogos_normalizados
 
 def convert_numpy_types(obj):
     if isinstance(obj, np.integer):
@@ -135,21 +96,21 @@ def convert_numpy_types(obj):
     else:
         return obj
 
-def salvar_jogos_gerados(jogos, fechamento, dna_params, numero_concurso_atual, data_concurso_atual, estatisticas=None):
+def salvar_jogos_mega_elite(jogos, parametros, estatisticas=None):
     try:
-        if not os.path.exists("jogos_salvos"):
-            os.makedirs("jogos_salvos")
+        if not os.path.exists("jogos_salvos_mega_elite"):
+            os.makedirs("jogos_salvos_mega_elite")
         jogo_id = str(uuid.uuid4())[:8]
         data_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
-        nome_arquivo = f"jogos_salvos/jogos_{data_hora}_{jogo_id}.json"
+        nome_arquivo = f"jogos_salvos_mega_elite/jogos_{data_hora}_{jogo_id}.json"
         jogos_convertidos = convert_numpy_types(jogos)
         dados = {
             "id": jogo_id,
             "data_geracao": datetime.now().isoformat(),
-            "concurso_base": {"numero": int(numero_concurso_atual), "data": str(data_concurso_atual)},
             "jogos": jogos_convertidos,
+            "parametros": convert_numpy_types(parametros),
             "estatisticas": convert_numpy_types(estatisticas) if estatisticas else {},
-            "schema_version": "2.0"
+            "schema_version": "3.0"
         }
         with open(nome_arquivo, 'w', encoding='utf-8') as f:
             json.dump(dados, f, indent=2, ensure_ascii=False)
@@ -158,43 +119,28 @@ def salvar_jogos_gerados(jogos, fechamento, dna_params, numero_concurso_atual, d
         st.error(f"Erro ao salvar jogos: {e}")
         return None, None
 
-def carregar_jogos_salvos():
+def carregar_jogos_mega_elite():
     jogos_salvos = []
     try:
-        if os.path.exists("jogos_salvos"):
-            for arquivo in os.listdir("jogos_salvos"):
+        if os.path.exists("jogos_salvos_mega_elite"):
+            for arquivo in os.listdir("jogos_salvos_mega_elite"):
                 if arquivo.endswith(".json"):
                     try:
-                        with open(f"jogos_salvos/{arquivo}", 'r', encoding='utf-8') as f:
+                        with open(f"jogos_salvos_mega_elite/{arquivo}", 'r', encoding='utf-8') as f:
                             dados = json.load(f)
-                            if "concurso_base" not in dados:
-                                dados["concurso_base"] = {"numero": 0, "data": "Desconhecido"}
                             dados["arquivo"] = arquivo
                             jogos_salvos.append(dados)
                     except Exception:
                         continue
             jogos_salvos.sort(key=lambda x: x.get("data_geracao", ""), reverse=True)
     except Exception as e:
-        st.error(f"Erro ao carregar jogos salvos: {e}")
+        st.error(f"Erro ao carregar jogos: {e}")
     return jogos_salvos
 
-def formatar_jogo_html(jogo, destaque_primos=True):
+def formatar_jogo_html_mega(jogo, destaque_primos=True):
     primos = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59]
-    if isinstance(jogo, dict):
-        dezenas = []
-        for chave in ["dezenas", "Dezenas", "jogo", "Jogo"]:
-            if chave in jogo:
-                val = jogo[chave]
-                if isinstance(val, str):
-                    dezenas = [int(d.strip()) for d in val.split(",") if d.strip()]
-                elif isinstance(val, list):
-                    dezenas = [int(d) for d in val]
-                break
-    elif isinstance(jogo, str):
-        if "," in jogo:
-            dezenas = [int(d.strip()) for d in jogo.split(",")]
-        else:
-            dezenas = [int(d) for d in jogo.split()]
+    if isinstance(jogo, str):
+        dezenas = [int(d.strip()) for d in jogo.split(",")]
     else:
         dezenas = jogo
     if not dezenas:
@@ -207,1255 +153,1511 @@ def formatar_jogo_html(jogo, destaque_primos=True):
             html += f"<span style='background:#0e1117; border:1px solid #262730; border-radius:20px; padding:5px 8px; margin:2px; display:inline-block;'>{num:02d}</span>"
     return html
 
-def contar_pares(jogo):
+def contar_pares_mega(jogo):
     return sum(1 for d in jogo if d % 2 == 0)
 
-def contar_primos(jogo):
+def contar_primos_mega(jogo):
     primos = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59}
     return sum(1 for d in jogo if d in primos)
 
-def contar_consecutivos(jogo):
+def contar_consecutivos_mega(jogo):
     jogo = sorted(jogo)
     return sum(1 for i in range(len(jogo)-1) if jogo[i+1] == jogo[i] + 1)
 
-def contar_por_faixa(jogo, faixa_limites):
-    contagem = []
-    for inicio, fim in faixa_limites:
-        contagem.append(sum(1 for n in jogo if inicio <= n <= fim))
-    return contagem
-
-def distribuir_por_linhas(jogo, linhas=6):
-    resultado = [0] * linhas
+def distribuir_faixas_mega(jogo):
+    faixas = [0, 0, 0]
     for n in jogo:
-        resultado[(n-1)//10] += 1
-    return resultado
+        if 1 <= n <= 20:
+            faixas[0] += 1
+        elif 21 <= n <= 40:
+            faixas[1] += 1
+        else:
+            faixas[2] += 1
+    return faixas
 
-def distribuir_por_colunas(jogo):
-    colunas = [0] * 10
+def distribuir_colunas_mega(jogo):
+    """Distribui as 6 dezenas em 6 colunas de 10 números cada (C1: 1-10, C2: 11-20, etc)"""
+    colunas = [0] * 6
     for n in jogo:
-        colunas[(n-1)%10] += 1
+        col = (n - 1) // 10
+        if col < 6:
+            colunas[col] += 1
     return colunas
 
 # =====================================================
-# FUNÇÃO PARA BUSCAR DADOS DA API COMPLETA
+# FUNÇÃO PARA BUSCAR DADOS DA MEGA-SENA
 # =====================================================
 
-def buscar_dados_loterias():
-    """
-    Busca todos os dados das loterias da API
-    Retorna os dados da Mega-Sena especificamente
-    """
+def buscar_historico_megasena(quantidade=300):
     try:
-        url = "https://loteriascaixa-api.herokuapp.com/api/v1/loterias"
-        response = requests.get(url, timeout=10)
-        
-        if response.status_code == 200:
-            dados_completos = response.json()
-            
-            # Verifica se a Mega-Sena está nos dados
-            if 'megasena' in dados_completos:
-                dados_mega = dados_completos['megasena']
-                
-                # Converte para o formato esperado (lista de concursos)
-                # A API retorna o último concurso, precisamos buscar o histórico
-                return buscar_historico_megasena()
-            else:
-                st.warning("⚠️ Mega-Sena não encontrada na resposta da API")
-                return None
-        else:
-            st.error(f"❌ Erro ao buscar dados: {response.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"❌ Erro na requisição: {e}")
-        return None
-
-def buscar_historico_megasena(quantidade=100):
-    """
-    Busca o histórico de concursos da Mega-Sena
-    """
-    try:
-        # Busca lista de concursos
         url_lista = "https://loteriascaixa-api.herokuapp.com/api/megasena"
         response = requests.get(url_lista, timeout=10)
         
         if response.status_code == 200:
             dados = response.json()
-            
-            # Se for uma lista, retorna os últimos 'quantidade'
             if isinstance(dados, list):
                 return dados[:quantidade]
-            # Se for um único concurso, retorna como lista
             elif isinstance(dados, dict):
                 return [dados]
-            else:
-                return None
-        else:
-            # Fallback: busca concurso específico
-            return buscar_concurso_especifico()
-    except Exception as e:
-        st.error(f"❌ Erro ao buscar histórico: {e}")
-        return None
-
-def buscar_concurso_especifico(numero=None):
-    """
-    Busca um concurso específico da Mega-Sena
-    """
-    try:
-        if numero:
-            url = f"https://loteriascaixa-api.herokuapp.com/api/megasena/{numero}"
-        else:
-            # Busca o último concurso
-            url = "https://loteriascaixa-api.herokuapp.com/api/megasena/latest"
-        
-        response = requests.get(url, timeout=10)
-        
-        if response.status_code == 200:
-            dados = response.json()
-            if isinstance(dados, dict):
-                return [dados]
         return None
     except Exception as e:
-        st.error(f"❌ Erro ao buscar concurso específico: {e}")
+        st.error(f"❌ Erro na requisição: {e}")
         return None
 
 # =====================================================
-# MEGA-SENA VERSÃO 4 - GERADOR INTELIGENTE
+# MÓDULO 1: BANCO DE DADOS INTELIGENTE - MEGA
 # =====================================================
 
-class GeradorMegaSenaV4:
-    """
-    Versão 4 do gerador da Mega-Sena
-    Baseado em análise de colunas e padrões históricos
-    """
+class BancoDadosMegaInteligente:
+    """Módulo 1 - Banco de Dados Inteligente para Mega-Sena"""
     
-    def __init__(self, dados_api, qtd_concursos=50):
+    def __init__(self, dados_api):
         self.dados_api = dados_api
-        self.qtd_concursos = min(qtd_concursos, len(dados_api))
-        
-        # Definição das colunas (6 colunas de 10 números cada)
-        self.colunas = {
-            'C1': list(range(1, 11)),
-            'C2': list(range(11, 21)),
-            'C3': list(range(21, 31)),
-            'C4': list(range(31, 41)),
-            'C5': list(range(41, 51)),
-            'C6': list(range(51, 61))
-        }
-        
-        # Lista de números primos para destaque
-        self.primos = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59}
-        
-        # Processa concursos
         self.concursos = []
-        for concurso in dados_api[:self.qtd_concursos]:
+        self._processar_dados()
+        
+    def _processar_dados(self):
+        for concurso in self.dados_api:
             if 'dezenas' in concurso:
                 dezenas = sorted(map(int, concurso['dezenas']))
-                self.concursos.append(dezenas)
+                self.concursos.append({
+                    'numero': concurso.get('concurso', concurso.get('numeroDoConcurso', 0)),
+                    'data': concurso.get('data', concurso.get('dataApuracao', '')),
+                    'dezenas': dezenas,
+                    'pares': contar_pares_mega(dezenas),
+                    'impares': 6 - contar_pares_mega(dezenas),
+                    'primos': contar_primos_mega(dezenas),
+                    'soma': sum(dezenas),
+                    'consecutivos': contar_consecutivos_mega(dezenas),
+                    'faixas': distribuir_faixas_mega(dezenas),
+                    'colunas': distribuir_colunas_mega(dezenas)
+                })
         
-        self.ultimo_concurso = self.concursos[0] if self.concursos else []
+        # Ordena por número do concurso
+        self.concursos.sort(key=lambda x: x['numero'], reverse=True)
+    
+    def get_ultimo_concurso(self):
+        return self.concursos[0] if self.concursos else None
+    
+    def get_historico_dezenas(self):
+        return [c['dezenas'] for c in self.concursos]
+    
+    def get_estatisticas_concurso(self, concurso):
+        if isinstance(concurso, dict):
+            return concurso
+        return None
+
+# =====================================================
+# MÓDULO 2: ESTATÍSTICAS AVANÇADAS - MEGA
+# =====================================================
+
+class EstatisticasMegaAvancadas:
+    """Módulo 2 - Estatísticas Avançadas para Mega-Sena"""
+    
+    def __init__(self, banco_dados):
+        self.banco = banco_dados
+        self.dezenas = range(1, 61)
+        self._calcular_estatisticas()
         
-        # Calcula frequências e análises
-        self.frequencias = self._calcular_frequencias()
-        self.atrasos = self._calcular_atrasos()
-        self.analise_colunas = self._analisar_colunas()
+    def _calcular_estatisticas(self):
+        historico = self.banco.get_historico_dezenas()
+        self.total_concursos = len(historico)
         
-    def _calcular_frequencias(self):
+        # Frequências
+        self.frequencias = self._calcular_frequencias(historico)
+        self.frequencias_periodos = self._calcular_frequencias_periodos(historico)
+        
+        # Atrasos
+        self.atrasos = self._calcular_atrasos(historico)
+        self.atraso_relativo = self._calcular_atraso_relativo()
+        
+        # Tendências
+        self.tendencias = self._calcular_tendencias(historico)
+        
+        # Distribuições
+        self.distribuicao_faixas = self._calcular_distribuicao_faixas(historico)
+        self.distribuicao_colunas = self._calcular_distribuicao_colunas(historico)
+        self.distribuicao_paridade = self._calcular_distribuicao_paridade(historico)
+        self.distribuicao_soma = self._calcular_distribuicao_soma(historico)
+        self.distribuicao_repetidas = self._calcular_distribuicao_repetidas(historico)
+        
+        # Estatísticas adicionais
+        self.media_soma = np.mean([c['soma'] for c in self.banco.concursos])
+        self.std_soma = np.std([c['soma'] for c in self.banco.concursos])
+        self.media_pares = np.mean([c['pares'] for c in self.banco.concursos])
+        self.media_colunas = np.mean([len([c for c in colunas if c > 0]) for colunas in [c['colunas'] for c in self.banco.concursos]])
+        
+    def _calcular_frequencias(self, historico):
         freq = Counter()
-        for concurso in self.concursos:
+        for concurso in historico:
             freq.update(concurso)
         return freq
     
-    def _calcular_atrasos(self):
+    def _calcular_frequencias_periodos(self, historico):
+        periodos = [10, 20, 50, 100, 300]
+        resultado = {}
+        for p in periodos:
+            if len(historico) >= p:
+                freq = Counter()
+                for concurso in historico[:p]:
+                    freq.update(concurso)
+                resultado[p] = freq
+            else:
+                resultado[p] = self.frequencias
+        return resultado
+    
+    def _calcular_atrasos(self, historico):
         atrasos = {i: 0 for i in range(1, 61)}
-        if not self.concursos:
+        if not historico:
             return atrasos
         for dezena in range(1, 61):
             atraso = 0
-            for concurso in self.concursos:
+            for concurso in historico:
                 if dezena in concurso:
                     break
                 atraso += 1
             atrasos[dezena] = atraso
         return atrasos
     
-    def _analisar_colunas(self):
-        """Analisa frequência de cada coluna nos últimos concursos"""
-        contagem = {col: 0 for col in self.colunas}
-        for concurso in self.concursos[:20]:  # Últimos 20 concursos
-            for dezena in concurso:
-                for col, intervalo in self.colunas.items():
-                    if dezena in intervalo:
-                        contagem[col] += 1
-                        break
-        
-        # Ordena colunas por frequência
-        colunas_ordenadas = sorted(contagem.items(), key=lambda x: x[1], reverse=True)
-        
+    def _calcular_atraso_relativo(self):
+        max_atraso = max(self.atrasos.values()) if self.atrasos else 1
+        return {num: atraso / max_atraso for num, atraso in self.atrasos.items()}
+    
+    def _calcular_tendencias(self, historico):
+        tendencias = {}
+        for num in range(1, 61):
+            janelas = [10, 20, 50, 100]
+            freq_janelas = []
+            for janela in janelas:
+                freq = Counter()
+                for concurso in historico[:janela]:
+                    if num in concurso:
+                        freq[num] += 1
+                freq_janelas.append(freq.get(num, 0) / janela)
+            
+            if len(freq_janelas) >= 2:
+                x = np.array(range(len(freq_janelas)))
+                y = np.array(freq_janelas)
+                slope = np.polyfit(x, y, 1)[0] if len(x) > 1 else 0
+                
+                if slope > 0.002:
+                    tendencia = 'subindo'
+                elif slope < -0.002:
+                    tendencia = 'caindo'
+                else:
+                    tendencia = 'estavel'
+                
+                tendencias[num] = {
+                    'inclinacao': slope,
+                    'tendencia': tendencia,
+                    'freq_janelas': freq_janelas
+                }
+            else:
+                tendencias[num] = {
+                    'inclinacao': 0,
+                    'tendencia': 'estavel',
+                    'freq_janelas': [0] * 4
+                }
+        return tendencias
+    
+    def _calcular_distribuicao_faixas(self, historico):
+        faixas = [0, 0, 0]
+        for concurso in historico:
+            for num in concurso:
+                if 1 <= num <= 20:
+                    faixas[0] += 1
+                elif 21 <= num <= 40:
+                    faixas[1] += 1
+                else:
+                    faixas[2] += 1
+        total = sum(faixas) if sum(faixas) > 0 else 1
+        return [f/total for f in faixas]
+    
+    def _calcular_distribuicao_colunas(self, historico):
+        colunas = [0] * 6
+        for concurso in historico:
+            for num in concurso:
+                col = (num - 1) // 10
+                if col < 6:
+                    colunas[col] += 1
+        total = sum(colunas) if sum(colunas) > 0 else 1
+        return [c/total for c in colunas]
+    
+    def _calcular_distribuicao_paridade(self, historico):
+        pares_total = 0
+        impares_total = 0
+        for concurso in historico:
+            pares = contar_pares_mega(concurso)
+            pares_total += pares
+            impares_total += 6 - pares
+        total = pares_total + impares_total
+        if total == 0:
+            return {'pares': 0.5, 'impares': 0.5}
+        return {'pares': pares_total/total, 'impares': impares_total/total}
+    
+    def _calcular_distribuicao_soma(self, historico):
+        somas = [sum(concurso) for concurso in historico]
         return {
-            'contagem': contagem,
-            'colunas_mais_frequentes': colunas_ordenadas,
-            'coluna_principal': colunas_ordenadas[0][0] if colunas_ordenadas else 'C3',
-            'coluna_apoio1': colunas_ordenadas[1][0] if len(colunas_ordenadas) > 1 else 'C4',
-            'coluna_apoio2': colunas_ordenadas[2][0] if len(colunas_ordenadas) > 2 else 'C6'
+            'media': np.mean(somas) if somas else 0,
+            'std': np.std(somas) if somas else 0,
+            'min': min(somas) if somas else 0,
+            'max': max(somas) if somas else 0,
+            'percentil_25': np.percentile(somas, 25) if somas else 0,
+            'percentil_75': np.percentile(somas, 75) if somas else 0
         }
     
-    def get_dezenas_por_coluna(self, coluna, quantidade, usar_frequentes=True):
-        """Retorna dezenas específicas de uma coluna"""
-        if coluna not in self.colunas:
-            return []
+    def _calcular_distribuicao_repetidas(self, historico):
+        repetidas = []
+        for i in range(len(historico) - 1):
+            rep = len(set(historico[i]) & set(historico[i+1]))
+            repetidas.append(rep)
+        if repetidas:
+            return {
+                'media': np.mean(repetidas),
+                'std': np.std(repetidas),
+                'max': max(repetidas),
+                'min': min(repetidas),
+                'distribuicao': Counter(repetidas)
+            }
+        return {'media': 0, 'std': 0, 'max': 0, 'min': 0, 'distribuicao': {}}
+    
+    def get_estatisticas_dezena(self, numero):
+        """Retorna todas as estatísticas de uma dezena"""
+        return {
+            'numero': numero,
+            'frequencia': self.frequencias.get(numero, 0),
+            'frequencia_periodos': {p: self.frequencias_periodos[p].get(numero, 0) for p in self.frequencias_periodos},
+            'atraso': self.atrasos.get(numero, 0),
+            'atraso_relativo': self.atraso_relativo.get(numero, 0),
+            'tendencia': self.tendencias.get(numero, {'tendencia': 'estavel', 'inclinacao': 0}),
+            'probabilidade': self.frequencias.get(numero, 0) / (self.total_concursos * 6) if self.total_concursos > 0 else 0
+        }
+
+# =====================================================
+# MÓDULO 3: MOTOR DE PONTUAÇÃO - MEGA
+# =====================================================
+
+class MotorPontuacaoMega:
+    """Módulo 3 - Motor de Pontuação para Mega-Sena"""
+    
+    def __init__(self, estatisticas):
+        self.estatisticas = estatisticas
+        self.pesos = self._definir_pesos()
+        self.pontuacoes = self._calcular_pontuacoes()
         
-        numeros_coluna = self.colunas[coluna]
+    def _definir_pesos(self):
+        return {
+            'frequencia_recente': 0.25,
+            'frequencia_historica': 0.20,
+            'atraso': 0.20,
+            'tendencia': 0.15,
+            'equilibrio': 0.10,
+            'diversidade': 0.10
+        }
+    
+    def _calcular_pontuacoes(self):
+        pontuacoes = {}
         
-        if usar_frequentes:
-            # Pega números mais frequentes nesta coluna
-            numeros_com_freq = [(n, self.frequencias.get(n, 0)) for n in numeros_coluna]
-            numeros_com_freq.sort(key=lambda x: x[1], reverse=True)
-            numeros_ordenados = [n for n, _ in numeros_com_freq]
+        # Normaliza métricas
+        max_freq = max(self.estatisticas.frequencias.values()) if self.estatisticas.frequencias else 1
+        max_freq_recente = max(self.estatisticas.frequencias_periodos[20].values()) if 20 in self.estatisticas.frequencias_periodos else 1
+        max_atraso = max(self.estatisticas.atrasos.values()) if self.estatisticas.atrasos else 1
+        
+        for num in range(1, 61):
+            # Frequência recente (20 últimos)
+            freq_recente = self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0) / max_freq_recente
+            
+            # Frequência histórica
+            freq_historica = self.estatisticas.frequencias.get(num, 0) / max_freq
+            
+            # Atraso (invertido)
+            atraso = 1 - (self.estatisticas.atrasos.get(num, 0) / max_atraso)
+            
+            # Tendência
+            tendencia_info = self.estatisticas.tendencias.get(num, {})
+            inclinacao = tendencia_info.get('inclinacao', 0)
+            tendencia_norm = (inclinacao + 1) / 2
+            
+            # Equilíbrio
+            equilibrio = self._calcular_equilibrio(num)
+            
+            # Diversidade
+            diversidade = self._calcular_diversidade(num)
+            
+            # Pontuação final
+            pontuacao = (
+                freq_recente * self.pesos['frequencia_recente'] +
+                freq_historica * self.pesos['frequencia_historica'] +
+                atraso * self.pesos['atraso'] +
+                tendencia_norm * self.pesos['tendencia'] +
+                equilibrio * self.pesos['equilibrio'] +
+                diversidade * self.pesos['diversidade']
+            )
+            
+            pontuacoes[num] = round(pontuacao * 100, 2)
+        
+        return pontuacoes
+    
+    def _calcular_equilibrio(self, numero):
+        """Calcula fator de equilíbrio baseado na posição da dezena"""
+        # Verifica distribuição por faixa
+        faixa = 0 if numero <= 20 else 1 if numero <= 40 else 2
+        freq_faixas = self.estatisticas.distribuicao_faixas
+        
+        if faixa < len(freq_faixas):
+            proporcao = freq_faixas[faixa]
+            ideal = 1/3
+            equilibrio = 1 - abs(proporcao - ideal) * 2
+            return max(0, min(1, equilibrio))
+        return 0.5
+    
+    def _calcular_diversidade(self, numero):
+        """Calcula fator de diversidade"""
+        freq = self.estatisticas.frequencias.get(numero, 0)
+        media = np.mean(list(self.estatisticas.frequencias.values())) if self.estatisticas.frequencias else 0
+        
+        if freq < media * 0.5:
+            return 1.0
+        elif freq > media * 1.5:
+            return 0.3
         else:
-            numeros_ordenados = numeros_coluna.copy()
-            random.shuffle(numeros_ordenados)
-        
-        # Seleciona os primeiros 'quantidade' números
-        selecionados = numeros_ordenados[:min(quantidade, len(numeros_ordenados))]
-        
-        # Se não tiver números suficientes, completa com aleatórios
-        if len(selecionados) < quantidade:
-            disponiveis = [n for n in numeros_coluna if n not in selecionados]
-            if disponiveis:
-                extras = random.sample(disponiveis, min(quantidade - len(selecionados), len(disponiveis)))
-                selecionados.extend(extras)
-        
-        return sorted(selecionados)
+            return 0.7
     
-    def criar_jogo(self, configuracao_colunas, usar_frequentes=True):
-        """Cria um jogo baseado na configuração de colunas"""
-        dezenas = []
-        
-        for coluna, quantidade in configuracao_colunas:
-            numeros = self.get_dezenas_por_coluna(coluna, quantidade, usar_frequentes)
-            dezenas.extend(numeros)
-        
-        # Remove duplicatas e ordena
-        dezenas = sorted(list(set(dezenas)))
-        
-        # Se tiver mais de 6, corta
-        if len(dezenas) > 6:
-            dezenas = dezenas[:6]
-        # Se tiver menos de 6, completa
-        elif len(dezenas) < 6:
-            todos_numeros = set(range(1, 61))
-            usados = set(dezenas)
-            disponiveis = list(todos_numeros - usados)
-            if disponiveis:
-                extras = random.sample(disponiveis, min(6 - len(dezenas), len(disponiveis)))
-                dezenas.extend(extras)
-                dezenas.sort()
-        
-        return dezenas
+    def get_ranking(self, top_n=60):
+        """Retorna ranking das dezenas"""
+        ranking = sorted(self.pontuacoes.items(), key=lambda x: x[1], reverse=True)
+        return ranking[:top_n]
+
+# =====================================================
+# MÓDULO 4: IA ESTATÍSTICA - MEGA
+# =====================================================
+
+class IAEstatisticaMega:
+    """Módulo 4 - IA Estatística para Mega-Sena
     
-    def gerar_jogos_principais(self, qtd=10):
-        """Gera os 10 jogos principais baseados na Versão 4"""
-        coluna_principal = self.analise_colunas['coluna_principal']
-        coluna_apoio1 = self.analise_colunas['coluna_apoio1']
-        coluna_apoio2 = self.analise_colunas['coluna_apoio2']
-        
-        # Configuração dos jogos principais
-        configs = [
-            # Jogo 1: Base C3 + C6
-            [(coluna_principal, 2), (coluna_apoio1, 1), (coluna_apoio2, 2), ('C1', 1)],
-            # Jogo 2: Base C3 + C4
-            [('C1', 1), (coluna_apoio1, 2), (coluna_principal, 2), ('C5', 1)],
-            # Jogo 3: Base C3 + C4 + C6
-            [(coluna_principal, 2), (coluna_apoio1, 2), (coluna_apoio2, 1), ('C1', 1)],
-            # Jogo 4: Equilibrado
-            [('C1', 2), (coluna_apoio2, 2), (coluna_principal, 1), (coluna_apoio1, 1)],
-            # Jogo 5: Reforço C3
-            [('C1', 1), (coluna_principal, 2), (coluna_apoio1, 1), (coluna_apoio2, 1), ('C5', 1)],
-            # Jogo 6: Reforço C6
-            [(coluna_principal, 1), (coluna_apoio2, 2), ('C1', 1), (coluna_apoio1, 1), ('C5', 1)],
-            # Jogo 7: Miolo
-            [('C5', 1), (coluna_apoio2, 1), (coluna_principal, 2), (coluna_apoio1, 1), ('C1', 1)],
-            # Jogo 8: C1 + C6
-            [(coluna_apoio2, 2), ('C1', 2), (coluna_apoio1, 1), (coluna_principal, 1)],
-            # Jogo 9: Diversificado
-            [('C5', 1), (coluna_apoio1, 1), (coluna_principal, 1), (coluna_apoio2, 2), ('C1', 1)],
-            # Jogo 10: Fechamento
-            [(coluna_apoio2, 1), ('C5', 1), ('C1', 1), (coluna_principal, 2), (coluna_apoio1, 1)]
-        ]
-        
-        jogos = []
-        for config in configs[:qtd]:
-            jogo = self.criar_jogo(config, usar_frequentes=True)
-            jogos.append(jogo)
-        
-        return jogos
+    CORREÇÃO CRÍTICA (mesmo problema identificado e corrigido na versão Lotofácil):
+    a versão anterior calculava as features (frequência, atraso, tendência) usando
+    `self.estatisticas`, computada com TODO o histórico carregado — incluindo
+    concursos futuros em relação a cada linha de treino ("look-ahead bias"). Além
+    disso, a feature de "proximidade" usava o próprio resultado do concurso pra se
+    calcular (0 para toda dezena NÃO sorteada, >0 quase sempre para a sorteada),
+    o que basicamente entrega a resposta certa pro modelo — por isso a acurácia
+    de treino tendia a ficar artificialmente alta e sem valor preditivo real.
     
-    def gerar_jogos_protecao(self, qtd=5):
-        """Gera os 5 jogos de proteção"""
-        coluna_principal = self.analise_colunas['coluna_principal']
-        coluna_apoio1 = self.analise_colunas['coluna_apoio1']
-        coluna_apoio2 = self.analise_colunas['coluna_apoio2']
-        
-        configs = [
-            # Proteção 1: C2
-            [(coluna_principal, 2), ('C2', 1), ('C5', 1), (coluna_apoio1, 1), (coluna_apoio2, 1)],
-            # Proteção 2: C2 + C5
-            [('C2', 1), (coluna_principal, 2), (coluna_apoio1, 1), ('C5', 1), (coluna_apoio2, 1)],
-            # Proteção 3: Cobertura total
-            [('C2', 1), (coluna_principal, 1), (coluna_apoio1, 1), ('C1', 1), (coluna_apoio2, 1), ('C5', 1)],
-            # Proteção 4: Reforço C2
-            [(coluna_apoio1, 1), (coluna_apoio2, 1), ('C5', 1), ('C2', 2), (coluna_principal, 1)],
-            # Proteção 5: Cobertura ampla
-            [('C1', 1), ('C2', 1), (coluna_principal, 1), (coluna_apoio1, 1), ('C5', 1), (coluna_apoio2, 1)]
-        ]
-        
-        jogos = []
-        for config in configs[:qtd]:
-            jogo = self.criar_jogo(config, usar_frequentes=True)
-            jogos.append(jogo)
-        
-        return jogos
+    Agora cada concurso usa apenas dados anteriores a ele (walk-forward), como
+    estaria disponível no momento real de uma aposta.
+    """
     
-    def gerar_todos_jogos(self):
-        """Gera todos os 15 jogos (10 principais + 5 proteção)"""
-        principais = self.gerar_jogos_principais(10)
-        protecao = self.gerar_jogos_protecao(5)
+    JANELAS_TENDENCIA = [10, 20, 50, 100]
+    AQUECIMENTO_MINIMO = 30
+    RAIO_VIZINHANCA = 5  # mesma distância (±5) usada na versão anterior para "proximidade"
+    
+    def __init__(self, banco_dados, estatisticas):
+        self.banco = banco_dados
+        self.estatisticas = estatisticas
+        self.modelos = {}
+        self.dados_processados = None
+        self._preparar_dados()
         
-        return {
-            'principais': principais,
-            'protecao': protecao,
-            'todos': principais + protecao
+    def _preparar_dados(self):
+        """Prepara dados de treino com features ponto-no-tempo (sem look-ahead bias)."""
+        concursos_asc = list(reversed(self.banco.concursos))  # mais antigo -> mais recente
+        n = len(concursos_asc)
+        
+        aquecimento = min(self.AQUECIMENTO_MINIMO, max(5, n // 4))
+        
+        freq_total = Counter()
+        janela20 = deque(maxlen=20)
+        freq_janela20 = Counter()
+        
+        janelas_dict = {w: deque(maxlen=w) for w in self.JANELAS_TENDENCIA}
+        freq_janelas_dict = {w: Counter() for w in self.JANELAS_TENDENCIA}
+        
+        ultimo_indice_visto = {num: -1 for num in range(1, 61)}
+        
+        features = []
+        targets = []
+        
+        for t, concurso in enumerate(concursos_asc):
+            dezenas = concurso['dezenas']
+            dezenas_set = set(dezenas)
+            
+            if t >= aquecimento:
+                atrasos_pt = {}
+                for num in range(1, 61):
+                    if ultimo_indice_visto[num] >= 0:
+                        atrasos_pt[num] = t - 1 - ultimo_indice_visto[num]
+                    else:
+                        atrasos_pt[num] = t
+                
+                tendencia_pt = {}
+                for num in range(1, 61):
+                    freq_j = [freq_janelas_dict[w].get(num, 0) / w for w in self.JANELAS_TENDENCIA]
+                    x = np.arange(len(freq_j))
+                    tendencia_pt[num] = np.polyfit(x, freq_j, 1)[0] if len(freq_j) > 1 else 0
+                
+                pares_prop = sum(1 for nn in dezenas if nn % 2 == 0) / 6
+                faixa_baixa_prop = sum(1 for nn in dezenas if nn <= 20) / 6
+                faixa_media_prop = sum(1 for nn in dezenas if 21 <= nn <= 40) / 6
+                soma_prop = sum(dezenas) / 60
+                
+                # "Vizinhança quente" ponto-no-tempo: NÃO usa o resultado do
+                # concurso que está sendo rotulado — só estatística histórica.
+                max_freq_total = max(freq_total.values()) if freq_total else 1
+                
+                for num in range(1, 61):
+                    r = self.RAIO_VIZINHANCA
+                    vizinhos = [v for v in range(max(1, num - r), min(60, num + r) + 1) if v != num]
+                    proximidade = (np.mean([freq_total.get(v, 0) for v in vizinhos]) / max_freq_total) if vizinhos else 0
+                    features.append([
+                        freq_total.get(num, 0),
+                        freq_janela20.get(num, 0),
+                        atrasos_pt.get(num, 0),
+                        tendencia_pt.get(num, 0),
+                        pares_prop,
+                        faixa_baixa_prop,
+                        faixa_media_prop,
+                        soma_prop,
+                        proximidade
+                    ])
+                    targets.append(1 if num in dezenas_set else 0)
+            
+            # Atualiza acumuladores DEPOIS de gerar as features
+            freq_total.update(dezenas)
+            
+            if len(janela20) == 20:
+                freq_janela20.subtract(janela20[0])
+            janela20.append(dezenas)
+            freq_janela20.update(dezenas)
+            
+            for w in self.JANELAS_TENDENCIA:
+                dq = janelas_dict[w]
+                if len(dq) == w:
+                    freq_janelas_dict[w].subtract(dq[0])
+                dq.append(dezenas)
+                freq_janelas_dict[w].update(dezenas)
+            
+            for num in dezenas:
+                ultimo_indice_visto[num] = t
+        
+        self.dados_processados = {
+            'features': np.array(features) if features else np.empty((0, 9)),
+            'targets': np.array(targets) if targets else np.empty((0,))
         }
     
-    def analisar_jogo(self, jogo):
-        """Analisa um jogo e retorna estatísticas"""
-        if not jogo or len(jogo) != 6:
+    def _split_cronologico(self, X, y):
+        """Divide em treino/calibração/teste respeitando a ordem temporal (sem embaralhar)."""
+        n = len(X)
+        i_train = int(n * 0.70)
+        i_calib = int(n * 0.85)
+        return (X[:i_train], y[:i_train]), (X[i_train:i_calib], y[i_train:i_calib]), (X[i_calib:], y[i_calib:])
+    
+    def treinar_random_forest(self):
+        """Treina Random Forest com split cronológico + calibração de probabilidades"""
+        try:
+            X = self.dados_processados['features']
+            y = self.dados_processados['targets']
+            
+            if len(X) < 200:
+                st.warning("⚠️ Poucos dados para treino confiável (carregue mais concursos).")
+                return False
+            
+            (X_train, y_train), (X_calib, y_calib), (X_test, y_test) = self._split_cronologico(X, y)
+            
+            modelo_base = RandomForestClassifier(
+                n_estimators=150,
+                max_depth=12,
+                min_samples_split=5,
+                random_state=42,
+                n_jobs=-1
+            )
+            modelo_base.fit(X_train, y_train)
+            
+            modelo_calibrado = _calibrar_modelo_prefit(modelo_base)
+            modelo_calibrado.fit(X_calib, y_calib)
+            
+            y_pred = modelo_calibrado.predict(X_test)
+            acuracia = accuracy_score(y_test, y_pred)
+            
+            self.modelos['random_forest'] = {
+                'modelo': modelo_calibrado,
+                'acuracia': acuracia,
+                'feature_importance': modelo_base.feature_importances_
+            }
+            
+            return True
+        except Exception as e:
+            st.error(f"Erro ao treinar Random Forest: {e}")
+            return False
+    
+    def treinar_xgboost(self):
+        """Treina Gradient Boosting com split cronológico + calibração de probabilidades"""
+        try:
+            X = self.dados_processados['features']
+            y = self.dados_processados['targets']
+            
+            if len(X) < 200:
+                st.warning("⚠️ Poucos dados para treino confiável (carregue mais concursos).")
+                return False
+            
+            (X_train, y_train), (X_calib, y_calib), (X_test, y_test) = self._split_cronologico(X, y)
+            
+            modelo_base = GradientBoostingClassifier(
+                n_estimators=150,
+                learning_rate=0.1,
+                max_depth=6,
+                random_state=42
+            )
+            modelo_base.fit(X_train, y_train)
+            
+            modelo_calibrado = _calibrar_modelo_prefit(modelo_base)
+            modelo_calibrado.fit(X_calib, y_calib)
+            
+            y_pred = modelo_calibrado.predict(X_test)
+            acuracia = accuracy_score(y_test, y_pred)
+            
+            self.modelos['xgboost'] = {
+                'modelo': modelo_calibrado,
+                'acuracia': acuracia,
+                'feature_importance': modelo_base.feature_importances_
+            }
+            
+            return True
+        except Exception as e:
+            st.error(f"Erro ao treinar XGBoost: {e}")
+            return False
+    
+    def prever_probabilidades(self, jogo):
+        """Prevê probabilidades para um jogo"""
+        if not self.modelos:
             return None
         
-        # Contagem por coluna
-        colunas_contagem = {col: 0 for col in self.colunas}
+        max_freq_total = max(self.estatisticas.frequencias.values()) if self.estatisticas.frequencias else 1
+        r = self.RAIO_VIZINHANCA
+        
+        features = []
         for num in jogo:
-            for col, intervalo in self.colunas.items():
-                if num in intervalo:
-                    colunas_contagem[col] += 1
-                    break
+            vizinhos = [v for v in range(max(1, num - r), min(60, num + r) + 1) if v != num]
+            proximidade = (np.mean([self.estatisticas.frequencias.get(v, 0) for v in vizinhos]) / max_freq_total) if vizinhos else 0
+            features.append([
+                self.estatisticas.frequencias.get(num, 0),
+                self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0),
+                self.estatisticas.atrasos.get(num, 0),
+                self.estatisticas.tendencias.get(num, {}).get('inclinacao', 0),
+                contar_pares_mega(jogo) / 6,
+                sum([1 for n in jogo if n <= 20]) / 6,
+                sum([1 for n in jogo if 21 <= n <= 40]) / 6,
+                sum(jogo) / 60,
+                proximidade
+            ])
         
-        colunas_ativas = [col for col, qtd in colunas_contagem.items() if qtd > 0]
+        features = np.array(features)
         
-        return {
-            'jogo': jogo,
-            'pares': contar_pares(jogo),
-            'impares': 6 - contar_pares(jogo),
-            'primos': contar_primos(jogo),
-            'soma': sum(jogo),
-            'consecutivos': contar_consecutivos(jogo),
-            'colunas_ativas': colunas_ativas,
-            'quantidade_colunas': len(colunas_ativas),
-            'colunas_contagem': colunas_contagem,
-            'repetidas_ultimo': len(set(jogo) & set(self.ultimo_concurso)) if self.ultimo_concurso else 0
-        }
-    
-    def get_recomendacoes_prioridade(self):
-        """Retorna recomendações de prioridade dos jogos"""
-        return {
-            'prioridade_maxima': [0, 1, 2, 3, 7, 9],  # Jogos 1,2,3,4,8,10
-            'prioridade_media': [4, 5, 6, 8],  # Jogos 5,6,7,9
-            'protecao': [10, 11, 12, 13, 14]  # Proteções 1-5
-        }
-    
-    def get_planos_jogo(self):
-        """Retorna planos de jogo"""
-        return {
-            'economico': ['Jogo 1', 'Jogo 2', 'Jogo 3', 'Jogo 8'],
-            'intermediario': ['Jogo 1', 'Jogo 2', 'Jogo 3', 'Jogo 4', 'Jogo 5', 'Jogo 8', 'Jogo 10', 'Proteção 1'],
-            'completo': 'Todos os 15 jogos'
-        }
-
+        resultados = {}
+        for nome, info in self.modelos.items():
+            modelo = info['modelo']
+            probs = modelo.predict_proba(features)
+            resultados[nome] = {
+                'probabilidades': probs[:, 1].tolist(),
+                'media': np.mean(probs[:, 1]),
+                'acuracia': info.get('acuracia', 0)
+            }
+        
+        return resultados
 
 # =====================================================
-# NOVO — ESTRATÉGIAS PROFISSIONAIS DE FECHAMENTO
-# (módulo aditivo, não altera nada acima)
+# MÓDULO 5: FILTROS INTELIGENTES - MEGA
 # =====================================================
 
-class EstrategiasProfissionaisMegaSena:
-    """
-    Implementa técnicas reais usadas por apostadores/sistemas comerciais de
-    fechamento de loteria. IMPORTANTE: nenhuma delas altera a probabilidade
-    matemática de acerto (todo jogo tem a mesma chance). O que elas fazem:
-      - Fechamento: garante um mínimo de acertos SE X dos seus números saírem
-        (matemática combinatória, não previsão).
-      - Filtros estatísticos / anti-popularidade: reduzem a chance de DIVIDIR
-        o prêmio, evitando combinações que outras pessoas também jogam
-        (datas, sequências, padrões visuais no volante).
-      - Quente/frio/atraso/delta: replicam o que sistemas comerciais vendem,
-        mas são estatística descritiva sobre sorteios passados, sem poder
-        preditivo comprovado sobre sorteios futuros (cada sorteio é
-        independente).
-    """
+class FiltrosInteligentesMega:
+    """Módulo 5 - Filtros Inteligentes para Mega-Sena"""
+    
+    def __init__(self, estatisticas):
+        self.estatisticas = estatisticas
+        self.filtros_padrao = self._definir_filtros_padrao()
+    
+    def _definir_filtros_padrao(self):
+        soma_stats = self.estatisticas.distribuicao_soma
+        return {
+            'pares_min': 2,
+            'pares_max': 4,
+            'soma_min': max(100, int(soma_stats['percentil_25'] - 20)),
+            'soma_max': min(300, int(soma_stats['percentil_75'] + 20)),
+            'faixa_min': 1,
+            'faixa_max': 4,
+            'consecutivos_max': 3,
+            'repetidas_max': 3,
+            'primos_min': 1,
+            'primos_max': 4,
+            'colunas_min': 4,
+            'colunas_max': 6
+        }
+    
+    def aplicar_filtros(self, jogo, filtros=None):
+        """Aplica filtros ao jogo"""
+        if filtros is None:
+            filtros = self.filtros_padrao
+        
+        # Paridade
+        pares = contar_pares_mega(jogo)
+        if not (filtros.get('pares_min', 2) <= pares <= filtros.get('pares_max', 4)):
+            return False, f'Paridade: {pares} pares'
+        
+        # Soma
+        soma = sum(jogo)
+        if not (filtros.get('soma_min', 100) <= soma <= filtros.get('soma_max', 300)):
+            return False, f'Soma: {soma}'
+        
+        # Distribuição por faixas
+        faixas = distribuir_faixas_mega(jogo)
+        for f in faixas:
+            if not (filtros.get('faixa_min', 1) <= f <= filtros.get('faixa_max', 4)):
+                return False, f'Faixa com {f} números'
+        
+        # Consecutivos
+        consec = contar_consecutivos_mega(jogo)
+        if consec > filtros.get('consecutivos_max', 3):
+            return False, f'{consec} números consecutivos'
+        
+        # Primos
+        primos = contar_primos_mega(jogo)
+        if not (filtros.get('primos_min', 1) <= primos <= filtros.get('primos_max', 4)):
+            return False, f'{primos} números primos'
+        
+        # Colunas
+        colunas = distribuir_colunas_mega(jogo)
+        colunas_ativas = len([c for c in colunas if c > 0])
+        if not (filtros.get('colunas_min', 4) <= colunas_ativas <= filtros.get('colunas_max', 6)):
+            return False, f'{colunas_ativas} colunas ativas'
+        
+        # Repetidas do último concurso
+        if self.estatisticas.banco.concursos:
+            ultimo = self.estatisticas.banco.concursos[0]['dezenas']
+            repetidas = len(set(jogo) & set(ultimo))
+            if repetidas > filtros.get('repetidas_max', 3):
+                return False, f'{repetidas} números repetidos'
+        
+        return True, 'Aprovado'
+    
+    def get_filtros_recomendados(self):
+        """Retorna filtros recomendados baseados nas estatísticas"""
+        soma_stats = self.estatisticas.distribuicao_soma
+        rep_stats = self.estatisticas.distribuicao_repetidas
+        
+        return {
+            'pares_min': 2,
+            'pares_max': 4,
+            'soma_min': int(soma_stats['percentil_25'] - 10),
+            'soma_max': int(soma_stats['percentil_75'] + 10),
+            'faixa_min': 1,
+            'faixa_max': 4,
+            'consecutivos_max': 3,
+            'repetidas_max': int(rep_stats.get('media', 2) + 1),
+            'primos_min': 1,
+            'primos_max': 4,
+            'colunas_min': 4,
+            'colunas_max': 6
+        }
 
-    def __init__(self, dados_api, qtd_concursos=100):
-        self.concursos = []
-        for c in dados_api[:qtd_concursos]:
-            if "dezenas" in c:
-                self.concursos.append(sorted(map(int, c["dezenas"])))
-        self.frequencias = Counter()
-        for jogo in self.concursos:
-            self.frequencias.update(jogo)
-        self.atrasos = self._calcular_atrasos()
-        self.pares_frequentes = self._calcular_pares_frequentes()
-        self.soma_media, self.soma_std = self._stats_soma()
-        self.deltas_historicos = self._calcular_deltas_historicos()
+# =====================================================
+# MÓDULO 6: GERADOR PREMIUM - MEGA
+# =====================================================
 
-    def _calcular_atrasos(self):
-        atrasos = {}
-        for d in range(1, 61):
-            atraso = 0
-            for jogo in self.concursos:
-                if d in jogo:
-                    break
-                atraso += 1
-            atrasos[d] = atraso
-        return atrasos
-
-    def _calcular_pares_frequentes(self):
-        cont = Counter()
-        for jogo in self.concursos:
-            for par in itertools.combinations(sorted(jogo), 2):
-                cont[par] += 1
-        return cont
-
-    def _stats_soma(self):
-        if not self.concursos:
-            return 183, 30
-        somas = [sum(j) for j in self.concursos]
-        return float(np.mean(somas)), float(np.std(somas))
-
-    def _calcular_deltas_historicos(self):
-        """Delta = diferença entre dezenas consecutivas do jogo ordenado.
-        Sistema Delta: em vez de escolher números diretamente, escolhe-se
-        os 'saltos' entre eles a partir da distribuição histórica real."""
-        todos_deltas = []
-        for jogo in self.concursos:
-            j = sorted(jogo)
-            deltas = [j[0]] + [j[i] - j[i - 1] for i in range(1, len(j))]
-            todos_deltas.append(deltas)
-        if not todos_deltas:
-            return [[7, 9, 8, 10, 9, 7]]
-        return todos_deltas
-
-    # ---------- 1) Sistema Delta ----------
-
-    def gerar_jogo_delta(self):
-        """Sorteia um padrão de deltas real de um concurso passado e
-        reconstrói uma sequência nova a partir dele."""
-        for _ in range(200):
-            deltas = random.choice(self.deltas_historicos)
-            deltas_embaralhados = deltas[:]
-            random.shuffle(deltas_embaralhados)
-            numeros = []
-            atual = 0
-            for d in deltas_embaralhados:
-                atual += max(d, 1)
-                numeros.append(atual)
-            numeros = sorted(set(n for n in numeros if 1 <= n <= 60))
-            if len(numeros) == 6:
-                return numeros
-        return sorted(random.sample(range(1, 61), 6))
-
-    # ---------- 2) Quente / Frio / Atrasado balanceado ----------
-
-    def gerar_jogo_quente_frio_atrasado(self, n_quentes=2, n_frios=1, n_atrasados=2, n_aleatorios=1):
-        """Divide o pool em números mais sorteados (quentes), menos
-        sorteados (frios) e com maior atraso, e combina proporcionalmente."""
-        todos = list(range(1, 61))
-        por_freq = sorted(todos, key=lambda n: self.frequencias.get(n, 0), reverse=True)
-        quentes = por_freq[:20]
-        frios = por_freq[-20:]
-        por_atraso = sorted(todos, key=lambda n: self.atrasos.get(n, 0), reverse=True)
-        atrasados = por_atraso[:20]
-
+class GeradorPremiumMega:
+    """Módulo 6 - Gerador Premium para Mega-Sena"""
+    
+    def __init__(self, banco_dados, estatisticas, pontuacao, filtros, ia=None):
+        self.banco = banco_dados
+        self.estatisticas = estatisticas
+        self.pontuacao = pontuacao
+        self.filtros = filtros
+        self.ia = ia
+    
+    def gerar_jogos(self, qtd=10, estrategia='equilibrada', dezenas_base=None, filtros_personalizados=None, max_tentativas=None):
+        """Gera jogos baseados na estratégia escolhida"""
+        if filtros_personalizados is None:
+            filtros_personalizados = self.filtros.get_filtros_recomendados()
+        
+        # CORREÇÃO: com exatamente 6 dezenas-base só existe 1 combinação possível
+        # (mesmo bug corrigido na versão Lotofácil, lá com 15). O código anterior
+        # ficava reamostrando 6-de-6 repetidamente — sempre o mesmo jogo — e a
+        # checagem "not in jogos" bloqueava a repetição, gastando tentativas à toa.
+        if dezenas_base:
+            dezenas_base = sorted(set(dezenas_base))
+            if len(dezenas_base) < 6:
+                st.warning(f"⚠️ Dezenas-base precisa ter pelo menos 6 números únicos (recebido: {len(dezenas_base)}). Ignorando dezenas-base.")
+                dezenas_base = None
+            elif len(dezenas_base) == 6:
+                st.info("ℹ️ Exatamente 6 dezenas-base: só existe 1 jogo possível com essa combinação.")
+                return [sorted(dezenas_base)]
+        
+        jogos = []
+        tentativas = 0
+        if max_tentativas is None:
+            max_tentativas = qtd * 10000
+        
+        # Obtém ranking das dezenas
+        ranking = self.pontuacao.get_ranking(40)
+        dezenas_prioritarias = [n for n, _ in ranking]
+        
+        # Estratégias
+        estrategias = {
+            'conservadora': self._gerar_conservadora,
+            'equilibrada': self._gerar_equilibrada,
+            'diversificada': self._gerar_diversificada
+        }
+        
+        gerador = estrategias.get(estrategia, self._gerar_equilibrada)
+        
+        progress_bar = st.progress(0, text="Gerando jogos...")
+        
+        while len(jogos) < qtd and tentativas < max_tentativas:
+            tentativas += 1
+            
+            if dezenas_base and len(dezenas_base) >= 6:
+                jogo = sorted(random.sample(dezenas_base, 6))
+            else:
+                jogo = gerador(dezenas_prioritarias)
+            
+            # Aplica filtros
+            aprovado, mensagem = self.filtros.aplicar_filtros(jogo, filtros_personalizados)
+            
+            if aprovado and jogo not in jogos:
+                jogos.append(jogo)
+            
+            if tentativas % 200 == 0:
+                progress_bar.progress(
+                    min(len(jogos)/qtd, 1.0),
+                    text=f"Gerados {len(jogos)}/{qtd} jogos (tentativas: {tentativas})"
+                )
+        
+        progress_bar.empty()
+        return jogos
+    
+    def _gerar_conservadora(self, dezenas_prioritarias):
+        """Estratégia Conservadora: prioriza números mais frequentes"""
         jogo = set()
-        jogo.update(random.sample(quentes, min(n_quentes, len(quentes))))
-        jogo.update(random.sample(frios, min(n_frios, len(frios))))
-        jogo.update(random.sample(atrasados, min(n_atrasados, len(atrasados))))
+        
+        # Pega 4 números do top ranking
+        top = dezenas_prioritarias[:20]
+        jogo.update(random.sample(top, min(4, len(top))))
+        
+        # Completa com números aleatórios
         while len(jogo) < 6:
-            jogo.add(random.randint(1, 60))
-        return sorted(list(jogo)[:6])
-
-    # ---------- 3) Filtro estatístico (soma dentro do range histórico) ----------
-
-    def gerar_jogo_filtro_estatistico(self, tentativas=500):
-        """Gera aleatoriamente e só aceita jogos cuja soma caia dentro de
-        1 desvio-padrão da média histórica de somas sorteadas, com 2-4
-        pares e 2-4 primos."""
-        primos = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59}
-        lo, hi = self.soma_media - self.soma_std, self.soma_media + self.soma_std
-        for _ in range(tentativas):
-            jogo = sorted(random.sample(range(1, 61), 6))
-            soma = sum(jogo)
-            pares = sum(1 for n in jogo if n % 2 == 0)
-            qtd_primos = sum(1 for n in jogo if n in primos)
-            if lo <= soma <= hi and 2 <= pares <= 4 and 2 <= qtd_primos <= 4:
-                return jogo
-        return sorted(random.sample(range(1, 61), 6))
-
-    # ---------- 4) Pares mais frequentes (co-ocorrência) ----------
-
-    def gerar_jogo_pares_frequentes(self):
-        """Usa os pares de números que mais saíram juntos historicamente
-        como 'âncoras' e completa o jogo aleatoriamente."""
-        top_pares = self.pares_frequentes.most_common(30)
-        if not top_pares:
-            return sorted(random.sample(range(1, 61), 6))
-        par_escolhido, _ = random.choice(top_pares)
-        jogo = set(par_escolhido)
+            novo = random.randint(1, 60)
+            if novo not in jogo:
+                jogo.add(novo)
+        
+        return sorted(jogo)
+    
+    def _gerar_equilibrada(self, dezenas_prioritarias):
+        """Estratégia Equilibrada: balanceia frequência e diversidade"""
+        jogo = set()
+        
+        # Pega 3 números do ranking
+        top = dezenas_prioritarias[:30]
+        jogo.update(random.sample(top, min(3, len(top))))
+        
+        # Pega 2 números de fora do top
+        fora_top = [n for n in range(1, 61) if n not in top]
+        if fora_top and len(jogo) < 5:
+            jogo.update(random.sample(fora_top, min(2, len(fora_top))))
+        
+        # Completa
         while len(jogo) < 6:
-            jogo.add(random.randint(1, 60))
+            novo = random.randint(1, 60)
+            if novo not in jogo:
+                jogo.add(novo)
+        
+        return sorted(jogo)
+    
+    def _gerar_diversificada(self, dezenas_prioritarias):
+        """Estratégia Diversificada: mistura diferentes tipos"""
+        jogo = set()
+        
+        # Pega 2 do ranking
+        top = dezenas_prioritarias[:30]
+        jogo.update(random.sample(top, min(2, len(top))))
+        
+        # Pega 2 atrasados
+        atrasados = sorted(self.estatisticas.atrasos.items(), key=lambda x: x[1], reverse=True)[:15]
+        atrasados_nums = [n for n, _ in atrasados]
+        if atrasados_nums:
+            jogo.update(random.sample(atrasados_nums, min(2, len(atrasados_nums))))
+        
+        # Pega 2 aleatórios
+        while len(jogo) < 6:
+            novo = random.randint(1, 60)
+            if novo not in jogo:
+                jogo.add(novo)
+        
         return sorted(jogo)
 
-    # ---------- 5) Anti-popularidade (reduz divisão de prêmio) ----------
-
-    def _e_padrao_popular(self, jogo):
-        j = sorted(jogo)
-        if all(n <= 31 for n in j):
-            return True
-        deltas = [j[i] - j[i - 1] for i in range(1, len(j))]
-        if len(set(deltas)) == 1:
-            return True
-        maior_seq = 1
-        atual_seq = 1
-        for i in range(1, len(j)):
-            if j[i] == j[i - 1] + 1:
-                atual_seq += 1
-                maior_seq = max(maior_seq, atual_seq)
-            else:
-                atual_seq = 1
-        if maior_seq >= 4:
-            return True
-        if sum(1 for n in j if n % 10 == 0) >= 3:
-            return True
-        return False
-
-    def gerar_jogo_anti_popular(self, tentativas=500):
-        """Descarta combinações que muita gente joga (datas, sequências,
-        padrões visuais no cartão)."""
-        for _ in range(tentativas):
-            jogo = sorted(random.sample(range(1, 61), 6))
-            if not self._e_padrao_popular(jogo):
-                return jogo
-        return sorted(random.sample(range(1, 61), 6))
-
-    # ---------- 6) Fechamento (wheeling) com garantia matemática via ILP ----------
-
-    def gerar_fechamento(self, pool, garantia=4, n_jogos_max=15):
-        """
-        Fechamento clássico: escolhe um pool de N números e gera o menor
-        conjunto de jogos de 6 dezenas que GARANTE que, se `garantia`
-        desses números estiverem entre os sorteados, pelo menos um dos
-        seus jogos acerte `garantia` dezenas. Usa ILP (OR-Tools) se
-        disponível; senão usa heurística gulosa.
-        """
-        pool = sorted(pool)
-        if len(pool) < 6:
-            raise ValueError("O pool precisa ter pelo menos 6 números.")
-
-        alvos = list(itertools.combinations(pool, garantia))
-
-        if ORTOOLS_AVAILABLE:
-            candidatos = list(itertools.combinations(pool, 6))
-            if len(candidatos) > 3000:
-                candidatos = random.sample(candidatos, 3000)
-
-            solver = pywraplp.Solver.CreateSolver("CBC")
-            x = {i: solver.IntVar(0, 1, f"x{i}") for i in range(len(candidatos))}
-
-            for alvo in alvos:
-                alvo_set = set(alvo)
-                cobre = [i for i, jogo in enumerate(candidatos) if alvo_set.issubset(jogo)]
-                if cobre:
-                    solver.Add(sum(x[i] for i in cobre) >= 1)
-
-            solver.Minimize(sum(x.values()))
-            solver.SetTimeLimit(8000)
-            status = solver.Solve()
-
-            if status in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
-                jogos = [list(candidatos[i]) for i in x if x[i].solution_value() > 0.5]
-                if jogos:
-                    return jogos[:n_jogos_max]
-
-        return self._fechamento_guloso(pool, garantia, n_jogos_max)
-
-    def _fechamento_guloso(self, pool, garantia, n_jogos_max):
-        alvos = set(itertools.combinations(pool, garantia))
-        candidatos = list(itertools.combinations(pool, 6))
-        random.shuffle(candidatos)
-        jogos_escolhidos = []
-        alvos_restantes = set(alvos)
-
-        while alvos_restantes and len(jogos_escolhidos) < n_jogos_max:
-            melhor_jogo, melhor_cobertura = None, set()
-            for jogo in candidatos:
-                cobertura = {a for a in alvos_restantes if set(a).issubset(jogo)}
-                if len(cobertura) > len(melhor_cobertura):
-                    melhor_jogo, melhor_cobertura = jogo, cobertura
-            if not melhor_jogo:
-                break
-            jogos_escolhidos.append(list(melhor_jogo))
-            alvos_restantes -= melhor_cobertura
-
-        return jogos_escolhidos
-
-    # ---------- ensemble ----------
-
-    def gerar_ensemble_profissional(self, qtd=15):
-        """Combina todas as estratégias acima num único lote de jogos,
-        evitando duplicados."""
-        jogos = []
-        geradores = [
-            self.gerar_jogo_delta,
-            self.gerar_jogo_quente_frio_atrasado,
-            self.gerar_jogo_filtro_estatistico,
-            self.gerar_jogo_pares_frequentes,
-            self.gerar_jogo_anti_popular,
-        ]
-        tentativas = 0
-        while len(jogos) < qtd and tentativas < qtd * 20:
-            tentativas += 1
-            gerador = random.choice(geradores)
-            jogo = gerador()
-            if jogo not in jogos:
-                jogos.append(jogo)
-        return jogos
-
 # =====================================================
-# FUNÇÕES DE DOWNLOAD
+# MÓDULO 7: BACKTESTS - MEGA
 # =====================================================
 
-def gerar_csv_download_mega(jogos, scores=None, estrategia="Padrão"):
-    dados_export = []
-    for i, jogo in enumerate(jogos):
-        linha = {
-            "Jogo": i + 1,
-            "Dezenas": ", ".join(f"{n:02d}" for n in sorted(jogo)),
-            "Pares": contar_pares(jogo),
-            "Ímpares": 6 - contar_pares(jogo),
-            "Primos": contar_primos(jogo),
-            "Soma": sum(jogo),
-            "Consecutivos": contar_consecutivos(jogo)
+class _BancoTemporalMega:
+    """Wrapper leve que expõe apenas os concursos anteriores a um certo ponto no
+    tempo, para recalcular estatísticas 'como se estivéssemos naquela época' —
+    necessário para um backtest sem look-ahead bias."""
+    def __init__(self, concursos):
+        self.concursos = concursos
+    
+    def get_historico_dezenas(self):
+        return [c['dezenas'] for c in self.concursos]
+
+
+class BacktestsMega:
+    """Módulo 7 - Backtests para Mega-Sena"""
+    
+    AQUECIMENTO_MINIMO = 30
+    
+    def __init__(self, banco_dados, estatisticas, filtros):
+        self.banco = banco_dados
+        self.estatisticas = estatisticas
+        self.filtros = filtros
+    
+    def testar_estrategia(self, estrategia='equilibrada', num_testes=50, filtros_personalizados=None, jogos_por_teste=5):
+        """Testa uma estratégia no histórico.
+        
+        CORREÇÃO CRÍTICA (mesmo problema da versão Lotofácil): a versão anterior
+        gerava os jogos de teste usando `self.estatisticas`, calculada com TODOS
+        os concursos carregados — incluindo os próprios concursos mais recentes
+        que estavam sendo testados. Ou seja, o "backtest" usava frequência/atraso
+        que já incluíam o resultado que tentava prever, inflando os acertos.
+        
+        Agora cada concurso testado recalcula as estatísticas usando só concursos
+        estritamente ANTERIORES a ele.
+        """
+        if filtros_personalizados is None:
+            filtros_personalizados = self.filtros.get_filtros_recomendados()
+        
+        resultados = []
+        historico = self.banco.concursos  # mais recente primeiro
+        
+        testes = historico[:min(num_testes, len(historico))]
+        
+        progress_bar = st.progress(0, text=f"Executando backtest (ponto-no-tempo) - {estrategia}...")
+        pulados = 0
+        
+        for i, concurso in enumerate(testes):
+            dezenas_reais = concurso['dezenas']
+            
+            # `testes` é um prefixo de `historico`, então a posição em `testes`
+            # é a mesma posição em `historico` (mais recente = índice 0)
+            concursos_anteriores = historico[i + 1:]
+            
+            if len(concursos_anteriores) < self.AQUECIMENTO_MINIMO:
+                pulados += 1
+                progress_bar.progress((i + 1) / len(testes))
+                continue
+            
+            banco_pt = _BancoTemporalMega(concursos_anteriores)
+            estatisticas_pt = EstatisticasMegaAvancadas(banco_pt)
+            filtros_pt = FiltrosInteligentesMega(estatisticas_pt)
+            pontuacao_pt = MotorPontuacaoMega(estatisticas_pt)
+            
+            gerador_temp = GeradorPremiumMega(banco_pt, estatisticas_pt, pontuacao_pt, filtros_pt)
+            
+            jogos = gerador_temp.gerar_jogos(
+                qtd=jogos_por_teste,
+                estrategia=estrategia,
+                filtros_personalizados=filtros_personalizados,
+                max_tentativas=jogos_por_teste * 2000
+            )
+            
+            for jogo in jogos:
+                acertos = len(set(jogo) & set(dezenas_reais))
+                resultados.append(acertos)
+            
+            progress_bar.progress((i + 1) / len(testes))
+        
+        progress_bar.empty()
+        
+        if pulados:
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) por não terem histórico anterior suficiente ({self.AQUECIMENTO_MINIMO}+ concursos).")
+        
+        return {
+            'estrategia': estrategia,
+            'total_simulacoes': len(resultados),
+            'media': np.mean(resultados) if resultados else 0,
+            'mediana': np.median(resultados) if resultados else 0,
+            'std': np.std(resultados) if resultados else 0,
+            'max': max(resultados) if resultados else 0,
+            'min': min(resultados) if resultados else 0,
+            'distribuicao': Counter(resultados) if resultados else {},
+            'percentil_75': np.percentile(resultados, 75) if resultados else 0,
+            'percentil_25': np.percentile(resultados, 25) if resultados else 0
         }
-        if scores and i < len(scores):
-            if isinstance(scores[i], dict):
-                linha["Score"] = scores[i].get("score_ajustado", scores[i].get("score", 0))
-            else:
-                linha["Score"] = scores[i]
-        dados_export.append(linha)
-    return pd.DataFrame(dados_export)
-
-def detectar_estrategia_ativa_mega():
-    if "v4_jogos" in st.session_state and st.session_state.v4_jogos:
-        return "Mega-Sena V4"
-    return "Padrão"
-
-def conferir_jogos_mega(jogos, resultado_set):
-    resultados = []
-    for i, jogo in enumerate(jogos):
-        if isinstance(jogo, str):
-            dezenas = set(map(int, jogo.replace('"', '').replace(' ', '').split(',')))
-        else:
-            dezenas = set(jogo)
-        acertos = dezenas.intersection(resultado_set)
-        resultados.append({
-            "Jogo": i + 1,
-            "Acertos": len(acertos),
-            "Acertos_Dezenas": sorted(acertos),
-            "Dezenas": sorted(dezenas)
-        })
-    df = pd.DataFrame(resultados)
-    return df.sort_values(by="Acertos", ascending=False).reset_index(drop=True)
+    
+    def comparar_estrategias(self, estrategias=['conservadora', 'equilibrada', 'diversificada'], num_testes=50):
+        """Compara múltiplas estratégias"""
+        resultados = {}
+        for estrategia in estrategias:
+            resultados[estrategia] = self.testar_estrategia(estrategia, num_testes)
+        return resultados
 
 # =====================================================
 # INTERFACE PRINCIPAL
 # =====================================================
 
 def main():
-    if "analise" not in st.session_state: st.session_state.analise = None
-    if "jogos" not in st.session_state: st.session_state.jogos = []
-    if "dados_api" not in st.session_state: st.session_state.dados_api = None
-    if "jogos_salvos" not in st.session_state: st.session_state.jogos_salvos = []
-    if "v4_jogos" not in st.session_state: st.session_state.v4_jogos = None
-    if "v4_gerador" not in st.session_state: st.session_state.v4_gerador = None
-    if "v4_scores" not in st.session_state: st.session_state.v4_scores = []
-    if "v4_analise_detalhada" not in st.session_state: st.session_state.v4_analise_detalhada = []
-    if "ultimo_concurso_info" not in st.session_state: st.session_state.ultimo_concurso_info = None
-    if "estrategias_pro" not in st.session_state: st.session_state.estrategias_pro = None
+    # Inicializa session state
+    if "dados_api" not in st.session_state:
+        st.session_state.dados_api = None
+    if "banco_dados" not in st.session_state:
+        st.session_state.banco_dados = None
+    if "estatisticas" not in st.session_state:
+        st.session_state.estatisticas = None
+    if "pontuacao" not in st.session_state:
+        st.session_state.pontuacao = None
+    if "ia" not in st.session_state:
+        st.session_state.ia = None
+    if "filtros" not in st.session_state:
+        st.session_state.filtros = None
+    if "gerador" not in st.session_state:
+        st.session_state.gerador = None
+    if "backtests" not in st.session_state:
+        st.session_state.backtests = None
+    if "jogos_gerados" not in st.session_state:
+        st.session_state.jogos_gerados = []
+    if "jogos_salvos" not in st.session_state:
+        st.session_state.jogos_salvos = []
+    if "ia_treinada" not in st.session_state:
+        st.session_state.ia_treinada = False
 
+    # Barra Lateral
     with st.sidebar:
         st.header("⚙️ Configurações")
         
-        # Opção para carregar dados
-        qtd = st.slider("Qtd concursos históricos", 20, 200, 100)
+        qtd_concursos = st.slider("Qtd concursos históricos", 50, 500, 200)
         
         col1, col2 = st.columns(2)
         with col1:
             if st.button("📥 Carregar Mega-Sena", use_container_width=True):
                 with st.spinner("Carregando dados da Mega-Sena..."):
-                    # Tenta carregar da API completa primeiro
-                    dados = buscar_historico_megasena(qtd)
-                    
-                    if dados is None:
-                        # Fallback: tenta carregar da API específica
-                        st.info("Tentando carregar da API específica...")
-                        try:
-                            url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
-                            response = requests.get(url, timeout=10)
-                            if response.status_code == 200:
-                                dados = response.json()
-                                if isinstance(dados, list):
-                                    dados = dados[:qtd]
-                                elif isinstance(dados, dict):
-                                    dados = [dados]
-                        except Exception as e:
-                            st.error(f"Erro ao carregar: {e}")
-                    
+                    dados = buscar_historico_megasena(qtd_concursos)
                     if dados and len(dados) > 0:
                         st.session_state.dados_api = dados
                         
-                        # Extrai informações do último concurso
-                        ultimo = dados[0] if isinstance(dados, list) else dados
-                        st.session_state.ultimo_concurso_info = {
-                            'numero': ultimo.get('concurso', ultimo.get('numeroDoConcurso', 'N/A')),
-                            'data': ultimo.get('data', ultimo.get('dataApuracao', 'N/A')),
-                            'dezenas': ultimo.get('dezenas', [])
-                        }
+                        # Inicializa módulos
+                        st.session_state.banco_dados = BancoDadosMegaInteligente(dados)
+                        st.session_state.estatisticas = EstatisticasMegaAvancadas(st.session_state.banco_dados)
+                        st.session_state.pontuacao = MotorPontuacaoMega(st.session_state.estatisticas)
+                        st.session_state.filtros = FiltrosInteligentesMega(st.session_state.estatisticas)
                         
-                        # Inicializa gerador
-                        st.session_state.v4_gerador = GeradorMegaSenaV4(dados, qtd)
-                        # Inicializa engine de estratégias profissionais
-                        st.session_state.estrategias_pro = EstrategiasProfissionaisMegaSena(dados, qtd)
-                        st.success(f"✅ Carregados {len(dados)} concursos!")
-                        st.success(f"📅 Último: #{st.session_state.ultimo_concurso_info['numero']} - {st.session_state.ultimo_concurso_info['data']}")
-                    else:
-                        st.error("❌ Não foi possível carregar os dados")
+                        # IA
+                        st.session_state.ia = IAEstatisticaMega(st.session_state.banco_dados, st.session_state.estatisticas)
+                        
+                        st.session_state.gerador = GeradorPremiumMega(
+                            st.session_state.banco_dados,
+                            st.session_state.estatisticas,
+                            st.session_state.pontuacao,
+                            st.session_state.filtros,
+                            st.session_state.ia
+                        )
+                        
+                        st.session_state.backtests = BacktestsMega(
+                            st.session_state.banco_dados,
+                            st.session_state.estatisticas,
+                            st.session_state.filtros
+                        )
+                        
+                        st.success(f"✅ {len(dados)} concursos carregados!")
+                        st.info("🔄 IA pronta para treinamento")
         
         with col2:
-            if st.button("🔄 Atualizar Dados", use_container_width=True):
-                with st.spinner("Atualizando dados..."):
-                    try:
-                        url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
-                        response = requests.get(url, timeout=10)
-                        if response.status_code == 200:
-                            dados = response.json()
-                            if isinstance(dados, list):
-                                dados = dados[:qtd]
-                            elif isinstance(dados, dict):
-                                dados = [dados]
-                            
-                            if dados and len(dados) > 0:
-                                st.session_state.dados_api = dados
-                                st.session_state.v4_gerador = GeradorMegaSenaV4(dados, qtd)
-                                st.session_state.estrategias_pro = EstrategiasProfissionaisMegaSena(dados, qtd)
-                                st.success(f"✅ Dados atualizados! {len(dados)} concursos")
-                    except Exception as e:
-                        st.error(f"Erro ao atualizar: {e}")
+            if st.button("🧠 Treinar IA", use_container_width=True):
+                with st.spinner("Treinando modelos de IA..."):
+                    if st.session_state.ia:
+                        rf_ok = st.session_state.ia.treinar_random_forest()
+                        xgb_ok = st.session_state.ia.treinar_xgboost()
+                        if rf_ok or xgb_ok:
+                            st.session_state.ia_treinada = True
+                            st.success("✅ IA treinada com sucesso!")
+        
+        st.markdown("---")
+        
+        # Informações do sistema
+        if st.session_state.banco_dados:
+            ultimo = st.session_state.banco_dados.get_ultimo_concurso()
+            if ultimo:
+                st.markdown("### 📅 Último Concurso")
+                st.markdown(f"**#{ultimo['numero']}**")
+                st.markdown(f"📆 {ultimo['data']}")
+                dezenas = ultimo['dezenas']
+                st.markdown(f"🎯 {', '.join(f'{d:02d}' for d in dezenas)}")
+        
+        st.markdown("---")
+        st.caption("MEGA-SENA Elite 3.0 v1.0")
 
-    # Exibe informações do último concurso se disponível
-    if st.session_state.ultimo_concurso_info:
-        info = st.session_state.ultimo_concurso_info
-        st.sidebar.markdown("---")
-        st.sidebar.markdown(f"**📅 Último Concurso:** #{info['numero']}")
-        st.sidebar.markdown(f"**📆 Data:** {info['data']}")
-        if info['dezenas']:
-            dezenas = sorted(map(int, info['dezenas']))
-            st.sidebar.markdown(f"**🎯 Resultado:** {', '.join(f'{d:02d}' for d in dezenas)}")
-
+    # Conteúdo Principal
     if not st.session_state.dados_api:
         st.info("👈 Carregue os dados da Mega-Sena na barra lateral para começar.")
         return
 
-    st.subheader("🎯 Análise e Geração de Jogos")
+    st.subheader("🎯 MEGA-SENA Elite 3.0 - Sistema Avançado")
 
-    # Criar abas
+    # Tabs
     tabs = st.tabs([
-        "📊 Análise",
-        "🎲 Gerador",
-        "🔍 Conferência",
-        "📈 Avaliação",
-        "✅ Salvos",
-        "🎯 V4 MEGA-SENA",
-        "🧠 Profissional"
+        "📊 Dashboard",
+        "🏆 Ranking",
+        "🧠 IA Estatística",
+        "🎲 Gerador Premium",
+        "🔬 Backtests",
+        "📈 Análise Avançada",
+        "💾 Salvos"
     ])
 
-    # ================= TAB 1: ANÁLISE =================
+    # ================= TAB 1: DASHBOARD =================
     with tabs[0]:
-        if st.session_state.dados_api:
-            ultimo = st.session_state.dados_api[0]
-            numeros_ultimo = sorted(map(int, ultimo['dezenas']))
-            st.markdown(f"""
-            <div class='concurso-info'>
-                <strong>Concurso #{ultimo.get('concurso', ultimo.get('numeroDoConcurso', 'N/A'))}</strong> - {ultimo.get('data', ultimo.get('dataApuracao', 'N/A'))}
-            </div>
-            """, unsafe_allow_html=True)
+        st.markdown("### 📊 Dashboard - Visão Geral")
+        
+        if st.session_state.estatisticas:
+            stats = st.session_state.estatisticas
             
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown("**Dezenas sorteadas:**")
-                st.markdown(formatar_jogo_html(numeros_ultimo), unsafe_allow_html=True)
-            with col2:
-                pares = contar_pares(numeros_ultimo)
-                st.metric("Pares/Ímpares", f"{pares}×{6-pares}")
-            with col3:
-                st.metric("Soma total", sum(numeros_ultimo))
-            
-            st.markdown("### 📊 Estatísticas do Último Concurso")
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Primos", contar_primos(numeros_ultimo))
+                st.metric("Total Concursos", stats.total_concursos)
             with col2:
-                st.metric("Consecutivos", contar_consecutivos(numeros_ultimo))
+                st.metric("📊 Média Soma", f"{stats.media_soma:.1f}")
             with col3:
-                faixas = [(1, 20), (21, 40), (41, 60)]
-                contagem = contar_por_faixa(numeros_ultimo, faixas)
-                st.metric("Distribuição (B/M/A)", f"{contagem[0]}/{contagem[1]}/{contagem[2]}")
+                st.metric("⚖️ Média Pares", f"{stats.media_pares:.1f}")
             with col4:
-                linhas = distribuir_por_linhas(numeros_ultimo, 6)
-                st.metric("Linhas (0-5)", f"{linhas[0]}-{linhas[1]}-{linhas[2]}-{linhas[3]}-{linhas[4]}-{linhas[5]}")
-
-    # ================= TAB 2: GERADOR =================
-    with tabs[1]:
-        st.markdown("### 🎲 Gerador de Jogos da Mega-Sena")
-        st.caption("Geração aleatória com filtros básicos")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            qtd_jogos = st.slider("Quantidade de jogos", 1, 20, 5)
-        with col2:
-            if st.button("🚀 GERAR JOGOS", use_container_width=True):
-                with st.spinner(f"Gerando {qtd_jogos} jogos..."):
-                    jogos = []
-                    for _ in range(qtd_jogos * 3):
-                        jogo = sorted(random.sample(range(1, 61), 6))
-                        if jogo not in jogos:
-                            jogos.append(jogo)
-                        if len(jogos) >= qtd_jogos:
-                            break
-                    st.session_state.jogos = jogos
-                    st.success(f"✅ {len(jogos)} jogos gerados!")
-        
-        if st.session_state.jogos:
-            st.markdown(f"### 📋 Jogos Gerados ({len(st.session_state.jogos)})")
-            for i, jogo in enumerate(st.session_state.jogos):
-                st.markdown(f"""
-                <div style='border-left: 5px solid #4cc9f0; background:#0e1117; border-radius:10px; padding:15px; margin-bottom:10px;'>
-                    <strong>Jogo {i+1:2d}</strong><br>
-                    {formatar_jogo_html(jogo)}
-                </div>
-                """, unsafe_allow_html=True)
-
-    # ================= TAB 3: CONFERÊNCIA =================
-    with tabs[2]:
-        st.markdown("### 🔍 Conferência de Jogos")
-        
-        if st.session_state.dados_api:
-            concurso_resultado = st.selectbox(
-                "Selecione o concurso para conferência", 
-                st.session_state.dados_api, 
-                format_func=lambda c: f"#{c.get('concurso', c.get('numeroDoConcurso', 'N/A'))} - {c.get('data', c.get('dataApuracao', 'N/A'))}"
-            )
-            if concurso_resultado:
-                resultado_oficial = set(map(int, concurso_resultado["dezenas"]))
-                st.markdown(f"""<div class="highlight"><strong>🎯 Resultado #{concurso_resultado.get('concurso', concurso_resultado.get('numeroDoConcurso', 'N/A'))}:</strong><br>{formatar_jogo_html(sorted(resultado_oficial))}</div>""", unsafe_allow_html=True)
-        
-        opcao_jogos = st.radio("Origem dos jogos:", ["Jogos gerados na sessão atual", "Carregar de arquivo CSV", "Digitar manualmente"], horizontal=True)
-        jogos_para_conferir = []
-        
-        if opcao_jogos == "Jogos gerados na sessão atual":
-            if st.session_state.jogos:
-                jogos_para_conferir = st.session_state.jogos
-                st.info(f"{len(jogos_para_conferir)} jogos carregados da sessão atual")
-        elif opcao_jogos == "Carregar de arquivo CSV":
-            uploaded_file = st.file_uploader("Escolha um arquivo CSV", type="csv")
-            if uploaded_file:
-                df_carregado = pd.read_csv(uploaded_file)
-                if "Dezenas" in df_carregado.columns:
-                    jogos_para_conferir = df_carregado["Dezenas"].tolist()
-        else:
-            jogos_texto = st.text_area("Digite os jogos (um por linha, números separados por vírgula)", placeholder="1,2,3,4,5,6")
-            if jogos_texto:
-                for linha in jogos_texto.strip().split('\n'):
-                    if linha.strip():
-                        try:
-                            dezenas = [int(n.strip()) for n in linha.split(',')]
-                            if len(dezenas) == 6 and all(1 <= n <= 60 for n in dezenas):
-                                jogos_para_conferir.append(sorted(dezenas))
-                        except:
-                            pass
-        
-        if jogos_para_conferir and 'resultado_oficial' in locals():
-            if st.button("🔍 CONFERIR JOGOS", use_container_width=True, type="primary"):
-                df_conferencia = conferir_jogos_mega(jogos_para_conferir, resultado_oficial)
-                st.markdown("### 📊 Resultados da Conferência")
-                col1, col2, col3, col4 = st.columns(4)
-                with col1: st.metric("Total Jogos", len(df_conferencia))
-                with col2: st.metric("Melhor Acerto", df_conferencia.iloc[0]["Acertos"])
-                with col3: st.metric("Média Acertos", round(df_conferencia["Acertos"].mean(), 1))
-                with col4: st.metric("Jogos com 4+", len(df_conferencia[df_conferencia["Acertos"] >= 4]))
-                
-                for i, row in df_conferencia.head(20).iterrows():
-                    medalha = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "📌"
-                    st.markdown(f"""
-                    <div style='border-left: 5px solid {"#ffd700" if i == 0 else "#c0c0c0" if i == 1 else "#cd7f32" if i == 2 else "#4cc9f0"}; background:#0e1117; border-radius:10px; padding:12px; margin-bottom:8px;'>
-                        {medalha} <strong>Jogo {row['Jogo']}</strong> — <span style='color:#00ffaa;'>{row['Acertos']} acertos</span><br>
-                        {formatar_jogo_html(row['Dezenas'])}
-                    </div>
-                    """, unsafe_allow_html=True)
-
-    # ================= TAB 4: AVALIAÇÃO =================
-    with tabs[3]:
-        st.markdown("### 📈 Avaliação Estatística dos Jogos")
-        if st.session_state.jogos:
-            avaliacao = []
-            for i, jogo in enumerate(st.session_state.jogos):
-                avaliacao.append({
-                    "Jogo": i+1,
-                    "Pares": contar_pares(jogo),
-                    "Ímpares": 6 - contar_pares(jogo),
-                    "Primos": contar_primos(jogo),
-                    "Soma": sum(jogo),
-                    "Consecutivos": contar_consecutivos(jogo)
+                st.metric("📊 Média Colunas", f"{stats.media_colunas:.1f}")
+            
+            # Gráficos interativos
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("### 📊 Frequência das Dezenas")
+                df_freq = pd.DataFrame({
+                    'Dezena': range(1, 61),
+                    'Frequência': [stats.frequencias.get(i, 0) for i in range(1, 61)]
                 })
-            df_avaliacao = pd.DataFrame(avaliacao)
-            st.dataframe(df_avaliacao, use_container_width=True, hide_index=True)
-        else:
-            st.info("Gere jogos primeiro na aba 'Gerador'")
+                fig = px.bar(df_freq, x='Dezena', y='Frequência', title='Frequência por Dezena')
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                st.markdown("### ⏰ Atraso das Dezenas")
+                df_atraso = pd.DataFrame({
+                    'Dezena': range(1, 61),
+                    'Atraso': [stats.atrasos.get(i, 0) for i in range(1, 61)]
+                })
+                fig = px.bar(df_atraso, x='Dezena', y='Atraso', title='Atraso por Dezena',
+                            color='Atraso', color_continuous_scale='Viridis')
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
 
-    # ================= TAB 5: SALVOS =================
-    with tabs[4]:
-        st.markdown("### ✅ Jogos Salvos")
-        st.session_state.jogos_salvos = carregar_jogos_salvos()
-        if not st.session_state.jogos_salvos:
-            st.warning("Nenhum jogo salvo encontrado.")
-        else:
-            for jogo_salvo in st.session_state.jogos_salvos[:10]:
+    # ================= TAB 2: RANKING =================
+    with tabs[1]:
+        st.markdown("### 🏆 Ranking das Dezenas")
+        
+        if st.session_state.pontuacao:
+            pontuacao = st.session_state.pontuacao
+            stats = st.session_state.estatisticas
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                top_n = st.slider("Top N dezenas", 5, 60, 20)
+            with col2:
+                mostrar_detalhes = st.checkbox("Mostrar detalhes", True)
+            
+            ranking = pontuacao.get_ranking(top_n)
+            
+            for pos, (num, score) in enumerate(ranking, 1):
+                medalha = "🥇" if pos == 1 else "🥈" if pos == 2 else "🥉" if pos == 3 else f"{pos}º"
+                classe = f"pos-{pos}" if pos <= 3 else ""
+                
+                stats_dezena = stats.get_estatisticas_dezena(num)
+                tendencia = stats_dezena['tendencia']['tendencia']
+                tendencia_cls = "tendencia-up" if tendencia == "subindo" else "tendencia-down" if tendencia == "caindo" else "tendencia-stable"
+                tendencia_icon = "⬆️" if tendencia == "subindo" else "⬇️" if tendencia == "caindo" else "➡️"
+                
+                detalhes = ""
+                if mostrar_detalhes:
+                    freq_periodos = stats_dezena['frequencia_periodos']
+                    detalhes = f"""
+                    <small style='color:#aaa;'>
+                        Freq: {stats_dezena['frequencia']} | 
+                        Últimos 20: {freq_periodos.get(20, 0)} | 
+                        Atraso: {stats_dezena['atraso']} | 
+                        Tendência: <span class='{tendencia_cls}'>{tendencia_icon} {tendencia}</span>
+                    </small>
+                    """
+                
                 st.markdown(f"""
-                <div style='background:#0e1117; border:1px solid #262730; border-radius:10px; padding:10px; margin-bottom:8px;'>
-                    <strong>ID:</strong> {jogo_salvo['id']} | <strong>Concurso:</strong> #{jogo_salvo['concurso_base']['numero']}
+                <div class='ranking-card'>
+                    <div>
+                        <span class='{classe}'>{medalha}</span>
+                        <strong>Dezena {num:02d}</strong>
+                        <span style='float: right;'>
+                            <strong>Score: {score:.2f}</strong>
+                        </span>
+                    </div>
+                    {detalhes}
                 </div>
                 """, unsafe_allow_html=True)
 
-    # ================= TAB 6: V4 MEGA-SENA =================
-    with tabs[5]:
-        st.markdown("### 🎯 MEGA-SENA V4 - Fechamento Inteligente")
+    # ================= TAB 3: IA ESTATÍSTICA =================
+    with tabs[2]:
+        st.markdown("### 🧠 IA Estatística")
         st.markdown("""
-        <div class="v4-highlight">
-            <strong>🎯 ESTRATÉGIA V4:</strong><br>
-            • 10 jogos principais seguindo o padrão de colunas<br>
-            • 5 jogos de proteção para cobertura de viradas<br>
-            • Baseado em análise de frequência e colunas<br>
-            • Foco em C3, C4 e C6 como colunas principais
+        <div class="ia-mega-highlight">
+            <strong>🤖 Modelos de IA:</strong><br>
+            • Random Forest: Classifica combinações baseado em padrões históricos<br>
+            • XGBoost: Gradient Boosting para análise de tendências<br>
+            • Análise de Feature Importance para identificar fatores relevantes
         </div>
         """, unsafe_allow_html=True)
         
-        # Inicializa gerador se necessário
-        if st.session_state.v4_gerador is None and st.session_state.dados_api:
-            st.session_state.v4_gerador = GeradorMegaSenaV4(st.session_state.dados_api, 50)
-        
-        with st.expander("📊 Análise de Colunas", expanded=True):
-            if st.session_state.v4_gerador:
-                analise = st.session_state.v4_gerador.analise_colunas
-                st.markdown("**Frequência das Colunas nos Últimos 20 Concursos:**")
-                cols = st.columns(6)
-                for i, (col, qtd) in enumerate(analise['colunas_mais_frequentes']):
-                    with cols[i]:
-                        st.metric(col, f"{qtd}x")
+        if st.session_state.ia:
+            ia = st.session_state.ia
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Modelos Treinados", len(ia.modelos))
+            with col2:
+                st.metric("Dados de Treino", len(ia.dados_processados['features']) if ia.dados_processados else 0)
+            with col3:
+                status = "✅ Treinada" if st.session_state.ia_treinada else "⚠️ Não treinada"
+                st.metric("Status", status)
+            
+            if ia.modelos:
+                st.markdown("### 📊 Performance dos Modelos")
                 
-                st.markdown(f"""
-                <div style='background:#0e1117; border-radius:10px; padding:15px; margin-top:10px;'>
-                    <strong>🎯 Coluna Principal:</strong> {analise['coluna_principal']}<br>
-                    <strong>🔧 Colunas de Apoio:</strong> {analise['coluna_apoio1']}, {analise['coluna_apoio2']}
-                </div>
-                """, unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🚀 GERAR V4 - 15 JOGOS", use_container_width=True, type="primary"):
-                with st.spinner("Gerando 15 jogos com a estratégia V4..."):
-                    if st.session_state.v4_gerador:
-                        resultado = st.session_state.v4_gerador.gerar_todos_jogos()
-                        st.session_state.v4_jogos = resultado
-                        st.session_state.jogos = resultado['todos']
+                for nome, info in ia.modelos.items():
+                    st.markdown(f"**{nome.upper()}**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Acurácia", f"{info.get('acuracia', 0)*100:.2f}%")
+                    with col2:
+                        if 'feature_importance' in info:
+                            importance = info['feature_importance']
+                            st.metric("Importância Média", f"{np.mean(importance):.3f}")
+                
+                # Feature Importance
+                st.markdown("### 📈 Feature Importance")
+                
+                feature_names = ['Frequência', 'Freq. Recente', 'Atraso', 'Tendência', 
+                               'Proporção Pares', 'Faixa Baixa', 'Faixa Média', 'Soma', 'Proximidade']
+                
+                for nome, info in ia.modelos.items():
+                    if 'feature_importance' in info:
+                        df_imp = pd.DataFrame({
+                            'Feature': feature_names[:len(info['feature_importance'])],
+                            'Importância': info['feature_importance']
+                        }).sort_values('Importância', ascending=True)
                         
-                        # Calcula scores
-                        scores = []
-                        analises = []
-                        for jogo in resultado['todos']:
-                            analise = st.session_state.v4_gerador.analisar_jogo(jogo)
-                            analises.append(analise)
-                            score = 0
-                            if analise:
-                                if analise['quantidade_colunas'] >= 4:
-                                    score += 3
-                                if 2 <= analise['pares'] <= 4:
-                                    score += 2
-                                if 2 <= analise['primos'] <= 4:
-                                    score += 2
-                                if 180 <= analise['soma'] <= 220:
-                                    score += 1
-                                if analise['repetidas_ultimo'] in [2, 3, 4]:
-                                    score += 2
-                            scores.append(score)
-                        
-                        st.session_state.v4_scores = scores
-                        st.session_state.v4_analise_detalhada = analises
-                        st.success("✅ 15 jogos gerados com sucesso!")
+                        fig = px.bar(df_imp, x='Importância', y='Feature', 
+                                    title=f'Feature Importance - {nome.upper()}',
+                                    orientation='h')
+                        st.plotly_chart(fig, use_container_width=True)
+
+    # ================= TAB 4: GERADOR PREMIUM =================
+    with tabs[3]:
+        st.markdown("### 🎲 Gerador Premium")
         
-        with col2:
-            if st.button("🎲 GERAR SÓ PRINCIPAIS", use_container_width=True):
-                with st.spinner("Gerando 10 jogos principais..."):
-                    if st.session_state.v4_gerador:
-                        principais = st.session_state.v4_gerador.gerar_jogos_principais(10)
-                        st.session_state.v4_jogos = {'principais': principais, 'protecao': [], 'todos': principais}
-                        st.session_state.jogos = principais
-                        st.success("✅ 10 jogos principais gerados!")
-        
-        # Exibe jogos gerados
-        if st.session_state.v4_jogos:
-            jogos = st.session_state.v4_jogos
-            scores = st.session_state.v4_scores if st.session_state.v4_scores else []
-            analises = st.session_state.v4_analise_detalhada if st.session_state.v4_analise_detalhada else []
+        if st.session_state.gerador:
+            gerador = st.session_state.gerador
             
-            st.markdown("### 📋 Jogos Gerados")
-            
-            # Bloco A - Jogos Principais
-            st.markdown("#### 🔵 BLOCO A - 10 Jogos Principais")
-            for i, jogo in enumerate(jogos['principais']):
-                score = scores[i] if i < len(scores) else 0
-                analise = analises[i] if i < len(analises) else None
-                medalha = "🏆" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "📌"
+            with st.expander("⚙️ Configurações", expanded=True):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    qtd_jogos = st.slider("Quantidade de jogos", 1, 50, 10)
+                    estrategia = st.selectbox("Estratégia", 
+                                             ['conservadora', 'equilibrada', 'diversificada'],
+                                             index=1)
+                with col2:
+                    usar_base = st.checkbox("Usar dezenas-base")
+                    dezenas_base = []
+                    if usar_base:
+                        base_input = st.text_input("Dezenas base (separadas por vírgula)", 
+                                                  "1,2,3,4,5,6,7,8,9,10,11,12")
+                        try:
+                            dezenas_base = [int(x.strip()) for x in base_input.split(",") if x.strip()]
+                            dezenas_base = sorted(dezenas_base)[:15]
+                        except:
+                            st.warning("Formato inválido. Use números separados por vírgula.")
+                with col3:
+                    usar_filtros_personalizados = st.checkbox("Filtros personalizados")
+                    if usar_filtros_personalizados:
+                        pares_min = st.slider("Mínimo Pares", 0, 6, 2)
+                        pares_max = st.slider("Máximo Pares", 0, 6, 4)
+                        soma_min = st.slider("Soma Mínima", 80, 300, 120)
+                        soma_max = st.slider("Soma Máxima", 80, 300, 220)
+                        consec_max = st.slider("Máx. Consecutivos", 1, 6, 3)
+                        colunas_min = st.slider("Mínimo Colunas", 1, 6, 4)
+                        colunas_max = st.slider("Máximo Colunas", 1, 6, 6)
+                    else:
+                        filtros_recomendados = st.session_state.filtros.get_filtros_recomendados()
+                        pares_min = filtros_recomendados['pares_min']
+                        pares_max = filtros_recomendados['pares_max']
+                        soma_min = filtros_recomendados['soma_min']
+                        soma_max = filtros_recomendados['soma_max']
+                        consec_max = filtros_recomendados['consecutivos_max']
+                        colunas_min = filtros_recomendados['colunas_min']
+                        colunas_max = filtros_recomendados['colunas_max']
                 
-                stats = ""
-                if analise:
-                    stats = f"⚖️ {analise['pares']}p/{analise['impares']}i | 🔢 {analise['primos']} primos | ➕ {analise['soma']} | 🔁 {analise['repetidas_ultimo']} rep | 📊 {analise['quantidade_colunas']} colunas"
-                
-                st.markdown(f"""
-                <div class='jogo-v4-principal'>
-                    {medalha} <strong>Jogo {i+1:2d}</strong> — Score: {score}<br>
-                    {formatar_jogo_html(jogo)}<br>
-                    <small style='color:#aaa;'>{stats}</small>
-                </div>
-                """, unsafe_allow_html=True)
+                # Monta filtros
+                filtros = {
+                    'pares_min': pares_min,
+                    'pares_max': pares_max,
+                    'soma_min': soma_min,
+                    'soma_max': soma_max,
+                    'faixa_min': 1,
+                    'faixa_max': 4,
+                    'consecutivos_max': consec_max,
+                    'repetidas_max': 3,
+                    'primos_min': 1,
+                    'primos_max': 4,
+                    'colunas_min': colunas_min,
+                    'colunas_max': colunas_max
+                }
             
-            # Bloco B - Jogos de Proteção
-            if jogos['protecao']:
-                st.markdown("#### 🟢 BLOCO B - 5 Jogos de Proteção")
-                for i, jogo in enumerate(jogos['protecao']):
-                    idx = 10 + i
-                    score = scores[idx] if idx < len(scores) else 0
-                    analise = analises[idx] if idx < len(analises) else None
+            if st.button("🎯 GERAR JOGOS", use_container_width=True, type="primary"):
+                with st.spinner(f"Gerando {qtd_jogos} jogos com estratégia {estrategia}..."):
+                    jogos = gerador.gerar_jogos(
+                        qtd=qtd_jogos,
+                        estrategia=estrategia,
+                        dezenas_base=dezenas_base if usar_base else None,
+                        filtros_personalizados=filtros
+                    )
                     
-                    stats = ""
-                    if analise:
-                        stats = f"⚖️ {analise['pares']}p/{analise['impares']}i | 🔢 {analise['primos']} primos | ➕ {analise['soma']} | 🔁 {analise['repetidas_ultimo']} rep | 📊 {analise['quantidade_colunas']} colunas"
+                    if jogos:
+                        st.session_state.jogos_gerados = jogos
+                        st.success(f"✅ {len(jogos)} jogos gerados!")
+            
+            if st.session_state.jogos_gerados:
+                jogos = st.session_state.jogos_gerados
+                st.markdown(f"### 📋 Jogos Gerados ({len(jogos)})")
+                
+                # Análise com IA se disponível
+                if st.session_state.ia and st.session_state.ia_treinada:
+                    st.markdown("#### 🤖 Análise IA dos Jogos")
+                    for i, jogo in enumerate(jogos[:10]):
+                        probs = st.session_state.ia.prever_probabilidades(jogo)
+                        if probs:
+                            cols = st.columns([3, 2])
+                            with cols[0]:
+                                st.markdown(f"**Jogo {i+1}:** {formatar_jogo_html_mega(jogo)}", unsafe_allow_html=True)
+                            with cols[1]:
+                                for nome, info in probs.items():
+                                    st.metric(f"{nome.upper()} Score", f"{info['media']*100:.1f}%")
+                
+                # Exibição dos jogos
+                for i, jogo in enumerate(jogos):
+                    medalha = "🏆" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "📌"
+                    
+                    pares = contar_pares_mega(jogo)
+                    primos = contar_primos_mega(jogo)
+                    soma = sum(jogo)
+                    consec = contar_consecutivos_mega(jogo)
+                    faixas = distribuir_faixas_mega(jogo)
+                    colunas = distribuir_colunas_mega(jogo)
+                    colunas_ativas = len([c for c in colunas if c > 0])
+                    
+                    stats = f"⚖️ {pares}p/{6-pares}i | 🔢 {primos} primos | ➕ {soma} | 🔗 {consec} consec | 📊 {colunas_ativas} colunas"
                     
                     st.markdown(f"""
-                    <div class='jogo-v4-protecao'>
-                        🛡️ <strong>Proteção {i+1}</strong> — Score: {score}<br>
-                        {formatar_jogo_html(jogo)}<br>
+                    <div class='card' style='border-left: 5px solid {"#ffd700" if i == 0 else "#4cc9f0"};'>
+                        {medalha} <strong>Jogo {i+1:2d}</strong><br>
+                        {formatar_jogo_html_mega(jogo)}<br>
                         <small style='color:#aaa;'>{stats}</small>
                     </div>
                     """, unsafe_allow_html=True)
-            
-            # Recomendações
-            st.markdown("### 📊 Recomendações de Prioridade")
-            
-            if st.session_state.v4_gerador:
-                recomendacoes = st.session_state.v4_gerador.get_recomendacoes_prioridade()
                 
+                # Botões de ação
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.markdown("**🔥 Prioridade Máxima (6 jogos)**")
-                    for idx in recomendacoes['prioridade_maxima']:
-                        if idx < len(jogos['principais']):
-                            st.markdown(f"Jogo {idx+1}")
-                
+                    if st.button("💾 Salvar Jogos", key="salvar_mega_elite", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_mega_elite(jogos, {
+                            'estrategia': estrategia,
+                            'filtros': filtros,
+                            'qtd': qtd_jogos
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogos salvos! ID: {jogo_id}")
                 with col2:
-                    st.markdown("**📊 Prioridade Média (4 jogos)**")
-                    for idx in recomendacoes['prioridade_media']:
-                        if idx < len(jogos['principais']):
-                            st.markdown(f"Jogo {idx+1}")
-                
-                with col3:
-                    st.markdown("**🛡️ Proteção (5 jogos)**")
-                    for idx in range(len(jogos['protecao'])):
-                        st.markdown(f"Proteção {idx+1}")
-            
-            # Planos de Jogo
-            st.markdown("### 💰 Planos de Jogo")
-            
-            planos = st.session_state.v4_gerador.get_planos_jogo() if st.session_state.v4_gerador else {}
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown("**📌 Econômico (4 jogos)**")
-                st.markdown("Jogos 1, 2, 3, 8")
-            with col2:
-                st.markdown("**📌 Intermediário (8 jogos)**")
-                st.markdown("Jogos 1, 2, 3, 4, 5, 8, 10, Proteção 1")
-            with col3:
-                st.markdown("**📌 Completo (15 jogos)**")
-                st.markdown("Todos os 15 jogos")
-            
-            # Botões de ação
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.button("💾 Salvar Jogos V4", key="salvar_v4", use_container_width=True):
-                    ultimo = st.session_state.dados_api[0]
-                    jogos_para_salvar = st.session_state.v4_jogos['todos']
-                    arquivo, jogo_id = salvar_jogos_gerados(
-                        jogos_para_salvar, [], 
-                        {"versao": "Mega-Sena V4", "estrategia": "Colunas"},
-                        ultimo.get('concurso', ultimo.get('numeroDoConcurso', 0)),
-                        ultimo.get('data', ultimo.get('dataApuracao', '')),
-                        {"scores": st.session_state.v4_scores}
+                    df_export = pd.DataFrame({
+                        'Jogo': range(1, len(jogos)+1),
+                        'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos],
+                        'Pares': [contar_pares_mega(j) for j in jogos],
+                        'Soma': [sum(j) for j in jogos],
+                        'Primos': [contar_primos_mega(j) for j in jogos],
+                        'Consecutivos': [contar_consecutivos_mega(j) for j in jogos]
+                    })
+                    st.download_button(
+                        label="📥 Exportar CSV",
+                        data=df_export.to_csv(index=False),
+                        file_name=f"mega_elite3_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
                     )
-                    if arquivo:
-                        st.success(f"✅ Jogos salvos! ID: {jogo_id}")
-                        st.session_state.jogos_salvos = carregar_jogos_salvos()
-            
-            with col2:
-                df_export = gerar_csv_download_mega(st.session_state.v4_jogos['todos'], st.session_state.v4_scores, "Mega-Sena V4")
-                st.download_button(
-                    label="📥 Exportar CSV",
-                    data=df_export.to_csv(index=False),
-                    file_name=f"megasena_v4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            
-            with col3:
-                json_data = json.dumps({
-                    "versao": "Mega-Sena V4",
-                    "data_geracao": datetime.now().isoformat(),
-                    "total_jogos": len(st.session_state.v4_jogos['todos']),
-                    "jogos_principais": st.session_state.v4_jogos['principais'],
-                    "jogos_protecao": st.session_state.v4_jogos['protecao'],
-                    "scores": st.session_state.v4_scores,
-                    "analises": convert_numpy_types(st.session_state.v4_analise_detalhada)
-                }, indent=2, ensure_ascii=False, default=str)
-                
-                st.download_button(
-                    label="📦 Exportar JSON",
-                    data=json_data,
-                    file_name=f"megasena_v4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
+                with col3:
+                    txt_content = "MEGA-SENA ELITE 3.0 - JOGOS GERADOS\n"
+                    txt_content += "=" * 50 + "\n"
+                    txt_content += f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+                    txt_content += f"Estratégia: {estrategia}\n"
+                    txt_content += f"Total: {len(jogos)} jogos\n\n"
+                    
+                    for i, jogo in enumerate(jogos):
+                        txt_content += f"Jogo {i+1:2d}: {', '.join(f'{d:02d}' for d in jogo)}\n"
+                    
+                    st.download_button(
+                        label="📝 Exportar TXT",
+                        data=txt_content,
+                        file_name=f"mega_elite3_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
 
-    # ================= TAB 7: PROFISSIONAL (NOVA) =================
-    with tabs[6]:
-        st.markdown("### 🧠 Estratégias Profissionais de Fechamento")
+    # ================= TAB 5: BACKTESTS =================
+    with tabs[4]:
+        st.markdown("### 🔬 Backtests - Teste de Estratégias")
         st.markdown("""
-        <div class="pro-highlight">
-            <strong>⚠️ IMPORTANTE:</strong> nenhuma técnica aqui muda a probabilidade
-            matemática de acerto — cada combinação tem sempre a mesma chance.
-            O fechamento garante acertos mínimos SE seus números saírem; os
-            filtros estatísticos e anti-popularidade só reduzem a chance de
-            dividir o prêmio.
+        <div class="mega-highlight">
+            <strong>🎯 OBJETIVO:</strong> Testar diferentes estratégias usando dados históricos<br>
+            <strong>⚠️ ATENÇÃO:</strong> Resultados passados NÃO garantem resultados futuros
         </div>
         """, unsafe_allow_html=True)
-
-        if st.session_state.estrategias_pro is None and st.session_state.dados_api:
-            st.session_state.estrategias_pro = EstrategiasProfissionaisMegaSena(st.session_state.dados_api, 100)
-        engine = st.session_state.estrategias_pro
-
-        if engine is None:
-            st.info("Carregue os dados da Mega-Sena na barra lateral primeiro.")
-        else:
-            estrategia = st.selectbox(
-                "Escolha a estratégia",
-                [
-                    "Ensemble (mistura tudo)",
-                    "Sistema Delta",
-                    "Quente / Frio / Atrasado",
-                    "Filtro Estatístico (soma/pares/primos)",
-                    "Pares Mais Frequentes",
-                    "Anti-Popularidade",
-                    "Fechamento com Garantia (ILP)",
-                ],
-            )
-
-            if estrategia == "Fechamento com Garantia (ILP)":
-                st.markdown(f"OR-Tools disponível: **{'sim' if ORTOOLS_AVAILABLE else 'não (usará heurística)'}**")
-                pool_texto = st.text_input(
-                    "Pool de números para o fechamento (separados por vírgula)",
-                    "4,7,11,19,23,28,31,40,45,52",
+        
+        if st.session_state.backtests:
+            backtests = st.session_state.backtests
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                estrategias_backtest = st.multiselect(
+                    "Selecione estratégias para testar",
+                    ['conservadora', 'equilibrada', 'diversificada'],
+                    default=['conservadora', 'equilibrada', 'diversificada']
                 )
-                garantia = st.slider("Garantia de acertos (se X do pool saírem)", 3, 5, 4)
-                n_max = st.slider("Máximo de jogos no fechamento", 2, 20, 10)
-
-                if st.button("🔒 Gerar Fechamento", use_container_width=True):
-                    try:
-                        pool = sorted(set(int(n.strip()) for n in pool_texto.split(",")))
-                        with st.spinner("Calculando fechamento..."):
-                            jogos = engine.gerar_fechamento(pool, garantia=garantia, n_jogos_max=n_max)
-                        st.session_state.jogos = jogos
-                        st.success(f"✅ {len(jogos)} jogos gerados garantindo {garantia} acertos se {garantia} do pool sair.")
-                        for i, j in enumerate(jogos):
-                            st.markdown(f"""
-                            <div class='jogo-pro'>
-                                🔒 <strong>Jogo {i+1}</strong><br>
-                                {formatar_jogo_html(j)}
-                            </div>
-                            """, unsafe_allow_html=True)
-                    except Exception as e:
-                        st.error(f"Erro no pool informado: {e}")
-            else:
-                qtd_jogos_pro = st.slider("Quantidade de jogos", 1, 20, 10, key="qtd_pro")
-                if st.button("🚀 Gerar Jogos", use_container_width=True, key="gerar_pro"):
-                    with st.spinner("Gerando..."):
-                        if estrategia == "Ensemble (mistura tudo)":
-                            jogos = engine.gerar_ensemble_profissional(qtd_jogos_pro)
-                        elif estrategia == "Sistema Delta":
-                            jogos = [engine.gerar_jogo_delta() for _ in range(qtd_jogos_pro)]
-                        elif estrategia == "Quente / Frio / Atrasado":
-                            jogos = [engine.gerar_jogo_quente_frio_atrasado() for _ in range(qtd_jogos_pro)]
-                        elif estrategia == "Filtro Estatístico (soma/pares/primos)":
-                            jogos = [engine.gerar_jogo_filtro_estatistico() for _ in range(qtd_jogos_pro)]
-                        elif estrategia == "Pares Mais Frequentes":
-                            jogos = [engine.gerar_jogo_pares_frequentes() for _ in range(qtd_jogos_pro)]
-                        else:
-                            jogos = [engine.gerar_jogo_anti_popular() for _ in range(qtd_jogos_pro)]
-
-                    st.session_state.jogos = jogos
-                    st.success(f"✅ {len(jogos)} jogos gerados com a estratégia '{estrategia}'!")
-                    for i, j in enumerate(jogos):
-                        st.markdown(f"""
-                        <div class='jogo-pro'>
-                            🧠 <strong>Jogo {i+1}</strong><br>
-                            {formatar_jogo_html(j)}
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                # Exportação dos jogos profissionais
-                if st.session_state.jogos:
-                    df_export_pro = gerar_csv_download_mega(st.session_state.jogos, estrategia=estrategia)
-                    st.download_button(
-                        label="📥 Exportar CSV (Profissional)",
-                        data=df_export_pro.to_csv(index=False),
-                        file_name=f"megasena_profissional_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                        key="csv_pro"
+            with col2:
+                num_testes = st.slider("Número de concursos para teste", 10, 100, 50)
+            
+            if st.button("🔬 EXECUTAR BACKTEST", use_container_width=True, type="primary"):
+                with st.spinner(f"Executando {num_testes} simulações por estratégia..."):
+                    resultados = backtests.comparar_estrategias(estrategias_backtest, num_testes)
+                    
+                    st.markdown("### 📊 Resultados do Backtest")
+                    
+                    dados_comp = []
+                    for estrategia, res in resultados.items():
+                        dados_comp.append({
+                            'Estratégia': estrategia.capitalize(),
+                            'Média': round(res['media'], 2),
+                            'Mediana': round(res['mediana'], 2),
+                            'Desvio': round(res['std'], 2),
+                            'Máximo': res['max'],
+                            'Mínimo': res['min'],
+                            'P75': round(res['percentil_75'], 1),
+                            'P25': round(res['percentil_25'], 1)
+                        })
+                    
+                    df_comp = pd.DataFrame(dados_comp)
+                    st.dataframe(df_comp, use_container_width=True, hide_index=True)
+                    
+                    fig = make_subplots(rows=1, cols=2, 
+                                       subplot_titles=('Média de Acertos', 'Distribuição'))
+                    
+                    fig.add_trace(
+                        go.Bar(x=df_comp['Estratégia'], y=df_comp['Média'],
+                              name='Média', marker_color='#4cc9f0'),
+                        row=1, col=1
                     )
+                    
+                    for estrategia, res in resultados.items():
+                        dist = res['distribuicao']
+                        df_dist = pd.DataFrame(list(dist.items()), columns=['Acertos', 'Frequência'])
+                        fig.add_trace(
+                            go.Bar(x=df_dist['Acertos'], y=df_dist['Frequência'],
+                                  name=estrategia.capitalize()),
+                            row=1, col=2
+                        )
+                    
+                    fig.update_layout(height=500, showlegend=True)
+                    st.plotly_chart(fig, use_container_width=True)
+
+    # ================= TAB 6: ANÁLISE AVANÇADA =================
+    with tabs[5]:
+        st.markdown("### 📈 Análise Avançada")
+        
+        if st.session_state.estatisticas:
+            stats = st.session_state.estatisticas
+            
+            # Análise de Correlação
+            st.markdown("### 🔗 Análise de Correlação entre Dezenas")
+            
+            matriz = np.zeros((60, 60))
+            for concurso in stats.banco.concursos:
+                dezenas = concurso['dezenas']
+                for i in dezenas:
+                    for j in dezenas:
+                        if i != j:
+                            matriz[i-1][j-1] += 1
+            
+            for i in range(60):
+                total = matriz[i].sum()
+                if total > 0:
+                    matriz[i] = matriz[i] / total
+            
+            fig = go.Figure(data=go.Heatmap(
+                z=matriz,
+                x=[f"{i+1:02d}" for i in range(60)],
+                y=[f"{i+1:02d}" for i in range(60)],
+                colorscale='Viridis'
+            ))
+            fig.update_layout(title='Matriz de Correlação entre Dezenas',
+                            height=600)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Análise de Colunas
+            st.markdown("### 📊 Análise de Colunas (C1-C6)")
+            
+            colunas_data = []
+            for concurso in stats.banco.concursos[:100]:
+                colunas = concurso['colunas']
+                colunas_data.append({
+                    'Concurso': concurso['numero'],
+                    'C1': colunas[0],
+                    'C2': colunas[1],
+                    'C3': colunas[2],
+                    'C4': colunas[3],
+                    'C5': colunas[4],
+                    'C6': colunas[5]
+                })
+            
+            df_colunas = pd.DataFrame(colunas_data)
+            fig = px.bar(df_colunas.melt(id_vars=['Concurso']), 
+                        x='Concurso', y='value', color='variable',
+                        title='Distribuição por Colunas (Últimos 100 Concursos)')
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ================= TAB 7: SALVOS =================
+    with tabs[6]:
+        st.markdown("### 💾 Jogos Salvos")
+        
+        jogos_salvos = carregar_jogos_mega_elite()
+        
+        if not jogos_salvos:
+            st.warning("Nenhum jogo salvo encontrado.")
+        else:
+            for jogo in jogos_salvos[:10]:
+                st.markdown(f"""
+                <div class='card'>
+                    <strong>ID:</strong> {jogo['id']} | 
+                    <strong>Data:</strong> {jogo['data_geracao'][:19]} |
+                    <strong>Jogos:</strong> {len(jogo['jogos'])}
+                </div>
+                """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
 
 st.markdown("""
-<style>
-.footer-premium{width:100%;text-align:center;padding:22px 10px;margin-top:40px;background:linear-gradient(180deg,#0b0b0b,#050505);color:#ffffff;border-top:1px solid #222;position:relative;}
-.footer-premium::before{content:"";position:absolute;top:0;left:0;width:100%;height:2px;background:linear-gradient(90deg,#ff6b6b,#4ecdc4,#45b7d1,#ff6b6b);box-shadow:0 0 10px #ff6b6b;}
-.footer-title{font-size:16px;font-weight:800;letter-spacing:3px;text-transform:uppercase;text-shadow:0 0 6px rgba(255,107,107,0.6);}
-.footer-sub{font-size:11px;color:#bfbfbf;margin-top:4px;letter-spacing:1.5px;}
-</style>
-<div class="footer-premium"><div class="footer-title">MEGA-SENA ELITE SYSTEM</div><div class="footer-sub">SAMUCJ TECNOLOGIA © 2026</div></div>
+<div class="footer-premium">
+    <div class="footer-title">MEGA-SENA ELITE 3.0 SYSTEM</div>
+    <div class="footer-sub">SAMUCJ TECNOLOGIA © 2026</div>
+</div>
 """, unsafe_allow_html=True)
