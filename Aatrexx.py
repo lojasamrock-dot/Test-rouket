@@ -7,6 +7,7 @@ import json
 import os
 import uuid
 import math
+import itertools
 import warnings
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -1124,6 +1125,319 @@ class BacktestsMega:
         return resultados
 
 # =====================================================
+# MÓDULO 8: CIONI - DETECTOR DE PADRÕES OCULTOS
+# =====================================================
+# IMPORTANTE (leia antes de usar): "padrão mais significativo" aqui significa
+# estatisticamente mais ATÍPICO frente ao que se esperaria de um sorteio
+# aleatório justo (calculado via hipergeométrica) — NÃO significa "mais
+# provável de sair de novo". Em um sorteio sem memória como a Mega-Sena, uma
+# combinação ter aparecido junto no passado não muda a probabilidade dela
+# aparecer junto no futuro. Isso é uma ferramenta de análise exploratória
+# (útil para auditoria/curiosidade estatística), não uma previsão.
+#
+# Problema estatístico real que este módulo já trata: com C(60,2)=1.770 pares
+# e C(60,3)=34.220 trios possíveis, testar todos simultaneamente gera o
+# "problema de comparações múltiplas" — por puro acaso, dezenas de pares vão
+# parecer "significativos" mesmo sem nenhum efeito real. Por isso aplicamos
+# correção de Bonferroni para marcar o que é significativo de fato.
+
+class ModuloCioni:
+    """Módulo 8 - Cioni: busca de padrões ocultos (co-ocorrências de pares/trios
+    que se repetem mais do que o esperado pelo acaso)."""
+
+    def __init__(self, banco_dados, alpha=0.05):
+        self.banco = banco_dados
+        self.historico = banco_dados.get_historico_dezenas()
+        self.total_concursos = len(self.historico)
+        self.alpha = alpha
+        self.padroes_pares = {}
+        self.padroes_trios = {}
+        self._detectar_padroes()
+
+    def _prob_coocorrencia(self, tamanho_subconjunto):
+        """P(um subconjunto fixo de `tamanho_subconjunto` dezenas sair inteiro
+        em um único concurso), via hipergeométrica."""
+        if tamanho_subconjunto > 6:
+            return 0.0
+        return math.comb(60 - tamanho_subconjunto, 6 - tamanho_subconjunto) / math.comb(60, 6)
+
+    def _detectar_padroes(self):
+        cont_pares = Counter()
+        cont_trios = Counter()
+        for dezenas in self.historico:
+            ordenadas = sorted(dezenas)
+            for par in itertools.combinations(ordenadas, 2):
+                cont_pares[par] += 1
+            for trio in itertools.combinations(ordenadas, 3):
+                cont_trios[trio] += 1
+
+        self.padroes_pares = self._avaliar_significancia(cont_pares, tamanho=2, n_comparacoes=math.comb(60, 2))
+        self.padroes_trios = self._avaliar_significancia(cont_trios, tamanho=3, n_comparacoes=math.comb(60, 3))
+
+    # -------------------------------------------------------------
+    # NOTA SOBRE QUADRAS E QUINTETOS: propositalmente não expandimos a
+    # contagem bruta de combinações para 4 ou 5 dezenas. C(60,4)=487.635 e
+    # C(60,5)=5.461.512 combinações possíveis — a ocorrência esperada de
+    # qualquer uma delas no histórico é praticamente zero, então qualquer
+    # combinação que apareça 1 vez pareceria "infinitamente significativa"
+    # só por causa da explosão combinatória, não por ser um padrão real.
+    # Em vez disso, os métodos abaixo testam tipos de padrão ESTRUTURALMENTE
+    # diferentes (não apenas "maior"), cada um comparado contra uma
+    # simulação de Monte Carlo de sorteios 100% aleatórios — essa é a forma
+    # estatisticamente correta de avaliar "isso é raro de verdade, ou só
+    # parece?" quando não há fórmula fechada simples.
+    # -------------------------------------------------------------
+
+    def simular_baseline(self, funcao_metrica, n_simulacoes=3000):
+        """Gera N sorteios 100% aleatórios e aplica `funcao_metrica` a cada um.
+        Serve como referência do que o acaso puro produziria, para qualquer
+        estatística nova que se queira testar."""
+        valores = [funcao_metrica(random.sample(range(1, 61), 6)) for _ in range(n_simulacoes)]
+        return {'media_simulada': np.mean(valores), 'std_simulada': np.std(valores)}
+
+    def testar_padrao_binario(self, funcao_binaria, n_simulacoes=4000):
+        """Compara a proporção de concursos reais em que `funcao_binaria` é
+        verdadeira com a proporção esperada sob sorteio aleatório justo
+        (estimada por Monte Carlo). Retorna z-score e p-valor de um teste
+        de proporções — é o jeito certo de testar padrões sem fórmula
+        fechada conhecida (ex: progressões aritméticas, números espelho)."""
+        n = self.total_concursos
+        if n == 0:
+            return {'proporcao_observada': 0, 'proporcao_esperada_acaso': 0, 'z_score': 0,
+                    'p_valor': 1.0, 'conclusao': 'Sem dados'}
+
+        observado = sum(1 for dezenas in self.historico if funcao_binaria(dezenas))
+        prop_observada = observado / n
+
+        simulados = [funcao_binaria(random.sample(range(1, 61), 6)) for _ in range(n_simulacoes)]
+        prop_esperada = np.mean(simulados)
+
+        erro_padrao = math.sqrt(prop_esperada * (1 - prop_esperada) / n) if 0 < prop_esperada < 1 else 1e-9
+        z = (prop_observada - prop_esperada) / erro_padrao
+        p_valor = 2 * (1 - norm.cdf(abs(z)))
+
+        return {
+            'proporcao_observada': prop_observada,
+            'proporcao_esperada_acaso': prop_esperada,
+            'z_score': z,
+            'p_valor': p_valor,
+            'conclusao': ('Desvio estatisticamente significativo do acaso'
+                          if p_valor < 0.05 else 'Sem desvio significativo do acaso')
+        }
+
+    # ---- Padrões estruturais prontos para uso ----
+
+    @staticmethod
+    def tem_progressao_aritmetica(dezenas, min_termos=3):
+        """Detecta se o jogo contém uma progressão aritmética (ex: 4,10,16 - razão 6)."""
+        ordenadas = sorted(dezenas)
+        for combo in itertools.combinations(ordenadas, min_termos):
+            diffs = [combo[i+1] - combo[i] for i in range(len(combo) - 1)]
+            if len(set(diffs)) == 1:
+                return True
+        return False
+
+    @staticmethod
+    def _mirror(n):
+        """'Número espelho': dígitos invertidos (ex: 12<->21, 34<->43). Para
+        números de 1 dígito, o espelho é o próprio dígito seguido de zero
+        (ex: 3 -> 30)."""
+        if n < 10:
+            candidato = n * 10
+        else:
+            candidato = int(str(n)[::-1])
+        if candidato != n and 1 <= candidato <= 60:
+            return candidato
+        return None
+
+    @classmethod
+    def tem_par_espelho(cls, dezenas):
+        """Detecta se o jogo contém um par de números 'espelhados' (ex: 12 e 21)."""
+        conjunto = set(dezenas)
+        for n in dezenas:
+            m = cls._mirror(n)
+            if m and m in conjunto:
+                return True
+        return False
+
+    @staticmethod
+    def tem_terminacao_repetida(dezenas):
+        """Detecta se duas ou mais dezenas do jogo terminam no mesmo dígito
+        (ex: 14 e 24, ambos terminando em 4)."""
+        terminacoes = [n % 10 for n in dezenas]
+        return len(terminacoes) != len(set(terminacoes))
+
+    @staticmethod
+    def gap_minimo(dezenas):
+        """Menor distância entre duas dezenas consecutivas do jogo (ordenado)."""
+        ordenadas = sorted(dezenas)
+        return min(ordenadas[i+1] - ordenadas[i] for i in range(len(ordenadas) - 1))
+
+    def analisar_terminacoes(self):
+        """Frequência de cada dígito final (0-9) no histórico, testada com
+        qui-quadrado contra a distribuição uniforme esperada (cada dígito
+        final tem exatamente 6 dezenas possíveis entre 1 e 60, então o
+        esperado É uniforme aqui, ao contrário de pares/trios)."""
+        cont = Counter()
+        for dezenas in self.historico:
+            for n in dezenas:
+                cont[n % 10] += 1
+        total = sum(cont.values())
+        esperado = total / 10 if total else 1
+        chi2_stat = sum((cont.get(d, 0) - esperado) ** 2 / esperado for d in range(10))
+        p_valor = 1 - chi2.cdf(chi2_stat, 9)
+        return {
+            'contagem_por_digito': {d: cont.get(d, 0) for d in range(10)},
+            'esperado_por_digito': round(esperado, 1),
+            'chi2': chi2_stat,
+            'p_valor': p_valor,
+            'conclusao': ('Desvio significativo entre terminações' if p_valor < 0.05
+                          else 'Terminações consistentes com sorteio uniforme')
+        }
+
+    def analisar_gaps(self):
+        """Distribuição das distâncias entre dezenas consecutivas dentro de
+        cada jogo sorteado."""
+        cont_gaps = Counter()
+        for dezenas in self.historico:
+            ordenadas = sorted(dezenas)
+            for i in range(len(ordenadas) - 1):
+                cont_gaps[ordenadas[i+1] - ordenadas[i]] += 1
+        return dict(sorted(cont_gaps.items()))
+
+    def relatorio_padroes_estruturais(self, n_simulacoes=4000):
+        """Roda todos os testes estruturais binários de uma vez e devolve um
+        relatório consolidado, pronto para exibir na interface."""
+        return {
+            'progressao_aritmetica': self.testar_padrao_binario(self.tem_progressao_aritmetica, n_simulacoes),
+            'numeros_espelho': self.testar_padrao_binario(self.tem_par_espelho, n_simulacoes),
+            'terminacao_repetida': self.testar_padrao_binario(self.tem_terminacao_repetida, n_simulacoes),
+            'terminacoes': self.analisar_terminacoes(),
+            'gaps': self.analisar_gaps()
+        }
+
+    def _avaliar_significancia(self, contagens, tamanho, n_comparacoes):
+        p = self._prob_coocorrencia(tamanho)
+        esperado = p * self.total_concursos
+        # aproximação normal à binomial (razoável aqui pois n é grande e p é pequeno)
+        desvio_padrao = math.sqrt(self.total_concursos * p * (1 - p)) if self.total_concursos > 0 else 1
+        # limiar corrigido por Bonferroni para múltiplas comparações
+        z_critico = norm.ppf(1 - self.alpha / (2 * n_comparacoes)) if n_comparacoes > 0 else norm.ppf(1 - self.alpha / 2)
+
+        resultado = {}
+        for combinacao, observado in contagens.items():
+            z = (observado - esperado) / desvio_padrao if desvio_padrao > 0 else 0
+            resultado[combinacao] = {
+                'observado': observado,
+                'esperado': round(esperado, 4),
+                'z_score': z,
+                'significativo_bonferroni': abs(z) >= z_critico
+            }
+        return resultado
+
+    def top_padroes(self, tipo='pares', top_n=15, apenas_significativos=False):
+        dados = self.padroes_pares if tipo == 'pares' else self.padroes_trios
+        itens = dados.items()
+        if apenas_significativos:
+            itens = [(k, v) for k, v in itens if v['significativo_bonferroni']]
+        ranking = sorted(itens, key=lambda x: x[1]['z_score'], reverse=True)
+        return ranking[:top_n]
+
+    def gerar_jogos_por_padroes(self, qtd=10, tipo='pares', top_n=15, apenas_significativos=False):
+        """Gera jogos usando os padrões (pares/trios) de maior z-score como 'semente',
+        completando o resto do jogo com outras dezenas que também aparecem entre os
+        padrões de destaque."""
+        candidatos = self.top_padroes(tipo=tipo, top_n=top_n, apenas_significativos=apenas_significativos)
+        if not candidatos:
+            return []
+
+        numeros_em_destaque = set()
+        for combinacao, _ in candidatos:
+            numeros_em_destaque.update(combinacao)
+        pool_destaque = list(numeros_em_destaque)
+
+        jogos = []
+        tentativas = 0
+        max_tentativas = qtd * 5000
+
+        while len(jogos) < qtd and tentativas < max_tentativas:
+            tentativas += 1
+            combinacao_base, _ = random.choice(candidatos)
+            jogo = set(combinacao_base)
+
+            while len(jogo) < 6:
+                if pool_destaque and random.random() < 0.7:
+                    novo = random.choice(pool_destaque)
+                else:
+                    novo = random.randint(1, 60)
+                if novo not in jogo:
+                    jogo.add(novo)
+
+            jogo = sorted(jogo)
+            if jogo not in jogos:
+                jogos.append(jogo)
+
+        return jogos
+
+    def gerar_jogos_estruturais(self, qtd=10, tipos=('progressao', 'espelho')):
+        """Gera jogos que deliberadamente CONTÊM um dos padrões estruturais
+        pedidos (progressão aritmética, par espelho, terminação repetida).
+        Isso é só combinatória guiada — não aumenta a chance real de acertar,
+        já que cada combinação de 6 dezenas tem a mesma probabilidade que
+        qualquer outra num sorteio justo."""
+        geradores = {
+            'progressao': self._gerar_com_progressao,
+            'espelho': self._gerar_com_espelho,
+            'terminacao': self._gerar_com_terminacao_repetida,
+        }
+        jogos = []
+        tentativas = 0
+        max_tentativas = qtd * 8000
+        tipos_validos = [t for t in tipos if t in geradores]
+        if not tipos_validos:
+            return []
+
+        while len(jogos) < qtd and tentativas < max_tentativas:
+            tentativas += 1
+            tipo_escolhido = random.choice(tipos_validos)
+            jogo = geradores[tipo_escolhido]()
+            if jogo and jogo not in jogos:
+                jogos.append(jogo)
+
+        return jogos
+
+    @staticmethod
+    def _gerar_com_progressao():
+        razao = random.randint(1, 9)
+        primeiro = random.randint(1, 60 - 2 * razao)
+        base = {primeiro, primeiro + razao, primeiro + 2 * razao}
+        while len(base) < 6:
+            base.add(random.randint(1, 60))
+        return sorted(base)
+
+    @classmethod
+    def _gerar_com_espelho(cls):
+        candidatos = [n for n in range(1, 61) if cls._mirror(n)]
+        n = random.choice(candidatos)
+        m = cls._mirror(n)
+        base = {n, m}
+        while len(base) < 6:
+            base.add(random.randint(1, 60))
+        return sorted(base)
+
+    @staticmethod
+    def _gerar_com_terminacao_repetida():
+        digito = random.randint(0, 9)
+        candidatos = [n for n in range(1, 61) if n % 10 == digito]
+        if len(candidatos) < 2:
+            return None
+        base = set(random.sample(candidatos, 2))
+        while len(base) < 6:
+            base.add(random.randint(1, 60))
+        return sorted(base)
+
+
+# =====================================================
 # INTERFACE PRINCIPAL
 # =====================================================
 
@@ -1151,6 +1465,8 @@ def main():
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
         st.session_state.ia_treinada = False
+    if "cioni" not in st.session_state:
+        st.session_state.cioni = None
 
     # Barra Lateral
     with st.sidebar:
@@ -1188,6 +1504,8 @@ def main():
                             st.session_state.estatisticas,
                             st.session_state.filtros
                         )
+
+                        st.session_state.cioni = ModuloCioni(st.session_state.banco_dados)
                         
                         st.success(f"✅ {len(dados)} concursos carregados!")
                         st.info("🔄 IA pronta para treinamento")
@@ -1232,6 +1550,7 @@ def main():
         "🎲 Gerador Premium",
         "🔬 Backtests",
         "📈 Análise Avançada",
+        "🕵️ Cioni - Padrões Ocultos",
         "💾 Salvos"
     ])
 
@@ -1695,8 +2014,136 @@ def main():
                         title='Distribuição por Colunas (Últimos 100 Concursos)')
             st.plotly_chart(fig, use_container_width=True)
 
-    # ================= TAB 7: SALVOS =================
+    # ================= TAB 7: CIONI - PADRÕES OCULTOS =================
     with tabs[6]:
+        st.markdown("### 🕵️ Cioni - Detector de Padrões Ocultos")
+        st.markdown("""
+        <div class="highlight">
+        <strong>O que isso realmente é:</strong> busca pares e trios de dezenas cuja
+        frequência de saírem juntas se desvia do que se esperaria de um sorteio
+        aleatório justo (calculado via distribuição hipergeométrica).<br><br>
+        <strong>O que isso NÃO é:</strong> uma previsão. A Mega-Sena não tem memória —
+        um par ter saído junto 8 vezes no passado não muda a chance dele sair junto
+        de novo. Isso é uma ferramenta de exploração estatística, com correção de
+        Bonferroni para múltiplas comparações (testamos 1.770 pares e 34.220 trios
+        ao mesmo tempo, então algum "destaque" por puro acaso é esperado).
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.session_state.cioni:
+            cioni = st.session_state.cioni
+
+            col1, col2 = st.columns(2)
+            with col1:
+                tipo_padrao = st.radio("Tipo de padrão", ['pares', 'trios'], horizontal=True)
+            with col2:
+                apenas_sig = st.checkbox("Mostrar apenas estatisticamente significativos (Bonferroni)", value=False)
+
+            top_padroes = cioni.top_padroes(tipo=tipo_padrao, top_n=20, apenas_significativos=apenas_sig)
+
+            if not top_padroes:
+                st.warning("Nenhum padrão encontrado com esse filtro. Tente desmarcar 'apenas significativos'.")
+            else:
+                df_padroes = pd.DataFrame([
+                    {
+                        'Dezenas': ', '.join(f'{n:02d}' for n in combinacao),
+                        'Observado': info['observado'],
+                        'Esperado (acaso)': info['esperado'],
+                        'Z-score': round(info['z_score'], 2),
+                        'Significativo (Bonferroni)': '✅' if info['significativo_bonferroni'] else '—'
+                    }
+                    for combinacao, info in top_padroes
+                ])
+                st.dataframe(df_padroes, use_container_width=True, hide_index=True)
+
+                st.markdown("#### 🎲 Gerar jogos a partir destes padrões")
+                qtd_cioni = st.slider("Quantidade de jogos", 1, 30, 10, key="qtd_cioni")
+                if st.button("🕵️ GERAR JOGOS CIONI", use_container_width=True, type="primary"):
+                    jogos_cioni = cioni.gerar_jogos_por_padroes(
+                        qtd=qtd_cioni, tipo=tipo_padrao, top_n=20, apenas_significativos=apenas_sig
+                    )
+                    if jogos_cioni:
+                        for i, jogo in enumerate(jogos_cioni):
+                            st.markdown(
+                                f"<div class='card'><strong>Jogo {i+1}:</strong> "
+                                f"{formatar_jogo_html_mega(jogo)}</div>",
+                                unsafe_allow_html=True
+                            )
+                    else:
+                        st.warning("Não foi possível gerar jogos com os parâmetros atuais.")
+
+            st.markdown("---")
+            st.markdown("#### 🧬 Padrões Estruturais (além de pares/trios)")
+            st.caption(
+                "Cada teste compara a proporção real no histórico com a proporção que o "
+                "acaso puro produziria (estimada por simulação de Monte Carlo)."
+            )
+
+            if st.button("🔍 Rodar análise estrutural completa", use_container_width=True):
+                with st.spinner("Simulando sorteios aleatórios para comparação..."):
+                    relatorio = cioni.relatorio_padroes_estruturais(n_simulacoes=4000)
+
+                linhas = []
+                nomes = {
+                    'progressao_aritmetica': 'Progressão aritmética (ex: 4,10,16)',
+                    'numeros_espelho': 'Par de números espelho (ex: 12 e 21)',
+                    'terminacao_repetida': 'Duas dezenas com mesma terminação'
+                }
+                for chave, nome in nomes.items():
+                    r = relatorio[chave]
+                    linhas.append({
+                        'Padrão': nome,
+                        '% Observado': f"{r['proporcao_observada']*100:.1f}%",
+                        '% Esperado (acaso)': f"{r['proporcao_esperada_acaso']*100:.1f}%",
+                        'Z-score': round(r['z_score'], 2),
+                        'p-valor': round(r['p_valor'], 4),
+                        'Conclusão': r['conclusao']
+                    })
+                st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
+
+                st.markdown("**Terminações (dígito final 0-9):**")
+                term = relatorio['terminacoes']
+                df_term = pd.DataFrame([
+                    {'Dígito final': d, 'Observado': v, 'Esperado (uniforme)': term['esperado_por_digito']}
+                    for d, v in term['contagem_por_digito'].items()
+                ])
+                st.dataframe(df_term, use_container_width=True, hide_index=True)
+                st.caption(f"χ²={term['chi2']:.2f}, p-valor={term['p_valor']:.4f} → {term['conclusao']}")
+
+                gaps = relatorio['gaps']
+                fig_gaps = go.Figure(data=go.Bar(x=list(gaps.keys()), y=list(gaps.values())))
+                fig_gaps.update_layout(title='Distância entre dezenas consecutivas dentro do jogo',
+                                        xaxis_title='Distância (gap)', yaxis_title='Frequência', height=350)
+                st.plotly_chart(fig_gaps, use_container_width=True)
+
+            st.markdown("#### 🎲 Gerar jogos com um padrão estrutural específico")
+            tipos_escolhidos = st.multiselect(
+                "Escolha os padrões que os jogos devem conter",
+                ['progressao', 'espelho', 'terminacao'],
+                default=['progressao', 'espelho'],
+                format_func=lambda t: {
+                    'progressao': 'Progressão aritmética',
+                    'espelho': 'Par espelho',
+                    'terminacao': 'Terminação repetida'
+                }[t]
+            )
+            qtd_estrutural = st.slider("Quantidade de jogos", 1, 30, 10, key="qtd_estrutural")
+            if st.button("🧬 GERAR JOGOS ESTRUTURAIS", use_container_width=True):
+                jogos_estruturais = cioni.gerar_jogos_estruturais(qtd=qtd_estrutural, tipos=tipos_escolhidos)
+                if jogos_estruturais:
+                    for i, jogo in enumerate(jogos_estruturais):
+                        st.markdown(
+                            f"<div class='card'><strong>Jogo {i+1}:</strong> "
+                            f"{formatar_jogo_html_mega(jogo)}</div>",
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.warning("Selecione ao menos um tipo de padrão.")
+        else:
+            st.info("Carregue os dados na barra lateral para ativar o Cioni.")
+
+    # ================= TAB 8: SALVOS =================
+    with tabs[7]:
         st.markdown("### 💾 Jogos Salvos")
         
         jogos_salvos = carregar_jogos_mega_elite()
