@@ -512,6 +512,28 @@ class AnaliseCombinatoriaMega:
         }
 
     @staticmethod
+    def distribuicao_colunas_ativas():
+        """Distribuição EXATA (via inclusão-exclusão) do número de colunas
+        ativas (de 6 colunas de 10 dezenas cada) num sorteio de 6 dezenas.
+        Isto é o 'problema da ocupação' clássico — não depende de nenhum
+        histórico, é matemática pura de um sorteio justo."""
+        total = math.comb(60, 6)
+
+        def formas_sem_vazio(k):
+            # nº de formas de sortear 6 dezenas dentro de k colunas específicas
+            # (10k números) sem que nenhuma dessas k colunas fique vazia
+            return sum(
+                (-1) ** i * math.comb(k, i) * math.comb(10 * (k - i), 6)
+                for i in range(0, k + 1)
+            )
+
+        distribuicao = {}
+        for k in range(1, 7):
+            formas = math.comb(6, k) * formas_sem_vazio(k)
+            distribuicao[k] = formas / total
+        return distribuicao
+
+    @staticmethod
     def valor_esperado_aposta(preco_aposta, premios_medios, tamanho_jogo=6):
         """Calcula o valor esperado (EV) de uma aposta, dado o preço e os prêmios médios
         históricos por faixa de acerto. Uma aposta de loteria quase sempre tem EV negativo
@@ -832,8 +854,12 @@ class FiltrosInteligentesMega:
             'repetidas_max': 3,
             'primos_min': 1,
             'primos_max': 4,
-            'colunas_min': 4,
-            'colunas_max': 6
+            # CORRIGIDO: o valor mais comum de colunas ativas é 4 (50,8% dos sorteios),
+            # mas 3 e 5 juntos somam mais de 46% — o intervalo 4-6 usado antes cobria só
+            # ~78% dos casos possíveis. O intervalo 3-5 é o que reflete a distribuição
+            # exata (problema da ocupação), cobrindo ~96,9% dos sorteios esperados.
+            'colunas_min': 3,
+            'colunas_max': 5
         }
     
     def aplicar_filtros(self, jogo, filtros=None):
@@ -870,7 +896,7 @@ class FiltrosInteligentesMega:
         # Colunas
         colunas = distribuir_colunas_mega(jogo)
         colunas_ativas = len([c for c in colunas if c > 0])
-        if not (filtros.get('colunas_min', 4) <= colunas_ativas <= filtros.get('colunas_max', 6)):
+        if not (filtros.get('colunas_min', 3) <= colunas_ativas <= filtros.get('colunas_max', 5)):
             return False, f'{colunas_ativas} colunas ativas'
         
         # Repetidas do último concurso
@@ -898,8 +924,8 @@ class FiltrosInteligentesMega:
             'repetidas_max': int(rep_stats.get('media', 2) + 1),
             'primos_min': 1,
             'primos_max': 4,
-            'colunas_min': 4,
-            'colunas_max': 6
+            'colunas_min': 3,
+            'colunas_max': 5
         }
 
 # =====================================================
@@ -1732,8 +1758,8 @@ def main():
                         soma_min = st.slider("Soma Mínima", 80, 300, 120)
                         soma_max = st.slider("Soma Máxima", 80, 300, 220)
                         consec_max = st.slider("Máx. Consecutivos", 1, 6, 3)
-                        colunas_min = st.slider("Mínimo Colunas", 1, 6, 4)
-                        colunas_max = st.slider("Máximo Colunas", 1, 6, 6)
+                        colunas_min = st.slider("Mínimo Colunas", 1, 6, 3)
+                        colunas_max = st.slider("Máximo Colunas", 1, 6, 5)
                     else:
                         filtros_recomendados = st.session_state.filtros.get_filtros_recomendados()
                         pares_min = filtros_recomendados['pares_min']
@@ -2013,6 +2039,31 @@ def main():
                         x='Concurso', y='value', color='variable',
                         title='Distribuição por Colunas (Últimos 100 Concursos)')
             st.plotly_chart(fig, use_container_width=True)
+
+            # Nº de colunas ativas: teórico (exato) vs observado — não existia antes
+            st.markdown("### 🎯 Nº de Colunas Ativas: Teórico (exato) vs. Observado")
+            st.caption(
+                "O valor teórico vem da matemática pura do 'problema da ocupação' "
+                "(distribuir 6 dezenas em 6 colunas de 10) — não depende do histórico. "
+                "4 colunas ativas é o resultado mais comum possível (~50,8% dos sorteios), "
+                "não um padrão específico da Mega-Sena."
+            )
+            dist_teorica = AnaliseCombinatoriaMega.distribuicao_colunas_ativas()
+            cont_observado = Counter()
+            for concurso in stats.banco.concursos:
+                ativas = len([c for c in concurso['colunas'] if c > 0])
+                cont_observado[ativas] += 1
+            total_obs = sum(cont_observado.values()) or 1
+
+            df_comp_colunas = pd.DataFrame([
+                {
+                    'Colunas ativas': k,
+                    'Probabilidade teórica': f"{dist_teorica.get(k, 0)*100:.2f}%",
+                    'Observado no histórico': f"{cont_observado.get(k, 0)/total_obs*100:.2f}%"
+                }
+                for k in range(1, 7)
+            ])
+            st.dataframe(df_comp_colunas, use_container_width=True, hide_index=True)
 
     # ================= TAB 7: CIONI - PADRÕES OCULTOS =================
     with tabs[6]:
