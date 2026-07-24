@@ -327,7 +327,10 @@ class EstatisticasMegaAvancadas:
                 freq_janelas.append(freq.get(num, 0) / janela)
             
             if len(freq_janelas) >= 2:
-                x = np.array(range(len(freq_janelas)))
+                # CORRIGIDO: usa o tamanho real de cada janela (10,20,50,100) no eixo X.
+                # Usar apenas o índice (0,1,2,3) distorce a inclinação porque as janelas
+                # não são igualmente espaçadas.
+                x = np.array(janelas, dtype=float)
                 y = np.array(freq_janelas)
                 slope = np.polyfit(x, y, 1)[0] if len(x) > 1 else 0
                 
@@ -423,6 +426,102 @@ class EstatisticasMegaAvancadas:
             'tendencia': self.tendencias.get(numero, {'tendencia': 'estavel', 'inclinacao': 0}),
             'probabilidade': self.frequencias.get(numero, 0) / (self.total_concursos * 6) if self.total_concursos > 0 else 0
         }
+
+# =====================================================
+# MÓDULO 2B: MATEMÁTICA COMBINATÓRIA E TESTE DE ALEATORIEDADE
+# =====================================================
+# Este módulo não existia no código original. Ele traz duas coisas que faltavam
+# e que são o estado da arte real para este tipo de sistema:
+#
+# 1) Probabilidades EXATAS via distribuição hipergeométrica (não estimativas
+#    empíricas). Para a Mega-Sena, a chance de acertar exatamente k dezenas em
+#    um jogo de 6 dezenas é:
+#
+#        P(k) = C(6,k) * C(54,6-k) / C(60,6)
+#
+#    Isso é constante e NÃO muda com base em histórico, "atraso" ou tendência,
+#    porque cada sorteio é uma extração independente sem memória.
+#
+# 2) Um teste qui-quadrado de aderência à uniformidade, que verifica de forma
+#    estatisticamente rigorosa se a frequência observada das 60 dezenas se
+#    desvia do que se espera de um sorteio justo. Isso é o jeito correto de
+#    checar "quente/frio" — e, na prática, para loterias oficiais bem
+#    auditadas, o resultado esperado é NÃO rejeitar a hipótese de uniformidade.
+
+class AnaliseCombinatoriaMega:
+    """Módulo 2B - Combinatória exata e teste de aleatoriedade para Mega-Sena"""
+
+    N_DEZENAS_UNIVERSO = 60
+    N_DEZENAS_JOGO = 6
+
+    @staticmethod
+    def probabilidade_exata(k, tamanho_jogo=6, universo=60, sorteados=6):
+        """P(acertar exatamente k dezenas) via hipergeométrica, para um jogo de
+        `tamanho_jogo` dezenas (permite calcular também para jogos de 7, 8... dezenas)."""
+        if k > min(tamanho_jogo, sorteados):
+            return 0.0
+        favoraveis = math.comb(tamanho_jogo, k) * math.comb(universo - tamanho_jogo, sorteados - k)
+        total = math.comb(universo, sorteados)
+        return favoraveis / total
+
+    @classmethod
+    def tabela_probabilidades(cls, tamanho_jogo=6):
+        """Retorna P(k acertos) para todos os k possíveis, com o valor '1 em N'."""
+        tabela = {}
+        for k in range(0, min(tamanho_jogo, 6) + 1):
+            p = cls.probabilidade_exata(k, tamanho_jogo=tamanho_jogo)
+            tabela[k] = {
+                'probabilidade': p,
+                'um_em': (1 / p) if p > 0 else float('inf')
+            }
+        return tabela
+
+    @staticmethod
+    def teste_qui_quadrado_uniformidade(historico):
+        """Testa H0: todas as 60 dezenas têm a mesma probabilidade de sair.
+        Retorna estatística, p-valor e conclusão. p-valor baixo (<0.05) sugeriria
+        viés real no sorteio; para uma loteria oficial auditada, o esperado é
+        NÃO rejeitar H0 (ou seja, p-valor alto)."""
+        freq_obs = Counter()
+        for dezenas in historico:
+            freq_obs.update(dezenas)
+
+        total_sorteios = sum(freq_obs.values())
+        if total_sorteios == 0:
+            return {'estatistica': 0, 'p_valor': 1.0, 'conclusao': 'Sem dados suficientes'}
+
+        esperado_por_dezena = total_sorteios / 60
+        observados = np.array([freq_obs.get(n, 0) for n in range(1, 61)])
+        esperados = np.full(60, esperado_por_dezena)
+
+        chi2_stat = np.sum((observados - esperados) ** 2 / esperados)
+        graus_liberdade = 59
+        p_valor = 1 - chi2.cdf(chi2_stat, graus_liberdade)
+
+        if p_valor < 0.05:
+            conclusao = "Desvio estatisticamente significativo da uniformidade (raro para loteria oficial; investigar)."
+        else:
+            conclusao = "Nenhum desvio estatisticamente significativo da uniformidade — consistente com sorteio justo."
+
+        return {
+            'estatistica': chi2_stat,
+            'p_valor': p_valor,
+            'graus_liberdade': graus_liberdade,
+            'conclusao': conclusao
+        }
+
+    @staticmethod
+    def valor_esperado_aposta(preco_aposta, premios_medios, tamanho_jogo=6):
+        """Calcula o valor esperado (EV) de uma aposta, dado o preço e os prêmios médios
+        históricos por faixa de acerto. Uma aposta de loteria quase sempre tem EV negativo
+        (é assim que o jogo se financia); isso NÃO é alterado por nenhuma estratégia de
+        escolha de dezenas, já que a probabilidade de cada faixa é fixa."""
+        ev = -preco_aposta
+        for k, premio_medio in premios_medios.items():
+            p = AnaliseCombinatoriaMega.probabilidade_exata(k, tamanho_jogo=tamanho_jogo)
+            ev += p * premio_medio
+        return ev
+
 
 # =====================================================
 # MÓDULO 3: MOTOR DE PONTUAÇÃO - MEGA
@@ -534,64 +633,96 @@ class IAEstatisticaMega:
         self._preparar_dados()
         
     def _preparar_dados(self):
-        """Prepara dados para treinamento"""
+        """Prepara dados para treinamento SEM vazamento de dados (look-ahead bias).
+
+        PROBLEMA NA VERSÃO ANTERIOR: as features usavam `self.estatisticas.frequencias`,
+        `atrasos` e `tendencias`, todos calculados sobre o histórico COMPLETO (passado E
+        futuro em relação a cada concurso usado como exemplo de treino). Além disso,
+        features como `sum(dezenas)/60` e `pares do próprio jogo` eram calculadas a partir
+        do PRÓPRIO concurso que estava sendo rotulado — ou seja, o modelo "via" o resultado
+        que deveria prever. Isso infla artificialmente a acurácia sem gerar nenhum poder
+        preditivo real fora da amostra.
+
+        CORREÇÃO: para cada concurso, as features usam apenas frequência e atraso
+        acumulados a partir dos concursos ANTERIORES (ordem cronológica), nunca do
+        concurso atual ou de concursos futuros.
+        """
         features = []
         targets = []
-        
-        for concurso in self.banco.concursos:
+
+        # self.banco.concursos vem ordenado do mais recente para o mais antigo.
+        # Para simular "o que se sabia até aquele momento", percorremos em ordem
+        # cronológica (do mais antigo para o mais novo).
+        concursos_cronologicos = list(reversed(self.banco.concursos))
+        janela_recente = 20
+
+        freq_acumulada = Counter()
+        historico_janela = []  # guarda as últimas `janela_recente` dezenas sorteadas
+        ultima_aparicao = {}   # numero -> índice cronológico da última vez que saiu
+
+        for idx, concurso in enumerate(concursos_cronologicos):
             dezenas = concurso['dezenas']
-            
-            # Para cada dezena sorteada
+            max_freq_hist = max(freq_acumulada.values()) if freq_acumulada else 1
+
+            freq_janela = Counter()
+            for d in historico_janela:
+                freq_janela.update(d)
+            max_freq_janela = max(freq_janela.values()) if freq_janela else 1
+
+            for num in range(1, 61):
+                freq_hist_norm = freq_acumulada.get(num, 0) / max_freq_hist
+                freq_recente_norm = freq_janela.get(num, 0) / max_freq_janela
+                if num in ultima_aparicao:
+                    atraso = idx - ultima_aparicao[num]
+                else:
+                    atraso = idx  # nunca saiu até agora nesta simulação
+                atraso_norm = atraso / (idx + 1)
+
+                features.append([freq_hist_norm, freq_recente_norm, atraso_norm])
+                targets.append(1 if num in dezenas else 0)
+
+            # só DEPOIS de gerar as features é que o concurso atual entra no histórico
+            freq_acumulada.update(dezenas)
+            historico_janela.append(dezenas)
+            if len(historico_janela) > janela_recente:
+                historico_janela.pop(0)
             for num in dezenas:
-                features.append([
-                    self.estatisticas.frequencias.get(num, 0),
-                    self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0),
-                    self.estatisticas.atrasos.get(num, 0),
-                    self.estatisticas.tendencias.get(num, {}).get('inclinacao', 0),
-                    sum([1 for n in dezenas if n % 2 == 0]) / 6,
-                    sum([1 for n in dezenas if n <= 20]) / 6,
-                    sum([1 for n in dezenas if 21 <= n <= 40]) / 6,
-                    sum(dezenas) / 60,
-                    len([n for n in dezenas if abs(n - num) <= 5]) / 6
-                ])
-                targets.append(1)
-            
-            # Para dezenas não sorteadas
-            todas_dezenas = set(range(1, 61))
-            nao_sorteadas = todas_dezenas - set(dezenas)
-            for num in nao_sorteadas:
-                features.append([
-                    self.estatisticas.frequencias.get(num, 0),
-                    self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0),
-                    self.estatisticas.atrasos.get(num, 0),
-                    self.estatisticas.tendencias.get(num, {}).get('inclinacao', 0),
-                    sum([1 for n in dezenas if n % 2 == 0]) / 6,
-                    sum([1 for n in dezenas if n <= 20]) / 6,
-                    sum([1 for n in dezenas if 21 <= n <= 40]) / 6,
-                    sum(dezenas) / 60,
-                    0
-                ])
-                targets.append(0)
-        
+                ultima_aparicao[num] = idx
+
         self.dados_processados = {
             'features': np.array(features),
-            'targets': np.array(targets)
+            'targets': np.array(targets),
+            'concursos_totais': len(concursos_cronologicos)
         }
     
+    def _split_temporal(self, test_frac=0.2):
+        """Divide os dados por TEMPO (concursos mais antigos = treino, mais recentes = teste),
+        nunca aleatoriamente. Um split aleatório misturaria as 60 linhas (uma por dezena)
+        de um mesmo concurso entre treino e teste, o que também vaza informação porque
+        essas linhas são estatisticamente dependentes (somam sempre 6 positivos)."""
+        X = self.dados_processados['features']
+        y = self.dados_processados['targets']
+        n_concursos = self.dados_processados['concursos_totais']
+
+        n_test_concursos = max(1, int(n_concursos * test_frac))
+        linha_corte = (n_concursos - n_test_concursos) * 60
+
+        X_train, X_test = X[:linha_corte], X[linha_corte:]
+        y_train, y_test = y[:linha_corte], y[linha_corte:]
+        return X_train, X_test, y_train, y_test
+
     def treinar_random_forest(self):
         """Treina modelo Random Forest"""
         try:
-            X = self.dados_processados['features']
-            y = self.dados_processados['targets']
-            
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            
+            X_train, X_test, y_train, y_test = self._split_temporal(test_frac=0.2)
+
             modelo = RandomForestClassifier(
                 n_estimators=150,
                 max_depth=12,
                 min_samples_split=5,
                 random_state=42,
-                n_jobs=-1
+                n_jobs=-1,
+                class_weight='balanced'
             )
             modelo.fit(X_train, y_train)
             
@@ -613,19 +744,21 @@ class IAEstatisticaMega:
         """Treina modelo XGBoost (Gradient Boosting)"""
         try:
             from sklearn.ensemble import GradientBoostingClassifier
-            
-            X = self.dados_processados['features']
-            y = self.dados_processados['targets']
-            
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            
+
+            X_train, X_test, y_train, y_test = self._split_temporal(test_frac=0.2)
+
+            # GradientBoostingClassifier não aceita class_weight; aplicamos sample_weight manualmente
+            classes, contagens = np.unique(y_train, return_counts=True)
+            peso_por_classe = {c: len(y_train) / (len(classes) * cnt) for c, cnt in zip(classes, contagens)}
+            sample_weight = np.array([peso_por_classe[v] for v in y_train])
+
             modelo = GradientBoostingClassifier(
                 n_estimators=150,
                 learning_rate=0.1,
                 max_depth=6,
                 random_state=42
             )
-            modelo.fit(X_train, y_train)
+            modelo.fit(X_train, y_train, sample_weight=sample_weight)
             
             y_pred = modelo.predict(X_test)
             acuracia = accuracy_score(y_test, y_pred)
@@ -642,24 +775,24 @@ class IAEstatisticaMega:
             return False
     
     def prever_probabilidades(self, jogo):
-        """Prevê probabilidades para um jogo"""
+        """Prevê probabilidades para um jogo, usando o histórico completo conhecido
+        até agora (features consistentes com as usadas no treino: freq histórica
+        normalizada, freq recente normalizada e atraso normalizado)."""
         if not self.modelos:
             return None
-        
+
+        max_freq = max(self.estatisticas.frequencias.values()) if self.estatisticas.frequencias else 1
+        freq_20 = self.estatisticas.frequencias_periodos.get(20, {})
+        max_freq_20 = max(freq_20.values()) if freq_20 else 1
+        max_atraso = max(self.estatisticas.atrasos.values()) if self.estatisticas.atrasos else 1
+
         features = []
         for num in jogo:
-            features.append([
-                self.estatisticas.frequencias.get(num, 0),
-                self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0),
-                self.estatisticas.atrasos.get(num, 0),
-                self.estatisticas.tendencias.get(num, {}).get('inclinacao', 0),
-                contar_pares_mega(jogo) / 6,
-                sum([1 for n in jogo if n <= 20]) / 6,
-                sum([1 for n in jogo if 21 <= n <= 40]) / 6,
-                sum(jogo) / 60,
-                sum([1 for n in jogo if abs(n - num) <= 5]) / 6
-            ])
-        
+            freq_hist_norm = self.estatisticas.frequencias.get(num, 0) / max_freq
+            freq_recente_norm = freq_20.get(num, 0) / max_freq_20
+            atraso_norm = self.estatisticas.atrasos.get(num, 0) / max_atraso
+            features.append([freq_hist_norm, freq_recente_norm, atraso_norm])
+
         features = np.array(features)
         
         resultados = {}
@@ -951,11 +1084,43 @@ class BacktestsMega:
             'percentil_25': np.percentile(resultados, 25) if resultados else 0
         }
     
+    def testar_baseline_aleatorio(self, num_testes=50, qtd_por_teste=10):
+        """Baseline de controle: gera jogos 100% aleatórios (sem nenhuma estatística)
+        e mede os acertos contra o mesmo histórico. Isso não existia no código original
+        e é essencial: só faz sentido dizer que uma estratégia é boa se ela superar
+        esta baseline de forma estatisticamente consistente. Para uma loteria justa,
+        o esperado é que TODAS as estratégias, incluindo esta, produzam médias
+        estatisticamente equivalentes."""
+        historico = self.banco.concursos
+        testes = historico[:min(num_testes, len(historico))]
+        resultados = []
+
+        for concurso in testes:
+            dezenas_reais = concurso['dezenas']
+            for _ in range(qtd_por_teste):
+                jogo = random.sample(range(1, 61), 6)
+                resultados.append(len(set(jogo) & set(dezenas_reais)))
+
+        return {
+            'estrategia': 'aleatorio_puro',
+            'total_simulacoes': len(resultados),
+            'media': np.mean(resultados) if resultados else 0,
+            'mediana': np.median(resultados) if resultados else 0,
+            'std': np.std(resultados) if resultados else 0,
+            'max': max(resultados) if resultados else 0,
+            'min': min(resultados) if resultados else 0,
+            'distribuicao': Counter(resultados) if resultados else {},
+            'percentil_75': np.percentile(resultados, 75) if resultados else 0,
+            'percentil_25': np.percentile(resultados, 25) if resultados else 0
+        }
+
     def comparar_estrategias(self, estrategias=['conservadora', 'equilibrada', 'diversificada'], num_testes=50):
-        """Compara múltiplas estratégias"""
+        """Compara múltiplas estratégias, incluindo sempre a baseline aleatória
+        como referência de controle."""
         resultados = {}
         for estrategia in estrategias:
             resultados[estrategia] = self.testar_estrategia(estrategia, num_testes)
+        resultados['aleatorio_puro'] = self.testar_baseline_aleatorio(num_testes)
         return resultados
 
 # =====================================================
@@ -1391,7 +1556,8 @@ def main():
                 estrategias_backtest = st.multiselect(
                     "Selecione estratégias para testar",
                     ['conservadora', 'equilibrada', 'diversificada'],
-                    default=['conservadora', 'equilibrada', 'diversificada']
+                    default=['conservadora', 'equilibrada', 'diversificada'],
+                    help="A baseline 'aleatorio_puro' é sempre incluída automaticamente na comparação."
                 )
             with col2:
                 num_testes = st.slider("Número de concursos para teste", 10, 100, 50)
@@ -1445,7 +1611,42 @@ def main():
         
         if st.session_state.estatisticas:
             stats = st.session_state.estatisticas
-            
+
+            # Teste de aleatoriedade (qui-quadrado) — não existia na versão anterior
+            st.markdown("### 🎲 Teste de Aleatoriedade (Qui-Quadrado)")
+            st.markdown("""
+            <div class="highlight">
+            Testa estatisticamente se as 60 dezenas saem com a mesma probabilidade.
+            Para uma loteria oficial e auditada, o esperado é <strong>não rejeitar</strong>
+            a hipótese de uniformidade — ou seja, nenhuma dezena é realmente "quente" ou "fria".
+            </div>
+            """, unsafe_allow_html=True)
+            resultado_qui2 = AnaliseCombinatoriaMega.teste_qui_quadrado_uniformidade(
+                stats.banco.get_historico_dezenas()
+            )
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Estatística χ²", f"{resultado_qui2['estatistica']:.2f}")
+            c2.metric("p-valor", f"{resultado_qui2['p_valor']:.4f}")
+            c3.metric("Graus de liberdade", resultado_qui2['graus_liberdade'])
+            st.info(resultado_qui2['conclusao'])
+
+            # Probabilidades exatas (hipergeométrica) — não existia na versão anterior
+            st.markdown("### 🎯 Probabilidades Exatas por Faixa de Acerto")
+            tabela_prob = AnaliseCombinatoriaMega.tabela_probabilidades()
+            df_prob = pd.DataFrame([
+                {
+                    'Acertos': k,
+                    'Probabilidade': f"{v['probabilidade']*100:.6f}%",
+                    'Chance': f"1 em {v['um_em']:,.0f}".replace(",", ".") if v['um_em'] != float('inf') else "—"
+                }
+                for k, v in tabela_prob.items()
+            ])
+            st.dataframe(df_prob, use_container_width=True, hide_index=True)
+            st.caption(
+                "Estes valores são exatos e constantes — não mudam com histórico, "
+                "'atraso' ou tendência, pois cada sorteio é uma extração independente."
+            )
+
             # Análise de Correlação
             st.markdown("### 🔗 Análise de Correlação entre Dezenas")
             
