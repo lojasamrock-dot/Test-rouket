@@ -187,6 +187,56 @@ def distribuir_colunas_lf(jogo):
         colunas[(n-1)%5] += 1
     return colunas
 
+def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas=None):
+    """
+    Gera um fechamento (roda de jogos) usando um pool fixo de dezenas
+    (ex.: as 21 dezenas mais bem rankeadas). Produz `qtd_jogos` jogos
+    distintos entre si, balanceando a frequência de aparição de cada
+    dezena do pool ao longo dos jogos gerados.
+    """
+    dezenas_pool = sorted(set(dezenas_pool))
+    n_pool = len(dezenas_pool)
+
+    if n_pool < tamanho_jogo or qtd_jogos <= 0:
+        return []
+
+    max_combinacoes = math.comb(n_pool, tamanho_jogo)
+    qtd_jogos = min(qtd_jogos, max_combinacoes)
+
+    if max_tentativas is None:
+        max_tentativas = qtd_jogos * 300 + 2000
+
+    contagem = {d: 0 for d in dezenas_pool}
+    jogos = []
+    jogos_set = set()
+    tentativas = 0
+
+    while len(jogos) < qtd_jogos and tentativas < max_tentativas:
+        tentativas += 1
+
+        # Pesos inversamente proporcionais à contagem atual: favorece
+        # dezenas menos usadas até agora, equilibrando o fechamento
+        pool_restante = list(dezenas_pool)
+        pesos_restante = [1.0 / (1 + contagem[d]) for d in pool_restante]
+
+        jogo = []
+        for _ in range(tamanho_jogo):
+            escolhido = random.choices(pool_restante, weights=pesos_restante, k=1)[0]
+            idx = pool_restante.index(escolhido)
+            jogo.append(escolhido)
+            pool_restante.pop(idx)
+            pesos_restante.pop(idx)
+
+        jogo_ordenado = tuple(sorted(jogo))
+
+        if jogo_ordenado not in jogos_set:
+            jogos_set.add(jogo_ordenado)
+            jogos.append(list(jogo_ordenado))
+            for d in jogo_ordenado:
+                contagem[d] += 1
+
+    return jogos
+
 # =====================================================
 # FUNÇÃO PARA BUSCAR DADOS DA LOTOFÁCIL
 # =====================================================
@@ -1249,6 +1299,10 @@ def main():
         st.session_state.backtests = None
     if "jogos_gerados" not in st.session_state:
         st.session_state.jogos_gerados = []
+    if "jogos_fechamento" not in st.session_state:
+        st.session_state.jogos_fechamento = []
+    if "fechamento_dezenas" not in st.session_state:
+        st.session_state.fechamento_dezenas = []
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -1426,6 +1480,113 @@ def main():
                     {detalhes}
                 </div>
                 """, unsafe_allow_html=True)
+
+            # ========= FECHAMENTO COM AS 21 DEZENAS DO RANKING =========
+            st.markdown("---")
+            st.markdown("### 🔒 Fechamento com as 21 Dezenas do Ranking")
+            st.markdown("""
+            <div class="lotofacil-highlight">
+                <strong>🎯 O que é:</strong> Um fechamento usa um grupo fixo de dezenas
+                (aqui, as 21 melhores do ranking) e gera vários jogos de 15 dezenas,
+                todos distintos entre si, tentando equilibrar quantas vezes cada
+                dezena do grupo aparece ao longo dos jogos gerados.
+            </div>
+            """, unsafe_allow_html=True)
+
+            ranking_21 = pontuacao.get_ranking(21)
+            dezenas_fechamento = sorted([n for n, _ in ranking_21])
+
+            if len(dezenas_fechamento) < 21:
+                st.warning(f"⚠️ Só há {len(dezenas_fechamento)} dezenas pontuadas disponíveis (menos que 21).")
+
+            st.markdown(f"**Dezenas usadas no fechamento ({len(dezenas_fechamento)}):**")
+            st.markdown(formatar_jogo_html_lf(dezenas_fechamento), unsafe_allow_html=True)
+
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                qtd_fechamento = st.select_slider(
+                    "Quantidade de jogos do fechamento",
+                    options=[5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
+                    value=10,
+                    key="qtd_fechamento_slider"
+                )
+            with col_f2:
+                max_combinacoes = math.comb(len(dezenas_fechamento), 15) if len(dezenas_fechamento) >= 15 else 0
+                st.metric("Combinações possíveis (21 escolhe 15)", f"{max_combinacoes:,}".replace(",", "."))
+
+            if st.button("🔒 GERAR FECHAMENTO", use_container_width=True, type="primary", key="gerar_fechamento_btn"):
+                if len(dezenas_fechamento) < 15:
+                    st.error("❌ É preciso de pelo menos 15 dezenas pontuadas para gerar o fechamento.")
+                else:
+                    with st.spinner(f"Gerando fechamento com {qtd_fechamento} jogos distintos..."):
+                        jogos_fechamento = gerar_fechamento_lf(dezenas_fechamento, qtd_fechamento, tamanho_jogo=15)
+                        if jogos_fechamento:
+                            st.session_state.jogos_fechamento = jogos_fechamento
+                            st.session_state.fechamento_dezenas = dezenas_fechamento
+                            st.success(f"✅ {len(jogos_fechamento)} jogos distintos gerados!")
+                        else:
+                            st.error("❌ Não foi possível gerar o fechamento.")
+
+            if st.session_state.jogos_fechamento:
+                jogos_fechamento = st.session_state.jogos_fechamento
+                st.markdown(f"### 📋 Jogos do Fechamento ({len(jogos_fechamento)})")
+
+                # Balanceamento: quantas vezes cada dezena apareceu nos jogos
+                contagem_final = Counter()
+                for j in jogos_fechamento:
+                    contagem_final.update(j)
+                df_balanco = pd.DataFrame({
+                    'Dezena': list(contagem_final.keys()),
+                    'Aparições': list(contagem_final.values())
+                }).sort_values('Dezena')
+
+                with st.expander("⚖️ Balanceamento das dezenas no fechamento"):
+                    fig = px.bar(df_balanco, x='Dezena', y='Aparições',
+                                title='Quantas vezes cada dezena aparece nos jogos do fechamento')
+                    st.plotly_chart(fig, use_container_width=True)
+
+                for i, jogo in enumerate(jogos_fechamento):
+                    pares = contar_pares_lf(jogo)
+                    soma = sum(jogo)
+                    st.markdown(f"""
+                    <div class='card'>
+                        📌 <strong>Jogo {i+1:02d}</strong><br>
+                        {formatar_jogo_html_lf(jogo)}<br>
+                        <small style='color:#aaa;'>⚖️ {pares}p/{15-pares}i | ➕ {soma}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                col_fs1, col_fs2, col_fs3 = st.columns(3)
+                with col_fs1:
+                    if st.button("💾 Salvar Fechamento", key="salvar_fechamento_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite(jogos_fechamento, {
+                            'tipo': 'fechamento_ranking_21',
+                            'dezenas_pool': st.session_state.fechamento_dezenas,
+                            'qtd_jogos': len(jogos_fechamento)
+                        })
+                        if arquivo:
+                            st.success(f"✅ Fechamento salvo! ID: {jogo_id}")
+                with col_fs2:
+                    df_export_fech = pd.DataFrame({
+                        'Jogo': range(1, len(jogos_fechamento) + 1),
+                        'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_fechamento],
+                        'Pares': [contar_pares_lf(j) for j in jogos_fechamento],
+                        'Soma': [sum(j) for j in jogos_fechamento],
+                        'Primos': [contar_primos_lf(j) for j in jogos_fechamento],
+                        'Consecutivos': [contar_consecutivos_lf(j) for j in jogos_fechamento]
+                    })
+                    st.download_button(
+                        label="📥 Exportar CSV",
+                        data=df_export_fech.to_csv(index=False),
+                        file_name=f"fechamento_lf_21_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_fechamento_csv"
+                    )
+                with col_fs3:
+                    if st.button("🗑️ Limpar Fechamento", key="limpar_fechamento_btn", use_container_width=True):
+                        st.session_state.jogos_fechamento = []
+                        st.rerun()
 
     # ================= TAB 3: IA ESTATÍSTICA =================
     with tabs[2]:
