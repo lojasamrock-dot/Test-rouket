@@ -1130,6 +1130,99 @@ class IAEstatisticaLF:
         
         return resultados
 
+    def prever_probabilidades_dezenas(self):
+        """
+        Prevê, para cada uma das 25 dezenas, a probabilidade média (entre os
+        modelos treinados) de sair no próximo concurso. Diferente de
+        `prever_probabilidades`, que avalia um jogo específico já montado,
+        este método não recebe um jogo pronto — por isso usa o contexto
+        médio dos concursos mais recentes (proporção típica de pares,
+        faixas e soma) como pano de fundo neutro para cada dezena.
+        """
+        if not self.modelos:
+            return {}
+
+        max_freq_total = max(self.estatisticas.frequencias.values()) if self.estatisticas.frequencias else 1
+
+        concursos_recentes = self.banco.get_historico_dezenas()[:50]
+        if concursos_recentes:
+            pares_prop_medio = float(np.mean([contar_pares_lf(c) / 15 for c in concursos_recentes]))
+            faixa_baixa_medio = float(np.mean([sum(1 for n in c if n <= 8) / 15 for c in concursos_recentes]))
+            faixa_media_medio = float(np.mean([sum(1 for n in c if 9 <= n <= 16) / 15 for c in concursos_recentes]))
+            soma_medio = float(np.mean([sum(c) / 25 for c in concursos_recentes]))
+        else:
+            pares_prop_medio = faixa_baixa_medio = faixa_media_medio = 0.5
+            soma_medio = 0.5
+
+        features = []
+        for num in range(1, 26):
+            vizinhos = [v for v in range(max(1, num - 3), min(25, num + 3) + 1) if v != num]
+            proximidade = (np.mean([self.estatisticas.frequencias.get(v, 0) for v in vizinhos]) / max_freq_total) if vizinhos else 0
+            features.append([
+                self.estatisticas.frequencias.get(num, 0),
+                self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0),
+                self.estatisticas.atrasos.get(num, 0),
+                self.estatisticas.tendencias.get(num, {}).get('inclinacao', 0),
+                pares_prop_medio,
+                faixa_baixa_medio,
+                faixa_media_medio,
+                soma_medio,
+                proximidade
+            ])
+
+        features = np.array(features)
+
+        probs_por_modelo = []
+        for nome, info in self.modelos.items():
+            modelo = info['modelo']
+            probs = modelo.predict_proba(features)[:, 1]
+            probs_por_modelo.append(probs)
+
+        if not probs_por_modelo:
+            return {}
+
+        probs_media = np.mean(probs_por_modelo, axis=0)
+        return {num: float(probs_media[num - 1]) for num in range(1, 26)}
+
+    def gerar_jogos_ia(self, qtd_jogos=3, tamanho_jogo=15, semente=None):
+        """
+        Gera jogos com base no que os modelos de IA treinados aprenderam:
+        usa a probabilidade média prevista para cada dezena como peso em
+        uma amostragem ponderada, produzindo `qtd_jogos` jogos distintos
+        entre si (em vez de sempre repetir o mesmo Top 15 fixo).
+        """
+        probs_dezenas = self.prever_probabilidades_dezenas()
+        if not probs_dezenas:
+            return [], {}
+
+        rng = random.Random(semente)
+        dezenas = list(range(1, 26))
+        pesos_base = [max(probs_dezenas.get(d, 0.0), 1e-6) for d in dezenas]
+
+        jogos = []
+        jogos_set = set()
+        tentativas = 0
+        max_tentativas = qtd_jogos * 500 + 2000
+
+        while len(jogos) < qtd_jogos and tentativas < max_tentativas:
+            tentativas += 1
+            pool_restante = list(dezenas)
+            pesos_restante = list(pesos_base)
+            jogo = []
+            for _ in range(tamanho_jogo):
+                escolhido = rng.choices(pool_restante, weights=pesos_restante, k=1)[0]
+                idx = pool_restante.index(escolhido)
+                jogo.append(escolhido)
+                pool_restante.pop(idx)
+                pesos_restante.pop(idx)
+
+            jogo_ordenado = tuple(sorted(jogo))
+            if jogo_ordenado not in jogos_set:
+                jogos_set.add(jogo_ordenado)
+                jogos.append(list(jogo_ordenado))
+
+        return jogos, probs_dezenas
+
 # =====================================================
 # MÓDULO 5: FILTROS INTELIGENTES - LOTOFÁCIL
 # =====================================================
@@ -1604,6 +1697,10 @@ def main():
         st.session_state.resultado_conferencia = []
     if "resultado_conferencia_meta" not in st.session_state:
         st.session_state.resultado_conferencia_meta = {}
+    if "jogos_ia" not in st.session_state:
+        st.session_state.jogos_ia = []
+    if "probs_ia_dezenas" not in st.session_state:
+        st.session_state.probs_ia_dezenas = {}
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -2047,6 +2144,91 @@ def main():
                                     title=f'Feature Importance - {nome.upper()}',
                                     orientation='h')
                         st.plotly_chart(fig, use_container_width=True)
+
+                # ---- Geração de jogos segundo o que a IA aprendeu ----
+                st.markdown("---")
+                st.markdown("### 🎯 Gerar Jogos Segundo a IA Treinada")
+                st.markdown("""
+                <div class="ia-lf-highlight">
+                    Usa a probabilidade que os modelos treinados calcularam para cada uma das
+                    25 dezenas saírem no próximo concurso como peso para montar os jogos —
+                    dezenas com maior probabilidade prevista tendem a aparecer mais nos jogos
+                    gerados, mas o resultado não é sempre o mesmo Top 15 fixo.
+                </div>
+                """, unsafe_allow_html=True)
+
+                qtd_jogos_ia = st.slider("Quantidade de jogos a gerar", 1, 10, 3, key="qtd_jogos_ia_slider")
+
+                if st.button("🧠 GERAR JOGOS COM A IA", use_container_width=True, type="primary", key="gerar_jogos_ia_btn"):
+                    with st.spinner("Calculando probabilidades e montando os jogos..."):
+                        jogos_ia_gerados, probs_dezenas_ia = ia.gerar_jogos_ia(qtd_jogos=qtd_jogos_ia, tamanho_jogo=15)
+                        if jogos_ia_gerados:
+                            st.session_state.jogos_ia = jogos_ia_gerados
+                            st.session_state.probs_ia_dezenas = probs_dezenas_ia
+                            st.success(f"✅ {len(jogos_ia_gerados)} jogo(s) gerado(s) com base no treinamento da IA!")
+                        else:
+                            st.error("❌ Não foi possível gerar jogos com os modelos atuais.")
+
+                if st.session_state.get("jogos_ia"):
+                    jogos_ia = st.session_state.jogos_ia
+                    probs_dezenas = st.session_state.get("probs_ia_dezenas", {})
+
+                    st.markdown(f"#### 📋 Jogos Gerados pela IA ({len(jogos_ia)})")
+                    for i, jogo in enumerate(jogos_ia):
+                        pares = contar_pares_lf(jogo)
+                        soma = sum(jogo)
+                        prob_media_jogo = np.mean([probs_dezenas.get(d, 0) for d in jogo]) * 100 if probs_dezenas else 0
+                        st.markdown(f"""
+                        <div class='card'>
+                            🧠 <strong>Jogo IA {i+1:02d}</strong><br>
+                            {formatar_jogo_html_lf(jogo)}<br>
+                            <small style='color:#aaa;'>⚖️ {pares}p/{15-pares}i | ➕ {soma} | 📈 Prob. média prevista: {prob_media_jogo:.1f}%</small>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    if probs_dezenas:
+                        with st.expander("📊 Probabilidade prevista por dezena (próximo concurso)"):
+                            df_probs = pd.DataFrame({
+                                'Dezena': list(probs_dezenas.keys()),
+                                'Probabilidade (%)': [v * 100 for v in probs_dezenas.values()]
+                            }).sort_values('Probabilidade (%)', ascending=False)
+                            fig = px.bar(df_probs, x='Dezena', y='Probabilidade (%)',
+                                        title='Probabilidade prevista pela IA para cada dezena')
+                            st.plotly_chart(fig, use_container_width=True)
+
+                    col_ia1, col_ia2, col_ia3 = st.columns(3)
+                    with col_ia1:
+                        if st.button("💾 Salvar Jogos da IA", key="salvar_jogos_ia_btn", use_container_width=True):
+                            arquivo, jogo_id = salvar_jogos_lf_elite(jogos_ia, {
+                                'tipo': 'jogos_ia_treinada',
+                                'modelos_usados': list(ia.modelos.keys()),
+                                'qtd_jogos': len(jogos_ia)
+                            })
+                            if arquivo:
+                                st.success(f"✅ Jogos da IA salvos! ID: {jogo_id}")
+                    with col_ia2:
+                        df_export_ia = pd.DataFrame({
+                            'Jogo': range(1, len(jogos_ia) + 1),
+                            'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_ia],
+                            'Pares': [contar_pares_lf(j) for j in jogos_ia],
+                            'Soma': [sum(j) for j in jogos_ia],
+                            'Prob. média prevista (%)': [round(np.mean([probs_dezenas.get(d, 0) for d in j]) * 100, 2) for j in jogos_ia]
+                        })
+                        st.download_button(
+                            label="📥 Exportar CSV",
+                            data=df_export_ia.to_csv(index=False),
+                            file_name=f"jogos_ia_lf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                            key="download_jogos_ia_csv"
+                        )
+                    with col_ia3:
+                        if st.button("🗑️ Limpar Jogos da IA", key="limpar_jogos_ia_btn", use_container_width=True):
+                            st.session_state.jogos_ia = []
+                            st.session_state.probs_ia_dezenas = {}
+                            st.rerun()
+            else:
+                st.info("ℹ️ Treine ao menos um modelo (Random Forest ou XGBoost) nesta aba para poder gerar jogos com base na IA.")
 
     # ================= TAB 4: GERADOR PREMIUM =================
     with tabs[3]:
