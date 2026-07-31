@@ -187,12 +187,42 @@ def distribuir_colunas_lf(jogo):
         colunas[(n-1)%5] += 1
     return colunas
 
-def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas=None):
+def passa_filtros_qualidade_lf(jogo, ultimo_concurso=None,
+                                pares_min=7, pares_max=8,
+                                soma_min=170, soma_max=220,
+                                primos_min=3, primos_max=5,
+                                repetidas_min=4, repetidas_max=6):
+    """
+    Filtro de qualidade opcional para descartar jogos que fujam de
+    padrões historicamente comuns na Lotofácil (pares, soma, primos,
+    quantidade de dezenas repetidas em relação ao último concurso).
+    """
+    pares = contar_pares_lf(jogo)
+    if not (pares_min <= pares <= pares_max):
+        return False
+
+    soma = sum(jogo)
+    if not (soma_min <= soma <= soma_max):
+        return False
+
+    primos = contar_primos_lf(jogo)
+    if not (primos_min <= primos <= primos_max):
+        return False
+
+    if ultimo_concurso:
+        repetidas = len(set(jogo) & set(ultimo_concurso))
+        if not (repetidas_min <= repetidas <= repetidas_max):
+            return False
+
+    return True
+
+def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas=None, filtro_fn=None):
     """
     Gera um fechamento (roda de jogos) usando um pool fixo de dezenas
     (ex.: as 21 dezenas mais bem rankeadas). Produz `qtd_jogos` jogos
     distintos entre si, balanceando a frequência de aparição de cada
-    dezena do pool ao longo dos jogos gerados.
+    dezena do pool ao longo dos jogos gerados. Se `filtro_fn` for
+    informado, só aceita jogos para os quais `filtro_fn(jogo)` seja True.
     """
     dezenas_pool = sorted(set(dezenas_pool))
     n_pool = len(dezenas_pool)
@@ -204,7 +234,7 @@ def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas
     qtd_jogos = min(qtd_jogos, max_combinacoes)
 
     if max_tentativas is None:
-        max_tentativas = qtd_jogos * 300 + 2000
+        max_tentativas = qtd_jogos * 600 + 4000
 
     contagem = {d: 0 for d in dezenas_pool}
     jogos = []
@@ -229,13 +259,129 @@ def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas
 
         jogo_ordenado = tuple(sorted(jogo))
 
-        if jogo_ordenado not in jogos_set:
-            jogos_set.add(jogo_ordenado)
-            jogos.append(list(jogo_ordenado))
-            for d in jogo_ordenado:
-                contagem[d] += 1
+        if jogo_ordenado in jogos_set:
+            continue
+        if filtro_fn is not None and not filtro_fn(list(jogo_ordenado)):
+            continue
+
+        jogos_set.add(jogo_ordenado)
+        jogos.append(list(jogo_ordenado))
+        for d in jogo_ordenado:
+            contagem[d] += 1
 
     return jogos
+
+def gerar_fechamento_cobertura_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, k_garantia=11,
+                                   n_candidatos=600, n_amostras_subconjuntos=2500,
+                                   filtro_fn=None, semente=None):
+    """
+    Fechamento por cobertura aproximada (Greedy Set-Cover heurístico).
+
+    Gera um conjunto de jogos candidatos e, a cada rodada, escolhe o
+    candidato que cobre o maior número de subconjuntos de tamanho
+    `k_garantia` (amostrados aleatoriamente dentro do pool) ainda não
+    cobertos por nenhum jogo já selecionado. Isso tende a distribuir
+    melhor a cobertura das combinações possíveis do que uma seleção
+    puramente aleatória ou só balanceada por frequência.
+
+    IMPORTANTE: como o pool costuma ter 21 dezenas, o número total de
+    subconjuntos de tamanho 11 é C(21,11) ≈ 352 mil — grande demais para
+    testar cobertura exaustiva em tempo real. Por isso este método usa
+    uma AMOSTRA de subconjuntos-alvo (`n_amostras_subconjuntos`) como
+    estimativa: é uma heurística de boa cobertura, não uma garantia
+    matemática formal de que qualquer combinação de `k_garantia` acertos
+    dentro do pool será sempre coberta por algum jogo.
+
+    Retorna (jogos_selecionados, taxa_cobertura_estimada).
+    """
+    dezenas_pool = sorted(set(dezenas_pool))
+    n_pool = len(dezenas_pool)
+
+    if n_pool < tamanho_jogo or n_pool < k_garantia or qtd_jogos <= 0:
+        return [], 0.0
+
+    rng = random.Random(semente)
+    idx_map = {d: i for i, d in enumerate(dezenas_pool)}
+
+    def to_mask(nums):
+        m = 0
+        for n in nums:
+            m |= (1 << idx_map[n])
+        return m
+
+    # ---- Gera jogos candidatos distintos (respeitando filtro de qualidade, se houver) ----
+    max_comb_jogo = math.comb(n_pool, tamanho_jogo)
+    n_candidatos = min(n_candidatos, max_comb_jogo)
+
+    candidatos = set()
+    tentativas = 0
+    max_tent_cand = n_candidatos * 40 + 4000
+    while len(candidatos) < n_candidatos and tentativas < max_tent_cand:
+        tentativas += 1
+        jogo = tuple(sorted(rng.sample(dezenas_pool, tamanho_jogo)))
+        if jogo in candidatos:
+            continue
+        if filtro_fn is not None and not filtro_fn(list(jogo)):
+            continue
+        candidatos.add(jogo)
+
+    candidatos = list(candidatos)
+    if not candidatos:
+        return [], 0.0
+
+    candidatos_mask = np.array([to_mask(c) for c in candidatos], dtype=np.int64)
+    qtd_jogos = min(qtd_jogos, len(candidatos))
+
+    # ---- Amostra subconjuntos-alvo de tamanho k_garantia para estimar cobertura ----
+    max_comb_sub = math.comb(n_pool, k_garantia)
+    n_amostras_subconjuntos = min(n_amostras_subconjuntos, max_comb_sub)
+
+    subconjuntos = set()
+    tent_sub = 0
+    max_tent_sub = n_amostras_subconjuntos * 40 + 4000
+    while len(subconjuntos) < n_amostras_subconjuntos and tent_sub < max_tent_sub:
+        tent_sub += 1
+        sub = tuple(sorted(rng.sample(dezenas_pool, k_garantia)))
+        subconjuntos.add(sub)
+
+    sub_masks = np.array([to_mask(s) for s in subconjuntos], dtype=np.int64)
+    if len(sub_masks) == 0:
+        return [], 0.0
+
+    disponivel_cand = np.ones(len(candidatos_mask), dtype=bool)
+    restante_masks = sub_masks.copy()
+    total_subs = len(sub_masks)
+
+    selecionados_idx = []
+
+    for _ in range(qtd_jogos):
+        if len(restante_masks) == 0 or not disponivel_cand.any():
+            break
+
+        cand_idx_disp = np.where(disponivel_cand)[0]
+        cm = candidatos_mask[cand_idx_disp][:, None]   # (C, 1)
+        sm = restante_masks[None, :]                    # (1, S)
+        cobre = (sm & cm) == sm                          # (C, S) booleano
+        contagem = cobre.sum(axis=1)                     # (C,)
+
+        melhor_pos = int(np.argmax(contagem))
+        if contagem[melhor_pos] <= 0 and len(selecionados_idx) > 0:
+            # Nenhum candidato restante cobre algo novo; melhor parar aqui
+            # do que preencher jogos sem ganho de cobertura.
+            break
+
+        melhor_i_global = int(cand_idx_disp[melhor_pos])
+        disponivel_cand[melhor_i_global] = False
+
+        cobertos_bool = cobre[melhor_pos]
+        restante_masks = restante_masks[~cobertos_bool]
+        selecionados_idx.append(melhor_i_global)
+
+    jogos_selecionados = [list(candidatos[i]) for i in selecionados_idx]
+    cobertura_total = total_subs - len(restante_masks)
+    taxa_cobertura = cobertura_total / total_subs if total_subs else 0.0
+
+    return jogos_selecionados, taxa_cobertura
 
 # =====================================================
 # FUNÇÃO PARA BUSCAR DADOS DA LOTOFÁCIL
@@ -340,6 +486,7 @@ class EstatisticasLFAvancadas:
         self.intervalos_medios = self._calcular_intervalos_medios(historico)
         self.moldura_miolo_freq = self._calcular_moldura_miolo_freq(historico)
         self.repetiu_ultimo_concurso = self._calcular_repetiu_ultimo_concurso(historico)
+        self.correlacao_media = self._calcular_correlacao_media(historico)
 
         # Estatísticas adicionais
         self.media_soma = np.mean([c['soma'] for c in self.banco.concursos])
@@ -354,7 +501,7 @@ class EstatisticasLFAvancadas:
         return freq
     
     def _calcular_frequencias_periodos(self, historico):
-        periodos = [10, 20, 50, 100, 300]
+        periodos = [10, 20, 30, 50, 100, 300]
         resultado = {}
         for p in periodos:
             if len(historico) >= p:
@@ -543,6 +690,34 @@ class EstatisticasLFAvancadas:
         ultimo = set(historico[0])
         return {n: (n in ultimo) for n in range(1, 26)}
 
+    def _calcular_correlacao_media(self, historico):
+        """
+        Para cada dezena, calcula a correlação de Pearson entre o vetor
+        binário de presença dela e o de cada uma das outras 24 dezenas ao
+        longo do histórico, e tira a média dos valores absolutos. Dezenas
+        com correlação média alta tendem a co-ocorrer de forma mais
+        consistente (positiva ou negativamente) com o restante do grupo.
+        """
+        n = len(historico)
+        if n < 3:
+            return {num: 0.0 for num in range(1, 26)}
+
+        presenca = np.zeros((25, n))
+        for j, concurso in enumerate(historico):
+            for num in concurso:
+                presenca[num - 1, j] = 1
+
+        with np.errstate(invalid='ignore', divide='ignore'):
+            matriz_corr = np.corrcoef(presenca)
+        matriz_corr = np.nan_to_num(matriz_corr, nan=0.0)
+
+        corr_media = {}
+        for num in range(1, 26):
+            linha = matriz_corr[num - 1]
+            outros = np.delete(linha, num - 1)
+            corr_media[num] = float(np.mean(np.abs(outros))) if len(outros) else 0.0
+        return corr_media
+
     def get_estatisticas_dezena(self, numero):
         """Retorna todas as estatísticas de uma dezena"""
         return {
@@ -568,30 +743,35 @@ class MotorPontuacaoLF:
         self.pontuacoes = self._calcular_pontuacoes()
         
     def _definir_pesos(self):
+        # Tabela de pesos definida junto com o usuário
         return {
-            'frequencia_recente': 0.20,
-            'frequencia_historica': 0.15,
-            'atraso_equilibrado': 0.20,
+            'frequencia_30': 0.30,
+            'frequencia_10': 0.20,
+            'atraso_equilibrado': 0.15,
             'repeticao_ultimo': 0.10,
-            'moldura_miolo': 0.10,
-            'tendencia': 0.15,
-            'equilibrio': 0.05,
-            'diversidade': 0.05
+            'linhas_colunas': 0.10,
+            'moldura_miolo': 0.05,
+            'pares_impares': 0.05,
+            'correlacao': 0.05
         }
     
     def _calcular_pontuacoes(self):
         pontuacoes = {}
         
         # Normaliza métricas
-        max_freq = max(self.estatisticas.frequencias.values()) if self.estatisticas.frequencias else 1
-        max_freq_recente = max(self.estatisticas.frequencias_periodos[20].values()) if 20 in self.estatisticas.frequencias_periodos else 1
+        freq_30_dict = self.estatisticas.frequencias_periodos.get(30, {})
+        freq_10_dict = self.estatisticas.frequencias_periodos.get(10, {})
+        max_freq_30 = max(freq_30_dict.values()) if freq_30_dict else 1
+        max_freq_10 = max(freq_10_dict.values()) if freq_10_dict else 1
+        max_correlacao = max(self.estatisticas.correlacao_media.values()) if self.estatisticas.correlacao_media else 1
+        max_correlacao = max_correlacao if max_correlacao > 0 else 1
         
         for num in range(1, 26):
-            # Frequência recente (20 últimos)
-            freq_recente = self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0) / max_freq_recente
+            # Frequência nos últimos 30 concursos
+            freq_30 = freq_30_dict.get(num, 0) / max_freq_30 if max_freq_30 else 0
             
-            # Frequência histórica
-            freq_historica = self.estatisticas.frequencias.get(num, 0) / max_freq
+            # Frequência nos últimos 10 concursos
+            freq_10 = freq_10_dict.get(num, 0) / max_freq_10 if max_freq_10 else 0
             
             # Atraso equilibrado: nem quente nem fria demais em relação ao
             # intervalo médio típico de cada dezena (em vez de só premiar
@@ -602,30 +782,28 @@ class MotorPontuacaoLF:
             # de repetição entre concursos consecutivos
             repeticao_ultimo = self._calcular_repeticao(num)
             
+            # Linhas e colunas do painel 5x5
+            linhas_colunas = self._calcular_linhas_colunas(num)
+            
             # Padrão moldura (borda) x miolo (centro) do painel 5x5
             moldura_miolo = self._calcular_moldura_miolo(num)
             
-            # Tendência
-            tendencia_info = self.estatisticas.tendencias.get(num, {})
-            inclinacao = tendencia_info.get('inclinacao', 0)
-            tendencia_norm = (inclinacao + 1) / 2
+            # Pares x ímpares
+            pares_impares = self._calcular_pares_impares(num)
             
-            # Equilíbrio
-            equilibrio = self._calcular_equilibrio(num)
-            
-            # Diversidade
-            diversidade = self._calcular_diversidade(num)
+            # Correlação média com as demais dezenas
+            correlacao = self.estatisticas.correlacao_media.get(num, 0) / max_correlacao
             
             # Pontuação final
             pontuacao = (
-                freq_recente * self.pesos['frequencia_recente'] +
-                freq_historica * self.pesos['frequencia_historica'] +
+                freq_30 * self.pesos['frequencia_30'] +
+                freq_10 * self.pesos['frequencia_10'] +
                 atraso_equilibrado * self.pesos['atraso_equilibrado'] +
                 repeticao_ultimo * self.pesos['repeticao_ultimo'] +
+                linhas_colunas * self.pesos['linhas_colunas'] +
                 moldura_miolo * self.pesos['moldura_miolo'] +
-                tendencia_norm * self.pesos['tendencia'] +
-                equilibrio * self.pesos['equilibrio'] +
-                diversidade * self.pesos['diversidade']
+                pares_impares * self.pesos['pares_impares'] +
+                correlacao * self.pesos['correlacao']
             )
             
             pontuacoes[num] = round(pontuacao * 100, 2)
@@ -661,6 +839,24 @@ class MotorPontuacaoLF:
         saiu_ultimo = self.estatisticas.repetiu_ultimo_concurso.get(numero, False)
         return taxa_repeticao if saiu_ultimo else (1 - taxa_repeticao)
     
+    def _calcular_linhas_colunas(self, numero):
+        """
+        Avalia se a linha e a coluna do número no painel 5x5 costumam
+        sair perto da proporção ideal (1/5 cada), penalizando linhas ou
+        colunas historicamente super ou sub-representadas.
+        """
+        linha = (numero - 1) // 5
+        coluna = (numero - 1) % 5
+        freq_linhas = self.estatisticas.distribuicao_linhas
+        freq_colunas = self.estatisticas.distribuicao_colunas
+        ideal = 1 / 5
+        
+        score_linha = 1 - abs(freq_linhas[linha] - ideal) * 2 if linha < len(freq_linhas) else 0.5
+        score_coluna = 1 - abs(freq_colunas[coluna] - ideal) * 2 if coluna < len(freq_colunas) else 0.5
+        
+        score = (score_linha + score_coluna) / 2
+        return max(0.0, min(1.0, score))
+    
     def _calcular_moldura_miolo(self, numero):
         """
         Compara a frequência normalizada do grupo (moldura/miolo) ao qual
@@ -672,30 +868,18 @@ class MotorPontuacaoLF:
         valor = info.get(grupo, 0.5)
         return max(0.0, min(1.0, valor))
     
-    def _calcular_equilibrio(self, numero):
-        """Calcula fator de equilíbrio baseado na posição da dezena"""
-        # Verifica distribuição por faixa
-        faixa = 0 if numero <= 8 else 1 if numero <= 16 else 2
-        freq_faixas = self.estatisticas.distribuicao_faixas
-        
-        if faixa < len(freq_faixas):
-            proporcao = freq_faixas[faixa]
-            ideal = 1/3
-            equilibrio = 1 - abs(proporcao - ideal) * 2
-            return max(0, min(1, equilibrio))
-        return 0.5
-    
-    def _calcular_diversidade(self, numero):
-        """Calcula fator de diversidade"""
-        freq = self.estatisticas.frequencias.get(numero, 0)
-        media = np.mean(list(self.estatisticas.frequencias.values())) if self.estatisticas.frequencias else 0
-        
-        if freq < media * 0.5:
-            return 1.0
-        elif freq > media * 1.5:
-            return 0.3
-        else:
-            return 0.7
+    def _calcular_pares_impares(self, numero):
+        """
+        Compara a proporção histórica de pares/ímpares sorteados com a
+        proporção ideal (50/50), pontuando mais alto quando o grupo
+        (par ou ímpar) da dezena não está historicamente desbalanceado.
+        """
+        par = (numero % 2 == 0)
+        chave = 'pares' if par else 'impares'
+        proporcao = self.estatisticas.distribuicao_paridade.get(chave, 0.5)
+        ideal = 0.5
+        score = 1 - abs(proporcao - ideal) * 2
+        return max(0.0, min(1.0, score))
     
     def get_ranking(self, top_n=25):
         """Retorna ranking das dezenas"""
@@ -1412,6 +1596,10 @@ def main():
         st.session_state.jogos_fechamento = []
     if "fechamento_dezenas" not in st.session_state:
         st.session_state.fechamento_dezenas = []
+    if "fechamento_metodo" not in st.session_state:
+        st.session_state.fechamento_metodo = ""
+    if "fechamento_cobertura" not in st.session_state:
+        st.session_state.fechamento_cobertura = None
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -1663,22 +1851,81 @@ def main():
                 max_combinacoes = math.comb(len(dezenas_fechamento), 15) if len(dezenas_fechamento) >= 15 else 0
                 st.metric("Combinações possíveis (21 escolhe 15)", f"{max_combinacoes:,}".replace(",", "."))
 
+            metodo_fechamento = st.radio(
+                "Método do fechamento",
+                ["⚖️ Balanceado (equilibra frequência das dezenas)", "🧩 Cobertura otimizada (Greedy Set-Cover aproximado)"],
+                key="metodo_fechamento_radio",
+                help="O método de cobertura tenta escolher jogos que, juntos, cubram o maior número possível de combinações de "
+                     "dezenas dentro do pool — mas é uma heurística por amostragem, não uma garantia matemática formal."
+            )
+            usar_cobertura = metodo_fechamento.startswith("🧩")
+
+            if usar_cobertura:
+                k_garantia = st.slider(
+                    "Tamanho do subconjunto de garantia (k)", 8, 14, 11,
+                    help="O algoritmo tenta priorizar jogos que cubram combinações de k dezenas dentro do pool. "
+                         "Valores menores de k são mais fáceis de cobrir bem; valores maiores (13, 14) exigem muito mais jogos."
+                )
+
+            with st.expander("🧪 Filtros de padrão histórico (opcional)"):
+                aplicar_filtros_fechamento = st.checkbox("Aplicar filtros ao gerar os jogos", value=False, key="aplicar_filtros_fechamento_chk")
+                colfa, colfb = st.columns(2)
+                with colfa:
+                    pares_min_f = st.slider("Pares mínimo", 0, 15, 7, key="pares_min_fechamento")
+                    pares_max_f = st.slider("Pares máximo", 0, 15, 8, key="pares_max_fechamento")
+                    primos_min_f = st.slider("Primos mínimo", 0, 9, 3, key="primos_min_fechamento")
+                    primos_max_f = st.slider("Primos máximo", 0, 9, 5, key="primos_max_fechamento")
+                with colfb:
+                    soma_min_f = st.slider("Soma mínima", 150, 300, 170, key="soma_min_fechamento")
+                    soma_max_f = st.slider("Soma máxima", 150, 300, 220, key="soma_max_fechamento")
+                    repetidas_min_f = st.slider("Repetidas do último concurso (mín.)", 0, 15, 4, key="repetidas_min_fechamento")
+                    repetidas_max_f = st.slider("Repetidas do último concurso (máx.)", 0, 15, 6, key="repetidas_max_fechamento")
+
             if st.button("🔒 GERAR FECHAMENTO", use_container_width=True, type="primary", key="gerar_fechamento_btn"):
                 if len(dezenas_fechamento) < 15:
                     st.error("❌ É preciso de pelo menos 15 dezenas pontuadas para gerar o fechamento.")
                 else:
+                    filtro_fn = None
+                    if aplicar_filtros_fechamento:
+                        ultimo_concurso = st.session_state.banco_dados.get_ultimo_concurso()
+                        ultimo_dezenas = ultimo_concurso['dezenas'] if ultimo_concurso else None
+                        filtro_fn = lambda j: passa_filtros_qualidade_lf(
+                            j, ultimo_concurso=ultimo_dezenas,
+                            pares_min=min(pares_min_f, pares_max_f), pares_max=max(pares_min_f, pares_max_f),
+                            soma_min=min(soma_min_f, soma_max_f), soma_max=max(soma_min_f, soma_max_f),
+                            primos_min=min(primos_min_f, primos_max_f), primos_max=max(primos_min_f, primos_max_f),
+                            repetidas_min=min(repetidas_min_f, repetidas_max_f), repetidas_max=max(repetidas_min_f, repetidas_max_f)
+                        )
+
                     with st.spinner(f"Gerando fechamento com {qtd_fechamento} jogos distintos..."):
-                        jogos_fechamento = gerar_fechamento_lf(dezenas_fechamento, qtd_fechamento, tamanho_jogo=15)
+                        if usar_cobertura:
+                            jogos_fechamento, cobertura_estimada = gerar_fechamento_cobertura_lf(
+                                dezenas_fechamento, qtd_fechamento, tamanho_jogo=15,
+                                k_garantia=k_garantia, filtro_fn=filtro_fn
+                            )
+                        else:
+                            jogos_fechamento = gerar_fechamento_lf(dezenas_fechamento, qtd_fechamento, tamanho_jogo=15, filtro_fn=filtro_fn)
+                            cobertura_estimada = None
+
                         if jogos_fechamento:
                             st.session_state.jogos_fechamento = jogos_fechamento
                             st.session_state.fechamento_dezenas = dezenas_fechamento
-                            st.success(f"✅ {len(jogos_fechamento)} jogos distintos gerados!")
+                            st.session_state.fechamento_metodo = metodo_fechamento
+                            st.session_state.fechamento_cobertura = cobertura_estimada
+                            msg = f"✅ {len(jogos_fechamento)} jogos distintos gerados!"
+                            if cobertura_estimada is not None:
+                                msg += f" Cobertura estimada (amostral, k={k_garantia}): {cobertura_estimada*100:.1f}%"
+                            st.success(msg)
                         else:
-                            st.error("❌ Não foi possível gerar o fechamento.")
+                            st.error("❌ Não foi possível gerar o fechamento com os filtros/parâmetros atuais. Tente relaxar os filtros.")
 
             if st.session_state.jogos_fechamento:
                 jogos_fechamento = st.session_state.jogos_fechamento
                 st.markdown(f"### 📋 Jogos do Fechamento ({len(jogos_fechamento)})")
+                if st.session_state.fechamento_cobertura is not None:
+                    st.caption(f"Método: {st.session_state.fechamento_metodo} | Cobertura estimada (amostral): {st.session_state.fechamento_cobertura*100:.1f}%")
+                elif st.session_state.fechamento_metodo:
+                    st.caption(f"Método: {st.session_state.fechamento_metodo}")
 
                 # Balanceamento: quantas vezes cada dezena apareceu nos jogos
                 contagem_final = Counter()
@@ -1710,6 +1957,8 @@ def main():
                     if st.button("💾 Salvar Fechamento", key="salvar_fechamento_btn", use_container_width=True):
                         arquivo, jogo_id = salvar_jogos_lf_elite(jogos_fechamento, {
                             'tipo': 'fechamento_ranking_21',
+                            'metodo': st.session_state.fechamento_metodo,
+                            'cobertura_estimada': st.session_state.fechamento_cobertura,
                             'dezenas_pool': st.session_state.fechamento_dezenas,
                             'qtd_jogos': len(jogos_fechamento)
                         })
@@ -1735,6 +1984,8 @@ def main():
                 with col_fs3:
                     if st.button("🗑️ Limpar Fechamento", key="limpar_fechamento_btn", use_container_width=True):
                         st.session_state.jogos_fechamento = []
+                        st.session_state.fechamento_metodo = ""
+                        st.session_state.fechamento_cobertura = None
                         st.rerun()
 
     # ================= TAB 3: IA ESTATÍSTICA =================
