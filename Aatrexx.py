@@ -1600,6 +1600,10 @@ def main():
         st.session_state.fechamento_metodo = ""
     if "fechamento_cobertura" not in st.session_state:
         st.session_state.fechamento_cobertura = None
+    if "resultado_conferencia" not in st.session_state:
+        st.session_state.resultado_conferencia = []
+    if "resultado_conferencia_meta" not in st.session_state:
+        st.session_state.resultado_conferencia_meta = {}
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -1685,6 +1689,7 @@ def main():
         "🎲 Gerador Premium",
         "🔬 Backtests",
         "📈 Análise Avançada",
+        "🔍 Conferência",
         "💾 Salvos"
     ])
 
@@ -2343,8 +2348,189 @@ def main():
                 fig = px.bar(df_colunas, x='Coluna', y='Frequência', title='Distribuição por Colunas')
                 st.plotly_chart(fig, use_container_width=True)
 
-    # ================= TAB 7: SALVOS =================
+    # ================= TAB 7: CONFERÊNCIA =================
     with tabs[6]:
+        st.markdown("### 🔍 Conferência de Jogos com Concursos Anteriores")
+        st.markdown("""
+        <div class="lotofacil-highlight">
+            <strong>🎯 O que é:</strong> Confira quantos acertos os jogos que você gerou (ou salvou)
+            teriam feito nos concursos já sorteados da Lotofácil — para avaliar o desempenho real
+            de uma estratégia antes de apostar de fato.
+        </div>
+        """, unsafe_allow_html=True)
+
+        banco = st.session_state.banco_dados
+        total_concursos_disp = len(banco.concursos) if banco else 0
+
+        if not banco or total_concursos_disp == 0:
+            st.warning("⚠️ Nenhum histórico de concursos carregado ainda.")
+        else:
+            # ---- 1) Escolha da origem dos jogos a conferir ----
+            st.markdown("#### 1️⃣ Escolha os jogos a conferir")
+            origem_jogos = st.radio(
+                "Origem dos jogos",
+                ["🎲 Jogos gerados na sessão (Gerador Premium)",
+                 "🔒 Jogos do fechamento (Ranking)",
+                 "💾 Jogos salvos (arquivo)",
+                 "✍️ Colar jogos manualmente"],
+                key="origem_jogos_conferencia"
+            )
+
+            jogos_para_conferir = []
+            rotulo_origem = ""
+
+            if origem_jogos.startswith("🎲"):
+                jogos_para_conferir = st.session_state.get("jogos_gerados", [])
+                rotulo_origem = "Gerador Premium (sessão atual)"
+                if not jogos_para_conferir:
+                    st.info("Nenhum jogo gerado nesta sessão ainda. Vá até a aba 🎲 Gerador Premium.")
+
+            elif origem_jogos.startswith("🔒"):
+                jogos_para_conferir = st.session_state.get("jogos_fechamento", [])
+                rotulo_origem = "Fechamento (Ranking)"
+                if not jogos_para_conferir:
+                    st.info("Nenhum fechamento gerado nesta sessão ainda. Vá até a aba 🏆 Ranking.")
+
+            elif origem_jogos.startswith("💾"):
+                lista_salvos = carregar_jogos_lf_elite()
+                if not lista_salvos:
+                    st.info("Nenhum jogo salvo encontrado.")
+                else:
+                    opcoes_salvos = {
+                        f"{s['id']} • {s['data_geracao'][:19]} • {len(s['jogos'])} jogo(s)": s
+                        for s in lista_salvos
+                    }
+                    escolha_salvo = st.selectbox("Selecione o arquivo salvo", list(opcoes_salvos.keys()), key="select_salvo_conferencia")
+                    salvo_selecionado = opcoes_salvos[escolha_salvo]
+                    jogos_para_conferir = [j if isinstance(j, list) else [int(x) for x in j.split(",")] for j in salvo_selecionado['jogos']]
+                    rotulo_origem = f"Salvo {salvo_selecionado['id']}"
+
+            else:  # Colar manualmente
+                texto_manual = st.text_area(
+                    "Um jogo por linha, dezenas separadas por vírgula (ex.: 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15)",
+                    height=150, key="texto_jogos_manual_conferencia"
+                )
+                if texto_manual.strip():
+                    jogos_para_conferir = []
+                    linhas_invalidas = 0
+                    for linha in texto_manual.strip().splitlines():
+                        linha = linha.strip()
+                        if not linha:
+                            continue
+                        try:
+                            dezenas_linha = sorted(set(int(x.strip()) for x in linha.split(",") if x.strip()))
+                            if all(1 <= d <= 25 for d in dezenas_linha) and len(dezenas_linha) >= 10:
+                                jogos_para_conferir.append(dezenas_linha)
+                            else:
+                                linhas_invalidas += 1
+                        except ValueError:
+                            linhas_invalidas += 1
+                    rotulo_origem = "Colado manualmente"
+                    if linhas_invalidas:
+                        st.warning(f"⚠️ {linhas_invalidas} linha(s) ignorada(s) por formato inválido.")
+
+            if jogos_para_conferir:
+                st.success(f"✅ {len(jogos_para_conferir)} jogo(s) prontos para conferência ({rotulo_origem}).")
+
+                # ---- 2) Escolha do período de concursos ----
+                st.markdown("#### 2️⃣ Escolha os concursos para conferir")
+                periodo_conferencia = st.radio(
+                    "Período",
+                    ["Somente o último concurso", "Últimos N concursos", "Todo o histórico carregado"],
+                    horizontal=True,
+                    key="periodo_conferencia"
+                )
+
+                if periodo_conferencia == "Somente o último concurso":
+                    concursos_alvo = banco.concursos[:1]
+                elif periodo_conferencia == "Últimos N concursos":
+                    n_concursos = st.slider("Quantidade de concursos mais recentes", 1, total_concursos_disp, min(20, total_concursos_disp), key="n_concursos_conferencia")
+                    concursos_alvo = banco.concursos[:n_concursos]
+                else:
+                    concursos_alvo = banco.concursos
+
+                if st.button("🔍 CONFERIR JOGOS", use_container_width=True, type="primary", key="conferir_jogos_btn"):
+                    with st.spinner(f"Conferindo {len(jogos_para_conferir)} jogo(s) em {len(concursos_alvo)} concurso(s)..."):
+                        linhas_resultado = []
+                        for i, jogo in enumerate(jogos_para_conferir):
+                            jogo_set = set(jogo)
+                            melhor_acertos = -1
+                            melhor_concurso = None
+                            acertos_ultimo = None
+                            for j, concurso in enumerate(concursos_alvo):
+                                acertos = len(jogo_set & set(concurso['dezenas']))
+                                if j == 0:
+                                    acertos_ultimo = acertos
+                                if acertos > melhor_acertos:
+                                    melhor_acertos = acertos
+                                    melhor_concurso = concurso['numero']
+                            linhas_resultado.append({
+                                'Jogo': i + 1,
+                                'Dezenas': ', '.join(f'{d:02d}' for d in jogo),
+                                'Acertos no último concurso': acertos_ultimo,
+                                'Melhor resultado no período': melhor_acertos,
+                                'Concurso do melhor resultado': melhor_concurso
+                            })
+
+                        st.session_state.resultado_conferencia = linhas_resultado
+                        st.session_state.resultado_conferencia_meta = {
+                            'origem': rotulo_origem,
+                            'periodo': periodo_conferencia,
+                            'qtd_concursos': len(concursos_alvo)
+                        }
+
+            if st.session_state.get("resultado_conferencia"):
+                linhas_resultado = st.session_state.resultado_conferencia
+                meta = st.session_state.get("resultado_conferencia_meta", {})
+                df_resultado = pd.DataFrame(linhas_resultado)
+
+                st.markdown("---")
+                st.markdown(f"### 📋 Resultado da Conferência — {meta.get('origem', '')}")
+                st.caption(f"Período: {meta.get('periodo', '')} ({meta.get('qtd_concursos', 0)} concurso(s) analisados)")
+
+                melhores = df_resultado['Melhor resultado no período']
+                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+                with col_r1:
+                    st.metric("🏆 Melhor acerto geral", int(melhores.max()) if len(melhores) else 0)
+                with col_r2:
+                    st.metric("📊 Média de acertos", f"{melhores.mean():.1f}" if len(melhores) else "0")
+                with col_r3:
+                    qtd_14_mais = int((melhores >= 14).sum())
+                    st.metric("🎯 Jogos com 14+ acertos", qtd_14_mais)
+                with col_r4:
+                    qtd_15 = int((melhores == 15).sum())
+                    st.metric("🏅 Jogos com 15 acertos", qtd_15)
+
+                with st.expander("📈 Distribuição de acertos (melhor resultado por jogo)"):
+                    dist = Counter(melhores.tolist())
+                    df_dist = pd.DataFrame({
+                        'Acertos': list(dist.keys()),
+                        'Quantidade de jogos': list(dist.values())
+                    }).sort_values('Acertos')
+                    fig = px.bar(df_dist, x='Acertos', y='Quantidade de jogos',
+                                title='Distribuição de acertos entre os jogos conferidos')
+                    st.plotly_chart(fig, use_container_width=True)
+
+                st.dataframe(df_resultado, use_container_width=True, hide_index=True)
+
+                col_cd1, col_cd2 = st.columns(2)
+                with col_cd1:
+                    st.download_button(
+                        label="📥 Exportar Conferência (CSV)",
+                        data=df_resultado.to_csv(index=False),
+                        file_name=f"conferencia_lf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_conferencia_csv"
+                    )
+                with col_cd2:
+                    if st.button("🗑️ Limpar Resultado", key="limpar_conferencia_btn", use_container_width=True):
+                        st.session_state.resultado_conferencia = []
+                        st.session_state.resultado_conferencia_meta = {}
+                        st.rerun()
+
+    # ================= TAB 8: SALVOS =================
+    with tabs[7]:
         st.markdown("### 💾 Jogos Salvos")
         
         jogos_salvos = carregar_jogos_lf_elite()
