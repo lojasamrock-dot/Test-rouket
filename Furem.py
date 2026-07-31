@@ -1,5 +1,4 @@
 # =====================================================
-# # =====================================================
 # MEGA-SENA ELITE 3.0 - VERSÃO APRIMORADA
 # =====================================================
 
@@ -190,6 +189,188 @@ def distribuir_linhas_mega(jogo):
         if linha < 6:
             linhas[linha] += 1
     return linhas
+
+def passa_filtros_qualidade_mega(jogo, ultimo_concurso=None,
+                                  pares_min=2, pares_max=4,
+                                  soma_min=120, soma_max=250,
+                                  primos_min=1, primos_max=3,
+                                  repetidas_min=0, repetidas_max=2):
+    """
+    Filtro de qualidade opcional para descartar jogos que fujam de
+    padrões historicamente comuns na Mega-Sena (pares, soma, primos,
+    quantidade de dezenas repetidas em relação ao último concurso).
+    """
+    pares = contar_pares_mega(jogo)
+    if not (pares_min <= pares <= pares_max):
+        return False
+
+    soma = sum(jogo)
+    if not (soma_min <= soma <= soma_max):
+        return False
+
+    primos = contar_primos_mega(jogo)
+    if not (primos_min <= primos <= primos_max):
+        return False
+
+    if ultimo_concurso:
+        repetidas = len(set(jogo) & set(ultimo_concurso))
+        if not (repetidas_min <= repetidas <= repetidas_max):
+            return False
+
+    return True
+
+def gerar_fechamento_mega(dezenas_pool, qtd_jogos, tamanho_jogo=6, max_tentativas=None, filtro_fn=None):
+    """
+    Gera um fechamento (roda de jogos) usando um pool fixo de dezenas
+    (ex.: as N dezenas mais bem rankeadas). Produz `qtd_jogos` jogos
+    distintos entre si, balanceando a frequência de aparição de cada
+    dezena do pool ao longo dos jogos gerados. Se `filtro_fn` for
+    informado, só aceita jogos para os quais `filtro_fn(jogo)` seja True.
+    """
+    dezenas_pool = sorted(set(dezenas_pool))
+    n_pool = len(dezenas_pool)
+
+    if n_pool < tamanho_jogo or qtd_jogos <= 0:
+        return []
+
+    max_combinacoes = math.comb(n_pool, tamanho_jogo)
+    qtd_jogos = min(qtd_jogos, max_combinacoes)
+
+    if max_tentativas is None:
+        max_tentativas = qtd_jogos * 600 + 4000
+
+    contagem = {d: 0 for d in dezenas_pool}
+    jogos = []
+    jogos_set = set()
+    tentativas = 0
+
+    while len(jogos) < qtd_jogos and tentativas < max_tentativas:
+        tentativas += 1
+
+        pool_restante = list(dezenas_pool)
+        pesos_restante = [1.0 / (1 + contagem[d]) for d in pool_restante]
+
+        jogo = []
+        for _ in range(tamanho_jogo):
+            escolhido = random.choices(pool_restante, weights=pesos_restante, k=1)[0]
+            idx = pool_restante.index(escolhido)
+            jogo.append(escolhido)
+            pool_restante.pop(idx)
+            pesos_restante.pop(idx)
+
+        jogo_ordenado = tuple(sorted(jogo))
+
+        if jogo_ordenado in jogos_set:
+            continue
+        if filtro_fn is not None and not filtro_fn(list(jogo_ordenado)):
+            continue
+
+        jogos_set.add(jogo_ordenado)
+        jogos.append(list(jogo_ordenado))
+        for d in jogo_ordenado:
+            contagem[d] += 1
+
+    return jogos
+
+def gerar_fechamento_cobertura_mega(dezenas_pool, qtd_jogos, tamanho_jogo=6, k_garantia=4,
+                                     n_candidatos=600, n_amostras_subconjuntos=2500,
+                                     filtro_fn=None, semente=None):
+    """
+    Fechamento por cobertura aproximada (Greedy Set-Cover heurístico) para
+    Mega-Sena. Gera um conjunto de jogos candidatos e, a cada rodada,
+    escolhe o candidato que cobre o maior número de subconjuntos de
+    tamanho `k_garantia` (amostrados aleatoriamente dentro do pool)
+    ainda não cobertos por nenhum jogo já selecionado.
+
+    IMPORTANTE: assim como na versão da Lotofácil, isso é uma heurística
+    por amostragem (não uma garantia matemática formal de cobertura).
+
+    Retorna (jogos_selecionados, taxa_cobertura_estimada).
+    """
+    dezenas_pool = sorted(set(dezenas_pool))
+    n_pool = len(dezenas_pool)
+
+    if n_pool < tamanho_jogo or n_pool < k_garantia or qtd_jogos <= 0:
+        return [], 0.0
+
+    rng = random.Random(semente)
+    idx_map = {d: i for i, d in enumerate(dezenas_pool)}
+
+    def to_mask(nums):
+        m = 0
+        for n in nums:
+            m |= (1 << idx_map[n])
+        return m
+
+    max_comb_jogo = math.comb(n_pool, tamanho_jogo)
+    n_candidatos = min(n_candidatos, max_comb_jogo)
+
+    candidatos = set()
+    tentativas = 0
+    max_tent_cand = n_candidatos * 40 + 4000
+    while len(candidatos) < n_candidatos and tentativas < max_tent_cand:
+        tentativas += 1
+        jogo = tuple(sorted(rng.sample(dezenas_pool, tamanho_jogo)))
+        if jogo in candidatos:
+            continue
+        if filtro_fn is not None and not filtro_fn(list(jogo)):
+            continue
+        candidatos.add(jogo)
+
+    candidatos = list(candidatos)
+    if not candidatos:
+        return [], 0.0
+
+    candidatos_mask = np.array([to_mask(c) for c in candidatos], dtype=np.int64)
+    qtd_jogos = min(qtd_jogos, len(candidatos))
+
+    max_comb_sub = math.comb(n_pool, k_garantia)
+    n_amostras_subconjuntos = min(n_amostras_subconjuntos, max_comb_sub)
+
+    subconjuntos = set()
+    tent_sub = 0
+    max_tent_sub = n_amostras_subconjuntos * 40 + 4000
+    while len(subconjuntos) < n_amostras_subconjuntos and tent_sub < max_tent_sub:
+        tent_sub += 1
+        sub = tuple(sorted(rng.sample(dezenas_pool, k_garantia)))
+        subconjuntos.add(sub)
+
+    sub_masks = np.array([to_mask(s) for s in subconjuntos], dtype=np.int64)
+    if len(sub_masks) == 0:
+        return [], 0.0
+
+    disponivel_cand = np.ones(len(candidatos_mask), dtype=bool)
+    restante_masks = sub_masks.copy()
+    total_subs = len(sub_masks)
+
+    selecionados_idx = []
+
+    for _ in range(qtd_jogos):
+        if len(restante_masks) == 0 or not disponivel_cand.any():
+            break
+
+        cand_idx_disp = np.where(disponivel_cand)[0]
+        cm = candidatos_mask[cand_idx_disp][:, None]
+        sm = restante_masks[None, :]
+        cobre = (sm & cm) == sm
+        contagem = cobre.sum(axis=1)
+
+        melhor_pos = int(np.argmax(contagem))
+        if contagem[melhor_pos] <= 0 and len(selecionados_idx) > 0:
+            break
+
+        melhor_i_global = int(cand_idx_disp[melhor_pos])
+        disponivel_cand[melhor_i_global] = False
+
+        cobertos_bool = cobre[melhor_pos]
+        restante_masks = restante_masks[~cobertos_bool]
+        selecionados_idx.append(melhor_i_global)
+
+    jogos_selecionados = [list(candidatos[i]) for i in selecionados_idx]
+    cobertura_total = total_subs - len(restante_masks)
+    taxa_cobertura = cobertura_total / total_subs if total_subs else 0.0
+
+    return jogos_selecionados, taxa_cobertura
 
 # =====================================================
 # FUNÇÃO PARA BUSCAR DADOS DA MEGA-SENA
@@ -1508,6 +1689,14 @@ def main():
         st.session_state.resultado_conferencia = []
     if "resultado_conferencia_meta" not in st.session_state:
         st.session_state.resultado_conferencia_meta = {}
+    if "jogos_fechamento" not in st.session_state:
+        st.session_state.jogos_fechamento = []
+    if "fechamento_dezenas" not in st.session_state:
+        st.session_state.fechamento_dezenas = []
+    if "fechamento_metodo" not in st.session_state:
+        st.session_state.fechamento_metodo = ""
+    if "fechamento_cobertura" not in st.session_state:
+        st.session_state.fechamento_cobertura = None
 
     # Barra Lateral
     with st.sidebar:
@@ -1645,6 +1834,7 @@ def main():
         if st.session_state.pontuacao:
             pontuacao = st.session_state.pontuacao
             stats = st.session_state.estatisticas
+            banco = st.session_state.banco_dados
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -1690,6 +1880,218 @@ def main():
                     {detalhes}
                 </div>
                 """, unsafe_allow_html=True)
+
+            # ========= FECHAMENTO COM AS DEZENAS DO RANKING =========
+            st.markdown("---")
+            st.markdown("### 🔒 Fechamento com as Dezenas do Ranking")
+            st.markdown("""
+            <div class="mega-highlight">
+                <strong>🎯 O que é:</strong> Um fechamento usa um grupo fixo de dezenas
+                (as melhores do ranking) e gera vários jogos de 6 dezenas, todos distintos
+                entre si, tentando equilibrar ou maximizar a cobertura das combinações
+                possíveis dentro desse grupo.
+            </div>
+            """, unsafe_allow_html=True)
+
+            ranking_completo_fech = pontuacao.get_ranking(60)
+            tamanho_pool = st.slider(
+                "Quantidade de dezenas na base do fechamento", 7, 30, 15,
+                key="tamanho_pool_fechamento_mega",
+                help="Quanto maior o pool, mais jogos distintos são possíveis, mas cada jogo individual cobre uma fração menor das combinações."
+            )
+            ranking_pool = ranking_completo_fech[:tamanho_pool]
+            ranking_risco = ranking_completo_fech[tamanho_pool:tamanho_pool + 5]
+            dezenas_pool_fech = sorted([n for n, _ in ranking_pool])
+
+            ultimo_concurso_obj = banco.get_ultimo_concurso() if banco else None
+            ultimo_dezenas_fech = ultimo_concurso_obj['dezenas'] if ultimo_concurso_obj else []
+
+            st.markdown("**⚠️ Zona de risco (dezenas logo fora do pool):**")
+            if ranking_risco:
+                partes_risco = []
+                for num, score in ranking_risco:
+                    saiu_ultimo = num in ultimo_dezenas_fech
+                    marcador = " 🔥 saiu no último concurso" if saiu_ultimo else ""
+                    partes_risco.append(f"Dezena {num:02d} (score {score:.2f}){marcador}")
+                st.caption(" | ".join(partes_risco))
+            else:
+                st.caption("Nenhuma dezena pontuada fora do pool.")
+
+            incluir_seguranca_mega = st.checkbox(
+                "🛡️ Incluir automaticamente dezenas da zona de risco que saíram no último concurso",
+                value=False,
+                key="incluir_seguranca_fechamento_mega",
+                help="Troca a dezena de menor score do pool (entre as que NÃO saíram no último concurso) por dezenas da zona de risco que saíram."
+            )
+
+            if incluir_seguranca_mega:
+                candidatas_seguranca = [num for num, _ in ranking_risco if num in ultimo_dezenas_fech]
+                if candidatas_seguranca:
+                    pool_por_score_asc = sorted(ranking_pool, key=lambda x: x[1])
+                    trocaveis = [num for num, _ in pool_por_score_asc if num not in ultimo_dezenas_fech]
+
+                    for candidata in candidatas_seguranca:
+                        if not trocaveis:
+                            break
+                        removida = trocaveis.pop(0)
+                        if removida in dezenas_pool_fech:
+                            dezenas_pool_fech.remove(removida)
+                            dezenas_pool_fech.append(candidata)
+                            st.info(f"🔄 Troca de segurança: dezena {removida:02d} (pool) substituída pela dezena {candidata:02d} (zona de risco, saiu no último concurso).")
+
+                    dezenas_pool_fech = sorted(set(dezenas_pool_fech))
+                else:
+                    st.caption("Nenhuma dezena da zona de risco saiu no último concurso — nenhuma troca necessária.")
+
+            st.markdown(f"**Dezenas usadas no fechamento ({len(dezenas_pool_fech)}):**")
+            st.markdown(formatar_jogo_html_mega(dezenas_pool_fech), unsafe_allow_html=True)
+
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                qtd_fechamento_mega = st.select_slider(
+                    "Quantidade de jogos do fechamento",
+                    options=[5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
+                    value=10,
+                    key="qtd_fechamento_slider_mega"
+                )
+            with col_f2:
+                max_combinacoes_mega = math.comb(len(dezenas_pool_fech), 6) if len(dezenas_pool_fech) >= 6 else 0
+                st.metric(f"Combinações possíveis ({len(dezenas_pool_fech)} escolhe 6)", f"{max_combinacoes_mega:,}".replace(",", "."))
+
+            metodo_fechamento_mega = st.radio(
+                "Método do fechamento",
+                ["⚖️ Balanceado (equilibra frequência das dezenas)", "🧩 Cobertura otimizada (Greedy Set-Cover aproximado)"],
+                key="metodo_fechamento_radio_mega",
+                help="O método de cobertura tenta escolher jogos que, juntos, cubram o maior número possível de combinações de "
+                     "dezenas dentro do pool — mas é uma heurística por amostragem, não uma garantia matemática formal."
+            )
+            usar_cobertura_mega = metodo_fechamento_mega.startswith("🧩")
+
+            if usar_cobertura_mega:
+                k_garantia_mega = st.slider(
+                    "Tamanho do subconjunto de garantia (k)", 3, 5, 4,
+                    key="k_garantia_mega",
+                    help="O algoritmo tenta priorizar jogos que cubram combinações de k dezenas dentro do pool. "
+                         "k=4 mira reforçar quadras; k=5, quinas."
+                )
+
+            with st.expander("🧪 Filtros de padrão histórico (opcional)"):
+                aplicar_filtros_fechamento_mega = st.checkbox("Aplicar filtros ao gerar os jogos", value=False, key="aplicar_filtros_fechamento_chk_mega")
+                colfa, colfb = st.columns(2)
+                with colfa:
+                    pares_min_fm = st.slider("Pares mínimo", 0, 6, 2, key="pares_min_fechamento_mega")
+                    pares_max_fm = st.slider("Pares máximo", 0, 6, 4, key="pares_max_fechamento_mega")
+                    primos_min_fm = st.slider("Primos mínimo", 0, 6, 1, key="primos_min_fechamento_mega")
+                    primos_max_fm = st.slider("Primos máximo", 0, 6, 3, key="primos_max_fechamento_mega")
+                with colfb:
+                    soma_min_fm = st.slider("Soma mínima", 21, 351, 120, key="soma_min_fechamento_mega")
+                    soma_max_fm = st.slider("Soma máxima", 21, 351, 250, key="soma_max_fechamento_mega")
+                    repetidas_min_fm = st.slider("Repetidas do último concurso (mín.)", 0, 6, 0, key="repetidas_min_fechamento_mega")
+                    repetidas_max_fm = st.slider("Repetidas do último concurso (máx.)", 0, 6, 2, key="repetidas_max_fechamento_mega")
+
+            if st.button("🔒 GERAR FECHAMENTO", use_container_width=True, type="primary", key="gerar_fechamento_btn_mega"):
+                if len(dezenas_pool_fech) < 6:
+                    st.error("❌ É preciso de pelo menos 6 dezenas pontuadas para gerar o fechamento.")
+                else:
+                    filtro_fn_mega = None
+                    if aplicar_filtros_fechamento_mega:
+                        filtro_fn_mega = lambda j: passa_filtros_qualidade_mega(
+                            j, ultimo_concurso=ultimo_dezenas_fech,
+                            pares_min=min(pares_min_fm, pares_max_fm), pares_max=max(pares_min_fm, pares_max_fm),
+                            soma_min=min(soma_min_fm, soma_max_fm), soma_max=max(soma_min_fm, soma_max_fm),
+                            primos_min=min(primos_min_fm, primos_max_fm), primos_max=max(primos_min_fm, primos_max_fm),
+                            repetidas_min=min(repetidas_min_fm, repetidas_max_fm), repetidas_max=max(repetidas_min_fm, repetidas_max_fm)
+                        )
+
+                    with st.spinner(f"Gerando fechamento com {qtd_fechamento_mega} jogos distintos..."):
+                        if usar_cobertura_mega:
+                            jogos_fechamento_mega, cobertura_estimada_mega = gerar_fechamento_cobertura_mega(
+                                dezenas_pool_fech, qtd_fechamento_mega, tamanho_jogo=6,
+                                k_garantia=k_garantia_mega, filtro_fn=filtro_fn_mega
+                            )
+                        else:
+                            jogos_fechamento_mega = gerar_fechamento_mega(dezenas_pool_fech, qtd_fechamento_mega, tamanho_jogo=6, filtro_fn=filtro_fn_mega)
+                            cobertura_estimada_mega = None
+
+                        if jogos_fechamento_mega:
+                            st.session_state.jogos_fechamento = jogos_fechamento_mega
+                            st.session_state.fechamento_dezenas = dezenas_pool_fech
+                            st.session_state.fechamento_metodo = metodo_fechamento_mega
+                            st.session_state.fechamento_cobertura = cobertura_estimada_mega
+                            msg = f"✅ {len(jogos_fechamento_mega)} jogos distintos gerados!"
+                            if cobertura_estimada_mega is not None:
+                                msg += f" Cobertura estimada (amostral, k={k_garantia_mega}): {cobertura_estimada_mega*100:.1f}%"
+                            st.success(msg)
+                        else:
+                            st.error("❌ Não foi possível gerar o fechamento com os filtros/parâmetros atuais. Tente relaxar os filtros.")
+
+            if st.session_state.jogos_fechamento:
+                jogos_fechamento_mega = st.session_state.jogos_fechamento
+                st.markdown(f"### 📋 Jogos do Fechamento ({len(jogos_fechamento_mega)})")
+                if st.session_state.fechamento_cobertura is not None:
+                    st.caption(f"Método: {st.session_state.fechamento_metodo} | Cobertura estimada (amostral): {st.session_state.fechamento_cobertura*100:.1f}%")
+                elif st.session_state.fechamento_metodo:
+                    st.caption(f"Método: {st.session_state.fechamento_metodo}")
+
+                contagem_final_mega = Counter()
+                for j in jogos_fechamento_mega:
+                    contagem_final_mega.update(j)
+                df_balanco_mega = pd.DataFrame({
+                    'Dezena': list(contagem_final_mega.keys()),
+                    'Aparições': list(contagem_final_mega.values())
+                }).sort_values('Dezena')
+
+                with st.expander("⚖️ Balanceamento das dezenas no fechamento"):
+                    fig = px.bar(df_balanco_mega, x='Dezena', y='Aparições',
+                                title='Quantas vezes cada dezena aparece nos jogos do fechamento')
+                    st.plotly_chart(fig, use_container_width=True)
+
+                for i, jogo in enumerate(jogos_fechamento_mega):
+                    pares = contar_pares_mega(jogo)
+                    soma = sum(jogo)
+                    st.markdown(f"""
+                    <div class='card'>
+                        📌 <strong>Jogo {i+1:02d}</strong><br>
+                        {formatar_jogo_html_mega(jogo)}<br>
+                        <small style='color:#aaa;'>⚖️ {pares}p/{6-pares}i | ➕ {soma}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                col_fs1, col_fs2, col_fs3 = st.columns(3)
+                with col_fs1:
+                    if st.button("💾 Salvar Fechamento", key="salvar_fechamento_btn_mega", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_mega_elite(jogos_fechamento_mega, {
+                            'tipo': 'fechamento_ranking',
+                            'metodo': st.session_state.fechamento_metodo,
+                            'cobertura_estimada': st.session_state.fechamento_cobertura,
+                            'dezenas_pool': st.session_state.fechamento_dezenas,
+                            'qtd_jogos': len(jogos_fechamento_mega)
+                        })
+                        if arquivo:
+                            st.success(f"✅ Fechamento salvo! ID: {jogo_id}")
+                with col_fs2:
+                    df_export_fech_mega = pd.DataFrame({
+                        'Jogo': range(1, len(jogos_fechamento_mega) + 1),
+                        'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_fechamento_mega],
+                        'Pares': [contar_pares_mega(j) for j in jogos_fechamento_mega],
+                        'Soma': [sum(j) for j in jogos_fechamento_mega],
+                        'Primos': [contar_primos_mega(j) for j in jogos_fechamento_mega],
+                        'Consecutivos': [contar_consecutivos_mega(j) for j in jogos_fechamento_mega]
+                    })
+                    st.download_button(
+                        label="📥 Exportar CSV",
+                        data=df_export_fech_mega.to_csv(index=False),
+                        file_name=f"fechamento_mega_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_fechamento_csv_mega"
+                    )
+                with col_fs3:
+                    if st.button("🗑️ Limpar Fechamento", key="limpar_fechamento_btn_mega", use_container_width=True):
+                        st.session_state.jogos_fechamento = []
+                        st.session_state.fechamento_metodo = ""
+                        st.session_state.fechamento_cobertura = None
+                        st.rerun()
 
     # ================= TAB 3: IA ADAPTATIVA =================
     with tabs[2]:
@@ -2179,6 +2581,7 @@ def main():
                 "Origem dos jogos",
                 ["🎲 Jogos gerados na sessão (Gerador Premium)",
                  "🧠 Jogos gerados pela IA",
+                 "🔒 Jogos do fechamento (Ranking)",
                  "💾 Jogos salvos (arquivo)",
                  "✍️ Colar jogos manualmente"],
                 key="origem_jogos_conferencia_mega"
@@ -2198,6 +2601,12 @@ def main():
                 rotulo_origem = "Jogos gerados pela IA (sessão atual)"
                 if not jogos_para_conferir:
                     st.info("Nenhum jogo gerado pela IA ainda. Vá até a aba 🧠 IA Adaptativa.")
+
+            elif origem_jogos.startswith("🔒"):
+                jogos_para_conferir = st.session_state.get("jogos_fechamento", [])
+                rotulo_origem = "Fechamento (Ranking)"
+                if not jogos_para_conferir:
+                    st.info("Nenhum fechamento gerado nesta sessão ainda. Vá até a aba 🏆 Ranking.")
 
             elif origem_jogos.startswith("💾"):
                 lista_salvos = carregar_jogos_mega_elite()
