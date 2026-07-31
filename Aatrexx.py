@@ -335,7 +335,12 @@ class EstatisticasLFAvancadas:
         self.distribuicao_paridade = self._calcular_distribuicao_paridade(historico)
         self.distribuicao_soma = self._calcular_distribuicao_soma(historico)
         self.distribuicao_repetidas = self._calcular_distribuicao_repetidas(historico)
-        
+
+        # Fatores adicionais para refinar a seleção da base de dezenas
+        self.intervalos_medios = self._calcular_intervalos_medios(historico)
+        self.moldura_miolo_freq = self._calcular_moldura_miolo_freq(historico)
+        self.repetiu_ultimo_concurso = self._calcular_repetiu_ultimo_concurso(historico)
+
         # Estatísticas adicionais
         self.media_soma = np.mean([c['soma'] for c in self.banco.concursos])
         self.std_soma = np.std([c['soma'] for c in self.banco.concursos])
@@ -485,7 +490,59 @@ class EstatisticasLFAvancadas:
                 'distribuicao': Counter(repetidas)
             }
         return {'media': 0, 'std': 0, 'max': 0, 'min': 0, 'distribuicao': {}}
-    
+
+    def _calcular_intervalos_medios(self, historico):
+        """
+        Calcula o intervalo médio histórico (gap típico) entre aparições de
+        cada dezena. Usado para julgar um 'atraso equilibrado': nem muito
+        abaixo (dezena excessivamente quente) nem muito acima (fria demais)
+        do que costuma ocorrer para aquela dezena especificamente.
+        """
+        intervalos = {}
+        for num in range(1, 26):
+            posicoes = [i for i, concurso in enumerate(historico) if num in concurso]
+            if len(posicoes) >= 2:
+                gaps = [posicoes[i+1] - posicoes[i] for i in range(len(posicoes) - 1)]
+                intervalos[num] = float(np.mean(gaps)) if gaps else 1.6
+            else:
+                intervalos[num] = 1.6  # ~15/25 chance por concurso -> gap esperado
+        return intervalos
+
+    def _calcular_moldura_miolo_freq(self, historico):
+        """
+        Classifica as 25 dezenas em 'moldura' (borda do painel 5x5) e
+        'miolo' (centro 3x3) e calcula a frequência relativa histórica
+        de cada grupo, normalizada pelo tamanho do grupo.
+        """
+        miolo = {7, 8, 9, 12, 13, 14, 17, 18, 19}
+        contagem_moldura = 0
+        contagem_miolo = 0
+        for concurso in historico:
+            for num in concurso:
+                if num in miolo:
+                    contagem_miolo += 1
+                else:
+                    contagem_moldura += 1
+        total = contagem_moldura + contagem_miolo
+        if total == 0:
+            return {'moldura': 0.5, 'miolo': 0.5, 'grupo': {n: ('miolo' if n in miolo else 'moldura') for n in range(1, 26)}}
+        # Normaliza pela quantidade de dezenas em cada grupo (16 na moldura, 9 no miolo)
+        media_moldura = (contagem_moldura / 16)
+        media_miolo = (contagem_miolo / 9)
+        soma = media_moldura + media_miolo if (media_moldura + media_miolo) > 0 else 1
+        return {
+            'moldura': media_moldura / soma,
+            'miolo': media_miolo / soma,
+            'grupo': {n: ('miolo' if n in miolo else 'moldura') for n in range(1, 26)}
+        }
+
+    def _calcular_repetiu_ultimo_concurso(self, historico):
+        """Marca quais dezenas saíram no concurso mais recente."""
+        if not historico:
+            return {n: False for n in range(1, 26)}
+        ultimo = set(historico[0])
+        return {n: (n in ultimo) for n in range(1, 26)}
+
     def get_estatisticas_dezena(self, numero):
         """Retorna todas as estatísticas de uma dezena"""
         return {
@@ -512,12 +569,14 @@ class MotorPontuacaoLF:
         
     def _definir_pesos(self):
         return {
-            'frequencia_recente': 0.25,
-            'frequencia_historica': 0.20,
-            'atraso': 0.20,
+            'frequencia_recente': 0.20,
+            'frequencia_historica': 0.15,
+            'atraso_equilibrado': 0.20,
+            'repeticao_ultimo': 0.10,
+            'moldura_miolo': 0.10,
             'tendencia': 0.15,
-            'equilibrio': 0.10,
-            'diversidade': 0.10
+            'equilibrio': 0.05,
+            'diversidade': 0.05
         }
     
     def _calcular_pontuacoes(self):
@@ -526,7 +585,6 @@ class MotorPontuacaoLF:
         # Normaliza métricas
         max_freq = max(self.estatisticas.frequencias.values()) if self.estatisticas.frequencias else 1
         max_freq_recente = max(self.estatisticas.frequencias_periodos[20].values()) if 20 in self.estatisticas.frequencias_periodos else 1
-        max_atraso = max(self.estatisticas.atrasos.values()) if self.estatisticas.atrasos else 1
         
         for num in range(1, 26):
             # Frequência recente (20 últimos)
@@ -535,8 +593,17 @@ class MotorPontuacaoLF:
             # Frequência histórica
             freq_historica = self.estatisticas.frequencias.get(num, 0) / max_freq
             
-            # Atraso (invertido)
-            atraso = 1 - (self.estatisticas.atrasos.get(num, 0) / max_atraso)
+            # Atraso equilibrado: nem quente nem fria demais em relação ao
+            # intervalo médio típico de cada dezena (em vez de só premiar
+            # atraso baixo, o que tendia a excluir dezenas "devidas")
+            atraso_equilibrado = self._calcular_atraso_equilibrado(num)
+            
+            # Repetição do último concurso, ponderada pela taxa histórica
+            # de repetição entre concursos consecutivos
+            repeticao_ultimo = self._calcular_repeticao(num)
+            
+            # Padrão moldura (borda) x miolo (centro) do painel 5x5
+            moldura_miolo = self._calcular_moldura_miolo(num)
             
             # Tendência
             tendencia_info = self.estatisticas.tendencias.get(num, {})
@@ -553,7 +620,9 @@ class MotorPontuacaoLF:
             pontuacao = (
                 freq_recente * self.pesos['frequencia_recente'] +
                 freq_historica * self.pesos['frequencia_historica'] +
-                atraso * self.pesos['atraso'] +
+                atraso_equilibrado * self.pesos['atraso_equilibrado'] +
+                repeticao_ultimo * self.pesos['repeticao_ultimo'] +
+                moldura_miolo * self.pesos['moldura_miolo'] +
                 tendencia_norm * self.pesos['tendencia'] +
                 equilibrio * self.pesos['equilibrio'] +
                 diversidade * self.pesos['diversidade']
@@ -562,6 +631,46 @@ class MotorPontuacaoLF:
             pontuacoes[num] = round(pontuacao * 100, 2)
         
         return pontuacoes
+    
+    def _calcular_atraso_equilibrado(self, numero):
+        """
+        Em vez de simplesmente premiar o menor atraso possível (o que
+        favorece só dezenas 'quentes' e tende a excluir dezenas devidas),
+        usa uma curva em sino centrada no intervalo médio histórico da
+        própria dezena: pontua mais alto quando o atraso atual está
+        próximo do que costuma acontecer para ela, e penaliza tanto
+        atrasos muito abaixo (excesso de repetição) quanto muito acima
+        (fria demais) desse intervalo típico.
+        """
+        atraso_atual = self.estatisticas.atrasos.get(numero, 0)
+        intervalo_ideal = self.estatisticas.intervalos_medios.get(numero, 1.6)
+        sigma = max(intervalo_ideal, 1.0)
+        diff = atraso_atual - intervalo_ideal
+        score = math.exp(-(diff ** 2) / (2 * (sigma ** 2)))
+        return max(0.0, min(1.0, score))
+    
+    def _calcular_repeticao(self, numero):
+        """
+        Dá um bônus se a dezena saiu no concurso mais recente, na medida
+        exata da taxa histórica de repetição entre concursos consecutivos
+        (evita superestimar: se historicamente ~53% das dezenas repetem,
+        o bônus reflete essa proporção em vez de assumir 100%).
+        """
+        media_repetidas = self.estatisticas.distribuicao_repetidas.get('media', 8)
+        taxa_repeticao = max(0.0, min(1.0, media_repetidas / 15))
+        saiu_ultimo = self.estatisticas.repetiu_ultimo_concurso.get(numero, False)
+        return taxa_repeticao if saiu_ultimo else (1 - taxa_repeticao)
+    
+    def _calcular_moldura_miolo(self, numero):
+        """
+        Compara a frequência normalizada do grupo (moldura/miolo) ao qual
+        a dezena pertence, refletindo se esse padrão espacial do painel
+        5x5 costuma sair mais ou menos que o esperado.
+        """
+        info = self.estatisticas.moldura_miolo_freq
+        grupo = info.get('grupo', {}).get(numero, 'moldura')
+        valor = info.get(grupo, 0.5)
+        return max(0.0, min(1.0, valor))
     
     def _calcular_equilibrio(self, numero):
         """Calcula fator de equilíbrio baseado na posição da dezena"""
@@ -1493,8 +1602,48 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-            ranking_21 = pontuacao.get_ranking(21)
-            dezenas_fechamento = sorted([n for n, _ in ranking_21])
+            ranking_completo = pontuacao.get_ranking(25)
+            ranking_top21 = ranking_completo[:21]
+            ranking_risco = ranking_completo[21:25]
+            dezenas_top21 = sorted([n for n, _ in ranking_top21])
+
+            st.markdown("**⚠️ Zona de risco (dezenas logo fora do Top 21):**")
+            if ranking_risco:
+                partes_risco = []
+                for num, score in ranking_risco:
+                    saiu_ultimo = stats.repetiu_ultimo_concurso.get(num, False)
+                    marcador = " 🔥 saiu no último concurso" if saiu_ultimo else ""
+                    partes_risco.append(f"Dezena {num:02d} (score {score:.2f}){marcador}")
+                st.caption(" | ".join(partes_risco))
+            else:
+                st.caption("Nenhuma dezena pontuada fora do Top 21.")
+
+            incluir_seguranca = st.checkbox(
+                "🛡️ Incluir automaticamente dezenas da zona de risco que saíram no último concurso",
+                value=False,
+                key="incluir_seguranca_fechamento",
+                help="Troca a dezena de menor score do Top 21 (entre as que NÃO saíram no último concurso) por dezenas da zona de risco que saíram, reduzindo a chance de deixar de fora uma dezena 'quente' recente."
+            )
+
+            dezenas_fechamento = list(dezenas_top21)
+            if incluir_seguranca:
+                candidatas_seguranca = [num for num, _ in ranking_risco if stats.repetiu_ultimo_concurso.get(num, False)]
+                if candidatas_seguranca:
+                    top21_por_score_asc = sorted(ranking_top21, key=lambda x: x[1])
+                    trocaveis = [num for num, _ in top21_por_score_asc if not stats.repetiu_ultimo_concurso.get(num, False)]
+
+                    for candidata in candidatas_seguranca:
+                        if not trocaveis:
+                            break
+                        removida = trocaveis.pop(0)
+                        if removida in dezenas_fechamento:
+                            dezenas_fechamento.remove(removida)
+                            dezenas_fechamento.append(candidata)
+                            st.info(f"🔄 Troca de segurança: dezena {removida:02d} (Top 21) substituída pela dezena {candidata:02d} (zona de risco, saiu no último concurso).")
+
+                    dezenas_fechamento = sorted(set(dezenas_fechamento))
+                else:
+                    st.caption("Nenhuma dezena da zona de risco saiu no último concurso — nenhuma troca necessária.")
 
             if len(dezenas_fechamento) < 21:
                 st.warning(f"⚠️ Só há {len(dezenas_fechamento)} dezenas pontuadas disponíveis (menos que 21).")
