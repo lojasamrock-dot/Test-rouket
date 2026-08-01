@@ -13,7 +13,8 @@ from datetime import datetime, timedelta
 from scipy.stats import norm, binom, chi2, pearsonr
 from scipy.signal import find_peaks
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier, StackingClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.calibration import CalibratedClassifierCV
 try:
@@ -322,6 +323,55 @@ def passa_filtro_dna_lf(jogo, dna_historico, similaridade_minima=0.5):
     """
     return calcular_similaridade_dna_lf(jogo, dna_historico) >= similaridade_minima
 
+def calcular_meta_score_jogo(jogo, estatisticas, pontuacao, ia=None):
+    """
+    Módulo 19 - Meta Score.
+
+    Combina, em uma única nota de 0 a 100 avaliada no JOGO como um todo
+    (e não em cada dezena isolada), os módulos que só fazem sentido nesse
+    nível:
+
+    - `motor`: a pontuação média das 15 dezenas do jogo no MotorPontuacaoLF,
+      que já soma os Módulos 1 (Frequência Inteligente), 2 (Atraso), 3
+      (Ciclos), 5 (Bayes), 6 (Markov) e 7 (Correlação);
+    - `dna`: a similaridade do DNA do jogo com o perfil histórico (Módulo 4);
+    - `ml`: quando há modelos de IA treinados (Módulo 18), a probabilidade
+      média prevista pelos modelos para as dezenas do jogo.
+
+    Cada módulo contribui uma nota de 0 a 1; a nota final é a média
+    ponderada delas, escalada para 0-100.
+    """
+    pontuacao_media = float(np.mean([pontuacao.pontuacoes.get(n, 0) for n in jogo])) / 100.0
+    dna_similaridade = calcular_similaridade_dna_lf(jogo, estatisticas.dna_historico)
+
+    componentes = {'motor': pontuacao_media, 'dna': dna_similaridade}
+    pesos = {'motor': 0.55, 'dna': 0.25}
+
+    ml_prob = None
+    if ia is not None and getattr(ia, 'modelos', None):
+        previsoes = ia.prever_probabilidades(jogo)
+        if previsoes:
+            ml_prob = float(np.mean([info['media'] for info in previsoes.values()]))
+            componentes['ml'] = ml_prob
+            pesos['ml'] = 0.20
+
+    soma_pesos = sum(pesos.values()) or 1.0
+    nota = sum(componentes[k] * pesos[k] for k in componentes) / soma_pesos
+
+    return {
+        'nota': round(nota * 100, 2),
+        'motor_medio': round(pontuacao_media * 100, 2),
+        'dna_similaridade': round(dna_similaridade * 100, 2),
+        'ml_probabilidade': round(ml_prob * 100, 2) if ml_prob is not None else None
+    }
+
+def passa_meta_score_lf(jogo, estatisticas, pontuacao, corte=60, ia=None):
+    """
+    Módulo 19 - Meta Score: só sobrevivem jogos com nota final (0-100)
+    maior ou igual ao `corte` definido.
+    """
+    return calcular_meta_score_jogo(jogo, estatisticas, pontuacao, ia)['nota'] >= corte
+
 def passa_filtros_qualidade_lf(jogo, ultimo_concurso=None,
                                 pares_min=7, pares_max=8,
                                 soma_min=170, soma_max=220,
@@ -378,13 +428,51 @@ def respeita_quotas_atraso_lf(jogo, atraso_categoria, quotas):
             return False
     return True
 
-def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas=None, filtro_fn=None):
+def contar_clusters_jogo(jogo, clusters_dezena):
+    """
+    Módulo 8 - Clusters: conta quantas dezenas de um jogo pertencem a cada
+    grupo (Quente, Frio, Oscilante, Estável).
+    """
+    contagem = Counter()
+    for dezena in jogo:
+        grupo = clusters_dezena.get(dezena, 'Estável')
+        contagem[grupo] += 1
+    return contagem
+
+def respeita_quotas_cluster_lf(jogo, clusters_dezena, quotas):
+    """
+    Módulo 8 - Clusters: verifica se um jogo respeita as quotas
+    (mínimo/máximo de dezenas) definidas para cada cluster. `quotas` é um
+    dict {grupo: (minimo, maximo)}; grupos ausentes não são restringidos.
+    """
+    contagem = contar_clusters_jogo(jogo, clusters_dezena)
+    for grupo, (minimo, maximo) in quotas.items():
+        qtd = contagem.get(grupo, 0)
+        if not (minimo <= qtd <= maximo):
+            return False
+    return True
+
+def calcular_distancia_jogos_lf(jogo_a, jogo_b):
+    """
+    Módulo 16 - Distância entre Jogos.
+
+    Conta quantas dezenas diferem entre dois jogos de mesmo tamanho (ex.:
+    dois jogos de 15 dezenas com 9 dezenas em comum têm distância 6). Usada
+    para evitar jogos "clones" dentro de um mesmo fechamento — a
+    recomendação do estudo é distância mínima de 6, idealmente 7 ou 8.
+    """
+    return len(set(jogo_a) - set(jogo_b))
+
+def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas=None, filtro_fn=None, distancia_minima=None):
     """
     Gera um fechamento (roda de jogos) usando um pool fixo de dezenas
     (ex.: as 21 dezenas mais bem rankeadas). Produz `qtd_jogos` jogos
     distintos entre si, balanceando a frequência de aparição de cada
     dezena do pool ao longo dos jogos gerados. Se `filtro_fn` for
     informado, só aceita jogos para os quais `filtro_fn(jogo)` seja True.
+    Se `distancia_minima` for informado (Módulo 16), só aceita um jogo se
+    ele diferir de TODOS os jogos já aceitos em pelo menos essa quantidade
+    de dezenas, evitando jogos "clones" dentro do mesmo fechamento.
     """
     dezenas_pool = sorted(set(dezenas_pool))
     n_pool = len(dezenas_pool)
@@ -396,7 +484,7 @@ def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas
     qtd_jogos = min(qtd_jogos, max_combinacoes)
 
     if max_tentativas is None:
-        max_tentativas = qtd_jogos * 600 + 4000
+        max_tentativas = qtd_jogos * (2500 if distancia_minima else 600) + 4000
 
     contagem = {d: 0 for d in dezenas_pool}
     jogos = []
@@ -424,6 +512,10 @@ def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas
         if jogo_ordenado in jogos_set:
             continue
         if filtro_fn is not None and not filtro_fn(list(jogo_ordenado)):
+            continue
+        if distancia_minima and any(
+            calcular_distancia_jogos_lf(jogo_ordenado, existente) < distancia_minima for existente in jogos
+        ):
             continue
 
         jogos_set.add(jogo_ordenado)
@@ -544,6 +636,155 @@ def gerar_fechamento_cobertura_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, k_ga
     taxa_cobertura = cobertura_total / total_subs if total_subs else 0.0
 
     return jogos_selecionados, taxa_cobertura
+
+def _crossover_jogo_lf(pai_a, pai_b, dezenas_pool, tamanho_jogo=15):
+    """
+    Módulo 17 - Algoritmo Genético: cruzamento. O filho herda primeiro as
+    dezenas em comum entre os dois pais (o que os dois "concordam" ser
+    bom); o restante das vagas é preenchido com dezenas que aparecem em
+    QUALQUER um dos dois pais, e só recorre ao pool geral se isso ainda
+    não for suficiente.
+    """
+    comuns = list(set(pai_a) & set(pai_b))
+    uniao = list(set(pai_a) | set(pai_b))
+    random.shuffle(comuns)
+    random.shuffle(uniao)
+
+    filho = comuns[:tamanho_jogo]
+    for d in uniao:
+        if len(filho) >= tamanho_jogo:
+            break
+        if d not in filho:
+            filho.append(d)
+
+    if len(filho) < tamanho_jogo:
+        resto_pool = [d for d in dezenas_pool if d not in filho]
+        random.shuffle(resto_pool)
+        while len(filho) < tamanho_jogo and resto_pool:
+            filho.append(resto_pool.pop())
+
+    return sorted(filho[:tamanho_jogo])
+
+def _mutar_jogo_lf(jogo, dezenas_pool, taxa_mutacao=0.15):
+    """
+    Módulo 17 - Algoritmo Genético: mutação. Com probabilidade
+    `taxa_mutacao`, troca uma dezena do jogo por outra do pool que ainda
+    não estava presente — mantém diversidade genética na população e
+    evita convergência prematura para um único padrão de jogo.
+    """
+    jogo = list(jogo)
+    fora_pool = [d for d in dezenas_pool if d not in jogo]
+    if random.random() < taxa_mutacao and fora_pool:
+        idx = random.randrange(len(jogo))
+        jogo[idx] = random.choice(fora_pool)
+    return sorted(jogo)
+
+def gerar_fechamento_genetico_lf(dezenas_pool, qtd_jogos, estatisticas, pontuacao, ia=None,
+                                  tamanho_jogo=15, geracoes=40, tamanho_populacao=60,
+                                  taxa_mutacao=0.15, distancia_minima=6, filtro_fn=None):
+    """
+    Módulo 17 - Algoritmo Genético.
+
+    Evolui uma população de jogos candidatos por várias gerações usando
+    seleção por torneio, cruzamento e mutação. A aptidão (fitness) de cada
+    jogo é o seu Meta Score (Módulo 19), que já combina Frequência
+    Inteligente, Atraso, Ciclos, Bayes, Markov, Correlação, DNA e (quando
+    disponível) Machine Learning. Ao final, seleciona os `qtd_jogos`
+    melhores jogos distintos, priorizando quem respeita a distância
+    mínima entre jogos (Módulo 16) — evitando que o fechamento final saia
+    cheio de jogos "clones" uns dos outros.
+    """
+    dezenas_pool = sorted(set(dezenas_pool))
+    if len(dezenas_pool) < tamanho_jogo or qtd_jogos <= 0:
+        return []
+
+    def fitness(jogo):
+        if filtro_fn is not None and not filtro_fn(jogo):
+            return -1.0
+        return calcular_meta_score_jogo(jogo, estatisticas, pontuacao, ia=ia)['nota']
+
+    # População inicial aleatória
+    populacao = []
+    tentativas_init = 0
+    max_tentativas_init = tamanho_populacao * 30 + 500
+    while len(populacao) < tamanho_populacao and tentativas_init < max_tentativas_init:
+        tentativas_init += 1
+        populacao.append(sorted(random.sample(dezenas_pool, tamanho_jogo)))
+
+    if not populacao:
+        return []
+
+    for _ in range(geracoes):
+        avaliados = [(jogo, fitness(jogo)) for jogo in populacao]
+        avaliados.sort(key=lambda x: x[1], reverse=True)
+
+        elite_tam = max(2, tamanho_populacao // 10)
+        nova_populacao = [jogo for jogo, _ in avaliados[:elite_tam]]
+
+        while len(nova_populacao) < tamanho_populacao:
+            grupo_a = random.sample(avaliados, min(3, len(avaliados)))
+            pai_a = max(grupo_a, key=lambda x: x[1])[0]
+            grupo_b = random.sample(avaliados, min(3, len(avaliados)))
+            pai_b = max(grupo_b, key=lambda x: x[1])[0]
+
+            filho = _crossover_jogo_lf(pai_a, pai_b, dezenas_pool, tamanho_jogo)
+            filho = _mutar_jogo_lf(filho, dezenas_pool, taxa_mutacao)
+            nova_populacao.append(filho)
+
+        populacao = nova_populacao
+
+    avaliados_final = [(tuple(jogo), fitness(jogo)) for jogo in populacao]
+    avaliados_final = sorted(set(avaliados_final), key=lambda x: x[1], reverse=True)
+
+    selecionados = []
+    # 1ª passada: exige a distância mínima entre jogos (Módulo 16)
+    for jogo, nota in avaliados_final:
+        if nota < 0:
+            continue
+        if distancia_minima and any(
+            calcular_distancia_jogos_lf(jogo, sel) < distancia_minima for sel in selecionados
+        ):
+            continue
+        selecionados.append(jogo)
+        if len(selecionados) >= qtd_jogos:
+            break
+
+    # 2ª passada: quando a população converge para uma região estreita do
+    # espaço de busca, "repara" os melhores candidatos restantes via
+    # mutação sucessiva até satisfazerem a distância mínima em relação aos
+    # já selecionados — evita que o fechamento saia cheio de jogos quase
+    # idênticos só porque a evolução convergiu demais.
+    if distancia_minima and len(selecionados) < qtd_jogos:
+        candidatos_restantes = [j for j, n in avaliados_final if n >= 0 and j not in selecionados]
+        for candidato in candidatos_restantes:
+            if len(selecionados) >= qtd_jogos:
+                break
+            tentativa = list(candidato)
+            for _ in range(80):
+                if all(calcular_distancia_jogos_lf(tentativa, sel) >= distancia_minima for sel in selecionados):
+                    break
+                fora_pool = [d for d in dezenas_pool if d not in tentativa]
+                if not fora_pool:
+                    break
+                idx_troca = random.randrange(len(tentativa))
+                tentativa[idx_troca] = random.choice(fora_pool)
+            tentativa_tupla = tuple(sorted(tentativa))
+            if tentativa_tupla not in selecionados and all(
+                calcular_distancia_jogos_lf(tentativa_tupla, sel) >= distancia_minima for sel in selecionados
+            ):
+                selecionados.append(tentativa_tupla)
+
+    # 3ª passada: se ainda faltar jogo, completa relaxando a exigência de
+    # distância mínima (mantendo só a regra de não repetir jogo já selecionado)
+    if len(selecionados) < qtd_jogos:
+        for jogo, nota in avaliados_final:
+            if nota < 0 or jogo in selecionados:
+                continue
+            selecionados.append(jogo)
+            if len(selecionados) >= qtd_jogos:
+                break
+
+    return [list(j) for j in selecionados]
 
 # =====================================================
 # FUNÇÃO PARA BUSCAR DADOS DA LOTOFÁCIL
@@ -678,6 +919,14 @@ class EstatisticasLFAvancadas:
         # cada dezena é nas relações bayesianas/markovianas encontradas
         self.bayes_forca = self._agregar_forca_matriz(self.rede_bayesiana['matriz'])
         self.markov_forca = self._agregar_forca_matriz(self.cadeia_markov['matriz'])
+
+        # Módulo 7 - Correlação: pares de dezenas mais fortemente correlacionados
+        # (positiva ou negativamente) ao longo do histórico
+        self.pares_fortes = self._calcular_pares_fortes(historico)
+
+        # Módulo 8 - Clusters: agrupa as dezenas em 4 grupos (Quente, Frio,
+        # Oscilante, Estável) a partir do perfil atual de cada uma
+        self.clusters_dezena, self.clusters_contagem = self._calcular_clusters()
 
         # Estatísticas adicionais
         self.media_soma = np.mean([c['soma'] for c in self.banco.concursos])
@@ -987,6 +1236,103 @@ class EstatisticasLFAvancadas:
         max_v = max_v if max_v > 0 else 1.0
         return {a: round(v / max_v, 4) for a, v in medias.items()}
 
+    def _calcular_pares_fortes(self, historico):
+        """
+        Módulo 7 - Correlação.
+
+        Calcula a matriz completa de correlação de Pearson entre a
+        presença de cada par de dezenas ao longo do histórico e extrai os
+        10 pares mais fortemente correlacionados positivamente (tendem a
+        sair juntas mais do que o esperado ao acaso) e os 10 mais
+        correlacionados negativamente (tendem a se "evitar").
+        """
+        n = len(historico)
+        if n < 3:
+            return {'matriz': {}, 'top_positivos': [], 'top_negativos': []}
+
+        presenca = np.zeros((25, n))
+        for j, concurso in enumerate(historico):
+            for num in concurso:
+                presenca[num - 1, j] = 1
+
+        with np.errstate(invalid='ignore', divide='ignore'):
+            matriz_corr = np.corrcoef(presenca)
+        matriz_corr = np.nan_to_num(matriz_corr, nan=0.0)
+
+        matriz = {a: {} for a in range(1, 26)}
+        pares = []
+        for i in range(25):
+            for j in range(i + 1, 25):
+                valor = round(float(matriz_corr[i, j]), 4)
+                matriz[i + 1][j + 1] = valor
+                matriz[j + 1][i + 1] = valor
+                pares.append((i + 1, j + 1, valor))
+
+        top_positivos = sorted(pares, key=lambda x: x[2], reverse=True)[:10]
+        top_negativos = sorted(pares, key=lambda x: x[2])[:10]
+
+        return {'matriz': matriz, 'top_positivos': top_positivos, 'top_negativos': top_negativos}
+
+    def _calcular_clusters(self):
+        """
+        Módulo 8 - Clusters.
+
+        Agrupa as 25 dezenas em 4 clusters via K-Means, a partir de um
+        perfil de cada dezena (frequência inteligente, atraso relativo e
+        magnitude da tendência recente). Os clusters recebem rótulos com
+        significado (Quente, Frio, Oscilante, Estável) de acordo com as
+        características do centróide de cada grupo, em vez de um índice
+        arbitrário do K-Means.
+        """
+        numeros = list(range(1, 26))
+        features = []
+        for n in numeros:
+            freq = self.frequencia_inteligente.get(n, 0)
+            atraso = self.atraso_relativo.get(n, 0)
+            inclinacao = abs(self.tendencias.get(n, {}).get('inclinacao', 0))
+            features.append([freq, atraso, inclinacao])
+
+        X = np.array(features)
+        valores_unicos = len(set(map(tuple, np.round(X, 6).tolist())))
+        if valores_unicos < 4:
+            grupo_dezena = {n: 'Estável' for n in numeros}
+            return grupo_dezena, dict(Counter(grupo_dezena.values()))
+
+        scaler = StandardScaler()
+        X_escalado = scaler.fit_transform(X)
+
+        kmeans = KMeans(n_clusters=4, n_init=10, random_state=42)
+        indices = kmeans.fit_predict(X_escalado)
+        centroides = kmeans.cluster_centers_  # colunas: [freq, atraso, inclinacao]
+
+        restantes = set(range(4))
+        rotulo_por_indice = {}
+
+        # Quente: maior frequência relativa e menor atraso relativo
+        scores = {i: centroides[i][0] - centroides[i][1] for i in restantes}
+        idx = max(scores, key=scores.get)
+        rotulo_por_indice[idx] = 'Quente'
+        restantes.discard(idx)
+
+        # Frio: maior atraso relativo e menor frequência relativa
+        scores = {i: centroides[i][1] - centroides[i][0] for i in restantes}
+        idx = max(scores, key=scores.get)
+        rotulo_por_indice[idx] = 'Frio'
+        restantes.discard(idx)
+
+        # Oscilante: maior magnitude de tendência (mais instável)
+        scores = {i: centroides[i][2] for i in restantes}
+        idx = max(scores, key=scores.get)
+        rotulo_por_indice[idx] = 'Oscilante'
+        restantes.discard(idx)
+
+        # Estável: o grupo restante
+        for i in restantes:
+            rotulo_por_indice[i] = 'Estável'
+
+        grupo_dezena = {n: rotulo_por_indice[idx] for n, idx in zip(numeros, indices)}
+        return grupo_dezena, dict(Counter(grupo_dezena.values()))
+
     def _calcular_tendencias(self, historico):
         tendencias = {}
         for num in range(1, 26):
@@ -1188,6 +1534,7 @@ class EstatisticasLFAvancadas:
             'ciclo_status': 'Faltante (deve sair)' if numero in self.ciclos.get('dezenas_faltantes_ciclo', set()) else 'Já saiu no ciclo',
             'bayes_forca': self.bayes_forca.get(numero, 0),
             'markov_forca': self.markov_forca.get(numero, 0),
+            'cluster': self.clusters_dezena.get(numero, 'Estável'),
             'tendencia': self.tendencias.get(numero, {'tendencia': 'estavel', 'inclinacao': 0}),
             'probabilidade': self.frequencias.get(numero, 0) / (self.total_concursos * 15) if self.total_concursos > 0 else 0
         }
@@ -1574,6 +1921,93 @@ class IAEstatisticaLF:
             return True
         except Exception as e:
             st.error(f"Erro ao treinar XGBoost: {e}")
+            return False
+
+    def treinar_voting_ensemble(self):
+        """
+        Módulo 18 - Machine Learning: Voting Ensemble.
+
+        Combina Random Forest e Gradient Boosting por votação suave (soft
+        voting): a probabilidade final é a média das probabilidades de
+        cada modelo. (Usa Gradient Boosting no lugar de LightGBM/XGBoost/
+        CatBoost reais para não depender de bibliotecas externas que talvez
+        não estejam disponíveis no ambiente de implantação.)
+        """
+        try:
+            X = self.dados_processados['features']
+            y = self.dados_processados['targets']
+
+            if len(X) < 200:
+                st.warning("⚠️ Poucos dados para treino confiável (carregue mais concursos).")
+                return False
+
+            (X_train, y_train), (X_calib, y_calib), (X_test, y_test) = self._split_cronologico(X, y)
+
+            rf = RandomForestClassifier(n_estimators=150, max_depth=12, min_samples_split=5, random_state=42, n_jobs=-1)
+            gb = GradientBoostingClassifier(n_estimators=150, learning_rate=0.1, max_depth=6, random_state=42)
+
+            modelo_base = VotingClassifier(estimators=[('rf', rf), ('gb', gb)], voting='soft')
+            modelo_base.fit(X_train, y_train)
+
+            modelo_calibrado = _calibrar_modelo_prefit(modelo_base)
+            modelo_calibrado.fit(X_calib, y_calib)
+
+            y_pred = modelo_calibrado.predict(X_test)
+            acuracia = accuracy_score(y_test, y_pred)
+
+            self.modelos['voting_ensemble'] = {
+                'modelo': modelo_calibrado,
+                'acuracia': acuracia
+            }
+
+            return True
+        except Exception as e:
+            st.error(f"Erro ao treinar Voting Ensemble: {e}")
+            return False
+
+    def treinar_stacking(self):
+        """
+        Módulo 18 - Machine Learning: Stacking.
+
+        Usa Random Forest e Gradient Boosting como modelos de base e uma
+        Regressão Logística como meta-modelo, que aprende a PONDERAR as
+        previsões dos dois (em vez de simplesmente tirar a média, como no
+        Voting Ensemble).
+        """
+        try:
+            X = self.dados_processados['features']
+            y = self.dados_processados['targets']
+
+            if len(X) < 200:
+                st.warning("⚠️ Poucos dados para treino confiável (carregue mais concursos).")
+                return False
+
+            (X_train, y_train), (X_calib, y_calib), (X_test, y_test) = self._split_cronologico(X, y)
+
+            rf = RandomForestClassifier(n_estimators=150, max_depth=12, min_samples_split=5, random_state=42, n_jobs=-1)
+            gb = GradientBoostingClassifier(n_estimators=150, learning_rate=0.1, max_depth=6, random_state=42)
+
+            modelo_base = StackingClassifier(
+                estimators=[('rf', rf), ('gb', gb)],
+                final_estimator=LogisticRegression(max_iter=1000),
+                cv=3
+            )
+            modelo_base.fit(X_train, y_train)
+
+            modelo_calibrado = _calibrar_modelo_prefit(modelo_base)
+            modelo_calibrado.fit(X_calib, y_calib)
+
+            y_pred = modelo_calibrado.predict(X_test)
+            acuracia = accuracy_score(y_test, y_pred)
+
+            self.modelos['stacking'] = {
+                'modelo': modelo_calibrado,
+                'acuracia': acuracia
+            }
+
+            return True
+        except Exception as e:
+            st.error(f"Erro ao treinar Stacking: {e}")
             return False
     
     def prever_probabilidades(self, jogo):
@@ -2235,9 +2669,29 @@ def main():
                     if st.session_state.ia:
                         rf_ok = st.session_state.ia.treinar_random_forest()
                         xgb_ok = st.session_state.ia.treinar_xgboost()
-                        if rf_ok or xgb_ok:
+                        voting_ok = st.session_state.ia.treinar_voting_ensemble()
+                        stacking_ok = st.session_state.ia.treinar_stacking()
+                        if rf_ok or xgb_ok or voting_ok or stacking_ok:
                             st.session_state.ia_treinada = True
                             st.success("✅ IA treinada com sucesso!")
+
+        if st.session_state.ia and getattr(st.session_state.ia, 'modelos', None):
+            with st.expander("🤖 Módulo 18 · Acurácia dos modelos de Machine Learning"):
+                st.caption(
+                    "Acurácia medida em dados de teste cronologicamente posteriores ao treino "
+                    "(nunca vistos pelo modelo). Como cada concurso é um sorteio aleatório, não "
+                    "espere acurácia muito acima da taxa-base (~60%, já que em média 15 de 25 "
+                    "dezenas saem a cada concurso) — o valor serve para comparar os modelos entre "
+                    "si, não como garantia de acerto."
+                )
+                nomes_modelos = {
+                    'random_forest': 'Random Forest',
+                    'xgboost': 'Gradient Boosting',
+                    'voting_ensemble': 'Voting Ensemble',
+                    'stacking': 'Stacking'
+                }
+                for chave, info in st.session_state.ia.modelos.items():
+                    st.metric(nomes_modelos.get(chave, chave), f"{info['acuracia']*100:.1f}%")
         
         st.markdown("---")
         
@@ -2424,6 +2878,52 @@ def main():
                 else:
                     st.caption("Histórico insuficiente para calcular.")
 
+            st.markdown("---")
+            col9, col10 = st.columns(2)
+            with col9:
+                st.markdown("### 🔀 Módulo 7 · Correlação — pares mais fortes")
+                pares = stats.pares_fortes
+                if pares.get('top_positivos'):
+                    st.caption("Dezenas que mais tendem a sair JUNTAS (correlação positiva):")
+                    df_pos = pd.DataFrame(
+                        [(f"{a:02d} + {b:02d}", f"{v:.3f}") for a, b, v in pares['top_positivos'][:5]],
+                        columns=["Par", "Correlação"]
+                    )
+                    st.dataframe(df_pos, use_container_width=True, hide_index=True)
+
+                    st.caption("Dezenas que mais tendem a se EVITAR (correlação negativa):")
+                    df_neg = pd.DataFrame(
+                        [(f"{a:02d} + {b:02d}", f"{v:.3f}") for a, b, v in pares['top_negativos'][:5]],
+                        columns=["Par", "Correlação"]
+                    )
+                    st.dataframe(df_neg, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Histórico insuficiente para calcular.")
+
+            with col10:
+                st.markdown("### 🧩 Módulo 8 · Clusters")
+                st.caption("As 25 dezenas agrupadas por perfil atual (frequência, atraso e tendência).")
+                ordem_clusters = ["Quente", "Oscilante", "Estável", "Frio"]
+                df_clusters_count = pd.DataFrame({
+                    'Grupo': ordem_clusters,
+                    'Quantidade': [stats.clusters_contagem.get(g, 0) for g in ordem_clusters]
+                })
+                fig = px.bar(df_clusters_count, x='Grupo', y='Quantidade', title='Dezenas por Cluster',
+                            color='Grupo',
+                            color_discrete_map={
+                                "Quente": "#ff4d4d", "Oscilante": "#feca57",
+                                "Estável": "#4cc9f0", "Frio": "#4d79ff"
+                            })
+                fig.update_layout(height=320, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+
+                with st.expander("Ver cluster de cada dezena"):
+                    df_detalhe_cluster = pd.DataFrame({
+                        'Dezena': range(1, 26),
+                        'Cluster': [stats.clusters_dezena.get(i, 'Estável') for i in range(1, 26)]
+                    })
+                    st.dataframe(df_detalhe_cluster, use_container_width=True, hide_index=True)
+
     # ================= TAB 2: RANKING =================
     with tabs[1]:
         st.markdown("### 🏆 Ranking das Dezenas")
@@ -2460,6 +2960,7 @@ def main():
                         Freq. Inteligente: {stats_dezena['frequencia_inteligente']:.3f} | 
                         Ciclo: {stats_dezena['ciclo_status']} | 
                         Bayes: {stats_dezena['bayes_forca']:.2f} | Markov: {stats_dezena['markov_forca']:.2f} | 
+                        Cluster: {stats_dezena['cluster']} | 
                         Tendência: <span class='{tendencia_cls}'>{tendencia_icon} {tendencia}</span>
                     </small>
                     """
@@ -2552,12 +3053,16 @@ def main():
 
             metodo_fechamento = st.radio(
                 "Método do fechamento",
-                ["⚖️ Balanceado (equilibra frequência das dezenas)", "🧩 Cobertura otimizada (Greedy Set-Cover aproximado)"],
+                ["⚖️ Balanceado (equilibra frequência das dezenas)",
+                 "🧩 Cobertura otimizada (Greedy Set-Cover aproximado)",
+                 "🧬 Algoritmo Genético (evolui pelo Meta Score)"],
                 key="metodo_fechamento_radio",
-                help="O método de cobertura tenta escolher jogos que, juntos, cubram o maior número possível de combinações de "
-                     "dezenas dentro do pool — mas é uma heurística por amostragem, não uma garantia matemática formal."
+                help="Cobertura tenta escolher jogos que, juntos, cubram o maior número possível de combinações de "
+                     "dezenas dentro do pool (heurística por amostragem, não garantia formal). O Algoritmo Genético "
+                     "evolui uma população de jogos por gerações, usando o Meta Score (Módulo 19) como aptidão."
             )
             usar_cobertura = metodo_fechamento.startswith("🧩")
+            usar_genetico = metodo_fechamento.startswith("🧬")
 
             if usar_cobertura:
                 k_garantia = st.slider(
@@ -2565,6 +3070,20 @@ def main():
                     help="O algoritmo tenta priorizar jogos que cubram combinações de k dezenas dentro do pool. "
                          "Valores menores de k são mais fáceis de cobrir bem; valores maiores (13, 14) exigem muito mais jogos."
                 )
+
+            if usar_genetico:
+                colg1, colg2 = st.columns(2)
+                with colg1:
+                    geracoes_genetico = st.slider("Gerações", 10, 100, 40, key="geracoes_genetico_slider")
+                with colg2:
+                    populacao_genetica = st.slider("Tamanho da população", 20, 150, 60, key="populacao_genetica_slider")
+
+            distancia_minima_jogos = st.slider(
+                "📏 Módulo 16 · Distância mínima entre jogos (dezenas diferentes)",
+                0, 12, 0, key="distancia_minima_slider",
+                help="0 = desligado. O estudo recomenda mínimo de 6 dezenas diferentes entre quaisquer dois jogos do "
+                     "fechamento (ideal 7 ou 8), para evitar jogos praticamente 'clones' uns dos outros."
+            )
 
             with st.expander("🧪 Filtros de padrão histórico (opcional)"):
                 aplicar_filtros_fechamento = st.checkbox("Aplicar filtros ao gerar os jogos", value=False, key="aplicar_filtros_fechamento_chk")
@@ -2615,6 +3134,43 @@ def main():
                     0.0, 1.0, 0.5, step=0.05, key="similaridade_minima_dna_slider"
                 )
 
+            with st.expander("🧩 Módulo 8 · Quotas por Cluster (opcional)"):
+                st.caption(
+                    "Limita automaticamente quantas dezenas de cada cluster "
+                    "(Quente, Frio, Oscilante, Estável) podem entrar em cada jogo gerado."
+                )
+                aplicar_quotas_cluster = st.checkbox(
+                    "Aplicar quotas de cluster ao gerar os jogos",
+                    value=False, key="aplicar_quotas_cluster_chk"
+                )
+                grupos_cluster = ["Quente", "Frio", "Oscilante", "Estável"]
+                contagem_pool_cluster = contar_clusters_jogo(dezenas_fechamento, stats.clusters_dezena)
+                quotas_cluster = {}
+                colc = st.columns(4)
+                for i, grupo in enumerate(grupos_cluster):
+                    with colc[i % 4]:
+                        st.caption(f"{grupo} — {contagem_pool_cluster.get(grupo, 0)} no pool")
+                        minimo_c = st.slider(f"Mín. {grupo}", 0, 15, 0, key=f"cluster_min_{grupo}")
+                        maximo_c = st.slider(f"Máx. {grupo}", 0, 15, 15, key=f"cluster_max_{grupo}")
+                        quotas_cluster[grupo] = (min(minimo_c, maximo_c), max(minimo_c, maximo_c))
+
+            with st.expander("🏆 Módulo 19 · Meta Score — corte de qualidade (opcional)"):
+                st.caption(
+                    "Combina, numa única nota de 0 a 100 por jogo, a pontuação média do Motor "
+                    "(Módulos 1, 2, 3, 5, 6, 7), a similaridade de DNA (Módulo 4) e, se a IA já "
+                    "tiver sido treinada, a probabilidade média prevista pelo Machine Learning "
+                    "(Módulo 18). Só entram no fechamento os jogos com nota igual ou acima do corte."
+                )
+                aplicar_corte_meta_score = st.checkbox(
+                    "Aplicar corte de Meta Score ao gerar os jogos",
+                    value=False, key="aplicar_corte_meta_score_chk"
+                )
+                corte_meta_score = st.slider(
+                    "Nota mínima exigida (0-100)", 0, 100, 60, key="corte_meta_score_slider"
+                )
+                if not (st.session_state.ia and getattr(st.session_state.ia, 'modelos', None)):
+                    st.caption("ℹ️ IA ainda não treinada — a nota vai usar só Motor + DNA (sem o componente de ML).")
+
             if st.button("🔒 GERAR FECHAMENTO", use_container_width=True, type="primary", key="gerar_fechamento_btn"):
                 if len(dezenas_fechamento) < 15:
                     st.error("❌ É preciso de pelo menos 15 dezenas pontuadas para gerar o fechamento.")
@@ -2634,6 +3190,12 @@ def main():
                         filtros_ativos.append(lambda j: respeita_quotas_atraso_lf(j, stats.atraso_categoria, quotas_atraso))
                     if aplicar_filtro_dna:
                         filtros_ativos.append(lambda j: passa_filtro_dna_lf(j, stats.dna_historico, similaridade_minima_dna))
+                    if aplicar_quotas_cluster:
+                        filtros_ativos.append(lambda j: respeita_quotas_cluster_lf(j, stats.clusters_dezena, quotas_cluster))
+                    if aplicar_corte_meta_score:
+                        filtros_ativos.append(lambda j: passa_meta_score_lf(
+                            j, stats, pontuacao, corte=corte_meta_score, ia=st.session_state.ia
+                        ))
 
                     filtro_fn = None
                     if filtros_ativos:
@@ -2645,8 +3207,20 @@ def main():
                                 dezenas_fechamento, qtd_fechamento, tamanho_jogo=15,
                                 k_garantia=k_garantia, filtro_fn=filtro_fn
                             )
+                        elif usar_genetico:
+                            jogos_fechamento = gerar_fechamento_genetico_lf(
+                                dezenas_fechamento, qtd_fechamento, stats, pontuacao,
+                                ia=st.session_state.ia, geracoes=geracoes_genetico,
+                                tamanho_populacao=populacao_genetica,
+                                distancia_minima=distancia_minima_jogos or 0,
+                                filtro_fn=filtro_fn
+                            )
+                            cobertura_estimada = None
                         else:
-                            jogos_fechamento = gerar_fechamento_lf(dezenas_fechamento, qtd_fechamento, tamanho_jogo=15, filtro_fn=filtro_fn)
+                            jogos_fechamento = gerar_fechamento_lf(
+                                dezenas_fechamento, qtd_fechamento, tamanho_jogo=15,
+                                filtro_fn=filtro_fn, distancia_minima=distancia_minima_jogos or None
+                            )
                             cobertura_estimada = None
 
                         if jogos_fechamento:
@@ -2678,6 +3252,17 @@ def main():
                     'Aparições': list(contagem_final.values())
                 }).sort_values('Dezena')
 
+                if len(jogos_fechamento) > 1:
+                    distancias_pares = [
+                        calcular_distancia_jogos_lf(jogos_fechamento[i], jogos_fechamento[j])
+                        for i in range(len(jogos_fechamento))
+                        for j in range(i + 1, len(jogos_fechamento))
+                    ]
+                    st.caption(
+                        f"📏 Módulo 16 · Distância entre jogos — mínima: {min(distancias_pares)} | "
+                        f"média: {np.mean(distancias_pares):.1f} dezenas diferentes"
+                    )
+
                 with st.expander("⚖️ Balanceamento das dezenas no fechamento"):
                     fig = px.bar(df_balanco, x='Dezena', y='Aparições',
                                 title='Quantas vezes cada dezena aparece nos jogos do fechamento')
@@ -2686,11 +3271,13 @@ def main():
                 for i, jogo in enumerate(jogos_fechamento):
                     pares = contar_pares_lf(jogo)
                     soma = sum(jogo)
+                    meta = calcular_meta_score_jogo(jogo, stats, pontuacao, ia=st.session_state.ia)
                     st.markdown(f"""
                     <div class='card'>
-                        📌 <strong>Jogo {i+1:02d}</strong><br>
+                        📌 <strong>Jogo {i+1:02d}</strong>
+                        <span style='float: right;'><strong>🏆 Meta Score: {meta['nota']:.1f}</strong></span><br>
                         {formatar_jogo_html_lf(jogo)}<br>
-                        <small style='color:#aaa;'>⚖️ {pares}p/{15-pares}i | ➕ {soma}</small>
+                        <small style='color:#aaa;'>⚖️ {pares}p/{15-pares}i | ➕ {soma} | Motor: {meta['motor_medio']:.1f} | DNA: {meta['dna_similaridade']:.1f}{' | ML: ' + str(meta['ml_probabilidade']) if meta['ml_probabilidade'] is not None else ''}</small>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -2710,6 +3297,7 @@ def main():
                     df_export_fech = pd.DataFrame({
                         'Jogo': range(1, len(jogos_fechamento) + 1),
                         'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_fechamento],
+                        'Meta Score': [calcular_meta_score_jogo(j, stats, pontuacao, ia=st.session_state.ia)['nota'] for j in jogos_fechamento],
                         'Pares': [contar_pares_lf(j) for j in jogos_fechamento],
                         'Soma': [sum(j) for j in jogos_fechamento],
                         'Primos': [contar_primos_lf(j) for j in jogos_fechamento],
