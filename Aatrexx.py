@@ -216,6 +216,33 @@ def passa_filtros_qualidade_lf(jogo, ultimo_concurso=None,
 
     return True
 
+def contar_categorias_atraso_lf(jogo, atraso_categoria):
+    """
+    Conta quantas dezenas de um jogo pertencem a cada categoria de
+    atraso inteligente (Módulo 2): Muito Quente, Quente, Neutra, Fria,
+    Muito Fria, Fóssil.
+    """
+    contagem = Counter()
+    for dezena in jogo:
+        categoria = atraso_categoria.get(dezena, 'Neutra')
+        contagem[categoria] += 1
+    return contagem
+
+def respeita_quotas_atraso_lf(jogo, atraso_categoria, quotas):
+    """
+    Módulo 2 - Atraso Inteligente: verifica se um jogo respeita as quotas
+    (mínimo/máximo de dezenas) definidas para cada categoria de atraso.
+
+    `quotas` é um dict no formato {categoria: (minimo, maximo)}. Categorias
+    ausentes de `quotas` não são restringidas.
+    """
+    contagem = contar_categorias_atraso_lf(jogo, atraso_categoria)
+    for categoria, (minimo, maximo) in quotas.items():
+        qtd = contagem.get(categoria, 0)
+        if not (minimo <= qtd <= maximo):
+            return False
+    return True
+
 def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas=None, filtro_fn=None):
     """
     Gera um fechamento (roda de jogos) usando um pool fixo de dezenas
@@ -488,6 +515,16 @@ class EstatisticasLFAvancadas:
         self.repetiu_ultimo_concurso = self._calcular_repetiu_ultimo_concurso(historico)
         self.correlacao_media = self._calcular_correlacao_media(historico)
 
+        # Módulo 1 - Frequência Inteligente (multi-janela ponderada: 5, 10,
+        # 20, 30, 50, 100 e 200 concursos, cada uma com peso próprio)
+        self.frequencia_inteligente = self.calcular_frequencia_inteligente()
+
+        # Módulo 2 - Atraso Inteligente (classifica cada dezena em Muito
+        # Quente / Quente / Neutra / Fria / Muito Fria / Fóssil, comparando
+        # o atraso atual com o intervalo médio histórico da própria dezena)
+        self.atraso_categoria = self._classificar_atraso_inteligente()
+        self.contagem_categorias_atraso = Counter(self.atraso_categoria.values())
+
         # Estatísticas adicionais
         self.media_soma = np.mean([c['soma'] for c in self.banco.concursos])
         self.std_soma = np.std([c['soma'] for c in self.banco.concursos])
@@ -501,7 +538,7 @@ class EstatisticasLFAvancadas:
         return freq
     
     def _calcular_frequencias_periodos(self, historico):
-        periodos = [10, 20, 30, 50, 100, 300]
+        periodos = [5, 10, 20, 30, 50, 100, 200]
         resultado = {}
         for p in periodos:
             if len(historico) >= p:
@@ -529,7 +566,77 @@ class EstatisticasLFAvancadas:
     def _calcular_atraso_relativo(self):
         max_atraso = max(self.atrasos.values()) if self.atrasos else 1
         return {num: atraso / max_atraso for num, atraso in self.atrasos.items()}
-    
+
+    def calcular_frequencia_inteligente(self, pesos_janelas=None):
+        """
+        Módulo 1 - Frequência Inteligente.
+
+        Em vez de olhar para uma única janela de concursos, combina a
+        frequência de cada dezena em várias janelas temporais (5, 10, 20,
+        30, 50, 100 e 200 últimos concursos), cada uma com um peso
+        próprio. Janelas curtas capturam o momento recente; janelas
+        longas capturam o comportamento histórico de mais longo prazo.
+        `pesos_janelas` pode ser informado (ex.: vindo de sliders na UI)
+        para recalcular com pesos customizados. Retorna um score
+        normalizado (0 a 1) por dezena.
+        """
+        pesos_janelas = pesos_janelas or {
+            5: 0.05, 10: 0.10, 20: 0.15, 30: 0.20,
+            50: 0.20, 100: 0.15, 200: 0.15
+        }
+        soma_pesos = sum(pesos_janelas.values()) or 1.0
+        score = {n: 0.0 for n in range(1, 26)}
+
+        for janela, peso in pesos_janelas.items():
+            freq_dict = self.frequencias_periodos.get(janela, {})
+            max_freq = max(freq_dict.values()) if freq_dict else 0
+            for n in range(1, 26):
+                freq_norm = (freq_dict.get(n, 0) / max_freq) if max_freq else 0
+                score[n] += freq_norm * peso
+
+        return {n: round(v / soma_pesos, 4) for n, v in score.items()}
+
+    def _classificar_atraso_inteligente(self):
+        """
+        Módulo 2 - Atraso Inteligente.
+
+        Compara o atraso atual de cada dezena com o intervalo médio
+        histórico de saída DELA MESMA (não um valor fixo igual para
+        todas), e classifica em 6 categorias:
+
+        - Muito Quente: saiu bem antes do que costuma (razão < 0.3)
+        - Quente: saiu um pouco antes do habitual (0.3 a 0.7)
+        - Neutra: dentro do intervalo esperado (0.7 a 1.3)
+        - Fria: já passou um pouco do intervalo esperado (1.3 a 2.0)
+        - Muito Fria: bem além do esperado (2.0 a 3.0)
+        - Fóssil: muitíssimo além do intervalo típico (> 3.0)
+
+        Essas categorias são usadas depois para limitar automaticamente
+        quantas dezenas de cada grupo podem entrar em um jogo gerado
+        (ver `respeita_quotas_atraso_lf`).
+        """
+        categorias = {}
+        for n in range(1, 26):
+            atraso_atual = self.atrasos.get(n, 0)
+            intervalo_medio = self.intervalos_medios.get(n, 1.6) or 1.6
+            razao = atraso_atual / intervalo_medio
+
+            if razao < 0.3:
+                categoria = "Muito Quente"
+            elif razao < 0.7:
+                categoria = "Quente"
+            elif razao < 1.3:
+                categoria = "Neutra"
+            elif razao < 2.0:
+                categoria = "Fria"
+            elif razao < 3.0:
+                categoria = "Muito Fria"
+            else:
+                categoria = "Fóssil"
+
+            categorias[n] = categoria
+        return categorias
+
     def _calcular_tendencias(self, historico):
         tendencias = {}
         for num in range(1, 26):
@@ -726,6 +833,8 @@ class EstatisticasLFAvancadas:
             'frequencia_periodos': {p: self.frequencias_periodos[p].get(numero, 0) for p in self.frequencias_periodos},
             'atraso': self.atrasos.get(numero, 0),
             'atraso_relativo': self.atraso_relativo.get(numero, 0),
+            'atraso_categoria': self.atraso_categoria.get(numero, 'Neutra'),
+            'frequencia_inteligente': self.frequencia_inteligente.get(numero, 0),
             'tendencia': self.tendencias.get(numero, {'tendencia': 'estavel', 'inclinacao': 0}),
             'probabilidade': self.frequencias.get(numero, 0) / (self.total_concursos * 15) if self.total_concursos > 0 else 0
         }
@@ -745,33 +854,27 @@ class MotorPontuacaoLF:
     def _definir_pesos(self):
         # Tabela de pesos definida junto com o usuário
         return {
-            'frequencia_30': 0.30,
-            'frequencia_10': 0.20,
-            'atraso_equilibrado': 0.15,
+            'frequencia_inteligente': 0.40,
+            'atraso_equilibrado': 0.20,
             'repeticao_ultimo': 0.10,
             'linhas_colunas': 0.10,
             'moldura_miolo': 0.05,
             'pares_impares': 0.05,
-            'correlacao': 0.05
+            'correlacao': 0.10
         }
     
     def _calcular_pontuacoes(self):
         pontuacoes = {}
         
         # Normaliza métricas
-        freq_30_dict = self.estatisticas.frequencias_periodos.get(30, {})
-        freq_10_dict = self.estatisticas.frequencias_periodos.get(10, {})
-        max_freq_30 = max(freq_30_dict.values()) if freq_30_dict else 1
-        max_freq_10 = max(freq_10_dict.values()) if freq_10_dict else 1
         max_correlacao = max(self.estatisticas.correlacao_media.values()) if self.estatisticas.correlacao_media else 1
         max_correlacao = max_correlacao if max_correlacao > 0 else 1
         
         for num in range(1, 26):
-            # Frequência nos últimos 30 concursos
-            freq_30 = freq_30_dict.get(num, 0) / max_freq_30 if max_freq_30 else 0
-            
-            # Frequência nos últimos 10 concursos
-            freq_10 = freq_10_dict.get(num, 0) / max_freq_10 if max_freq_10 else 0
+            # Módulo 1 - Frequência Inteligente: combinação ponderada das
+            # janelas de 5, 10, 20, 30, 50, 100 e 200 concursos (já vem
+            # normalizada de 0 a 1 de EstatisticasLF)
+            freq_inteligente = self.estatisticas.frequencia_inteligente.get(num, 0)
             
             # Atraso equilibrado: nem quente nem fria demais em relação ao
             # intervalo médio típico de cada dezena (em vez de só premiar
@@ -796,8 +899,7 @@ class MotorPontuacaoLF:
             
             # Pontuação final
             pontuacao = (
-                freq_30 * self.pesos['frequencia_30'] +
-                freq_10 * self.pesos['frequencia_10'] +
+                freq_inteligente * self.pesos['frequencia_inteligente'] +
                 atraso_equilibrado * self.pesos['atraso_equilibrado'] +
                 repeticao_ultimo * self.pesos['repeticao_ultimo'] +
                 linhas_colunas * self.pesos['linhas_colunas'] +
@@ -1830,6 +1932,45 @@ def main():
                 fig.update_layout(height=400)
                 st.plotly_chart(fig, use_container_width=True)
 
+            st.markdown("---")
+            col3, col4 = st.columns(2)
+            with col3:
+                st.markdown("### 🧠 Módulo 1 · Frequência Inteligente")
+                st.caption("Combinação ponderada das janelas de 5, 10, 20, 30, 50, 100 e 200 concursos.")
+                df_freq_int = pd.DataFrame({
+                    'Dezena': range(1, 26),
+                    'Score': [stats.frequencia_inteligente.get(i, 0) for i in range(1, 26)]
+                })
+                fig = px.bar(df_freq_int, x='Dezena', y='Score', title='Frequência Inteligente por Dezena',
+                            color='Score', color_continuous_scale='Blues')
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col4:
+                st.markdown("### 🌡️ Módulo 2 · Atraso Inteligente")
+                st.caption("Classificação de cada dezena comparando o atraso atual com o intervalo médio histórico dela.")
+                ordem_categorias = ["Muito Quente", "Quente", "Neutra", "Fria", "Muito Fria", "Fóssil"]
+                df_cat = pd.DataFrame({
+                    'Categoria': ordem_categorias,
+                    'Quantidade': [stats.contagem_categorias_atraso.get(c, 0) for c in ordem_categorias]
+                })
+                fig = px.bar(df_cat, x='Categoria', y='Quantidade', title='Dezenas por Categoria de Atraso',
+                            color='Categoria',
+                            color_discrete_map={
+                                "Muito Quente": "#ff4d4d", "Quente": "#ff9d4d", "Neutra": "#feca57",
+                                "Fria": "#4cc9f0", "Muito Fria": "#4d79ff", "Fóssil": "#8888aa"
+                            })
+                fig.update_layout(height=400, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+
+                with st.expander("Ver categoria de cada dezena"):
+                    df_detalhe_cat = pd.DataFrame({
+                        'Dezena': range(1, 26),
+                        'Categoria': [stats.atraso_categoria.get(i, 'Neutra') for i in range(1, 26)],
+                        'Atraso atual': [stats.atrasos.get(i, 0) for i in range(1, 26)]
+                    })
+                    st.dataframe(df_detalhe_cat, use_container_width=True, hide_index=True)
+
     # ================= TAB 2: RANKING =================
     with tabs[1]:
         st.markdown("### 🏆 Ranking das Dezenas")
@@ -1862,7 +2003,8 @@ def main():
                     <small style='color:#aaa;'>
                         Freq: {stats_dezena['frequencia']} | 
                         Últimos 20: {freq_periodos.get(20, 0)} | 
-                        Atraso: {stats_dezena['atraso']} | 
+                        Atraso: {stats_dezena['atraso']} ({stats_dezena['atraso_categoria']}) | 
+                        Freq. Inteligente: {stats_dezena['frequencia_inteligente']:.3f} | 
                         Tendência: <span class='{tendencia_cls}'>{tendencia_icon} {tendencia}</span>
                     </small>
                     """
@@ -1983,21 +2125,47 @@ def main():
                     repetidas_min_f = st.slider("Repetidas do último concurso (mín.)", 0, 15, 4, key="repetidas_min_fechamento")
                     repetidas_max_f = st.slider("Repetidas do último concurso (máx.)", 0, 15, 6, key="repetidas_max_fechamento")
 
+            with st.expander("🌡️ Módulo 2 · Quotas por categoria de Atraso Inteligente (opcional)"):
+                st.caption(
+                    "Limita automaticamente quantas dezenas de cada categoria de atraso "
+                    "(Muito Quente, Quente, Neutra, Fria, Muito Fria, Fóssil) podem entrar em cada jogo gerado."
+                )
+                aplicar_quotas_atraso = st.checkbox(
+                    "Aplicar quotas de atraso inteligente ao gerar os jogos",
+                    value=False, key="aplicar_quotas_atraso_chk"
+                )
+                categorias_quota = ["Muito Quente", "Quente", "Neutra", "Fria", "Muito Fria", "Fóssil"]
+                contagem_pool = contar_categorias_atraso_lf(dezenas_fechamento, stats.atraso_categoria)
+                quotas_atraso = {}
+                colq = st.columns(3)
+                for i, categoria in enumerate(categorias_quota):
+                    with colq[i % 3]:
+                        st.caption(f"{categoria} — {contagem_pool.get(categoria, 0)} dezena(s) no pool")
+                        minimo_q = st.slider(f"Mín. {categoria}", 0, 15, 0, key=f"quota_min_{categoria}")
+                        maximo_q = st.slider(f"Máx. {categoria}", 0, 15, 15, key=f"quota_max_{categoria}")
+                        quotas_atraso[categoria] = (min(minimo_q, maximo_q), max(minimo_q, maximo_q))
+
             if st.button("🔒 GERAR FECHAMENTO", use_container_width=True, type="primary", key="gerar_fechamento_btn"):
                 if len(dezenas_fechamento) < 15:
                     st.error("❌ É preciso de pelo menos 15 dezenas pontuadas para gerar o fechamento.")
                 else:
-                    filtro_fn = None
+                    filtros_ativos = []
                     if aplicar_filtros_fechamento:
                         ultimo_concurso = st.session_state.banco_dados.get_ultimo_concurso()
                         ultimo_dezenas = ultimo_concurso['dezenas'] if ultimo_concurso else None
-                        filtro_fn = lambda j: passa_filtros_qualidade_lf(
+                        filtros_ativos.append(lambda j: passa_filtros_qualidade_lf(
                             j, ultimo_concurso=ultimo_dezenas,
                             pares_min=min(pares_min_f, pares_max_f), pares_max=max(pares_min_f, pares_max_f),
                             soma_min=min(soma_min_f, soma_max_f), soma_max=max(soma_min_f, soma_max_f),
                             primos_min=min(primos_min_f, primos_max_f), primos_max=max(primos_min_f, primos_max_f),
                             repetidas_min=min(repetidas_min_f, repetidas_max_f), repetidas_max=max(repetidas_min_f, repetidas_max_f)
-                        )
+                        ))
+                    if aplicar_quotas_atraso:
+                        filtros_ativos.append(lambda j: respeita_quotas_atraso_lf(j, stats.atraso_categoria, quotas_atraso))
+
+                    filtro_fn = None
+                    if filtros_ativos:
+                        filtro_fn = lambda j: all(f(j) for f in filtros_ativos)
 
                     with st.spinner(f"Gerando fechamento com {qtd_fechamento} jogos distintos..."):
                         if usar_cobertura:
