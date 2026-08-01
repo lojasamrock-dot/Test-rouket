@@ -1544,173 +1544,171 @@ class EstatisticasLFAvancadas:
 # =====================================================
 
 class MotorPontuacaoLF:
-    """Módulo 3 - Motor de Pontuação para Lotofácil"""
-    
+    """
+    Motor de Pontuação — Teoria da Dança das Dezenas (TDD).
+
+    Em vez de perguntar "qual dezena vai sair", este motor observa como o
+    conjunto das 25 dezenas está se reorganizando concurso a concurso:
+    permanências (núcleo forte), entradas/saídas, energia acumulada,
+    movimento (subindo/estável/caindo) e a regularidade dos seus ciclos
+    curtos de reaparição. A nota final de cada dezena combina esses
+    sinais nos pesos definidos pela TDD.
+
+    IMPORTANTE: assim como o restante do sistema, isto descreve
+    tendências e recorrências históricas descritivas. Não há evidência
+    de que um sorteio justo da Lotofácil seja previsível, e nenhuma nota
+    aqui garante resultado algum em concursos futuros.
+    """
+
     def __init__(self, estatisticas):
         self.estatisticas = estatisticas
         self.pesos = self._definir_pesos()
         self.pontuacoes = self._calcular_pontuacoes()
-        
+
     def _definir_pesos(self):
-        # Tabela de pesos definida junto com o usuário
+        # Princípio 10 - Pontuação Final da Teoria da Dança das Dezenas
         return {
-            'frequencia_inteligente': 0.31,
-            'atraso_equilibrado': 0.14,
-            'ciclo': 0.08,
-            'bayes': 0.04,
-            'markov': 0.04,
-            'repeticao_ultimo': 0.09,
-            'linhas_colunas': 0.09,
-            'moldura_miolo': 0.05,
-            'pares_impares': 0.05,
-            'correlacao': 0.11
+            'frequencia': 0.25,
+            'estabilidade': 0.20,
+            'coocorrencia': 0.20,
+            'movimento': 0.15,
+            'energia': 0.10,
+            'ciclos': 0.10
         }
-    
+
     def _calcular_pontuacoes(self):
+        estabilidade = self._calcular_estabilidade()
+        movimento = self._calcular_movimento()
+        ciclos_curtos = self._calcular_ciclos_curtos()
+        energia = self._calcular_energia(estabilidade)
+
+        # Guarda os componentes para exploração/depuração na interface
+        self.componentes = {
+            'estabilidade': estabilidade,
+            'movimento': movimento,
+            'ciclos_curtos': ciclos_curtos,
+            'energia': energia
+        }
+
         pontuacoes = {}
-        
-        # Normaliza métricas
-        max_correlacao = max(self.estatisticas.correlacao_media.values()) if self.estatisticas.correlacao_media else 1
-        max_correlacao = max_correlacao if max_correlacao > 0 else 1
-        
         for num in range(1, 26):
-            # Módulo 1 - Frequência Inteligente: combinação ponderada das
-            # janelas de 5, 10, 20, 30, 50, 100 e 200 concursos (já vem
-            # normalizada de 0 a 1 de EstatisticasLF)
-            freq_inteligente = self.estatisticas.frequencia_inteligente.get(num, 0)
-            
-            # Atraso equilibrado: nem quente nem fria demais em relação ao
-            # intervalo médio típico de cada dezena (em vez de só premiar
-            # atraso baixo, o que tendia a excluir dezenas "devidas")
-            atraso_equilibrado = self._calcular_atraso_equilibrado(num)
-            
-            # Módulo 3 - Ciclos: bônus para dezenas que ainda faltam
-            # aparecer no ciclo atual (mais "devidas" para fechá-lo)
-            ciclo = self._calcular_ciclo_score(num)
+            # Princípio 1 (via Módulo 1) - "Frequência" da TDD reaproveita
+            # a Frequência Inteligente multi-janela já calculada
+            frequencia = self.estatisticas.frequencia_inteligente.get(num, 0)
 
-            # Módulo 5 - Redes Bayesianas: o quão "influente" essa dezena é,
-            # em média, nas dependências P(B|A) do mesmo concurso
-            bayes = self.estatisticas.bayes_forca.get(num, 0)
+            # Princípio 4 - Coocorrência: reaproveita a força média das
+            # dependências P(B|A) da Rede Bayesiana (Módulo 5) como medida
+            # de o quanto essa dezena "caminha junto" com as demais
+            coocorrencia = self.estatisticas.bayes_forca.get(num, 0)
 
-            # Módulo 6 - Cadeias de Markov: o quão "influente" essa dezena é,
-            # em média, para prever dezenas do concurso seguinte
-            markov = self.estatisticas.markov_forca.get(num, 0)
-            
-            # Repetição do último concurso, ponderada pela taxa histórica
-            # de repetição entre concursos consecutivos
-            repeticao_ultimo = self._calcular_repeticao(num)
-            
-            # Linhas e colunas do painel 5x5
-            linhas_colunas = self._calcular_linhas_colunas(num)
-            
-            # Padrão moldura (borda) x miolo (centro) do painel 5x5
-            moldura_miolo = self._calcular_moldura_miolo(num)
-            
-            # Pares x ímpares
-            pares_impares = self._calcular_pares_impares(num)
-            
-            # Correlação média com as demais dezenas
-            correlacao = self.estatisticas.correlacao_media.get(num, 0) / max_correlacao
-            
-            # Pontuação final
             pontuacao = (
-                freq_inteligente * self.pesos['frequencia_inteligente'] +
-                atraso_equilibrado * self.pesos['atraso_equilibrado'] +
-                ciclo * self.pesos['ciclo'] +
-                bayes * self.pesos['bayes'] +
-                markov * self.pesos['markov'] +
-                repeticao_ultimo * self.pesos['repeticao_ultimo'] +
-                linhas_colunas * self.pesos['linhas_colunas'] +
-                moldura_miolo * self.pesos['moldura_miolo'] +
-                pares_impares * self.pesos['pares_impares'] +
-                correlacao * self.pesos['correlacao']
+                frequencia * self.pesos['frequencia'] +
+                estabilidade[num] * self.pesos['estabilidade'] +
+                coocorrencia * self.pesos['coocorrencia'] +
+                movimento[num] * self.pesos['movimento'] +
+                energia[num] * self.pesos['energia'] +
+                ciclos_curtos[num] * self.pesos['ciclos']
             )
-            
+
             pontuacoes[num] = round(pontuacao * 100, 2)
-        
+
         return pontuacoes
-    
-    def _calcular_ciclo_score(self, numero):
+
+    def _calcular_estabilidade(self):
         """
-        Módulo 3 - Ciclos: dá um score mais alto para dezenas que ainda
-        não saíram no ciclo atual (precisam sair para fechá-lo) e um
-        score mais baixo, mas não nulo, para as que já saíram (já
-        "fecharam sua parte" e podem repetir, só que com menos urgência).
+        Princípio 1 - Núcleo Permanente: mede a sequência atual de
+        concursos consecutivos (contando a partir do mais recente) em
+        que a dezena apareceu sem quebra. Dezenas que formam um "núcleo
+        forte" — vêm se repetindo concurso após concurso — recebem
+        pontuação de estabilidade mais alta.
         """
-        faltantes = self.estatisticas.ciclos.get('dezenas_faltantes_ciclo', set())
-        return 1.0 if numero in faltantes else 0.4
-    
-    def _calcular_atraso_equilibrado(self, numero):
+        historico = self.estatisticas.banco.get_historico_dezenas()
+        estabilidade = {}
+        for n in range(1, 26):
+            sequencia = 0
+            for concurso in historico:
+                if n in concurso:
+                    sequencia += 1
+                else:
+                    break
+            # 5 concursos seguidos já é considerado um núcleo bem forte
+            estabilidade[n] = min(sequencia / 5.0, 1.0)
+        return estabilidade
+
+    def _calcular_movimento(self):
         """
-        Em vez de simplesmente premiar o menor atraso possível (o que
-        favorece só dezenas 'quentes' e tende a excluir dezenas devidas),
-        usa uma curva em sino centrada no intervalo médio histórico da
-        própria dezena: pontua mais alto quando o atraso atual está
-        próximo do que costuma acontecer para ela, e penaliza tanto
-        atrasos muito abaixo (excesso de repetição) quanto muito acima
-        (fria demais) desse intervalo típico.
+        Princípio 6 - Matriz de Movimento: classifica cada dezena entre
+        Subindo / Estável / Caindo a partir da tendência recente já
+        calculada (frequência em janelas mais recentes vs. mais antigas),
+        convertendo essa inclinação num score contínuo de 0 a 1 (0 =
+        caindo forte, 0.5 = estável, 1 = subindo forte).
         """
-        atraso_atual = self.estatisticas.atrasos.get(numero, 0)
-        intervalo_ideal = self.estatisticas.intervalos_medios.get(numero, 1.6)
-        sigma = max(intervalo_ideal, 1.0)
-        diff = atraso_atual - intervalo_ideal
-        score = math.exp(-(diff ** 2) / (2 * (sigma ** 2)))
-        return max(0.0, min(1.0, score))
-    
-    def _calcular_repeticao(self, numero):
+        movimento = {}
+        inclinacoes = {
+            n: self.estatisticas.tendencias.get(n, {}).get('inclinacao', 0)
+            for n in range(1, 26)
+        }
+        maior_abs = max((abs(v) for v in inclinacoes.values()), default=0) or 1.0
+        for n in range(1, 26):
+            movimento[n] = 0.5 + 0.5 * (inclinacoes[n] / maior_abs)
+        return movimento
+
+    def _calcular_ciclos_curtos(self):
         """
-        Dá um bônus se a dezena saiu no concurso mais recente, na medida
-        exata da taxa histórica de repetição entre concursos consecutivos
-        (evita superestimar: se historicamente ~53% das dezenas repetem,
-        o bônus reflete essa proporção em vez de assumir 100%).
+        Princípio 9 - Ciclos: observa os intervalos históricos entre as
+        aparições de cada dezena e mede o quão regular (baixa
+        variabilidade) é esse ciclo — quanto mais regular, maior a
+        previsibilidade estatística descritiva (isso não é garantia de
+        acerto, apenas uma recorrência histórica).
         """
-        media_repetidas = self.estatisticas.distribuicao_repetidas.get('media', 8)
-        taxa_repeticao = max(0.0, min(1.0, media_repetidas / 15))
-        saiu_ultimo = self.estatisticas.repetiu_ultimo_concurso.get(numero, False)
-        return taxa_repeticao if saiu_ultimo else (1 - taxa_repeticao)
-    
-    def _calcular_linhas_colunas(self, numero):
+        historico = self.estatisticas.banco.get_historico_dezenas()
+        brutos = {}
+        for n in range(1, 26):
+            gaps = []
+            gap_atual = 0
+            apareceu_uma_vez = False
+            for concurso in historico:
+                if n in concurso:
+                    if apareceu_uma_vez:
+                        gaps.append(gap_atual)
+                    apareceu_uma_vez = True
+                    gap_atual = 0
+                else:
+                    gap_atual += 1
+
+            if len(gaps) >= 2:
+                media_gap = float(np.mean(gaps))
+                desvio_gap = float(np.std(gaps))
+                cv = desvio_gap / media_gap if media_gap > 0 else 1.0
+                brutos[n] = 1.0 / (1.0 + cv)
+            else:
+                brutos[n] = 0.5
+
+        max_v = max(brutos.values()) if brutos else 1.0
+        max_v = max_v if max_v > 0 else 1.0
+        return {n: v / max_v for n, v in brutos.items()}
+
+    def _calcular_energia(self, estabilidade):
         """
-        Avalia se a linha e a coluna do número no painel 5x5 costumam
-        sair perto da proporção ideal (1/5 cada), penalizando linhas ou
-        colunas historicamente super ou sub-representadas.
+        Princípio 3 - Energia: aumenta com frequência, estabilidade e
+        coocorrência; diminui com o atraso. Tudo normalizado de 0 a 1
+        no final para poder entrar na nota composta.
         """
-        linha = (numero - 1) // 5
-        coluna = (numero - 1) % 5
-        freq_linhas = self.estatisticas.distribuicao_linhas
-        freq_colunas = self.estatisticas.distribuicao_colunas
-        ideal = 1 / 5
-        
-        score_linha = 1 - abs(freq_linhas[linha] - ideal) * 2 if linha < len(freq_linhas) else 0.5
-        score_coluna = 1 - abs(freq_colunas[coluna] - ideal) * 2 if coluna < len(freq_colunas) else 0.5
-        
-        score = (score_linha + score_coluna) / 2
-        return max(0.0, min(1.0, score))
-    
-    def _calcular_moldura_miolo(self, numero):
-        """
-        Compara a frequência normalizada do grupo (moldura/miolo) ao qual
-        a dezena pertence, refletindo se esse padrão espacial do painel
-        5x5 costuma sair mais ou menos que o esperado.
-        """
-        info = self.estatisticas.moldura_miolo_freq
-        grupo = info.get('grupo', {}).get(numero, 'moldura')
-        valor = info.get(grupo, 0.5)
-        return max(0.0, min(1.0, valor))
-    
-    def _calcular_pares_impares(self, numero):
-        """
-        Compara a proporção histórica de pares/ímpares sorteados com a
-        proporção ideal (50/50), pontuando mais alto quando o grupo
-        (par ou ímpar) da dezena não está historicamente desbalanceado.
-        """
-        par = (numero % 2 == 0)
-        chave = 'pares' if par else 'impares'
-        proporcao = self.estatisticas.distribuicao_paridade.get(chave, 0.5)
-        ideal = 0.5
-        score = 1 - abs(proporcao - ideal) * 2
-        return max(0.0, min(1.0, score))
-    
+        atraso_max = max(self.estatisticas.atrasos.values()) if self.estatisticas.atrasos else 1
+        atraso_max = atraso_max if atraso_max > 0 else 1
+
+        brutos = {}
+        for n in range(1, 26):
+            frequencia = self.estatisticas.frequencia_inteligente.get(n, 0)
+            coocorrencia = self.estatisticas.bayes_forca.get(n, 0)
+            atraso_norm = self.estatisticas.atrasos.get(n, 0) / atraso_max
+            brutos[n] = frequencia + estabilidade[n] + coocorrencia - atraso_norm
+
+        minimo = min(brutos.values()) if brutos else 0.0
+        maximo = max(brutos.values()) if brutos else 1.0
+        amplitude = (maximo - minimo) or 1.0
+        return {n: (v - minimo) / amplitude for n, v in brutos.items()}
+
     def get_ranking(self, top_n=25):
         """Retorna ranking das dezenas"""
         ranking = sorted(self.pontuacoes.items(), key=lambda x: x[1], reverse=True)
@@ -2927,6 +2925,11 @@ def main():
     # ================= TAB 2: RANKING =================
     with tabs[1]:
         st.markdown("### 🏆 Ranking das Dezenas")
+        st.caption(
+            "🕺 Motor de Pontuação: **Teoria da Dança das Dezenas** — em vez de tratar cada dezena isoladamente, "
+            "avalia como o conjunto de 25 dezenas se reorganiza a cada concurso (permanência, movimento, energia e "
+            "ciclos). É uma forma mais estruturada de descrever tendências históricas, não uma previsão garantida."
+        )
         
         if st.session_state.pontuacao:
             pontuacao = st.session_state.pontuacao
@@ -2952,14 +2955,18 @@ def main():
                 detalhes = ""
                 if mostrar_detalhes:
                     freq_periodos = stats_dezena['frequencia_periodos']
+                    comp = pontuacao.componentes
                     detalhes = f"""
                     <small style='color:#aaa;'>
                         Freq: {stats_dezena['frequencia']} | 
                         Últimos 20: {freq_periodos.get(20, 0)} | 
                         Atraso: {stats_dezena['atraso']} ({stats_dezena['atraso_categoria']}) | 
-                        Freq. Inteligente: {stats_dezena['frequencia_inteligente']:.3f} | 
-                        Ciclo: {stats_dezena['ciclo_status']} | 
-                        Bayes: {stats_dezena['bayes_forca']:.2f} | Markov: {stats_dezena['markov_forca']:.2f} | 
+                        Freq. Inteligente: {stats_dezena['frequencia_inteligente']:.3f}<br>
+                        <em>Dança das Dezenas</em> — Estabilidade: {comp['estabilidade'].get(num, 0):.2f} | 
+                        Movimento: {comp['movimento'].get(num, 0):.2f} | 
+                        Energia: {comp['energia'].get(num, 0):.2f} | 
+                        Ciclo curto: {comp['ciclos_curtos'].get(num, 0):.2f} | 
+                        Coocorrência: {stats_dezena['bayes_forca']:.2f} | 
                         Cluster: {stats_dezena['cluster']} | 
                         Tendência: <span class='{tendencia_cls}'>{tendencia_icon} {tendencia}</span>
                     </small>
