@@ -8,6 +8,7 @@ import os
 import uuid
 import math
 import warnings
+import pickle
 from collections import Counter, defaultdict, deque
 from datetime import datetime, timedelta
 from scipy.stats import norm, binom, chi2, pearsonr
@@ -16,6 +17,7 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.calibration import CalibratedClassifierCV
+from pathlib import Path
 try:
     # sklearn >= 1.6 removed CalibratedClassifierCV(cv='prefit') in favor of FrozenEstimator
     from sklearn.frozen import FrozenEstimator
@@ -34,7 +36,7 @@ from plotly.subplots import make_subplots
 warnings.filterwarnings("ignore")
 
 st.set_page_config(
-    page_title="🎯 LOTOFÁCIL - DS Elite 3.0",
+    page_title="🎯 LOTOFÁCIL - DS Elite 4.0",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -71,8 +73,65 @@ input, textarea { border-radius: 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 LOTOFÁCIL - DS Elite 3.0")
-st.caption("Sistema Avançado de Análise Estatística, IA e Geração Inteligente")
+st.title("🎯 LOTOFÁCIL - DS Elite 4.0")
+st.caption("Sistema Avançado de Análise Estatística, IA e Geração Inteligente - Estratégias Aprimoradas")
+
+# =====================================================
+# CACHE PARA API
+# =====================================================
+
+CACHE_FILE = "lotofacil_cache.pkl"
+CACHE_EXPIRY = timedelta(hours=6)
+
+def buscar_historico_lotofacil_com_cache(quantidade=300, forcar_atualizacao=False):
+    """Busca histórico com cache local para evitar dependência da API"""
+    
+    # Tenta carregar do cache
+    if not forcar_atualizacao and Path(CACHE_FILE).exists():
+        try:
+            with open(CACHE_FILE, 'rb') as f:
+                cache_data = pickle.load(f)
+                if isinstance(cache_data, dict):
+                    dados_cached = cache_data.get('dados', [])
+                    timestamp = cache_data.get('timestamp', datetime.min)
+                    
+                    # Verifica se o cache é recente
+                    if datetime.now() - timestamp < CACHE_EXPIRY and len(dados_cached) >= quantidade:
+                        return dados_cached[:quantidade]
+        except Exception:
+            pass
+    
+    # Busca da API
+    try:
+        url_lista = "https://loteriascaixa-api.herokuapp.com/api/lotofacil"
+        response = requests.get(url_lista, timeout=10)
+        
+        if response.status_code == 200:
+            dados = response.json()
+            if isinstance(dados, list) and len(dados) > 0:
+                # Salva em cache
+                cache_data = {
+                    'dados': dados,
+                    'timestamp': datetime.now(),
+                    'quantidade': len(dados)
+                }
+                with open(CACHE_FILE, 'wb') as f:
+                    pickle.dump(cache_data, f)
+                return dados[:quantidade]
+        return None
+    except Exception as e:
+        st.warning(f"⚠️ Erro na API: {e}. Usando cache local...")
+        # Tenta usar cache mesmo que expirado
+        if Path(CACHE_FILE).exists():
+            try:
+                with open(CACHE_FILE, 'rb') as f:
+                    cache_data = pickle.load(f)
+                    dados_cached = cache_data.get('dados', [])
+                    if dados_cached:
+                        return dados_cached[:quantidade]
+            except Exception:
+                pass
+        return None
 
 # =====================================================
 # FUNÇÕES AUXILIARES
@@ -98,8 +157,14 @@ def convert_numpy_types(obj):
 
 def salvar_jogos_lf_elite(jogos, parametros, estatisticas=None):
     try:
-        if not os.path.exists("jogos_salvos_lf_elite"):
-            os.makedirs("jogos_salvos_lf_elite")
+        from pathlib import Path
+        base_dir = Path("jogos_salvos_lf_elite")
+        base_dir.mkdir(exist_ok=True)
+        
+        # Verifica se o diretório é seguro
+        if not base_dir.resolve().is_relative_to(Path.cwd()):
+            raise ValueError("Diretório de salvamento inválido")
+        
         jogo_id = str(uuid.uuid4())[:8]
         data_hora = datetime.now().strftime("%Y%m%d_%H%M%S")
         nome_arquivo = f"jogos_salvos_lf_elite/jogos_{data_hora}_{jogo_id}.json"
@@ -110,7 +175,7 @@ def salvar_jogos_lf_elite(jogos, parametros, estatisticas=None):
             "jogos": jogos_convertidos,
             "parametros": convert_numpy_types(parametros),
             "estatisticas": convert_numpy_types(estatisticas) if estatisticas else {},
-            "schema_version": "3.0"
+            "schema_version": "4.0"
         }
         with open(nome_arquivo, 'w', encoding='utf-8') as f:
             json.dump(dados, f, indent=2, ensure_ascii=False)
@@ -187,248 +252,12 @@ def distribuir_colunas_lf(jogo):
         colunas[(n-1)%5] += 1
     return colunas
 
-def passa_filtros_qualidade_lf(jogo, ultimo_concurso=None,
-                                pares_min=7, pares_max=8,
-                                soma_min=170, soma_max=220,
-                                primos_min=3, primos_max=5,
-                                repetidas_min=4, repetidas_max=6):
-    """
-    Filtro de qualidade opcional para descartar jogos que fujam de
-    padrões historicamente comuns na Lotofácil (pares, soma, primos,
-    quantidade de dezenas repetidas em relação ao último concurso).
-    """
-    pares = contar_pares_lf(jogo)
-    if not (pares_min <= pares <= pares_max):
-        return False
-
-    soma = sum(jogo)
-    if not (soma_min <= soma <= soma_max):
-        return False
-
-    primos = contar_primos_lf(jogo)
-    if not (primos_min <= primos <= primos_max):
-        return False
-
-    if ultimo_concurso:
-        repetidas = len(set(jogo) & set(ultimo_concurso))
-        if not (repetidas_min <= repetidas <= repetidas_max):
-            return False
-
-    return True
-
-def contar_categorias_atraso_lf(jogo, atraso_categoria):
-    """
-    Conta quantas dezenas de um jogo pertencem a cada categoria de
-    atraso inteligente (Módulo 2): Muito Quente, Quente, Neutra, Fria,
-    Muito Fria, Fóssil.
-    """
-    contagem = Counter()
-    for dezena in jogo:
-        categoria = atraso_categoria.get(dezena, 'Neutra')
-        contagem[categoria] += 1
-    return contagem
-
-def respeita_quotas_atraso_lf(jogo, atraso_categoria, quotas):
-    """
-    Módulo 2 - Atraso Inteligente: verifica se um jogo respeita as quotas
-    (mínimo/máximo de dezenas) definidas para cada categoria de atraso.
-
-    `quotas` é um dict no formato {categoria: (minimo, maximo)}. Categorias
-    ausentes de `quotas` não são restringidas.
-    """
-    contagem = contar_categorias_atraso_lf(jogo, atraso_categoria)
-    for categoria, (minimo, maximo) in quotas.items():
-        qtd = contagem.get(categoria, 0)
-        if not (minimo <= qtd <= maximo):
-            return False
-    return True
-
-def gerar_fechamento_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, max_tentativas=None, filtro_fn=None):
-    """
-    Gera um fechamento (roda de jogos) usando um pool fixo de dezenas
-    (ex.: as 21 dezenas mais bem rankeadas). Produz `qtd_jogos` jogos
-    distintos entre si, balanceando a frequência de aparição de cada
-    dezena do pool ao longo dos jogos gerados. Se `filtro_fn` for
-    informado, só aceita jogos para os quais `filtro_fn(jogo)` seja True.
-    """
-    dezenas_pool = sorted(set(dezenas_pool))
-    n_pool = len(dezenas_pool)
-
-    if n_pool < tamanho_jogo or qtd_jogos <= 0:
-        return []
-
-    max_combinacoes = math.comb(n_pool, tamanho_jogo)
-    qtd_jogos = min(qtd_jogos, max_combinacoes)
-
-    if max_tentativas is None:
-        max_tentativas = qtd_jogos * 600 + 4000
-
-    contagem = {d: 0 for d in dezenas_pool}
-    jogos = []
-    jogos_set = set()
-    tentativas = 0
-
-    while len(jogos) < qtd_jogos and tentativas < max_tentativas:
-        tentativas += 1
-
-        # Pesos inversamente proporcionais à contagem atual: favorece
-        # dezenas menos usadas até agora, equilibrando o fechamento
-        pool_restante = list(dezenas_pool)
-        pesos_restante = [1.0 / (1 + contagem[d]) for d in pool_restante]
-
-        jogo = []
-        for _ in range(tamanho_jogo):
-            escolhido = random.choices(pool_restante, weights=pesos_restante, k=1)[0]
-            idx = pool_restante.index(escolhido)
-            jogo.append(escolhido)
-            pool_restante.pop(idx)
-            pesos_restante.pop(idx)
-
-        jogo_ordenado = tuple(sorted(jogo))
-
-        if jogo_ordenado in jogos_set:
-            continue
-        if filtro_fn is not None and not filtro_fn(list(jogo_ordenado)):
-            continue
-
-        jogos_set.add(jogo_ordenado)
-        jogos.append(list(jogo_ordenado))
-        for d in jogo_ordenado:
-            contagem[d] += 1
-
-    return jogos
-
-def gerar_fechamento_cobertura_lf(dezenas_pool, qtd_jogos, tamanho_jogo=15, k_garantia=11,
-                                   n_candidatos=600, n_amostras_subconjuntos=2500,
-                                   filtro_fn=None, semente=None):
-    """
-    Fechamento por cobertura aproximada (Greedy Set-Cover heurístico).
-
-    Gera um conjunto de jogos candidatos e, a cada rodada, escolhe o
-    candidato que cobre o maior número de subconjuntos de tamanho
-    `k_garantia` (amostrados aleatoriamente dentro do pool) ainda não
-    cobertos por nenhum jogo já selecionado. Isso tende a distribuir
-    melhor a cobertura das combinações possíveis do que uma seleção
-    puramente aleatória ou só balanceada por frequência.
-
-    IMPORTANTE: como o pool costuma ter 21 dezenas, o número total de
-    subconjuntos de tamanho 11 é C(21,11) ≈ 352 mil — grande demais para
-    testar cobertura exaustiva em tempo real. Por isso este método usa
-    uma AMOSTRA de subconjuntos-alvo (`n_amostras_subconjuntos`) como
-    estimativa: é uma heurística de boa cobertura, não uma garantia
-    matemática formal de que qualquer combinação de `k_garantia` acertos
-    dentro do pool será sempre coberta por algum jogo.
-
-    Retorna (jogos_selecionados, taxa_cobertura_estimada).
-    """
-    dezenas_pool = sorted(set(dezenas_pool))
-    n_pool = len(dezenas_pool)
-
-    if n_pool < tamanho_jogo or n_pool < k_garantia or qtd_jogos <= 0:
-        return [], 0.0
-
-    rng = random.Random(semente)
-    idx_map = {d: i for i, d in enumerate(dezenas_pool)}
-
-    def to_mask(nums):
-        m = 0
-        for n in nums:
-            m |= (1 << idx_map[n])
-        return m
-
-    # ---- Gera jogos candidatos distintos (respeitando filtro de qualidade, se houver) ----
-    max_comb_jogo = math.comb(n_pool, tamanho_jogo)
-    n_candidatos = min(n_candidatos, max_comb_jogo)
-
-    candidatos = set()
-    tentativas = 0
-    max_tent_cand = n_candidatos * 40 + 4000
-    while len(candidatos) < n_candidatos and tentativas < max_tent_cand:
-        tentativas += 1
-        jogo = tuple(sorted(rng.sample(dezenas_pool, tamanho_jogo)))
-        if jogo in candidatos:
-            continue
-        if filtro_fn is not None and not filtro_fn(list(jogo)):
-            continue
-        candidatos.add(jogo)
-
-    candidatos = list(candidatos)
-    if not candidatos:
-        return [], 0.0
-
-    candidatos_mask = np.array([to_mask(c) for c in candidatos], dtype=np.int64)
-    qtd_jogos = min(qtd_jogos, len(candidatos))
-
-    # ---- Amostra subconjuntos-alvo de tamanho k_garantia para estimar cobertura ----
-    max_comb_sub = math.comb(n_pool, k_garantia)
-    n_amostras_subconjuntos = min(n_amostras_subconjuntos, max_comb_sub)
-
-    subconjuntos = set()
-    tent_sub = 0
-    max_tent_sub = n_amostras_subconjuntos * 40 + 4000
-    while len(subconjuntos) < n_amostras_subconjuntos and tent_sub < max_tent_sub:
-        tent_sub += 1
-        sub = tuple(sorted(rng.sample(dezenas_pool, k_garantia)))
-        subconjuntos.add(sub)
-
-    sub_masks = np.array([to_mask(s) for s in subconjuntos], dtype=np.int64)
-    if len(sub_masks) == 0:
-        return [], 0.0
-
-    disponivel_cand = np.ones(len(candidatos_mask), dtype=bool)
-    restante_masks = sub_masks.copy()
-    total_subs = len(sub_masks)
-
-    selecionados_idx = []
-
-    for _ in range(qtd_jogos):
-        if len(restante_masks) == 0 or not disponivel_cand.any():
-            break
-
-        cand_idx_disp = np.where(disponivel_cand)[0]
-        cm = candidatos_mask[cand_idx_disp][:, None]   # (C, 1)
-        sm = restante_masks[None, :]                    # (1, S)
-        cobre = (sm & cm) == sm                          # (C, S) booleano
-        contagem = cobre.sum(axis=1)                     # (C,)
-
-        melhor_pos = int(np.argmax(contagem))
-        if contagem[melhor_pos] <= 0 and len(selecionados_idx) > 0:
-            # Nenhum candidato restante cobre algo novo; melhor parar aqui
-            # do que preencher jogos sem ganho de cobertura.
-            break
-
-        melhor_i_global = int(cand_idx_disp[melhor_pos])
-        disponivel_cand[melhor_i_global] = False
-
-        cobertos_bool = cobre[melhor_pos]
-        restante_masks = restante_masks[~cobertos_bool]
-        selecionados_idx.append(melhor_i_global)
-
-    jogos_selecionados = [list(candidatos[i]) for i in selecionados_idx]
-    cobertura_total = total_subs - len(restante_masks)
-    taxa_cobertura = cobertura_total / total_subs if total_subs else 0.0
-
-    return jogos_selecionados, taxa_cobertura
-
 # =====================================================
 # FUNÇÃO PARA BUSCAR DADOS DA LOTOFÁCIL
 # =====================================================
 
 def buscar_historico_lotofacil(quantidade=300):
-    try:
-        url_lista = "https://loteriascaixa-api.herokuapp.com/api/lotofacil"
-        response = requests.get(url_lista, timeout=10)
-        
-        if response.status_code == 200:
-            dados = response.json()
-            if isinstance(dados, list):
-                return dados[:quantidade]
-            elif isinstance(dados, dict):
-                return [dados]
-        return None
-    except Exception as e:
-        st.error(f"❌ Erro na requisição: {e}")
-        return None
+    return buscar_historico_lotofacil_com_cache(quantidade)
 
 # =====================================================
 # MÓDULO 1: BANCO DE DADOS INTELIGENTE - LOTOFÁCIL
@@ -508,28 +337,15 @@ class EstatisticasLFAvancadas:
         self.distribuicao_paridade = self._calcular_distribuicao_paridade(historico)
         self.distribuicao_soma = self._calcular_distribuicao_soma(historico)
         self.distribuicao_repetidas = self._calcular_distribuicao_repetidas(historico)
-
-        # Fatores adicionais para refinar a seleção da base de dezenas
-        self.intervalos_medios = self._calcular_intervalos_medios(historico)
-        self.moldura_miolo_freq = self._calcular_moldura_miolo_freq(historico)
-        self.repetiu_ultimo_concurso = self._calcular_repetiu_ultimo_concurso(historico)
-        self.correlacao_media = self._calcular_correlacao_media(historico)
-
-        # Módulo 1 - Frequência Inteligente (multi-janela ponderada: 5, 10,
-        # 20, 30, 50, 100 e 200 concursos, cada uma com peso próprio)
-        self.frequencia_inteligente = self.calcular_frequencia_inteligente()
-
-        # Módulo 2 - Atraso Inteligente (classifica cada dezena em Muito
-        # Quente / Quente / Neutra / Fria / Muito Fria / Fóssil, comparando
-        # o atraso atual com o intervalo médio histórico da própria dezena)
-        self.atraso_categoria = self._classificar_atraso_inteligente()
-        self.contagem_categorias_atraso = Counter(self.atraso_categoria.values())
-
+        
         # Estatísticas adicionais
         self.media_soma = np.mean([c['soma'] for c in self.banco.concursos])
         self.std_soma = np.std([c['soma'] for c in self.banco.concursos])
         self.media_pares = np.mean([c['pares'] for c in self.banco.concursos])
         self.media_linhas = np.mean([len([l for l in c['linhas'] if l > 0]) for c in self.banco.concursos])
+        
+        # Estatísticas sazonais
+        self.estatisticas_sazonais = self._calcular_estatisticas_sazonais(historico)
         
     def _calcular_frequencias(self, historico):
         freq = Counter()
@@ -538,7 +354,7 @@ class EstatisticasLFAvancadas:
         return freq
     
     def _calcular_frequencias_periodos(self, historico):
-        periodos = [5, 10, 20, 30, 50, 100, 200]
+        periodos = [10, 20, 50, 100, 300]
         resultado = {}
         for p in periodos:
             if len(historico) >= p:
@@ -566,77 +382,7 @@ class EstatisticasLFAvancadas:
     def _calcular_atraso_relativo(self):
         max_atraso = max(self.atrasos.values()) if self.atrasos else 1
         return {num: atraso / max_atraso for num, atraso in self.atrasos.items()}
-
-    def calcular_frequencia_inteligente(self, pesos_janelas=None):
-        """
-        Módulo 1 - Frequência Inteligente.
-
-        Em vez de olhar para uma única janela de concursos, combina a
-        frequência de cada dezena em várias janelas temporais (5, 10, 20,
-        30, 50, 100 e 200 últimos concursos), cada uma com um peso
-        próprio. Janelas curtas capturam o momento recente; janelas
-        longas capturam o comportamento histórico de mais longo prazo.
-        `pesos_janelas` pode ser informado (ex.: vindo de sliders na UI)
-        para recalcular com pesos customizados. Retorna um score
-        normalizado (0 a 1) por dezena.
-        """
-        pesos_janelas = pesos_janelas or {
-            5: 0.05, 10: 0.10, 20: 0.15, 30: 0.20,
-            50: 0.20, 100: 0.15, 200: 0.15
-        }
-        soma_pesos = sum(pesos_janelas.values()) or 1.0
-        score = {n: 0.0 for n in range(1, 26)}
-
-        for janela, peso in pesos_janelas.items():
-            freq_dict = self.frequencias_periodos.get(janela, {})
-            max_freq = max(freq_dict.values()) if freq_dict else 0
-            for n in range(1, 26):
-                freq_norm = (freq_dict.get(n, 0) / max_freq) if max_freq else 0
-                score[n] += freq_norm * peso
-
-        return {n: round(v / soma_pesos, 4) for n, v in score.items()}
-
-    def _classificar_atraso_inteligente(self):
-        """
-        Módulo 2 - Atraso Inteligente.
-
-        Compara o atraso atual de cada dezena com o intervalo médio
-        histórico de saída DELA MESMA (não um valor fixo igual para
-        todas), e classifica em 6 categorias:
-
-        - Muito Quente: saiu bem antes do que costuma (razão < 0.3)
-        - Quente: saiu um pouco antes do habitual (0.3 a 0.7)
-        - Neutra: dentro do intervalo esperado (0.7 a 1.3)
-        - Fria: já passou um pouco do intervalo esperado (1.3 a 2.0)
-        - Muito Fria: bem além do esperado (2.0 a 3.0)
-        - Fóssil: muitíssimo além do intervalo típico (> 3.0)
-
-        Essas categorias são usadas depois para limitar automaticamente
-        quantas dezenas de cada grupo podem entrar em um jogo gerado
-        (ver `respeita_quotas_atraso_lf`).
-        """
-        categorias = {}
-        for n in range(1, 26):
-            atraso_atual = self.atrasos.get(n, 0)
-            intervalo_medio = self.intervalos_medios.get(n, 1.6) or 1.6
-            razao = atraso_atual / intervalo_medio
-
-            if razao < 0.3:
-                categoria = "Muito Quente"
-            elif razao < 0.7:
-                categoria = "Quente"
-            elif razao < 1.3:
-                categoria = "Neutra"
-            elif razao < 2.0:
-                categoria = "Fria"
-            elif razao < 3.0:
-                categoria = "Muito Fria"
-            else:
-                categoria = "Fóssil"
-
-            categorias[n] = categoria
-        return categorias
-
+    
     def _calcular_tendencias(self, historico):
         tendencias = {}
         for num in range(1, 26):
@@ -744,87 +490,34 @@ class EstatisticasLFAvancadas:
                 'distribuicao': Counter(repetidas)
             }
         return {'media': 0, 'std': 0, 'max': 0, 'min': 0, 'distribuicao': {}}
-
-    def _calcular_intervalos_medios(self, historico):
-        """
-        Calcula o intervalo médio histórico (gap típico) entre aparições de
-        cada dezena. Usado para julgar um 'atraso equilibrado': nem muito
-        abaixo (dezena excessivamente quente) nem muito acima (fria demais)
-        do que costuma ocorrer para aquela dezena especificamente.
-        """
-        intervalos = {}
-        for num in range(1, 26):
-            posicoes = [i for i, concurso in enumerate(historico) if num in concurso]
-            if len(posicoes) >= 2:
-                gaps = [posicoes[i+1] - posicoes[i] for i in range(len(posicoes) - 1)]
-                intervalos[num] = float(np.mean(gaps)) if gaps else 1.6
-            else:
-                intervalos[num] = 1.6  # ~15/25 chance por concurso -> gap esperado
-        return intervalos
-
-    def _calcular_moldura_miolo_freq(self, historico):
-        """
-        Classifica as 25 dezenas em 'moldura' (borda do painel 5x5) e
-        'miolo' (centro 3x3) e calcula a frequência relativa histórica
-        de cada grupo, normalizada pelo tamanho do grupo.
-        """
-        miolo = {7, 8, 9, 12, 13, 14, 17, 18, 19}
-        contagem_moldura = 0
-        contagem_miolo = 0
-        for concurso in historico:
-            for num in concurso:
-                if num in miolo:
-                    contagem_miolo += 1
-                else:
-                    contagem_moldura += 1
-        total = contagem_moldura + contagem_miolo
-        if total == 0:
-            return {'moldura': 0.5, 'miolo': 0.5, 'grupo': {n: ('miolo' if n in miolo else 'moldura') for n in range(1, 26)}}
-        # Normaliza pela quantidade de dezenas em cada grupo (16 na moldura, 9 no miolo)
-        media_moldura = (contagem_moldura / 16)
-        media_miolo = (contagem_miolo / 9)
-        soma = media_moldura + media_miolo if (media_moldura + media_miolo) > 0 else 1
-        return {
-            'moldura': media_moldura / soma,
-            'miolo': media_miolo / soma,
-            'grupo': {n: ('miolo' if n in miolo else 'moldura') for n in range(1, 26)}
-        }
-
-    def _calcular_repetiu_ultimo_concurso(self, historico):
-        """Marca quais dezenas saíram no concurso mais recente."""
-        if not historico:
-            return {n: False for n in range(1, 26)}
-        ultimo = set(historico[0])
-        return {n: (n in ultimo) for n in range(1, 26)}
-
-    def _calcular_correlacao_media(self, historico):
-        """
-        Para cada dezena, calcula a correlação de Pearson entre o vetor
-        binário de presença dela e o de cada uma das outras 24 dezenas ao
-        longo do histórico, e tira a média dos valores absolutos. Dezenas
-        com correlação média alta tendem a co-ocorrer de forma mais
-        consistente (positiva ou negativamente) com o restante do grupo.
-        """
-        n = len(historico)
-        if n < 3:
-            return {num: 0.0 for num in range(1, 26)}
-
-        presenca = np.zeros((25, n))
-        for j, concurso in enumerate(historico):
-            for num in concurso:
-                presenca[num - 1, j] = 1
-
-        with np.errstate(invalid='ignore', divide='ignore'):
-            matriz_corr = np.corrcoef(presenca)
-        matriz_corr = np.nan_to_num(matriz_corr, nan=0.0)
-
-        corr_media = {}
-        for num in range(1, 26):
-            linha = matriz_corr[num - 1]
-            outros = np.delete(linha, num - 1)
-            corr_media[num] = float(np.mean(np.abs(outros))) if len(outros) else 0.0
-        return corr_media
-
+    
+    def _calcular_estatisticas_sazonais(self, historico):
+        """Calcula estatísticas sazonais por mês e dia da semana"""
+        resultado = {}
+        
+        # Por mês
+        concursos_por_mes = defaultdict(list)
+        for concurso in self.banco.concursos:
+            if concurso.get('data'):
+                try:
+                    data = datetime.strptime(concurso['data'], '%d/%m/%Y')
+                    mes = data.month
+                    concursos_por_mes[mes].append(concurso['dezenas'])
+                except:
+                    pass
+        
+        for mes, concursos in concursos_por_mes.items():
+            if len(concursos) >= 5:
+                freq = Counter()
+                for c in concursos:
+                    freq.update(c)
+                resultado[f'mes_{mes}'] = {
+                    'frequencias': freq,
+                    'total': len(concursos)
+                }
+        
+        return resultado
+    
     def get_estatisticas_dezena(self, numero):
         """Retorna todas as estatísticas de uma dezena"""
         return {
@@ -833,8 +526,6 @@ class EstatisticasLFAvancadas:
             'frequencia_periodos': {p: self.frequencias_periodos[p].get(numero, 0) for p in self.frequencias_periodos},
             'atraso': self.atrasos.get(numero, 0),
             'atraso_relativo': self.atraso_relativo.get(numero, 0),
-            'atraso_categoria': self.atraso_categoria.get(numero, 'Neutra'),
-            'frequencia_inteligente': self.frequencia_inteligente.get(numero, 0),
             'tendencia': self.tendencias.get(numero, {'tendencia': 'estavel', 'inclinacao': 0}),
             'probabilidade': self.frequencias.get(numero, 0) / (self.total_concursos * 15) if self.total_concursos > 0 else 0
         }
@@ -852,136 +543,81 @@ class MotorPontuacaoLF:
         self.pontuacoes = self._calcular_pontuacoes()
         
     def _definir_pesos(self):
-        # Tabela de pesos definida junto com o usuário
         return {
-            'frequencia_inteligente': 0.40,
-            'atraso_equilibrado': 0.20,
-            'repeticao_ultimo': 0.10,
-            'linhas_colunas': 0.10,
-            'moldura_miolo': 0.05,
-            'pares_impares': 0.05,
-            'correlacao': 0.10
+            'frequencia_recente': 0.25,
+            'frequencia_historica': 0.20,
+            'atraso': 0.20,
+            'tendencia': 0.15,
+            'equilibrio': 0.10,
+            'diversidade': 0.10
         }
     
     def _calcular_pontuacoes(self):
         pontuacoes = {}
         
         # Normaliza métricas
-        max_correlacao = max(self.estatisticas.correlacao_media.values()) if self.estatisticas.correlacao_media else 1
-        max_correlacao = max_correlacao if max_correlacao > 0 else 1
+        max_freq = max(self.estatisticas.frequencias.values()) if self.estatisticas.frequencias else 1
+        max_freq_recente = max(self.estatisticas.frequencias_periodos[20].values()) if 20 in self.estatisticas.frequencias_periodos else 1
+        max_atraso = max(self.estatisticas.atrasos.values()) if self.estatisticas.atrasos else 1
         
         for num in range(1, 26):
-            # Módulo 1 - Frequência Inteligente: combinação ponderada das
-            # janelas de 5, 10, 20, 30, 50, 100 e 200 concursos (já vem
-            # normalizada de 0 a 1 de EstatisticasLF)
-            freq_inteligente = self.estatisticas.frequencia_inteligente.get(num, 0)
+            # Frequência recente (20 últimos)
+            freq_recente = self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0) / max_freq_recente
             
-            # Atraso equilibrado: nem quente nem fria demais em relação ao
-            # intervalo médio típico de cada dezena (em vez de só premiar
-            # atraso baixo, o que tendia a excluir dezenas "devidas")
-            atraso_equilibrado = self._calcular_atraso_equilibrado(num)
+            # Frequência histórica
+            freq_historica = self.estatisticas.frequencias.get(num, 0) / max_freq
             
-            # Repetição do último concurso, ponderada pela taxa histórica
-            # de repetição entre concursos consecutivos
-            repeticao_ultimo = self._calcular_repeticao(num)
+            # Atraso (invertido)
+            atraso = 1 - (self.estatisticas.atrasos.get(num, 0) / max_atraso)
             
-            # Linhas e colunas do painel 5x5
-            linhas_colunas = self._calcular_linhas_colunas(num)
+            # Tendência
+            tendencia_info = self.estatisticas.tendencias.get(num, {})
+            inclinacao = tendencia_info.get('inclinacao', 0)
+            tendencia_norm = (inclinacao + 1) / 2
             
-            # Padrão moldura (borda) x miolo (centro) do painel 5x5
-            moldura_miolo = self._calcular_moldura_miolo(num)
+            # Equilíbrio
+            equilibrio = self._calcular_equilibrio(num)
             
-            # Pares x ímpares
-            pares_impares = self._calcular_pares_impares(num)
-            
-            # Correlação média com as demais dezenas
-            correlacao = self.estatisticas.correlacao_media.get(num, 0) / max_correlacao
+            # Diversidade
+            diversidade = self._calcular_diversidade(num)
             
             # Pontuação final
             pontuacao = (
-                freq_inteligente * self.pesos['frequencia_inteligente'] +
-                atraso_equilibrado * self.pesos['atraso_equilibrado'] +
-                repeticao_ultimo * self.pesos['repeticao_ultimo'] +
-                linhas_colunas * self.pesos['linhas_colunas'] +
-                moldura_miolo * self.pesos['moldura_miolo'] +
-                pares_impares * self.pesos['pares_impares'] +
-                correlacao * self.pesos['correlacao']
+                freq_recente * self.pesos['frequencia_recente'] +
+                freq_historica * self.pesos['frequencia_historica'] +
+                atraso * self.pesos['atraso'] +
+                tendencia_norm * self.pesos['tendencia'] +
+                equilibrio * self.pesos['equilibrio'] +
+                diversidade * self.pesos['diversidade']
             )
             
             pontuacoes[num] = round(pontuacao * 100, 2)
         
         return pontuacoes
     
-    def _calcular_atraso_equilibrado(self, numero):
-        """
-        Em vez de simplesmente premiar o menor atraso possível (o que
-        favorece só dezenas 'quentes' e tende a excluir dezenas devidas),
-        usa uma curva em sino centrada no intervalo médio histórico da
-        própria dezena: pontua mais alto quando o atraso atual está
-        próximo do que costuma acontecer para ela, e penaliza tanto
-        atrasos muito abaixo (excesso de repetição) quanto muito acima
-        (fria demais) desse intervalo típico.
-        """
-        atraso_atual = self.estatisticas.atrasos.get(numero, 0)
-        intervalo_ideal = self.estatisticas.intervalos_medios.get(numero, 1.6)
-        sigma = max(intervalo_ideal, 1.0)
-        diff = atraso_atual - intervalo_ideal
-        score = math.exp(-(diff ** 2) / (2 * (sigma ** 2)))
-        return max(0.0, min(1.0, score))
-    
-    def _calcular_repeticao(self, numero):
-        """
-        Dá um bônus se a dezena saiu no concurso mais recente, na medida
-        exata da taxa histórica de repetição entre concursos consecutivos
-        (evita superestimar: se historicamente ~53% das dezenas repetem,
-        o bônus reflete essa proporção em vez de assumir 100%).
-        """
-        media_repetidas = self.estatisticas.distribuicao_repetidas.get('media', 8)
-        taxa_repeticao = max(0.0, min(1.0, media_repetidas / 15))
-        saiu_ultimo = self.estatisticas.repetiu_ultimo_concurso.get(numero, False)
-        return taxa_repeticao if saiu_ultimo else (1 - taxa_repeticao)
-    
-    def _calcular_linhas_colunas(self, numero):
-        """
-        Avalia se a linha e a coluna do número no painel 5x5 costumam
-        sair perto da proporção ideal (1/5 cada), penalizando linhas ou
-        colunas historicamente super ou sub-representadas.
-        """
-        linha = (numero - 1) // 5
-        coluna = (numero - 1) % 5
-        freq_linhas = self.estatisticas.distribuicao_linhas
-        freq_colunas = self.estatisticas.distribuicao_colunas
-        ideal = 1 / 5
+    def _calcular_equilibrio(self, numero):
+        """Calcula fator de equilíbrio baseado na posição da dezena"""
+        faixa = 0 if numero <= 8 else 1 if numero <= 16 else 2
+        freq_faixas = self.estatisticas.distribuicao_faixas
         
-        score_linha = 1 - abs(freq_linhas[linha] - ideal) * 2 if linha < len(freq_linhas) else 0.5
-        score_coluna = 1 - abs(freq_colunas[coluna] - ideal) * 2 if coluna < len(freq_colunas) else 0.5
+        if faixa < len(freq_faixas):
+            proporcao = freq_faixas[faixa]
+            ideal = 1/3
+            equilibrio = 1 - abs(proporcao - ideal) * 2
+            return max(0, min(1, equilibrio))
+        return 0.5
+    
+    def _calcular_diversidade(self, numero):
+        """Calcula fator de diversidade"""
+        freq = self.estatisticas.frequencias.get(numero, 0)
+        media = np.mean(list(self.estatisticas.frequencias.values())) if self.estatisticas.frequencias else 0
         
-        score = (score_linha + score_coluna) / 2
-        return max(0.0, min(1.0, score))
-    
-    def _calcular_moldura_miolo(self, numero):
-        """
-        Compara a frequência normalizada do grupo (moldura/miolo) ao qual
-        a dezena pertence, refletindo se esse padrão espacial do painel
-        5x5 costuma sair mais ou menos que o esperado.
-        """
-        info = self.estatisticas.moldura_miolo_freq
-        grupo = info.get('grupo', {}).get(numero, 'moldura')
-        valor = info.get(grupo, 0.5)
-        return max(0.0, min(1.0, valor))
-    
-    def _calcular_pares_impares(self, numero):
-        """
-        Compara a proporção histórica de pares/ímpares sorteados com a
-        proporção ideal (50/50), pontuando mais alto quando o grupo
-        (par ou ímpar) da dezena não está historicamente desbalanceado.
-        """
-        par = (numero % 2 == 0)
-        chave = 'pares' if par else 'impares'
-        proporcao = self.estatisticas.distribuicao_paridade.get(chave, 0.5)
-        ideal = 0.5
-        score = 1 - abs(proporcao - ideal) * 2
-        return max(0.0, min(1.0, score))
+        if freq < media * 0.5:
+            return 1.0
+        elif freq > media * 1.5:
+            return 0.3
+        else:
+            return 0.7
     
     def get_ranking(self, top_n=25):
         """Retorna ranking das dezenas"""
@@ -1021,7 +657,6 @@ class IAEstatisticaLF:
         
     def _preparar_dados(self):
         """Prepara dados de treino com features ponto-no-tempo (sem look-ahead bias)."""
-        # concursos_asc: do mais antigo para o mais recente
         concursos_asc = list(reversed(self.banco.concursos))
         n = len(concursos_asc)
         
@@ -1044,7 +679,6 @@ class IAEstatisticaLF:
             dezenas_set = set(dezenas)
             
             if t >= aquecimento:
-                # --- Features calculadas SOMENTE com dados de t-1 e anteriores ---
                 atrasos_pt = {}
                 for num in range(1, 26):
                     if ultimo_indice_visto[num] >= 0:
@@ -1063,13 +697,6 @@ class IAEstatisticaLF:
                 faixa_media_prop = sum(1 for nn in dezenas if 9 <= nn <= 16) / 15
                 soma_prop = sum(dezenas) / 25
                 
-                # "Vizinhança quente": frequência histórica média dos números
-                # próximos (num-3..num+3), calculada só com dados anteriores.
-                # IMPORTANTE: ao contrário da versão anterior, isso NÃO usa o
-                # resultado do concurso que está sendo rotulado — só estatística
-                # ponto-no-tempo — então não vaza a resposta certa (a versão
-                # antiga dava 0 para toda dezena não sorteada e >0 quase sempre
-                # para a sorteada, o que é basicamente entregar o gabarito).
                 max_freq_total = max(freq_total.values()) if freq_total else 1
                 
                 for num in range(1, 26):
@@ -1088,8 +715,7 @@ class IAEstatisticaLF:
                     ])
                     targets.append(1 if num in dezenas_set else 0)
             
-            # --- Atualiza acumuladores DEPOIS de gerar as features (dados só ficam
-            # "disponíveis" para o próximo concurso) ---
+            # Atualiza acumuladores DEPOIS de gerar as features
             freq_total.update(dezenas)
             
             if len(janela20) == 20:
@@ -1113,8 +739,7 @@ class IAEstatisticaLF:
         }
     
     def _split_cronologico(self, X, y):
-        """Divide em treino/calibração/teste respeitando a ordem temporal
-        (sem embaralhar), para não misturar 'futuro' com 'passado' na avaliação."""
+        """Divide em treino/calibração/teste respeitando a ordem temporal"""
         n = len(X)
         i_train = int(n * 0.70)
         i_calib = int(n * 0.85)
@@ -1231,99 +856,47 @@ class IAEstatisticaLF:
             }
         
         return resultados
-
-    def prever_probabilidades_dezenas(self):
-        """
-        Prevê, para cada uma das 25 dezenas, a probabilidade média (entre os
-        modelos treinados) de sair no próximo concurso. Diferente de
-        `prever_probabilidades`, que avalia um jogo específico já montado,
-        este método não recebe um jogo pronto — por isso usa o contexto
-        médio dos concursos mais recentes (proporção típica de pares,
-        faixas e soma) como pano de fundo neutro para cada dezena.
-        """
-        if not self.modelos:
-            return {}
-
-        max_freq_total = max(self.estatisticas.frequencias.values()) if self.estatisticas.frequencias else 1
-
-        concursos_recentes = self.banco.get_historico_dezenas()[:50]
-        if concursos_recentes:
-            pares_prop_medio = float(np.mean([contar_pares_lf(c) / 15 for c in concursos_recentes]))
-            faixa_baixa_medio = float(np.mean([sum(1 for n in c if n <= 8) / 15 for c in concursos_recentes]))
-            faixa_media_medio = float(np.mean([sum(1 for n in c if 9 <= n <= 16) / 15 for c in concursos_recentes]))
-            soma_medio = float(np.mean([sum(c) / 25 for c in concursos_recentes]))
-        else:
-            pares_prop_medio = faixa_baixa_medio = faixa_media_medio = 0.5
-            soma_medio = 0.5
-
+    
+    def prever_probabilidades_producao(self, jogo, concursos_anteriores):
+        """Versão para produção - usa apenas dados anteriores ao último concurso"""
+        if not concursos_anteriores or len(concursos_anteriores) < 30:
+            return None
+        
+        # Cria banco temporário com dados anteriores
+        banco_pt = _BancoTemporal(concursos_anteriores)
+        estatisticas_pt = EstatisticasLFAvancadas(banco_pt)
+        
+        max_freq_total = max(estatisticas_pt.frequencias.values()) if estatisticas_pt.frequencias else 1
+        
         features = []
-        for num in range(1, 26):
+        for num in jogo:
             vizinhos = [v for v in range(max(1, num - 3), min(25, num + 3) + 1) if v != num]
-            proximidade = (np.mean([self.estatisticas.frequencias.get(v, 0) for v in vizinhos]) / max_freq_total) if vizinhos else 0
+            proximidade = (np.mean([estatisticas_pt.frequencias.get(v, 0) for v in vizinhos]) / max_freq_total) if vizinhos else 0
             features.append([
-                self.estatisticas.frequencias.get(num, 0),
-                self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0),
-                self.estatisticas.atrasos.get(num, 0),
-                self.estatisticas.tendencias.get(num, {}).get('inclinacao', 0),
-                pares_prop_medio,
-                faixa_baixa_medio,
-                faixa_media_medio,
-                soma_medio,
+                estatisticas_pt.frequencias.get(num, 0),
+                estatisticas_pt.frequencias_periodos.get(20, {}).get(num, 0),
+                estatisticas_pt.atrasos.get(num, 0),
+                estatisticas_pt.tendencias.get(num, {}).get('inclinacao', 0),
+                contar_pares_lf(jogo) / 15,
+                sum([1 for n in jogo if n <= 8]) / 15,
+                sum([1 for n in jogo if 9 <= n <= 16]) / 15,
+                sum(jogo) / 25,
                 proximidade
             ])
-
+        
         features = np.array(features)
-
-        probs_por_modelo = []
+        
+        resultados = {}
         for nome, info in self.modelos.items():
             modelo = info['modelo']
-            probs = modelo.predict_proba(features)[:, 1]
-            probs_por_modelo.append(probs)
-
-        if not probs_por_modelo:
-            return {}
-
-        probs_media = np.mean(probs_por_modelo, axis=0)
-        return {num: float(probs_media[num - 1]) for num in range(1, 26)}
-
-    def gerar_jogos_ia(self, qtd_jogos=3, tamanho_jogo=15, semente=None):
-        """
-        Gera jogos com base no que os modelos de IA treinados aprenderam:
-        usa a probabilidade média prevista para cada dezena como peso em
-        uma amostragem ponderada, produzindo `qtd_jogos` jogos distintos
-        entre si (em vez de sempre repetir o mesmo Top 15 fixo).
-        """
-        probs_dezenas = self.prever_probabilidades_dezenas()
-        if not probs_dezenas:
-            return [], {}
-
-        rng = random.Random(semente)
-        dezenas = list(range(1, 26))
-        pesos_base = [max(probs_dezenas.get(d, 0.0), 1e-6) for d in dezenas]
-
-        jogos = []
-        jogos_set = set()
-        tentativas = 0
-        max_tentativas = qtd_jogos * 500 + 2000
-
-        while len(jogos) < qtd_jogos and tentativas < max_tentativas:
-            tentativas += 1
-            pool_restante = list(dezenas)
-            pesos_restante = list(pesos_base)
-            jogo = []
-            for _ in range(tamanho_jogo):
-                escolhido = rng.choices(pool_restante, weights=pesos_restante, k=1)[0]
-                idx = pool_restante.index(escolhido)
-                jogo.append(escolhido)
-                pool_restante.pop(idx)
-                pesos_restante.pop(idx)
-
-            jogo_ordenado = tuple(sorted(jogo))
-            if jogo_ordenado not in jogos_set:
-                jogos_set.add(jogo_ordenado)
-                jogos.append(list(jogo_ordenado))
-
-        return jogos, probs_dezenas
+            probs = modelo.predict_proba(features)
+            resultados[nome] = {
+                'probabilidades': probs[:, 1].tolist(),
+                'media': np.mean(probs[:, 1]),
+                'acuracia': info.get('acuracia', 0)
+            }
+        
+        return resultados
 
 # =====================================================
 # MÓDULO 5: FILTROS INTELIGENTES - LOTOFÁCIL
@@ -1349,13 +922,6 @@ class FiltrosInteligentesLF:
             'repetidas_max': 10,
             'primos_min': 3,
             'primos_max': 7,
-            # CORREÇÃO: numa combinação de 15 dezenas em 25 (5 linhas de 5),
-            # é matematicamente quase impossível deixar mais de 1 linha vazia
-            # (>97% dos jogos ativam as 5 linhas, ~2.4% ativam 4, e ativar só
-            # 2-3 linhas é praticamente 0%). O default anterior (min:2, max:4)
-            # rejeitava >97% de QUALQUER combinação válida — inclusive sorteios
-            # reais da Lotofácil — fazendo o gerador quase sempre falhar ou cair
-            # no fallback de filtros flexíveis.
             'linhas_min': 4,
             'linhas_max': 5,
             'colunas_min': 4,
@@ -1396,13 +962,13 @@ class FiltrosInteligentesLF:
         # Linhas
         linhas = distribuir_linhas_lf(jogo)
         linhas_ativas = len([l for l in linhas if l > 0])
-        if not (filtros.get('linhas_min', 2) <= linhas_ativas <= filtros.get('linhas_max', 4)):
+        if not (filtros.get('linhas_min', 4) <= linhas_ativas <= filtros.get('linhas_max', 5)):
             return False, f'{linhas_ativas} linhas ativas'
         
         # Colunas
         colunas = distribuir_colunas_lf(jogo)
         colunas_ativas = len([c for c in colunas if c > 0])
-        if not (filtros.get('colunas_min', 2) <= colunas_ativas <= filtros.get('colunas_max', 4)):
+        if not (filtros.get('colunas_min', 4) <= colunas_ativas <= filtros.get('colunas_max', 5)):
             return False, f'{colunas_ativas} colunas ativas'
         
         # Repetidas do último concurso
@@ -1437,11 +1003,11 @@ class FiltrosInteligentesLF:
         }
 
 # =====================================================
-# MÓDULO 6: GERADOR PREMIUM - LOTOFÁCIL (CORRIGIDO)
+# MÓDULO 6: GERADOR PREMIUM - LOTOFÁCIL (VERSÃO MELHORADA)
 # =====================================================
 
 class GeradorPremiumLF:
-    """Módulo 6 - Gerador Premium para Lotofácil"""
+    """Módulo 6 - Gerador Premium para Lotofácil com Estratégias Aprimoradas"""
     
     def __init__(self, banco_dados, estatisticas, pontuacao, filtros, ia=None):
         self.banco = banco_dados
@@ -1449,16 +1015,14 @@ class GeradorPremiumLF:
         self.pontuacao = pontuacao
         self.filtros = filtros
         self.ia = ia
+        self.historico_estrategias = defaultdict(list)  # Para estratégia adaptativa
     
-    def gerar_jogos(self, qtd=10, estrategia='equilibrada', dezenas_base=None, filtros_personalizados=None, max_tentativas=None):
+    def gerar_jogos(self, qtd=10, estrategia='equilibrada', dezenas_base=None, 
+                    filtros_personalizados=None, max_tentativas=None, combinar_estrategias=False):
         """Gera jogos baseados na estratégia escolhida"""
         if filtros_personalizados is None:
             filtros_personalizados = self.filtros.get_filtros_recomendados()
         
-        # CORREÇÃO: com exatamente 15 dezenas-base só existe 1 combinação possível.
-        # O código anterior tentava gerar `qtd` jogos amostrando 15-de-15 repetidamente,
-        # o que sempre produz o mesmo jogo — a checagem "not in jogos" bloqueava
-        # qualquer repetição e o loop rodava até `max_tentativas` sem nunca completar.
         if dezenas_base:
             dezenas_base = sorted(set(dezenas_base))
             if len(dezenas_base) < 15:
@@ -1466,24 +1030,31 @@ class GeradorPremiumLF:
                 dezenas_base = None
             elif len(dezenas_base) == 15:
                 st.info("ℹ️ Exatamente 15 dezenas-base: só existe 1 jogo possível com essa combinação.")
+                return [sorted(dezenas_base)]
         
         jogos = []
         tentativas = 0
         if max_tentativas is None:
             max_tentativas = qtd * 10000
         
-        # Obtém ranking das dezenas
         ranking = self.pontuacao.get_ranking(20)
         dezenas_prioritarias = [n for n, _ in ranking]
         
-        # Estratégias
+        # Estratégias disponíveis
         estrategias = {
             'conservadora': self._gerar_conservadora,
             'equilibrada': self._gerar_equilibrada,
-            'diversificada': self._gerar_diversificada
+            'diversificada': self._gerar_diversificada,
+            'padroes': self._gerar_padroes_historicos,
+            'ia': self._gerar_com_ia,
+            'adaptativa': self._gerar_adaptativa,
+            'ensemble': self._gerar_ensemble
         }
         
-        gerador = estrategias.get(estrategia, self._gerar_equilibrada)
+        if combinar_estrategias:
+            gerador = self._gerar_ensemble
+        else:
+            gerador = estrategias.get(estrategia, self._gerar_equilibrada)
         
         if dezenas_base and len(dezenas_base) == 15:
             return [sorted(dezenas_base)]
@@ -1493,22 +1064,23 @@ class GeradorPremiumLF:
         while len(jogos) < qtd and tentativas < max_tentativas:
             tentativas += 1
             
-            # Gera o jogo usando a estratégia escolhida
             if dezenas_base and len(dezenas_base) >= 15:
-                # Usa dezenas base se fornecidas
                 jogo = sorted(random.sample(dezenas_base, 15))
             else:
-                # Gera jogo com a estratégia
-                jogo = gerador(dezenas_prioritarias)
+                # Usa o gerador selecionado
+                if estrategia == 'ia' or estrategia == 'adaptativa' or estrategia == 'ensemble':
+                    jogo = gerador(dezenas_prioritarias, qtd_tentativa=len(jogos))
+                elif estrategia == 'padroes':
+                    jogo = gerador(dezenas_prioritarias)
+                else:
+                    jogo = gerador(dezenas_prioritarias)
                 
-                # Garante que o jogo tem 15 números
                 while len(jogo) < 15:
                     novo = random.randint(1, 25)
                     if novo not in jogo:
                         jogo.append(novo)
                 jogo = sorted(jogo)
             
-            # Aplica filtros
             aprovado, mensagem = self.filtros.aplicar_filtros(jogo, filtros_personalizados)
             
             if aprovado and jogo not in jogos:
@@ -1522,11 +1094,10 @@ class GeradorPremiumLF:
         
         progress_bar.empty()
         
-        # Se não gerou todos os jogos, tenta com menos filtros
+        # Fallback com filtros flexíveis
         if len(jogos) < qtd:
             st.warning(f"⚠️ Gerados apenas {len(jogos)} de {qtd} jogos com os filtros atuais. Tentando com filtros mais flexíveis...")
             
-            # Filtros mais flexíveis
             filtros_flexiveis = filtros_personalizados.copy()
             filtros_flexiveis['pares_min'] = max(4, filtros_personalizados.get('pares_min', 6) - 2)
             filtros_flexiveis['pares_max'] = min(11, filtros_personalizados.get('pares_max', 9) + 2)
@@ -1548,21 +1119,39 @@ class GeradorPremiumLF:
         
         return jogos
     
+    # ==================== ESTRATÉGIAS MELHORADAS ====================
+    
     def _gerar_conservadora(self, dezenas_prioritarias):
-        """Estratégia Conservadora: prioriza números mais frequentes"""
+        """Estratégia Conservadora Melhorada: prioriza números mais frequentes com equilíbrio"""
         jogo = set()
         
-        # Pega 10 números do top ranking
-        top = dezenas_prioritarias[:15]
-        qtd_top = min(10, len(top))
-        if qtd_top > 0:
-            jogo.update(random.sample(top, qtd_top))
+        # 1. Pega 8-10 números mais frequentes
+        top_ranking = dezenas_prioritarias[:20]
+        qtd_top = random.randint(8, 10)
+        if qtd_top > 0 and top_ranking:
+            jogo.update(random.sample(top_ranking, min(qtd_top, len(top_ranking))))
         
-        # Completa com números aleatórios
+        # 2. Pega 3-4 números com bom atraso (estatisticamente tendem a sair)
+        atrasados = sorted(self.estatisticas.atrasos.items(), key=lambda x: x[1], reverse=True)[:15]
+        atrasados_nums = [n for n, _ in atrasados if n not in jogo]
+        qtd_atrasados = min(random.randint(3, 4), len(atrasados_nums))
+        if qtd_atrasados > 0 and atrasados_nums:
+            jogo.update(random.sample(atrasados_nums, qtd_atrasados))
+        
+        # 3. Completa com números que equilibram paridade
         while len(jogo) < 15:
-            novo = random.randint(1, 25)
-            if novo not in jogo:
-                jogo.add(novo)
+            pares_atuais = sum(1 for n in jogo if n % 2 == 0)
+            if pares_atuais < 7:
+                candidatos = [n for n in range(2, 26, 2) if n not in jogo]
+            elif pares_atuais > 8:
+                candidatos = [n for n in range(1, 26, 2) if n not in jogo]
+            else:
+                candidatos = [n for n in range(1, 26) if n not in jogo]
+            
+            if candidatos:
+                jogo.add(random.choice(candidatos))
+            else:
+                break
         
         return sorted(list(jogo))
     
@@ -1570,59 +1159,225 @@ class GeradorPremiumLF:
         """Estratégia Equilibrada: balanceia frequência e diversidade"""
         jogo = set()
         
-        # Pega 8 números do ranking
         top = dezenas_prioritarias[:20]
         qtd_top = min(8, len(top))
         if qtd_top > 0:
             jogo.update(random.sample(top, qtd_top))
         
-        # Pega 4 números de fora do top
         fora_top = [n for n in range(1, 26) if n not in top]
         if fora_top and len(jogo) < 14:
             qtd_fora = min(4, len(fora_top), 15 - len(jogo))
             jogo.update(random.sample(fora_top, qtd_fora))
         
-        # Completa com números aleatórios
+        # Completa com equilíbrio de paridade
         while len(jogo) < 15:
-            novo = random.randint(1, 25)
-            if novo not in jogo:
-                jogo.add(novo)
+            pares_atuais = sum(1 for n in jogo if n % 2 == 0)
+            if pares_atuais < 7:
+                candidatos = [n for n in range(2, 26, 2) if n not in jogo]
+            elif pares_atuais > 8:
+                candidatos = [n for n in range(1, 26, 2) if n not in jogo]
+            else:
+                candidatos = [n for n in range(1, 26) if n not in jogo]
+            
+            if candidatos:
+                jogo.add(random.choice(candidatos))
+            else:
+                break
         
         return sorted(list(jogo))
     
     def _gerar_diversificada(self, dezenas_prioritarias):
-        """Estratégia Diversificada: mistura diferentes tipos"""
+        """Estratégia Diversificada Melhorada: distribuição equilibrada por grupos"""
         jogo = set()
         
-        # Pega 6 do ranking
-        top = dezenas_prioritarias[:20]
-        qtd_top = min(6, len(top))
-        if qtd_top > 0:
-            jogo.update(random.sample(top, qtd_top))
+        # 1. Distribuição por grupos (faixas)
+        grupos = {
+            'baixo': list(range(1, 9)),
+            'medio': list(range(9, 17)),
+            'alto': list(range(17, 26))
+        }
         
-        # Pega 5 atrasados
-        atrasados = sorted(self.estatisticas.atrasos.items(), key=lambda x: x[1], reverse=True)[:10]
-        atrasados_nums = [n for n, _ in atrasados]
-        if atrasados_nums and len(jogo) < 14:
-            qtd_atrasados = min(5, len(atrasados_nums), 15 - len(jogo))
-            jogo.update(random.sample(atrasados_nums, qtd_atrasados))
+        distribuicao = random.choice([
+            (5, 5, 5), (6, 5, 4), (5, 6, 4), (4, 6, 5), (6, 4, 5)
+        ])
         
-        # Completa com números aleatórios
+        for (grupo_nome, numeros), qtd in zip(grupos.items(), distribuicao):
+            # Escolhe os melhores de cada grupo baseado no ranking
+            ranking_grupo = [n for n in numeros if n in dezenas_prioritarias[:15]]
+            if len(ranking_grupo) < qtd:
+                outros = [n for n in numeros if n not in ranking_grupo]
+                ranking_grupo.extend(random.sample(outros, min(qtd - len(ranking_grupo), len(outros))))
+            if ranking_grupo:
+                jogo.update(random.sample(ranking_grupo, min(qtd, len(ranking_grupo))))
+        
+        # 2. Equilibra paridade e completa
         while len(jogo) < 15:
-            novo = random.randint(1, 25)
-            if novo not in jogo:
-                jogo.add(novo)
+            pares_atuais = sum(1 for n in jogo if n % 2 == 0)
+            if pares_atuais < 7:
+                candidatos = [n for n in range(2, 26, 2) if n not in jogo]
+            elif pares_atuais > 8:
+                candidatos = [n for n in range(1, 26, 2) if n not in jogo]
+            else:
+                candidatos = [n for n in range(1, 26) if n not in jogo]
+            
+            if candidatos:
+                jogo.add(random.choice(candidatos))
+            else:
+                break
         
         return sorted(list(jogo))
+    
+    def _gerar_padroes_historicos(self, dezenas_prioritarias):
+        """Nova Estratégia: baseada em padrões históricos recorrentes"""
+        jogo = set()
+        
+        # 1. Analisa padrões de repetição do último concurso
+        if self.banco.concursos:
+            ultimo = self.banco.concursos[0]['dezenas']
+            repeticoes_esperadas = int(self.estatisticas.distribuicao_repetidas.get('media', 8))
+            repeticoes = random.sample(ultimo, min(repeticoes_esperadas, len(ultimo)))
+            jogo.update(repeticoes)
+        
+        # 2. Analisa linhas mais frequentes
+        linhas_freq = self.estatisticas.distribuicao_linhas
+        linhas_prioritarias = sorted(range(5), key=lambda i: linhas_freq[i], reverse=True)[:3]
+        
+        # 3. Completa com números das linhas prioritárias
+        for linha in linhas_prioritarias:
+            nums_linha = [n for n in range(linha*5+1, min((linha+1)*5+1, 26)) 
+                         if n not in jogo]
+            if nums_linha:
+                qtd = min(3, 15 - len(jogo), len(nums_linha))
+                jogo.update(random.sample(nums_linha, qtd))
+        
+        # 4. Completa com números aleatórios balanceados
+        while len(jogo) < 15:
+            candidatos = [n for n in range(1, 26) if n not in jogo]
+            soma_atual = sum(jogo)
+            if soma_atual < 190:
+                candidatos = sorted(candidatos, reverse=True)[:10]
+            elif soma_atual > 210:
+                candidatos = sorted(candidatos)[:10]
+            if candidatos:
+                jogo.add(random.choice(candidatos))
+            else:
+                break
+        
+        return sorted(list(jogo))
+    
+    def _gerar_com_ia(self, dezenas_prioritarias, qtd_tentativa=0):
+        """Nova Estratégia: usa IA para sugerir combinações com alta probabilidade"""
+        if not self.ia or not self.ia.modelos:
+            return self._gerar_equilibrada(dezenas_prioritarias)
+        
+        # Gera algumas combinações e avalia com IA
+        candidatos = []
+        for _ in range(50):
+            jogo = sorted(random.sample(range(1, 26), 15))
+            # Avalia com IA
+            probs = self.ia.prever_probabilidades(jogo)
+            if probs:
+                score_medio = np.mean([info['media'] for info in probs.values()])
+                # Penaliza jogos que não passam nos filtros básicos
+                aprovado, _ = self.filtros.aplicar_filtros(jogo)
+                if aprovado:
+                    score_medio *= 1.1
+                candidatos.append((jogo, score_medio))
+        
+        if candidatos:
+            candidatos.sort(key=lambda x: x[1], reverse=True)
+            return candidatos[0][0]
+        
+        return self._gerar_equilibrada(dezenas_prioritarias)
+    
+    def _gerar_adaptativa(self, dezenas_prioritarias, qtd_tentativa=0):
+        """Nova Estratégia: adapta-se baseado no histórico de acertos"""
+        # Se não tem histórico, usa equilibrada
+        if not self.historico_estrategias:
+            return self._gerar_equilibrada(dezenas_prioritarias)
+        
+        # Calcula média de acertos por estratégia
+        medias = {}
+        for estrategia, acertos in self.historico_estrategias.items():
+            if acertos:
+                medias[estrategia] = np.mean(acertos)
+        
+        if not medias:
+            return self._gerar_equilibrada(dezenas_prioritarias)
+        
+        # Escolhe a melhor estratégia baseada no histórico
+        melhor_estrategia = max(medias, key=medias.get)
+        
+        # Mapeia para os métodos
+        estrategias_map = {
+            'conservadora': self._gerar_conservadora,
+            'equilibrada': self._gerar_equilibrada,
+            'diversificada': self._gerar_diversificada,
+            'padroes': self._gerar_padroes_historicos
+        }
+        
+        gerador = estrategias_map.get(melhor_estrategia, self._gerar_equilibrada)
+        return gerador(dezenas_prioritarias)
+    
+    def _gerar_ensemble(self, dezenas_prioritarias, qtd_tentativa=0):
+        """Nova Estratégia: combina múltiplas estratégias e escolhe a melhor"""
+        estrategias = [
+            ('conservadora', self._gerar_conservadora),
+            ('equilibrada', self._gerar_equilibrada),
+            ('diversificada', self._gerar_diversificada),
+            ('padroes', self._gerar_padroes_historicos)
+        ]
+        
+        jogos_gerados = []
+        for nome, metodo in estrategias:
+            jogo = metodo(dezenas_prioritarias)
+            jogos_gerados.append((nome, jogo))
+        
+        # Avalia cada jogo
+        melhores = []
+        for nome, jogo in jogos_gerados:
+            score = self._avaliar_jogo(jogo)
+            melhores.append((score, jogo))
+        
+        melhores.sort(key=lambda x: x[0], reverse=True)
+        return melhores[0][1] if melhores else jogos_gerados[0][1]
+    
+    def _avaliar_jogo(self, jogo):
+        """Avalia um jogo baseado em múltiplos critérios"""
+        score = 0
+        
+        # 1. Paridade balanceada (6-9 pares)
+        pares = contar_pares_lf(jogo)
+        score += max(0, 10 - abs(7.5 - pares))
+        
+        # 2. Soma na faixa ideal (180-210)
+        soma = sum(jogo)
+        score += max(0, 10 - abs(195 - soma) / 5)
+        
+        # 3. Linhas ativas (4-5)
+        linhas_ativas = len([l for l in distribuir_linhas_lf(jogo) if l > 0])
+        score += max(0, 5 - abs(4.5 - linhas_ativas))
+        
+        # 4. Diversidade de faixas
+        faixas = distribuir_faixas_lf(jogo)
+        score += min(5, len([f for f in faixas if f >= 4]))
+        
+        # 5. Consecutivos (não muitos)
+        consec = contar_consecutivos_lf(jogo)
+        score += max(0, 5 - consec)
+        
+        return score
+    
+    def registrar_resultado_estrategia(self, estrategia, acertos):
+        """Registra o desempenho de uma estratégia para uso adaptativo"""
+        self.historico_estrategias[estrategia].append(acertos)
 
 # =====================================================
 # MÓDULO 7: BACKTESTS - LOTOFÁCIL
 # =====================================================
 
 class _BancoTemporal:
-    """Wrapper leve que expõe apenas os concursos anteriores a um certo ponto no
-    tempo, para permitir recalcular estatísticas 'como se estivéssemos naquela
-    época' — necessário para um backtest sem look-ahead bias."""
+    """Wrapper leve que expõe apenas os concursos anteriores a um certo ponto no tempo"""
     def __init__(self, concursos):
         self.concursos = concursos
     
@@ -1633,32 +1388,21 @@ class _BancoTemporal:
 class BacktestsLF:
     """Módulo 7 - Backtests para Lotofácil"""
     
-    AQUECIMENTO_MINIMO = 30  # concursos mínimos de histórico antes de testar um ponto
+    AQUECIMENTO_MINIMO = 30
     
     def __init__(self, banco_dados, estatisticas, filtros):
         self.banco = banco_dados
         self.estatisticas = estatisticas
         self.filtros = filtros
     
-    def testar_estrategia(self, estrategia='equilibrada', num_testes=50, filtros_personalizados=None, jogos_por_teste=5):
-        """Testa uma estratégia no histórico.
-        
-        CORREÇÃO CRÍTICA: a versão anterior gerava os jogos de teste usando
-        `self.estatisticas`, calculada com TODOS os concursos carregados —
-        incluindo os próprios concursos que estavam sendo testados (que são
-        justamente os mais recentes). Ou seja, o "backtest" estava usando
-        frequência/atraso que já 'sabiam' o resultado que tentavam prever,
-        inflando artificialmente os acertos.
-        
-        Agora, para cada concurso testado, as estatísticas são recalculadas
-        usando apenas concursos estritamente ANTERIORES a ele — replicando o
-        que estaria disponível no momento real da aposta.
-        """
+    def testar_estrategia(self, estrategia='equilibrada', num_testes=50, 
+                          filtros_personalizados=None, jogos_por_teste=5):
+        """Testa uma estratégia no histórico com correção de look-ahead bias"""
         if filtros_personalizados is None:
             filtros_personalizados = self.filtros.get_filtros_recomendados()
         
         resultados = []
-        historico = self.banco.concursos  # mais recente primeiro
+        historico = self.banco.concursos
         
         testes = historico[:min(num_testes, len(historico))]
         
@@ -1667,10 +1411,7 @@ class BacktestsLF:
         
         for i, concurso in enumerate(testes):
             dezenas_reais = concurso['dezenas']
-            
-            # `testes` é um prefixo de `historico`, então a posição em `testes`
-            # é a mesma posição em `historico` (mais recente = índice 0)
-            concursos_anteriores = historico[i + 1:]  # apenas dados mais antigos que o teste
+            concursos_anteriores = historico[i + 1:]
             
             if len(concursos_anteriores) < self.AQUECIMENTO_MINIMO:
                 pulados += 1
@@ -1700,7 +1441,7 @@ class BacktestsLF:
         progress_bar.empty()
         
         if pulados:
-            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) por não terem histórico anterior suficiente ({self.AQUECIMENTO_MINIMO}+ concursos).")
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
         
         return {
             'estrategia': estrategia,
@@ -1715,7 +1456,8 @@ class BacktestsLF:
             'percentil_25': np.percentile(resultados, 25) if resultados else 0
         }
     
-    def comparar_estrategias(self, estrategias=['conservadora', 'equilibrada', 'diversificada'], num_testes=50):
+    def comparar_estrategias(self, estrategias=['conservadora', 'equilibrada', 'diversificada', 'padroes'], 
+                            num_testes=50):
         """Compara múltiplas estratégias"""
         resultados = {}
         for estrategia in estrategias:
@@ -1729,7 +1471,6 @@ class BacktestsLF:
 def testar_geracao():
     """Função de teste para verificar se os jogos estão sendo gerados corretamente"""
     
-    # Cria dados de teste
     dados_teste = []
     for i in range(100):
         dados_teste.append({
@@ -1738,28 +1479,28 @@ def testar_geracao():
             'dezenas': sorted(random.sample(range(1, 26), 15))
         })
     
-    # Inicializa módulos
     banco = BancoDadosLFInteligente(dados_teste)
     estatisticas = EstatisticasLFAvancadas(banco)
     pontuacao = MotorPontuacaoLF(estatisticas)
     filtros = FiltrosInteligentesLF(estatisticas)
     
-    # Cria gerador
     gerador = GeradorPremiumLF(banco, estatisticas, pontuacao, filtros)
     
-    # Testa geração
     st.write("🧪 Testando geração de jogos...")
     
-    for estrategia in ['conservadora', 'equilibrada', 'diversificada']:
+    # Testa todas as estratégias
+    estrategias_teste = ['conservadora', 'equilibrada', 'diversificada', 'padroes', 'ensemble']
+    
+    for estrategia in estrategias_teste:
         st.write(f"\n📊 Estratégia: {estrategia}")
-        jogos = gerador.gerar_jogos(qtd=5, estrategia=estrategia)
+        jogos = gerador.gerar_jogos(qtd=5, estrategia=estrategia, combinar_estrategias=(estrategia=='ensemble'))
         
         if jogos:
             st.success(f"✅ Gerados {len(jogos)} jogos")
             for i, jogo in enumerate(jogos[:3]):
                 st.write(f"  Jogo {i+1}: {jogo} (tamanho: {len(jogo)})")
         else:
-            st.error("❌ Nenhum jogo gerado")
+            st.error(f"❌ Nenhum jogo gerado para {estrategia}")
     
     st.success("\n✅ Teste concluído!")
 
@@ -1768,45 +1509,24 @@ def testar_geracao():
 # =====================================================
 
 def main():
-    # Inicializa session state
-    if "dados_api" not in st.session_state:
-        st.session_state.dados_api = None
-    if "banco_dados" not in st.session_state:
-        st.session_state.banco_dados = None
-    if "estatisticas" not in st.session_state:
-        st.session_state.estatisticas = None
-    if "pontuacao" not in st.session_state:
-        st.session_state.pontuacao = None
-    if "ia" not in st.session_state:
-        st.session_state.ia = None
-    if "filtros" not in st.session_state:
-        st.session_state.filtros = None
-    if "gerador" not in st.session_state:
-        st.session_state.gerador = None
-    if "backtests" not in st.session_state:
-        st.session_state.backtests = None
-    if "jogos_gerados" not in st.session_state:
-        st.session_state.jogos_gerados = []
-    if "jogos_fechamento" not in st.session_state:
-        st.session_state.jogos_fechamento = []
-    if "fechamento_dezenas" not in st.session_state:
-        st.session_state.fechamento_dezenas = []
-    if "fechamento_metodo" not in st.session_state:
-        st.session_state.fechamento_metodo = ""
-    if "fechamento_cobertura" not in st.session_state:
-        st.session_state.fechamento_cobertura = None
-    if "resultado_conferencia" not in st.session_state:
-        st.session_state.resultado_conferencia = []
-    if "resultado_conferencia_meta" not in st.session_state:
-        st.session_state.resultado_conferencia_meta = {}
-    if "jogos_ia" not in st.session_state:
-        st.session_state.jogos_ia = []
-    if "probs_ia_dezenas" not in st.session_state:
-        st.session_state.probs_ia_dezenas = {}
-    if "jogos_salvos" not in st.session_state:
-        st.session_state.jogos_salvos = []
-    if "ia_treinada" not in st.session_state:
-        st.session_state.ia_treinada = False
+    # Inicializa session state de forma organizada
+    if "app" not in st.session_state:
+        st.session_state.app = {
+            "dados_api": None,
+            "banco_dados": None,
+            "estatisticas": None,
+            "pontuacao": None,
+            "ia": None,
+            "filtros": None,
+            "gerador": None,
+            "backtests": None,
+            "jogos_gerados": [],
+            "jogos_salvos": [],
+            "ia_treinada": False,
+            "estrategia_atual": "equilibrada"
+        }
+    
+    app = st.session_state.app
 
     # Barra Lateral
     with st.sidebar:
@@ -1818,31 +1538,29 @@ def main():
         with col1:
             if st.button("📥 Carregar Lotofácil", use_container_width=True):
                 with st.spinner("Carregando dados da Lotofácil..."):
-                    dados = buscar_historico_lotofacil(qtd_concursos)
+                    dados = buscar_historico_lotofacil_com_cache(qtd_concursos)
                     if dados and len(dados) > 0:
-                        st.session_state.dados_api = dados
+                        app["dados_api"] = dados
                         
-                        # Inicializa módulos
-                        st.session_state.banco_dados = BancoDadosLFInteligente(dados)
-                        st.session_state.estatisticas = EstatisticasLFAvancadas(st.session_state.banco_dados)
-                        st.session_state.pontuacao = MotorPontuacaoLF(st.session_state.estatisticas)
-                        st.session_state.filtros = FiltrosInteligentesLF(st.session_state.estatisticas)
+                        app["banco_dados"] = BancoDadosLFInteligente(dados)
+                        app["estatisticas"] = EstatisticasLFAvancadas(app["banco_dados"])
+                        app["pontuacao"] = MotorPontuacaoLF(app["estatisticas"])
+                        app["filtros"] = FiltrosInteligentesLF(app["estatisticas"])
                         
-                        # IA
-                        st.session_state.ia = IAEstatisticaLF(st.session_state.banco_dados, st.session_state.estatisticas)
+                        app["ia"] = IAEstatisticaLF(app["banco_dados"], app["estatisticas"])
                         
-                        st.session_state.gerador = GeradorPremiumLF(
-                            st.session_state.banco_dados,
-                            st.session_state.estatisticas,
-                            st.session_state.pontuacao,
-                            st.session_state.filtros,
-                            st.session_state.ia
+                        app["gerador"] = GeradorPremiumLF(
+                            app["banco_dados"],
+                            app["estatisticas"],
+                            app["pontuacao"],
+                            app["filtros"],
+                            app["ia"]
                         )
                         
-                        st.session_state.backtests = BacktestsLF(
-                            st.session_state.banco_dados,
-                            st.session_state.estatisticas,
-                            st.session_state.filtros
+                        app["backtests"] = BacktestsLF(
+                            app["banco_dados"],
+                            app["estatisticas"],
+                            app["filtros"]
                         )
                         
                         st.success(f"✅ {len(dados)} concursos carregados!")
@@ -1851,18 +1569,18 @@ def main():
         with col2:
             if st.button("🧠 Treinar IA", use_container_width=True):
                 with st.spinner("Treinando modelos de IA..."):
-                    if st.session_state.ia:
-                        rf_ok = st.session_state.ia.treinar_random_forest()
-                        xgb_ok = st.session_state.ia.treinar_xgboost()
+                    if app["ia"]:
+                        rf_ok = app["ia"].treinar_random_forest()
+                        xgb_ok = app["ia"].treinar_xgboost()
                         if rf_ok or xgb_ok:
-                            st.session_state.ia_treinada = True
+                            app["ia_treinada"] = True
                             st.success("✅ IA treinada com sucesso!")
         
         st.markdown("---")
         
         # Informações do sistema
-        if st.session_state.banco_dados:
-            ultimo = st.session_state.banco_dados.get_ultimo_concurso()
+        if app["banco_dados"]:
+            ultimo = app["banco_dados"].get_ultimo_concurso()
             if ultimo:
                 st.markdown("### 📅 Último Concurso")
                 st.markdown(f"**#{ultimo['numero']}**")
@@ -1871,14 +1589,14 @@ def main():
                 st.markdown(f"🎯 {', '.join(f'{d:02d}' for d in dezenas)}")
         
         st.markdown("---")
-        st.caption("LOTOFÁCIL Elite 3.0 v1.0")
+        st.caption("LOTOFÁCIL Elite 4.0 v2.0")
 
     # Conteúdo Principal
-    if not st.session_state.dados_api:
+    if not app["dados_api"]:
         st.info("👈 Carregue os dados da Lotofácil na barra lateral para começar.")
         return
 
-    st.subheader("🎯 LOTOFÁCIL Elite 3.0 - Sistema Avançado")
+    st.subheader("🎯 LOTOFÁCIL Elite 4.0 - Sistema Avançado")
 
     # Tabs
     tabs = st.tabs([
@@ -1888,7 +1606,6 @@ def main():
         "🎲 Gerador Premium",
         "🔬 Backtests",
         "📈 Análise Avançada",
-        "🔍 Conferência",
         "💾 Salvos"
     ])
 
@@ -1896,8 +1613,8 @@ def main():
     with tabs[0]:
         st.markdown("### 📊 Dashboard - Visão Geral")
         
-        if st.session_state.estatisticas:
-            stats = st.session_state.estatisticas
+        if app["estatisticas"]:
+            stats = app["estatisticas"]
             
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -1932,52 +1649,13 @@ def main():
                 fig.update_layout(height=400)
                 st.plotly_chart(fig, use_container_width=True)
 
-            st.markdown("---")
-            col3, col4 = st.columns(2)
-            with col3:
-                st.markdown("### 🧠 Módulo 1 · Frequência Inteligente")
-                st.caption("Combinação ponderada das janelas de 5, 10, 20, 30, 50, 100 e 200 concursos.")
-                df_freq_int = pd.DataFrame({
-                    'Dezena': range(1, 26),
-                    'Score': [stats.frequencia_inteligente.get(i, 0) for i in range(1, 26)]
-                })
-                fig = px.bar(df_freq_int, x='Dezena', y='Score', title='Frequência Inteligente por Dezena',
-                            color='Score', color_continuous_scale='Blues')
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-
-            with col4:
-                st.markdown("### 🌡️ Módulo 2 · Atraso Inteligente")
-                st.caption("Classificação de cada dezena comparando o atraso atual com o intervalo médio histórico dela.")
-                ordem_categorias = ["Muito Quente", "Quente", "Neutra", "Fria", "Muito Fria", "Fóssil"]
-                df_cat = pd.DataFrame({
-                    'Categoria': ordem_categorias,
-                    'Quantidade': [stats.contagem_categorias_atraso.get(c, 0) for c in ordem_categorias]
-                })
-                fig = px.bar(df_cat, x='Categoria', y='Quantidade', title='Dezenas por Categoria de Atraso',
-                            color='Categoria',
-                            color_discrete_map={
-                                "Muito Quente": "#ff4d4d", "Quente": "#ff9d4d", "Neutra": "#feca57",
-                                "Fria": "#4cc9f0", "Muito Fria": "#4d79ff", "Fóssil": "#8888aa"
-                            })
-                fig.update_layout(height=400, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
-
-                with st.expander("Ver categoria de cada dezena"):
-                    df_detalhe_cat = pd.DataFrame({
-                        'Dezena': range(1, 26),
-                        'Categoria': [stats.atraso_categoria.get(i, 'Neutra') for i in range(1, 26)],
-                        'Atraso atual': [stats.atrasos.get(i, 0) for i in range(1, 26)]
-                    })
-                    st.dataframe(df_detalhe_cat, use_container_width=True, hide_index=True)
-
     # ================= TAB 2: RANKING =================
     with tabs[1]:
         st.markdown("### 🏆 Ranking das Dezenas")
         
-        if st.session_state.pontuacao:
-            pontuacao = st.session_state.pontuacao
-            stats = st.session_state.estatisticas
+        if app["pontuacao"]:
+            pontuacao = app["pontuacao"]
+            stats = app["estatisticas"]
             
             col1, col2 = st.columns(2)
             with col1:
@@ -2003,8 +1681,7 @@ def main():
                     <small style='color:#aaa;'>
                         Freq: {stats_dezena['frequencia']} | 
                         Últimos 20: {freq_periodos.get(20, 0)} | 
-                        Atraso: {stats_dezena['atraso']} ({stats_dezena['atraso_categoria']}) | 
-                        Freq. Inteligente: {stats_dezena['frequencia_inteligente']:.3f} | 
+                        Atraso: {stats_dezena['atraso']} | 
                         Tendência: <span class='{tendencia_cls}'>{tendencia_icon} {tendencia}</span>
                     </small>
                     """
@@ -2022,242 +1699,6 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
 
-            # ========= FECHAMENTO COM AS 21 DEZENAS DO RANKING =========
-            st.markdown("---")
-            st.markdown("### 🔒 Fechamento com as 21 Dezenas do Ranking")
-            st.markdown("""
-            <div class="lotofacil-highlight">
-                <strong>🎯 O que é:</strong> Um fechamento usa um grupo fixo de dezenas
-                (aqui, as 21 melhores do ranking) e gera vários jogos de 15 dezenas,
-                todos distintos entre si, tentando equilibrar quantas vezes cada
-                dezena do grupo aparece ao longo dos jogos gerados.
-            </div>
-            """, unsafe_allow_html=True)
-
-            ranking_completo = pontuacao.get_ranking(25)
-            ranking_top21 = ranking_completo[:21]
-            ranking_risco = ranking_completo[21:25]
-            dezenas_top21 = sorted([n for n, _ in ranking_top21])
-
-            st.markdown("**⚠️ Zona de risco (dezenas logo fora do Top 21):**")
-            if ranking_risco:
-                partes_risco = []
-                for num, score in ranking_risco:
-                    saiu_ultimo = stats.repetiu_ultimo_concurso.get(num, False)
-                    marcador = " 🔥 saiu no último concurso" if saiu_ultimo else ""
-                    partes_risco.append(f"Dezena {num:02d} (score {score:.2f}){marcador}")
-                st.caption(" | ".join(partes_risco))
-            else:
-                st.caption("Nenhuma dezena pontuada fora do Top 21.")
-
-            incluir_seguranca = st.checkbox(
-                "🛡️ Incluir automaticamente dezenas da zona de risco que saíram no último concurso",
-                value=False,
-                key="incluir_seguranca_fechamento",
-                help="Troca a dezena de menor score do Top 21 (entre as que NÃO saíram no último concurso) por dezenas da zona de risco que saíram, reduzindo a chance de deixar de fora uma dezena 'quente' recente."
-            )
-
-            dezenas_fechamento = list(dezenas_top21)
-            if incluir_seguranca:
-                candidatas_seguranca = [num for num, _ in ranking_risco if stats.repetiu_ultimo_concurso.get(num, False)]
-                if candidatas_seguranca:
-                    top21_por_score_asc = sorted(ranking_top21, key=lambda x: x[1])
-                    trocaveis = [num for num, _ in top21_por_score_asc if not stats.repetiu_ultimo_concurso.get(num, False)]
-
-                    for candidata in candidatas_seguranca:
-                        if not trocaveis:
-                            break
-                        removida = trocaveis.pop(0)
-                        if removida in dezenas_fechamento:
-                            dezenas_fechamento.remove(removida)
-                            dezenas_fechamento.append(candidata)
-                            st.info(f"🔄 Troca de segurança: dezena {removida:02d} (Top 21) substituída pela dezena {candidata:02d} (zona de risco, saiu no último concurso).")
-
-                    dezenas_fechamento = sorted(set(dezenas_fechamento))
-                else:
-                    st.caption("Nenhuma dezena da zona de risco saiu no último concurso — nenhuma troca necessária.")
-
-            if len(dezenas_fechamento) < 21:
-                st.warning(f"⚠️ Só há {len(dezenas_fechamento)} dezenas pontuadas disponíveis (menos que 21).")
-
-            st.markdown(f"**Dezenas usadas no fechamento ({len(dezenas_fechamento)}):**")
-            st.markdown(formatar_jogo_html_lf(dezenas_fechamento), unsafe_allow_html=True)
-
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                qtd_fechamento = st.select_slider(
-                    "Quantidade de jogos do fechamento",
-                    options=[5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
-                    value=10,
-                    key="qtd_fechamento_slider"
-                )
-            with col_f2:
-                max_combinacoes = math.comb(len(dezenas_fechamento), 15) if len(dezenas_fechamento) >= 15 else 0
-                st.metric("Combinações possíveis (21 escolhe 15)", f"{max_combinacoes:,}".replace(",", "."))
-
-            metodo_fechamento = st.radio(
-                "Método do fechamento",
-                ["⚖️ Balanceado (equilibra frequência das dezenas)", "🧩 Cobertura otimizada (Greedy Set-Cover aproximado)"],
-                key="metodo_fechamento_radio",
-                help="O método de cobertura tenta escolher jogos que, juntos, cubram o maior número possível de combinações de "
-                     "dezenas dentro do pool — mas é uma heurística por amostragem, não uma garantia matemática formal."
-            )
-            usar_cobertura = metodo_fechamento.startswith("🧩")
-
-            if usar_cobertura:
-                k_garantia = st.slider(
-                    "Tamanho do subconjunto de garantia (k)", 8, 14, 11,
-                    help="O algoritmo tenta priorizar jogos que cubram combinações de k dezenas dentro do pool. "
-                         "Valores menores de k são mais fáceis de cobrir bem; valores maiores (13, 14) exigem muito mais jogos."
-                )
-
-            with st.expander("🧪 Filtros de padrão histórico (opcional)"):
-                aplicar_filtros_fechamento = st.checkbox("Aplicar filtros ao gerar os jogos", value=False, key="aplicar_filtros_fechamento_chk")
-                colfa, colfb = st.columns(2)
-                with colfa:
-                    pares_min_f = st.slider("Pares mínimo", 0, 15, 7, key="pares_min_fechamento")
-                    pares_max_f = st.slider("Pares máximo", 0, 15, 8, key="pares_max_fechamento")
-                    primos_min_f = st.slider("Primos mínimo", 0, 9, 3, key="primos_min_fechamento")
-                    primos_max_f = st.slider("Primos máximo", 0, 9, 5, key="primos_max_fechamento")
-                with colfb:
-                    soma_min_f = st.slider("Soma mínima", 150, 300, 170, key="soma_min_fechamento")
-                    soma_max_f = st.slider("Soma máxima", 150, 300, 220, key="soma_max_fechamento")
-                    repetidas_min_f = st.slider("Repetidas do último concurso (mín.)", 0, 15, 4, key="repetidas_min_fechamento")
-                    repetidas_max_f = st.slider("Repetidas do último concurso (máx.)", 0, 15, 6, key="repetidas_max_fechamento")
-
-            with st.expander("🌡️ Módulo 2 · Quotas por categoria de Atraso Inteligente (opcional)"):
-                st.caption(
-                    "Limita automaticamente quantas dezenas de cada categoria de atraso "
-                    "(Muito Quente, Quente, Neutra, Fria, Muito Fria, Fóssil) podem entrar em cada jogo gerado."
-                )
-                aplicar_quotas_atraso = st.checkbox(
-                    "Aplicar quotas de atraso inteligente ao gerar os jogos",
-                    value=False, key="aplicar_quotas_atraso_chk"
-                )
-                categorias_quota = ["Muito Quente", "Quente", "Neutra", "Fria", "Muito Fria", "Fóssil"]
-                contagem_pool = contar_categorias_atraso_lf(dezenas_fechamento, stats.atraso_categoria)
-                quotas_atraso = {}
-                colq = st.columns(3)
-                for i, categoria in enumerate(categorias_quota):
-                    with colq[i % 3]:
-                        st.caption(f"{categoria} — {contagem_pool.get(categoria, 0)} dezena(s) no pool")
-                        minimo_q = st.slider(f"Mín. {categoria}", 0, 15, 0, key=f"quota_min_{categoria}")
-                        maximo_q = st.slider(f"Máx. {categoria}", 0, 15, 15, key=f"quota_max_{categoria}")
-                        quotas_atraso[categoria] = (min(minimo_q, maximo_q), max(minimo_q, maximo_q))
-
-            if st.button("🔒 GERAR FECHAMENTO", use_container_width=True, type="primary", key="gerar_fechamento_btn"):
-                if len(dezenas_fechamento) < 15:
-                    st.error("❌ É preciso de pelo menos 15 dezenas pontuadas para gerar o fechamento.")
-                else:
-                    filtros_ativos = []
-                    if aplicar_filtros_fechamento:
-                        ultimo_concurso = st.session_state.banco_dados.get_ultimo_concurso()
-                        ultimo_dezenas = ultimo_concurso['dezenas'] if ultimo_concurso else None
-                        filtros_ativos.append(lambda j: passa_filtros_qualidade_lf(
-                            j, ultimo_concurso=ultimo_dezenas,
-                            pares_min=min(pares_min_f, pares_max_f), pares_max=max(pares_min_f, pares_max_f),
-                            soma_min=min(soma_min_f, soma_max_f), soma_max=max(soma_min_f, soma_max_f),
-                            primos_min=min(primos_min_f, primos_max_f), primos_max=max(primos_min_f, primos_max_f),
-                            repetidas_min=min(repetidas_min_f, repetidas_max_f), repetidas_max=max(repetidas_min_f, repetidas_max_f)
-                        ))
-                    if aplicar_quotas_atraso:
-                        filtros_ativos.append(lambda j: respeita_quotas_atraso_lf(j, stats.atraso_categoria, quotas_atraso))
-
-                    filtro_fn = None
-                    if filtros_ativos:
-                        filtro_fn = lambda j: all(f(j) for f in filtros_ativos)
-
-                    with st.spinner(f"Gerando fechamento com {qtd_fechamento} jogos distintos..."):
-                        if usar_cobertura:
-                            jogos_fechamento, cobertura_estimada = gerar_fechamento_cobertura_lf(
-                                dezenas_fechamento, qtd_fechamento, tamanho_jogo=15,
-                                k_garantia=k_garantia, filtro_fn=filtro_fn
-                            )
-                        else:
-                            jogos_fechamento = gerar_fechamento_lf(dezenas_fechamento, qtd_fechamento, tamanho_jogo=15, filtro_fn=filtro_fn)
-                            cobertura_estimada = None
-
-                        if jogos_fechamento:
-                            st.session_state.jogos_fechamento = jogos_fechamento
-                            st.session_state.fechamento_dezenas = dezenas_fechamento
-                            st.session_state.fechamento_metodo = metodo_fechamento
-                            st.session_state.fechamento_cobertura = cobertura_estimada
-                            msg = f"✅ {len(jogos_fechamento)} jogos distintos gerados!"
-                            if cobertura_estimada is not None:
-                                msg += f" Cobertura estimada (amostral, k={k_garantia}): {cobertura_estimada*100:.1f}%"
-                            st.success(msg)
-                        else:
-                            st.error("❌ Não foi possível gerar o fechamento com os filtros/parâmetros atuais. Tente relaxar os filtros.")
-
-            if st.session_state.jogos_fechamento:
-                jogos_fechamento = st.session_state.jogos_fechamento
-                st.markdown(f"### 📋 Jogos do Fechamento ({len(jogos_fechamento)})")
-                if st.session_state.fechamento_cobertura is not None:
-                    st.caption(f"Método: {st.session_state.fechamento_metodo} | Cobertura estimada (amostral): {st.session_state.fechamento_cobertura*100:.1f}%")
-                elif st.session_state.fechamento_metodo:
-                    st.caption(f"Método: {st.session_state.fechamento_metodo}")
-
-                # Balanceamento: quantas vezes cada dezena apareceu nos jogos
-                contagem_final = Counter()
-                for j in jogos_fechamento:
-                    contagem_final.update(j)
-                df_balanco = pd.DataFrame({
-                    'Dezena': list(contagem_final.keys()),
-                    'Aparições': list(contagem_final.values())
-                }).sort_values('Dezena')
-
-                with st.expander("⚖️ Balanceamento das dezenas no fechamento"):
-                    fig = px.bar(df_balanco, x='Dezena', y='Aparições',
-                                title='Quantas vezes cada dezena aparece nos jogos do fechamento')
-                    st.plotly_chart(fig, use_container_width=True)
-
-                for i, jogo in enumerate(jogos_fechamento):
-                    pares = contar_pares_lf(jogo)
-                    soma = sum(jogo)
-                    st.markdown(f"""
-                    <div class='card'>
-                        📌 <strong>Jogo {i+1:02d}</strong><br>
-                        {formatar_jogo_html_lf(jogo)}<br>
-                        <small style='color:#aaa;'>⚖️ {pares}p/{15-pares}i | ➕ {soma}</small>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                col_fs1, col_fs2, col_fs3 = st.columns(3)
-                with col_fs1:
-                    if st.button("💾 Salvar Fechamento", key="salvar_fechamento_btn", use_container_width=True):
-                        arquivo, jogo_id = salvar_jogos_lf_elite(jogos_fechamento, {
-                            'tipo': 'fechamento_ranking_21',
-                            'metodo': st.session_state.fechamento_metodo,
-                            'cobertura_estimada': st.session_state.fechamento_cobertura,
-                            'dezenas_pool': st.session_state.fechamento_dezenas,
-                            'qtd_jogos': len(jogos_fechamento)
-                        })
-                        if arquivo:
-                            st.success(f"✅ Fechamento salvo! ID: {jogo_id}")
-                with col_fs2:
-                    df_export_fech = pd.DataFrame({
-                        'Jogo': range(1, len(jogos_fechamento) + 1),
-                        'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_fechamento],
-                        'Pares': [contar_pares_lf(j) for j in jogos_fechamento],
-                        'Soma': [sum(j) for j in jogos_fechamento],
-                        'Primos': [contar_primos_lf(j) for j in jogos_fechamento],
-                        'Consecutivos': [contar_consecutivos_lf(j) for j in jogos_fechamento]
-                    })
-                    st.download_button(
-                        label="📥 Exportar CSV",
-                        data=df_export_fech.to_csv(index=False),
-                        file_name=f"fechamento_lf_21_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                        key="download_fechamento_csv"
-                    )
-                with col_fs3:
-                    if st.button("🗑️ Limpar Fechamento", key="limpar_fechamento_btn", use_container_width=True):
-                        st.session_state.jogos_fechamento = []
-                        st.session_state.fechamento_metodo = ""
-                        st.session_state.fechamento_cobertura = None
-                        st.rerun()
-
     # ================= TAB 3: IA ESTATÍSTICA =================
     with tabs[2]:
         st.markdown("### 🧠 IA Estatística")
@@ -2270,8 +1711,8 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        if st.session_state.ia:
-            ia = st.session_state.ia
+        if app["ia"]:
+            ia = app["ia"]
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -2279,7 +1720,7 @@ def main():
             with col2:
                 st.metric("Dados de Treino", len(ia.dados_processados['features']) if ia.dados_processados else 0)
             with col3:
-                status = "✅ Treinada" if st.session_state.ia_treinada else "⚠️ Não treinada"
+                status = "✅ Treinada" if app["ia_treinada"] else "⚠️ Não treinada"
                 st.metric("Status", status)
             
             if ia.modelos:
@@ -2313,99 +1754,21 @@ def main():
                                     orientation='h')
                         st.plotly_chart(fig, use_container_width=True)
 
-                # ---- Geração de jogos segundo o que a IA aprendeu ----
-                st.markdown("---")
-                st.markdown("### 🎯 Gerar Jogos Segundo a IA Treinada")
-                st.markdown("""
-                <div class="ia-lf-highlight">
-                    Usa a probabilidade que os modelos treinados calcularam para cada uma das
-                    25 dezenas saírem no próximo concurso como peso para montar os jogos —
-                    dezenas com maior probabilidade prevista tendem a aparecer mais nos jogos
-                    gerados, mas o resultado não é sempre o mesmo Top 15 fixo.
-                </div>
-                """, unsafe_allow_html=True)
-
-                qtd_jogos_ia = st.slider("Quantidade de jogos a gerar", 1, 10, 3, key="qtd_jogos_ia_slider")
-
-                if st.button("🧠 GERAR JOGOS COM A IA", use_container_width=True, type="primary", key="gerar_jogos_ia_btn"):
-                    with st.spinner("Calculando probabilidades e montando os jogos..."):
-                        jogos_ia_gerados, probs_dezenas_ia = ia.gerar_jogos_ia(qtd_jogos=qtd_jogos_ia, tamanho_jogo=15)
-                        if jogos_ia_gerados:
-                            st.session_state.jogos_ia = jogos_ia_gerados
-                            st.session_state.probs_ia_dezenas = probs_dezenas_ia
-                            st.success(f"✅ {len(jogos_ia_gerados)} jogo(s) gerado(s) com base no treinamento da IA!")
-                        else:
-                            st.error("❌ Não foi possível gerar jogos com os modelos atuais.")
-
-                if st.session_state.get("jogos_ia"):
-                    jogos_ia = st.session_state.jogos_ia
-                    probs_dezenas = st.session_state.get("probs_ia_dezenas", {})
-
-                    st.markdown(f"#### 📋 Jogos Gerados pela IA ({len(jogos_ia)})")
-                    for i, jogo in enumerate(jogos_ia):
-                        pares = contar_pares_lf(jogo)
-                        soma = sum(jogo)
-                        prob_media_jogo = np.mean([probs_dezenas.get(d, 0) for d in jogo]) * 100 if probs_dezenas else 0
-                        st.markdown(f"""
-                        <div class='card'>
-                            🧠 <strong>Jogo IA {i+1:02d}</strong><br>
-                            {formatar_jogo_html_lf(jogo)}<br>
-                            <small style='color:#aaa;'>⚖️ {pares}p/{15-pares}i | ➕ {soma} | 📈 Prob. média prevista: {prob_media_jogo:.1f}%</small>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    if probs_dezenas:
-                        with st.expander("📊 Probabilidade prevista por dezena (próximo concurso)"):
-                            df_probs = pd.DataFrame({
-                                'Dezena': list(probs_dezenas.keys()),
-                                'Probabilidade (%)': [v * 100 for v in probs_dezenas.values()]
-                            }).sort_values('Probabilidade (%)', ascending=False)
-                            fig = px.bar(df_probs, x='Dezena', y='Probabilidade (%)',
-                                        title='Probabilidade prevista pela IA para cada dezena')
-                            st.plotly_chart(fig, use_container_width=True)
-
-                    col_ia1, col_ia2, col_ia3 = st.columns(3)
-                    with col_ia1:
-                        if st.button("💾 Salvar Jogos da IA", key="salvar_jogos_ia_btn", use_container_width=True):
-                            arquivo, jogo_id = salvar_jogos_lf_elite(jogos_ia, {
-                                'tipo': 'jogos_ia_treinada',
-                                'modelos_usados': list(ia.modelos.keys()),
-                                'qtd_jogos': len(jogos_ia)
-                            })
-                            if arquivo:
-                                st.success(f"✅ Jogos da IA salvos! ID: {jogo_id}")
-                    with col_ia2:
-                        df_export_ia = pd.DataFrame({
-                            'Jogo': range(1, len(jogos_ia) + 1),
-                            'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_ia],
-                            'Pares': [contar_pares_lf(j) for j in jogos_ia],
-                            'Soma': [sum(j) for j in jogos_ia],
-                            'Prob. média prevista (%)': [round(np.mean([probs_dezenas.get(d, 0) for d in j]) * 100, 2) for j in jogos_ia]
-                        })
-                        st.download_button(
-                            label="📥 Exportar CSV",
-                            data=df_export_ia.to_csv(index=False),
-                            file_name=f"jogos_ia_lf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv",
-                            use_container_width=True,
-                            key="download_jogos_ia_csv"
-                        )
-                    with col_ia3:
-                        if st.button("🗑️ Limpar Jogos da IA", key="limpar_jogos_ia_btn", use_container_width=True):
-                            st.session_state.jogos_ia = []
-                            st.session_state.probs_ia_dezenas = {}
-                            st.rerun()
-            else:
-                st.info("ℹ️ Treine ao menos um modelo (Random Forest ou XGBoost) nesta aba para poder gerar jogos com base na IA.")
-
     # ================= TAB 4: GERADOR PREMIUM =================
     with tabs[3]:
         st.markdown("### 🎲 Gerador Premium")
+        st.markdown("""
+        <div class="elite-lf-highlight">
+            <strong>🎯 NOVIDADES:</strong><br>
+            • 6 estratégias disponíveis (incluindo IA, Padrões, Ensemble e Adaptativa)<br>
+            • Combinação de estratégias para melhores resultados<br>
+            • Avaliação automática de jogos gerados
+        </div>
+        """, unsafe_allow_html=True)
         
-        if st.session_state.gerador:
-            gerador = st.session_state.gerador
+        if app["gerador"]:
+            gerador = app["gerador"]
             
-            # Botão de teste rápido
             if st.button("🧪 Testar Geração", use_container_width=True):
                 testar_geracao()
             
@@ -2413,9 +1776,19 @@ def main():
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     qtd_jogos = st.slider("Quantidade de jogos", 1, 50, 10)
-                    estrategia = st.selectbox("Estratégia", 
-                                             ['conservadora', 'equilibrada', 'diversificada'],
-                                             index=1)
+                    
+                    estrategias_disponiveis = [
+                        'conservadora', 'equilibrada', 'diversificada', 
+                        'padroes', 'ia', 'adaptativa', 'ensemble'
+                    ]
+                    estrategia = st.selectbox("Estratégia", estrategias_disponiveis, index=1)
+                    app["estrategia_atual"] = estrategia
+                    
+                    combinar_estrategias = st.checkbox("Combinar estratégias (ensemble)", 
+                                                      value=(estrategia == 'ensemble'))
+                    if combinar_estrategias:
+                        st.info("ℹ️ O modo ensemble testa múltiplas estratégias e escolhe a melhor combinação")
+                
                 with col2:
                     usar_base = st.checkbox("Usar dezenas-base")
                     dezenas_base = []
@@ -2424,10 +1797,18 @@ def main():
                                                   "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15")
                         try:
                             dezenas_base = [int(x.strip()) for x in base_input.split(",") if x.strip()]
-                            dezenas_base = sorted(dezenas_base)[:20]
-                            st.success(f"✅ {len(dezenas_base)} dezenas base carregadas")
-                        except:
+                            # Validação
+                            dezenas_base = [d for d in dezenas_base if 1 <= d <= 25]
+                            if len(dezenas_base) < 15:
+                                st.warning(f"⚠️ Dezenas-base precisa ter pelo menos 15 números (tem {len(dezenas_base)})")
+                                dezenas_base = []
+                            else:
+                                dezenas_base = sorted(set(dezenas_base))[:20]
+                                st.success(f"✅ {len(dezenas_base)} dezenas base carregadas")
+                        except ValueError:
                             st.warning("Formato inválido. Use números separados por vírgula.")
+                            dezenas_base = []
+                
                 with col3:
                     usar_filtros_personalizados = st.checkbox("Filtros personalizados")
                     if usar_filtros_personalizados:
@@ -2436,10 +1817,10 @@ def main():
                         soma_min = st.slider("Soma Mínima", 150, 300, 180)
                         soma_max = st.slider("Soma Máxima", 150, 300, 210)
                         consec_max = st.slider("Máx. Consecutivos", 1, 10, 4)
-                        linhas_min = st.slider("Mínimo Linhas ativas", 1, 5, 4, help="Em 15 dezenas de 25, quase sempre 4 ou 5 das 5 linhas ficam ativas. Valores abaixo de 4 raramente são satisfeitos.")
+                        linhas_min = st.slider("Mínimo Linhas ativas", 1, 5, 4)
                         linhas_max = st.slider("Máximo Linhas ativas", 1, 5, 5)
                     else:
-                        filtros_recomendados = st.session_state.filtros.get_filtros_recomendados()
+                        filtros_recomendados = app["filtros"].get_filtros_recomendados()
                         pares_min = filtros_recomendados['pares_min']
                         pares_max = filtros_recomendados['pares_max']
                         soma_min = filtros_recomendados['soma_min']
@@ -2448,8 +1829,7 @@ def main():
                         linhas_min = filtros_recomendados['linhas_min']
                         linhas_max = filtros_recomendados['linhas_max']
                 
-                # Monta filtros (corrige min/max invertidos, já que os sliders
-                # são independentes e nada impedia pares_min > pares_max etc.)
+                # Monta filtros com correção
                 pares_min, pares_max = min(pares_min, pares_max), max(pares_min, pares_max)
                 soma_min, soma_max = min(soma_min, soma_max), max(soma_min, soma_max)
                 linhas_min, linhas_max = min(linhas_min, linhas_max), max(linhas_min, linhas_max)
@@ -2467,8 +1847,8 @@ def main():
                     'primos_max': 7,
                     'linhas_min': linhas_min,
                     'linhas_max': linhas_max,
-                    'colunas_min': 2,
-                    'colunas_max': 4
+                    'colunas_min': 4,
+                    'colunas_max': 5
                 }
             
             if st.button("🎯 GERAR JOGOS", use_container_width=True, type="primary"):
@@ -2477,17 +1857,33 @@ def main():
                         qtd=qtd_jogos,
                         estrategia=estrategia,
                         dezenas_base=dezenas_base if usar_base else None,
-                        filtros_personalizados=filtros
+                        filtros_personalizados=filtros,
+                        combinar_estrategias=combinar_estrategias
                     )
                     
                     if jogos:
-                        st.session_state.jogos_gerados = jogos
+                        app["jogos_gerados"] = jogos
                         st.success(f"✅ {len(jogos)} jogos gerados!")
+                        
+                        # Avaliação dos jogos
+                        st.markdown("### 📊 Avaliação dos Jogos")
+                        scores = []
+                        for jogo in jogos:
+                            score = gerador._avaliar_jogo(jogo)
+                            scores.append(score)
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Score Médio", f"{np.mean(scores):.1f}")
+                        with col2:
+                            st.metric("Melhor Score", f"{max(scores):.1f}")
+                        with col3:
+                            st.metric("Pior Score", f"{min(scores):.1f}")
                     else:
                         st.error("❌ Nenhum jogo foi gerado. Tente ajustar os filtros.")
             
-            if st.session_state.jogos_gerados:
-                jogos = st.session_state.jogos_gerados
+            if app["jogos_gerados"]:
+                jogos = app["jogos_gerados"]
                 st.markdown(f"### 📋 Jogos Gerados ({len(jogos)})")
                 
                 # Verifica tamanho dos jogos
@@ -2498,10 +1894,10 @@ def main():
                     st.warning(f"⚠️ Alguns jogos não têm 15 números: {tamanhos}")
                 
                 # Análise com IA se disponível
-                if st.session_state.ia and st.session_state.ia_treinada:
+                if app["ia"] and app["ia_treinada"]:
                     st.markdown("#### 🤖 Análise IA dos Jogos")
                     for i, jogo in enumerate(jogos[:10]):
-                        probs = st.session_state.ia.prever_probabilidades(jogo)
+                        probs = app["ia"].prever_probabilidades(jogo)
                         if probs:
                             cols = st.columns([3, 2])
                             with cols[0]:
@@ -2522,7 +1918,9 @@ def main():
                     linhas = distribuir_linhas_lf(jogo)
                     linhas_ativas = len([l for l in linhas if l > 0])
                     
-                    stats = f"⚖️ {pares}p/{15-pares}i | 🔢 {primos} primos | ➕ {soma} | 🔗 {consec} consec | 📊 {linhas_ativas} linhas"
+                    score = gerador._avaliar_jogo(jogo) if app["gerador"] else 0
+                    
+                    stats = f"⚖️ {pares}p/{15-pares}i | 🔢 {primos} primos | ➕ {soma} | 🔗 {consec} consec | 📊 {linhas_ativas} linhas | ⭐ Score: {score:.1f}"
                     
                     st.markdown(f"""
                     <div class='card' style='border-left: 5px solid {"#ffd700" if i == 0 else "#4cc9f0"};'>
@@ -2539,7 +1937,8 @@ def main():
                         arquivo, jogo_id = salvar_jogos_lf_elite(jogos, {
                             'estrategia': estrategia,
                             'filtros': filtros,
-                            'qtd': qtd_jogos
+                            'qtd': qtd_jogos,
+                            'combinar_estrategias': combinar_estrategias
                         })
                         if arquivo:
                             st.success(f"✅ Jogos salvos! ID: {jogo_id}")
@@ -2550,17 +1949,18 @@ def main():
                         'Pares': [contar_pares_lf(j) for j in jogos],
                         'Soma': [sum(j) for j in jogos],
                         'Primos': [contar_primos_lf(j) for j in jogos],
-                        'Consecutivos': [contar_consecutivos_lf(j) for j in jogos]
+                        'Consecutivos': [contar_consecutivos_lf(j) for j in jogos],
+                        'Score': [gerador._avaliar_jogo(j) for j in jogos]
                     })
                     st.download_button(
                         label="📥 Exportar CSV",
                         data=df_export.to_csv(index=False),
-                        file_name=f"lotofacil_elite3_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        file_name=f"lotofacil_elite4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv",
                         use_container_width=True
                     )
                 with col3:
-                    txt_content = "LOTOFÁCIL ELITE 3.0 - JOGOS GERADOS\n"
+                    txt_content = "LOTOFÁCIL ELITE 4.0 - JOGOS GERADOS\n"
                     txt_content += "=" * 50 + "\n"
                     txt_content += f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
                     txt_content += f"Estratégia: {estrategia}\n"
@@ -2572,7 +1972,7 @@ def main():
                     st.download_button(
                         label="📝 Exportar TXT",
                         data=txt_content,
-                        file_name=f"lotofacil_elite3_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        file_name=f"lotofacil_elite4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                         mime="text/plain",
                         use_container_width=True
                     )
@@ -2587,15 +1987,15 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        if st.session_state.backtests:
-            backtests = st.session_state.backtests
+        if app["backtests"]:
+            backtests = app["backtests"]
             
             col1, col2 = st.columns(2)
             with col1:
                 estrategias_backtest = st.multiselect(
                     "Selecione estratégias para testar",
-                    ['conservadora', 'equilibrada', 'diversificada'],
-                    default=['conservadora', 'equilibrada', 'diversificada']
+                    ['conservadora', 'equilibrada', 'diversificada', 'padroes'],
+                    default=['conservadora', 'equilibrada', 'diversificada', 'padroes']
                 )
             with col2:
                 num_testes = st.slider("Número de concursos para teste", 10, 100, 50)
@@ -2647,8 +2047,8 @@ def main():
     with tabs[5]:
         st.markdown("### 📈 Análise Avançada")
         
-        if st.session_state.estatisticas:
-            stats = st.session_state.estatisticas
+        if app["estatisticas"]:
+            stats = app["estatisticas"]
             
             # Análise de Correlação
             st.markdown("### 🔗 Análise de Correlação entre Dezenas")
@@ -2698,189 +2098,8 @@ def main():
                 fig = px.bar(df_colunas, x='Coluna', y='Frequência', title='Distribuição por Colunas')
                 st.plotly_chart(fig, use_container_width=True)
 
-    # ================= TAB 7: CONFERÊNCIA =================
+    # ================= TAB 7: SALVOS =================
     with tabs[6]:
-        st.markdown("### 🔍 Conferência de Jogos com Concursos Anteriores")
-        st.markdown("""
-        <div class="lotofacil-highlight">
-            <strong>🎯 O que é:</strong> Confira quantos acertos os jogos que você gerou (ou salvou)
-            teriam feito nos concursos já sorteados da Lotofácil — para avaliar o desempenho real
-            de uma estratégia antes de apostar de fato.
-        </div>
-        """, unsafe_allow_html=True)
-
-        banco = st.session_state.banco_dados
-        total_concursos_disp = len(banco.concursos) if banco else 0
-
-        if not banco or total_concursos_disp == 0:
-            st.warning("⚠️ Nenhum histórico de concursos carregado ainda.")
-        else:
-            # ---- 1) Escolha da origem dos jogos a conferir ----
-            st.markdown("#### 1️⃣ Escolha os jogos a conferir")
-            origem_jogos = st.radio(
-                "Origem dos jogos",
-                ["🎲 Jogos gerados na sessão (Gerador Premium)",
-                 "🔒 Jogos do fechamento (Ranking)",
-                 "💾 Jogos salvos (arquivo)",
-                 "✍️ Colar jogos manualmente"],
-                key="origem_jogos_conferencia"
-            )
-
-            jogos_para_conferir = []
-            rotulo_origem = ""
-
-            if origem_jogos.startswith("🎲"):
-                jogos_para_conferir = st.session_state.get("jogos_gerados", [])
-                rotulo_origem = "Gerador Premium (sessão atual)"
-                if not jogos_para_conferir:
-                    st.info("Nenhum jogo gerado nesta sessão ainda. Vá até a aba 🎲 Gerador Premium.")
-
-            elif origem_jogos.startswith("🔒"):
-                jogos_para_conferir = st.session_state.get("jogos_fechamento", [])
-                rotulo_origem = "Fechamento (Ranking)"
-                if not jogos_para_conferir:
-                    st.info("Nenhum fechamento gerado nesta sessão ainda. Vá até a aba 🏆 Ranking.")
-
-            elif origem_jogos.startswith("💾"):
-                lista_salvos = carregar_jogos_lf_elite()
-                if not lista_salvos:
-                    st.info("Nenhum jogo salvo encontrado.")
-                else:
-                    opcoes_salvos = {
-                        f"{s['id']} • {s['data_geracao'][:19]} • {len(s['jogos'])} jogo(s)": s
-                        for s in lista_salvos
-                    }
-                    escolha_salvo = st.selectbox("Selecione o arquivo salvo", list(opcoes_salvos.keys()), key="select_salvo_conferencia")
-                    salvo_selecionado = opcoes_salvos[escolha_salvo]
-                    jogos_para_conferir = [j if isinstance(j, list) else [int(x) for x in j.split(",")] for j in salvo_selecionado['jogos']]
-                    rotulo_origem = f"Salvo {salvo_selecionado['id']}"
-
-            else:  # Colar manualmente
-                texto_manual = st.text_area(
-                    "Um jogo por linha, dezenas separadas por vírgula (ex.: 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15)",
-                    height=150, key="texto_jogos_manual_conferencia"
-                )
-                if texto_manual.strip():
-                    jogos_para_conferir = []
-                    linhas_invalidas = 0
-                    for linha in texto_manual.strip().splitlines():
-                        linha = linha.strip()
-                        if not linha:
-                            continue
-                        try:
-                            dezenas_linha = sorted(set(int(x.strip()) for x in linha.split(",") if x.strip()))
-                            if all(1 <= d <= 25 for d in dezenas_linha) and len(dezenas_linha) >= 10:
-                                jogos_para_conferir.append(dezenas_linha)
-                            else:
-                                linhas_invalidas += 1
-                        except ValueError:
-                            linhas_invalidas += 1
-                    rotulo_origem = "Colado manualmente"
-                    if linhas_invalidas:
-                        st.warning(f"⚠️ {linhas_invalidas} linha(s) ignorada(s) por formato inválido.")
-
-            if jogos_para_conferir:
-                st.success(f"✅ {len(jogos_para_conferir)} jogo(s) prontos para conferência ({rotulo_origem}).")
-
-                # ---- 2) Escolha do período de concursos ----
-                st.markdown("#### 2️⃣ Escolha os concursos para conferir")
-                periodo_conferencia = st.radio(
-                    "Período",
-                    ["Somente o último concurso", "Últimos N concursos", "Todo o histórico carregado"],
-                    horizontal=True,
-                    key="periodo_conferencia"
-                )
-
-                if periodo_conferencia == "Somente o último concurso":
-                    concursos_alvo = banco.concursos[:1]
-                elif periodo_conferencia == "Últimos N concursos":
-                    n_concursos = st.slider("Quantidade de concursos mais recentes", 1, total_concursos_disp, min(20, total_concursos_disp), key="n_concursos_conferencia")
-                    concursos_alvo = banco.concursos[:n_concursos]
-                else:
-                    concursos_alvo = banco.concursos
-
-                if st.button("🔍 CONFERIR JOGOS", use_container_width=True, type="primary", key="conferir_jogos_btn"):
-                    with st.spinner(f"Conferindo {len(jogos_para_conferir)} jogo(s) em {len(concursos_alvo)} concurso(s)..."):
-                        linhas_resultado = []
-                        for i, jogo in enumerate(jogos_para_conferir):
-                            jogo_set = set(jogo)
-                            melhor_acertos = -1
-                            melhor_concurso = None
-                            acertos_ultimo = None
-                            for j, concurso in enumerate(concursos_alvo):
-                                acertos = len(jogo_set & set(concurso['dezenas']))
-                                if j == 0:
-                                    acertos_ultimo = acertos
-                                if acertos > melhor_acertos:
-                                    melhor_acertos = acertos
-                                    melhor_concurso = concurso['numero']
-                            linhas_resultado.append({
-                                'Jogo': i + 1,
-                                'Dezenas': ', '.join(f'{d:02d}' for d in jogo),
-                                'Acertos no último concurso': acertos_ultimo,
-                                'Melhor resultado no período': melhor_acertos,
-                                'Concurso do melhor resultado': melhor_concurso
-                            })
-
-                        st.session_state.resultado_conferencia = linhas_resultado
-                        st.session_state.resultado_conferencia_meta = {
-                            'origem': rotulo_origem,
-                            'periodo': periodo_conferencia,
-                            'qtd_concursos': len(concursos_alvo)
-                        }
-
-            if st.session_state.get("resultado_conferencia"):
-                linhas_resultado = st.session_state.resultado_conferencia
-                meta = st.session_state.get("resultado_conferencia_meta", {})
-                df_resultado = pd.DataFrame(linhas_resultado)
-
-                st.markdown("---")
-                st.markdown(f"### 📋 Resultado da Conferência — {meta.get('origem', '')}")
-                st.caption(f"Período: {meta.get('periodo', '')} ({meta.get('qtd_concursos', 0)} concurso(s) analisados)")
-
-                melhores = df_resultado['Melhor resultado no período']
-                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-                with col_r1:
-                    st.metric("🏆 Melhor acerto geral", int(melhores.max()) if len(melhores) else 0)
-                with col_r2:
-                    st.metric("📊 Média de acertos", f"{melhores.mean():.1f}" if len(melhores) else "0")
-                with col_r3:
-                    qtd_14_mais = int((melhores >= 14).sum())
-                    st.metric("🎯 Jogos com 14+ acertos", qtd_14_mais)
-                with col_r4:
-                    qtd_15 = int((melhores == 15).sum())
-                    st.metric("🏅 Jogos com 15 acertos", qtd_15)
-
-                with st.expander("📈 Distribuição de acertos (melhor resultado por jogo)"):
-                    dist = Counter(melhores.tolist())
-                    df_dist = pd.DataFrame({
-                        'Acertos': list(dist.keys()),
-                        'Quantidade de jogos': list(dist.values())
-                    }).sort_values('Acertos')
-                    fig = px.bar(df_dist, x='Acertos', y='Quantidade de jogos',
-                                title='Distribuição de acertos entre os jogos conferidos')
-                    st.plotly_chart(fig, use_container_width=True)
-
-                st.dataframe(df_resultado, use_container_width=True, hide_index=True)
-
-                col_cd1, col_cd2 = st.columns(2)
-                with col_cd1:
-                    st.download_button(
-                        label="📥 Exportar Conferência (CSV)",
-                        data=df_resultado.to_csv(index=False),
-                        file_name=f"conferencia_lf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                        key="download_conferencia_csv"
-                    )
-                with col_cd2:
-                    if st.button("🗑️ Limpar Resultado", key="limpar_conferencia_btn", use_container_width=True):
-                        st.session_state.resultado_conferencia = []
-                        st.session_state.resultado_conferencia_meta = {}
-                        st.rerun()
-
-    # ================= TAB 8: SALVOS =================
-    with tabs[7]:
         st.markdown("### 💾 Jogos Salvos")
         
         jogos_salvos = carregar_jogos_lf_elite()
@@ -2902,7 +2121,7 @@ if __name__ == "__main__":
 
 st.markdown("""
 <div class="footer-premium">
-    <div class="footer-title">LOTOFÁCIL ELITE 3.0 SYSTEM</div>
-    <div class="footer-sub">SAMUCJ TECNOLOGIA © 2026</div>
+    <div class="footer-title">LOTOFÁCIL ELITE 4.0 SYSTEM</div>
+    <div class="footer-sub">SAMUCJ TECNOLOGIA © 2026 | Estratégias Avançadas com IA</div>
 </div>
 """, unsafe_allow_html=True)
