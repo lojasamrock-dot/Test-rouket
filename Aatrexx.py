@@ -668,6 +668,17 @@ class EstatisticasLFAvancadas:
         # pares, primos, fibonacci, moldura/centro, amplitude, entropia etc.)
         self.dna_historico = self._calcular_dna_historico(historico)
 
+        # Módulo 5 - Redes Bayesianas (P(B sair | A saiu no mesmo concurso))
+        self.rede_bayesiana = self._calcular_rede_bayesiana(historico)
+
+        # Módulo 6 - Cadeias de Markov (P(B sair no concurso seguinte | A saiu no atual))
+        self.cadeia_markov = self._calcular_cadeia_markov(historico)
+
+        # Scores agregados (0-1) usados na nota final: o quão "influente"
+        # cada dezena é nas relações bayesianas/markovianas encontradas
+        self.bayes_forca = self._agregar_forca_matriz(self.rede_bayesiana['matriz'])
+        self.markov_forca = self._agregar_forca_matriz(self.cadeia_markov['matriz'])
+
         # Estatísticas adicionais
         self.media_soma = np.mean([c['soma'] for c in self.banco.concursos])
         self.std_soma = np.std([c['soma'] for c in self.banco.concursos])
@@ -885,6 +896,97 @@ class EstatisticasLFAvancadas:
             'amostras': len(dnas)
         }
 
+    def _calcular_rede_bayesiana(self, historico):
+        """
+        Módulo 5 - Redes Bayesianas.
+
+        Para cada par de dezenas (A, B), calcula P(B | A) = probabilidade
+        de B ter saído em um concurso, dado que A saiu NESSE MESMO
+        concurso: (nº de concursos em que A e B saíram juntas) / (nº de
+        concursos em que A saiu). Diferente de uma correlação simples, a
+        direção importa aqui: P(B|A) pode ser bem diferente de P(A|B)
+        quando A e B têm frequências históricas distintas.
+        """
+        contagem_individual = Counter()
+        contagem_par = Counter()
+        for concurso in historico:
+            presentes = set(concurso)
+            for a in presentes:
+                contagem_individual[a] += 1
+            for a in presentes:
+                for b in presentes:
+                    if a != b:
+                        contagem_par[(a, b)] += 1
+
+        matriz = {a: {} for a in range(1, 26)}
+        for a in range(1, 26):
+            total_a = contagem_individual.get(a, 0)
+            for b in range(1, 26):
+                if a == b:
+                    continue
+                matriz[a][b] = round(contagem_par.get((a, b), 0) / total_a, 4) if total_a > 0 else 0.0
+
+        top_dependentes = {
+            a: sorted(matriz[a].items(), key=lambda x: x[1], reverse=True)[:5]
+            for a in range(1, 26)
+        }
+
+        return {'matriz': matriz, 'top_dependentes': top_dependentes}
+
+    def _calcular_cadeia_markov(self, historico):
+        """
+        Módulo 6 - Cadeias de Markov.
+
+        Para cada dezena A, calcula a probabilidade de cada dezena B
+        aparecer no concurso IMEDIATAMENTE SEGUINTE (cronologicamente) a
+        um concurso em que A apareceu: "A sai → qual a chance de B sair
+        no próximo concurso". Diferente do Módulo 5 (mesmo concurso),
+        aqui a relação é sequencial entre concursos consecutivos.
+        """
+        matriz_transicao = {a: Counter() for a in range(1, 26)}
+        contagem_a = Counter()
+
+        # historico[0] é o concurso mais recente e historico[k] é anterior
+        # a historico[k-1]; logo o concurso seguinte (cronologicamente) a
+        # historico[k] é historico[k-1].
+        for k in range(len(historico) - 1, 0, -1):
+            atual = set(historico[k])
+            seguinte = set(historico[k - 1])
+            for a in atual:
+                contagem_a[a] += 1
+                for b in seguinte:
+                    matriz_transicao[a][b] += 1
+
+        matriz = {a: {} for a in range(1, 26)}
+        for a in range(1, 26):
+            total_a = contagem_a.get(a, 0)
+            for b in range(1, 26):
+                if a == b:
+                    continue
+                matriz[a][b] = round(matriz_transicao[a].get(b, 0) / total_a, 4) if total_a > 0 else 0.0
+
+        top_sucessoras = {
+            a: sorted(matriz[a].items(), key=lambda x: x[1], reverse=True)[:5]
+            for a in range(1, 26)
+        }
+
+        return {'matriz': matriz, 'top_sucessoras': top_sucessoras}
+
+    def _agregar_forca_matriz(self, matriz):
+        """
+        Reduz uma matriz de dependência (Bayes ou Markov) a um único score
+        0-1 por dezena, representando o quão forte/influente essa dezena é
+        em média nas relações encontradas, normalizado pelo maior valor
+        observado entre todas as dezenas.
+        """
+        medias = {}
+        for a in range(1, 26):
+            valores = list(matriz.get(a, {}).values())
+            medias[a] = float(np.mean(valores)) if valores else 0.0
+        max_v = max(medias.values()) if medias else 1.0
+        max_v = max_v if max_v > 0 else 1.0
+        return {a: round(v / max_v, 4) for a, v in medias.items()}
+
     def _calcular_tendencias(self, historico):
         tendencias = {}
         for num in range(1, 26):
@@ -1084,6 +1186,8 @@ class EstatisticasLFAvancadas:
             'atraso_categoria': self.atraso_categoria.get(numero, 'Neutra'),
             'frequencia_inteligente': self.frequencia_inteligente.get(numero, 0),
             'ciclo_status': 'Faltante (deve sair)' if numero in self.ciclos.get('dezenas_faltantes_ciclo', set()) else 'Já saiu no ciclo',
+            'bayes_forca': self.bayes_forca.get(numero, 0),
+            'markov_forca': self.markov_forca.get(numero, 0),
             'tendencia': self.tendencias.get(numero, {'tendencia': 'estavel', 'inclinacao': 0}),
             'probabilidade': self.frequencias.get(numero, 0) / (self.total_concursos * 15) if self.total_concursos > 0 else 0
         }
@@ -1103,9 +1207,11 @@ class MotorPontuacaoLF:
     def _definir_pesos(self):
         # Tabela de pesos definida junto com o usuário
         return {
-            'frequencia_inteligente': 0.35,
-            'atraso_equilibrado': 0.18,
+            'frequencia_inteligente': 0.31,
+            'atraso_equilibrado': 0.14,
             'ciclo': 0.08,
+            'bayes': 0.04,
+            'markov': 0.04,
             'repeticao_ultimo': 0.09,
             'linhas_colunas': 0.09,
             'moldura_miolo': 0.05,
@@ -1134,6 +1240,14 @@ class MotorPontuacaoLF:
             # Módulo 3 - Ciclos: bônus para dezenas que ainda faltam
             # aparecer no ciclo atual (mais "devidas" para fechá-lo)
             ciclo = self._calcular_ciclo_score(num)
+
+            # Módulo 5 - Redes Bayesianas: o quão "influente" essa dezena é,
+            # em média, nas dependências P(B|A) do mesmo concurso
+            bayes = self.estatisticas.bayes_forca.get(num, 0)
+
+            # Módulo 6 - Cadeias de Markov: o quão "influente" essa dezena é,
+            # em média, para prever dezenas do concurso seguinte
+            markov = self.estatisticas.markov_forca.get(num, 0)
             
             # Repetição do último concurso, ponderada pela taxa histórica
             # de repetição entre concursos consecutivos
@@ -1156,6 +1270,8 @@ class MotorPontuacaoLF:
                 freq_inteligente * self.pesos['frequencia_inteligente'] +
                 atraso_equilibrado * self.pesos['atraso_equilibrado'] +
                 ciclo * self.pesos['ciclo'] +
+                bayes * self.pesos['bayes'] +
+                markov * self.pesos['markov'] +
                 repeticao_ultimo * self.pesos['repeticao_ultimo'] +
                 linhas_colunas * self.pesos['linhas_colunas'] +
                 moldura_miolo * self.pesos['moldura_miolo'] +
@@ -2275,6 +2391,39 @@ def main():
                         st.metric("Entropia (média)", f"{dna.get('entropia_media', 0):.3f}")
                     st.caption(f"Salto médio entre dezenas: {dna.get('salto_medio_media', 0):.2f} | Desvio padrão médio das dezenas: {dna.get('desvio_padrao_media', 0):.2f}")
 
+            st.markdown("---")
+            st.markdown("### 🔗 Módulos 5 e 6 · Redes Bayesianas & Cadeias de Markov")
+            st.caption(
+                "Escolha uma dezena para ver quais outras costumam sair JUNTO com ela (Bayes) "
+                "e quais costumam sair no concurso SEGUINTE a ela (Markov)."
+            )
+            dezena_explorar = st.selectbox("Dezena para explorar", list(range(1, 26)), key="dezena_explorar_dependencias")
+
+            col7, col8 = st.columns(2)
+            with col7:
+                st.markdown(f"**🧠 Módulo 5 · Redes Bayesianas — top dezenas junto com {dezena_explorar:02d}**")
+                top_bayes = stats.rede_bayesiana['top_dependentes'].get(dezena_explorar, [])
+                if top_bayes:
+                    df_bayes = pd.DataFrame(
+                        [(f"{b:02d}", f"{p*100:.1f}%") for b, p in top_bayes],
+                        columns=["Dezena", f"P(sair | {dezena_explorar:02d} saiu)"]
+                    )
+                    st.dataframe(df_bayes, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Histórico insuficiente para calcular.")
+
+            with col8:
+                st.markdown(f"**⛓️ Módulo 6 · Cadeia de Markov — tende a vir depois de {dezena_explorar:02d}**")
+                top_markov = stats.cadeia_markov['top_sucessoras'].get(dezena_explorar, [])
+                if top_markov:
+                    df_markov = pd.DataFrame(
+                        [(f"{b:02d}", f"{p*100:.1f}%") for b, p in top_markov],
+                        columns=["Dezena", f"P(sair no próximo | {dezena_explorar:02d} saiu)"]
+                    )
+                    st.dataframe(df_markov, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Histórico insuficiente para calcular.")
+
     # ================= TAB 2: RANKING =================
     with tabs[1]:
         st.markdown("### 🏆 Ranking das Dezenas")
@@ -2310,6 +2459,7 @@ def main():
                         Atraso: {stats_dezena['atraso']} ({stats_dezena['atraso_categoria']}) | 
                         Freq. Inteligente: {stats_dezena['frequencia_inteligente']:.3f} | 
                         Ciclo: {stats_dezena['ciclo_status']} | 
+                        Bayes: {stats_dezena['bayes_forca']:.2f} | Markov: {stats_dezena['markov_forca']:.2f} | 
                         Tendência: <span class='{tendencia_cls}'>{tendencia_icon} {tendencia}</span>
                     </small>
                     """
