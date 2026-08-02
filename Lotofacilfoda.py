@@ -1555,6 +1555,12 @@ class DuziaAI:
         self._melhor_modelo = None
         self._melhor_accuracy = 0.0
         self._tentativas_sem_melhora = 0
+        # 🛠️ CORREÇÃO: cada retraino valida contra uma janela diferente (os
+        # últimos 25% da janela deslizante daquela rodada), então comparar
+        # accuracy bruta contra o "recorde" anterior não é uma comparação
+        # justa — o modelo pode "vencer" só porque calhou de uma validação
+        # mais fácil. _acc_ema suaviza isso com média móvel exponencial.
+        self._acc_ema = None
         self._ultimos_lucky_numbers = []
         self._ultimo_multiplicador = 0
 
@@ -2113,8 +2119,23 @@ class DuziaAI:
                 target = self.historico_completo[i]
                 if target in [1, 2, 3]: X.append(features); y.append(target)
 
-            if len(X) < 12: 
-                logging.info(f"⚠️ Poucas amostras para treino: {len(X)}")
+            # 🛠️ CORREÇÃO: o vetor de features (base + pos-zero + numero_duzia +
+            # fadiga + alternância + ciclos + entropia + viés curto + raio +
+            # consenso) tem tipicamente 40-60+ dimensões. Um mínimo de 12
+            # amostras para treinar isso é ~4x mais features que amostras —
+            # praticamente garante overfitting, mesmo com regularização. O
+            # mínimo abaixo escala com o nº real de features (≈2x) com piso
+            # de 30, para manter uma proporção amostra/feature menos extrema.
+            n_features_atual = len(X[0]) if X else 0
+            # Nota: a janela de treino tem no máximo ~80 rodadas (config),
+            # o que já limita as amostras disponíveis a ~70. Exigir uma
+            # proporção alta demais (ex.: 2x o nº de features) desativaria
+            # o treino na prática. O piso abaixo (metade do nº de features,
+            # mínimo 20) já reduz o desequilíbrio de 4x para ~2x sem
+            # inviabilizar o treino nas janelas configuradas hoje.
+            minimo_amostras = max(20, round(n_features_atual * 0.5))
+            if len(X) < minimo_amostras:
+                logging.info(f"⚠️ Poucas amostras para treino: {len(X)} (mínimo recomendado: {minimo_amostras} p/ {n_features_atual} features)")
                 self.ultimo_treino_ml = max(self.ultimo_treino_ml, rodada_atual - atualizar_a_cada + 1)
                 return False
 
@@ -2133,11 +2154,15 @@ class DuziaAI:
             # 🆕 RF/GBT mais regularizados: com poucas amostras (30-90) e ~50
             # features, árvores profundas memorizam ruído. Profundidade e
             # folha mínima maiores reduzem variância sem perder muito viés.
-            rf_base = RandomForestClassifier(n_estimators=150, max_depth=7, random_state=42,
-                                              n_jobs=1, class_weight='balanced', min_samples_leaf=3,
+            # 🛠️ CORREÇÃO: min_samples_leaf e max_depth ainda permitiam
+            # folhas praticamente puras em amostras pequenas; aumentados
+            # para reduzir mais a variância dado o desequilíbrio
+            # amostra/feature descrito acima.
+            rf_base = RandomForestClassifier(n_estimators=150, max_depth=6, random_state=42,
+                                              n_jobs=1, class_weight='balanced', min_samples_leaf=5,
                                               max_features='sqrt')
             gbt_base = GradientBoostingClassifier(n_estimators=80, max_depth=3, learning_rate=0.07,
-                                                   subsample=0.85, min_samples_leaf=3, random_state=42)
+                                                   subsample=0.85, min_samples_leaf=5, random_state=42)
             # 🆕 Terceiro modelo, de perfil bem diferente das árvores: Regressão
             # Logística regularizada (com padronização de features). É um
             # modelo linear e de baixa variância — quando as árvores
@@ -2223,26 +2248,46 @@ class DuziaAI:
                 try:
                     proba, classes = novo_modelo.predict_proba(X_val)
                     preds = classes[np.argmax(proba, axis=1)]
-                    accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / len(y_val)
-                    
-                    if accuracy >= self._melhor_accuracy:
-                        self._melhor_accuracy = accuracy
+                    n_val = len(y_val)
+                    accuracy = sum(1 for p, t in zip(preds, y_val) if p == t) / n_val
+
+                    # 🛠️ CORREÇÃO: com n_val tipicamente entre 4 e ~20 amostras,
+                    # UM único acerto/erro a mais muda a "accuracy" em vários
+                    # pontos percentuais — e o conjunto de validação muda a
+                    # cada retraino (janela deslizante), então comparar
+                    # accuracy bruta contra o recorde anterior não é uma
+                    # comparação estatisticamente justa. Usamos uma média
+                    # móvel exponencial (EMA) como referência mais estável e
+                    # uma margem de tolerância proporcional ao tamanho da
+                    # amostra de validação (quanto menor n_val, maior a
+                    # margem exigida) para não trocar de modelo por ruído.
+                    margem = min(0.12, 0.5 / max(1, n_val) ** 0.5)
+                    referencia = self._acc_ema if self._acc_ema is not None else accuracy
+
+                    if accuracy >= referencia - margem:
+                        self._acc_ema = accuracy if self._acc_ema is None else (0.7 * self._acc_ema + 0.3 * accuracy)
+                        self._melhor_accuracy = self._acc_ema
                         self._melhor_modelo = novo_modelo
                         self.modelo_ml = novo_modelo
                         self._tentativas_sem_melhora = 0
                         
                         if salvar_modelo_ml(self.modelo_ml, self.api_name):
-                            logging.info(f"🧠 ML V15.2 Treinado! Acc: {accuracy:.2%} (RF:{peso_rf:.2f}/GBT:{peso_gbt:.2f}/LR:{peso_lr:.2f}) | Amostras: {len(X)} | Calibrado: {calibrado}")
+                            logging.info(f"🧠 ML V15.2 Treinado! Acc: {accuracy:.2%} (EMA:{self._acc_ema:.2%}, margem:{margem:.2%}, n_val:{n_val}) (RF:{peso_rf:.2f}/GBT:{peso_gbt:.2f}/LR:{peso_lr:.2f}) | Amostras: {len(X)} | Calibrado: {calibrado}")
                             return True
                         else:
                             logging.error("❌ Falha ao salvar modelo!")
                             return False
                     else:
+                        # Modelo pior que a referência mesmo com a margem de
+                        # tolerância: ainda assim deixa a EMA "sentir" o valor
+                        # (com peso pequeno), para acompanhar uma eventual
+                        # mudança real de regime sem descartar o histórico.
+                        self._acc_ema = accuracy if self._acc_ema is None else (0.85 * self._acc_ema + 0.15 * accuracy)
                         self._tentativas_sem_melhora += 1
                         if self._tentativas_sem_melhora >= 3:
-                            self._melhor_accuracy = max(0.36, self._melhor_accuracy * 0.985)
+                            self._acc_ema = max(0.34, self._acc_ema * 0.99)
                             self._tentativas_sem_melhora = 0
-                        logging.info(f"⏭️ ML sem melhoria ({accuracy:.2%} vs {self._melhor_accuracy:.2%}) — mantendo modelo atual")
+                        logging.info(f"⏭️ ML sem melhoria significativa ({accuracy:.2%} vs EMA {referencia:.2%} ± {margem:.2%}, n_val:{n_val}) — mantendo modelo atual")
                         return False
                 except Exception as e:
                     logging.error(f"❌ Erro na validação ML: {e}")
@@ -2410,7 +2455,7 @@ class DuziaAI:
             except: n_features_modelo = None
             if n_features_modelo is not None and len(features) != n_features_modelo:
                 logging.warning(f"⚠️ Dimensão incompatível ({len(features)} vs {n_features_modelo}). Retreinando...")
-                self.modelo_ml = None; self.ultimo_treino_ml = 0; self._melhor_accuracy = 0.0
+                self.modelo_ml = None; self.ultimo_treino_ml = 0; self._melhor_accuracy = 0.0; self._acc_ema = None
                 invalidar_modelo_ml(self.api_name)
                 return {1: 0.0, 2: 0.0, 3: 0.0}
             probabilidades, classes = self.modelo_ml.predict_proba([features])
@@ -2421,7 +2466,7 @@ class DuziaAI:
         except Exception as e:
             logging.error(f"❌ Erro na inferência ML: {e}")
             if "feature" in str(e).lower() or "shape" in str(e).lower():
-                self.modelo_ml = None; self.ultimo_treino_ml = 0; self._melhor_accuracy = 0.0
+                self.modelo_ml = None; self.ultimo_treino_ml = 0; self._melhor_accuracy = 0.0; self._acc_ema = None
                 invalidar_modelo_ml(self.api_name)
             return {1: 0.0, 2: 0.0, 3: 0.0}
 
@@ -2443,7 +2488,19 @@ class DuziaAI:
         if len(duzias_reais) < 5: return scores
         freq = Counter(duzias_reais); total = len(duzias_reais)
         scores_ajustados = scores.copy()
+        # 🛠️ CORREÇÃO: peso_adaptativo (reforça dúzia "quente") e viés_dinâmico
+        # (penaliza dúzia "quente") competiam pela mesma dúzia na mesma cadeia
+        # de calcular_score(), com o boost sendo aplicado DEPOIS da penalidade
+        # e desfazendo-a parcialmente, sem nenhum critério explícito de qual
+        # heurística deveria prevalecer. Regra adotada: se o viés_dinâmico
+        # está ativo e já identificou essa dúzia como enviesada (candidata a
+        # penalidade), o peso_adaptativo não a reforça — o sinal de reversão,
+        # calculado sobre uma janela maior e mais robusta estatisticamente,
+        # tem precedência sobre o momentum de curto prazo.
+        duzia_penalizada_pelo_vies = self._vies_dinamico_atual if self.vies_dinamico_ativo else None
         for duzia in [1, 2, 3]:
+            if duzia == duzia_penalizada_pelo_vies:
+                continue
             freq_pct = freq.get(duzia, 0) / total
             if freq_pct >= 0.40:
                 boost = 1.0 + (freq_pct - 0.40) * (self.peso_adaptativo_boost - 1.0) / 0.60
@@ -2623,6 +2680,25 @@ class DuziaAI:
         
         return previsao
 
+    def _normalizar_scores_finais(self, scores):
+        """
+        🛠️ CORREÇÃO: o score sai do ML calibrado (soma ≈ 100, interpretável
+        como probabilidade). Cada camada heurística subsequente (consenso,
+        streak, anti-viés, viés dinâmico, peso adaptativo) faz somas e
+        multiplicações independentes; algumas renormalizam entre si, outras
+        (bônus de consenso/streak) só adicionam sem tirar de ninguém. O
+        resultado acumulado deixa de somar 100 e deixa de ser comparável
+        entre rodadas ou exibível como "probabilidade" com significado real.
+        Esta normalização final preserva a ORDEM relativa entre as dúzias
+        (decisão de entrada não muda) mas devolve uma escala consistente de
+        0 a 100 para o que é exibido/logado, evitando a falsa sensação de
+        precisão de "score: 137" ou "score: 42" sem contexto.
+        """
+        total = sum(scores.values())
+        if total <= 0:
+            return {d: 33.33 for d in (1, 2, 3)}
+        return {d: round((v / total) * 100, 2) for d, v in scores.items()}
+
     def calcular_score(self):
         ml_scores = self._prever_ml()
         ml_ativo = not all(v == 0.0 for v in ml_scores.values())
@@ -2637,12 +2713,14 @@ class DuziaAI:
             scores = self._aplicar_anti_vies(scores)
             scores = self._aplicar_vies_dinamico(scores)
             scores = self._aplicar_peso_adaptativo(scores)
+            scores = self._normalizar_scores_finais(scores)
             return scores, modo
         else:
             scores = self._prever_fallback_frequencia()
             scores = self._aplicar_anti_vies(scores)
             scores = self._aplicar_vies_dinamico(scores)
             scores = self._aplicar_peso_adaptativo(scores)
+            scores = self._normalizar_scores_finais(scores)
             return scores, 'fallback'
 
     def detectar_alerta_zero(self):
