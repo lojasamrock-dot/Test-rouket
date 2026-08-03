@@ -1576,6 +1576,7 @@ class DuziaAI:
         # justa — o modelo pode "vencer" só porque calhou de uma validação
         # mais fácil. _acc_ema suaviza isso com média móvel exponencial.
         self._acc_ema = None
+        self._ml_progresso_amostras = None
         self._ultimos_lucky_numbers = []
         self._ultimo_multiplicador = 0
 
@@ -2149,6 +2150,10 @@ class DuziaAI:
             # mínimo 20) já reduz o desequilíbrio de 4x para ~2x sem
             # inviabilizar o treino nas janelas configuradas hoje.
             minimo_amostras = max(20, round(n_features_atual * 0.5))
+            # 🆕 Exposto para a UI poder mostrar "ML: X/Y amostras" em vez de
+            # só "aguardando", já que a mensagem de fallback não sabia
+            # explicar quanto faltava para o ML propriamente dito treinar.
+            self._ml_progresso_amostras = (len(X), minimo_amostras)
             if len(X) < minimo_amostras:
                 logging.info(f"⚠️ Poucas amostras para treino: {len(X)} (mínimo recomendado: {minimo_amostras} p/ {n_features_atual} features)")
                 self.ultimo_treino_ml = max(self.ultimo_treino_ml, rodada_atual - atualizar_a_cada + 1)
@@ -2861,7 +2866,18 @@ class DuziaAI:
                 if abs(self._threshold_ajuste) >= 1:
                     motivo += f" | 🎚️ ajuste:{self._threshold_ajuste:+.1f}"
             else:
-                motivo = f"Aguardando ML ({len(self.historico_completo)}/{max(30, min_rodadas_fb)} rod)"
+                # 🛠️ CORREÇÃO: a mensagem antiga sempre dizia "Aguardando ML
+                # (X/30 rod)", mesmo quando X já era suficiente e o motivo
+                # real de não entrar era o score de frequência não bater o
+                # mínimo — o que levava a interpretar "está esperando mais
+                # rodadas" quando na verdade era "o sinal atual é fraco".
+                if len(self.historico_completo) < min_rodadas_fb:
+                    motivo = f"Aguardando histórico ({len(self.historico_completo)}/{min_rodadas_fb} rod mínimas)"
+                elif self._ml_progresso_amostras is not None and self._ml_progresso_amostras[0] < self._ml_progresso_amostras[1]:
+                    atual, minimo = self._ml_progresso_amostras
+                    motivo = f"🧠 ML acumulando amostras ({atual}/{minimo}) | Fallback score: {s1:.1f}"
+                else:
+                    motivo = f"Score fallback baixo ({s1:.1f} < {score_min_fb:.1f}) | Histórico: {len(self.historico_completo)} rod"
 
         max_rep = config.get('ml_max_repeticoes_mesma_duzia', 2)
         if pode_entrar and len(self.ultimas_previsoes) >= max_rep:
