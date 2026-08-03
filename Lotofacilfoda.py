@@ -756,7 +756,14 @@ SETUP_XXXTREME = {
     'vies_dinamico_janela': 12,
     'vies_dinamico_limiar': 0.14,
     'vies_dinamico_penalidade': 0.80,
-    'ml_janela_treino': 20,
+    # 🛠️ CORREÇÃO CRÍTICA: 20 rodadas de janela produz no máximo ~12 amostras
+    # de treino (janela - 8 de lookback de features). O mínimo de amostras
+    # do ML foi elevado para escalar com o nº de features (~20-30) numa
+    # correção anterior — com essa janela pequena, o ML NUNCA atingia esse
+    # mínimo, mesmo com centenas de rodadas na sessão (ficava travado em
+    # "Aguardando" para sempre). Subido para 40 (~32 amostras possíveis),
+    # ainda bem mais reativo que os outros setups (60-80), mas viável.
+    'ml_janela_treino': 40,
     'ml_atualizar_a_cada': 5,
     'alerta_peso_adaptativo_off': True,
     'drift_janela': 12,
@@ -2157,6 +2164,18 @@ class DuziaAI:
             # mínimo 20) já reduz o desequilíbrio de 4x para ~2x sem
             # inviabilizar o treino nas janelas configuradas hoje.
             minimo_amostras = max(20, round(n_features_atual * 0.5))
+            # 🛠️ CORREÇÃO CRÍTICA: se a janela de treino for pequena (ex.:
+            # setups mais reativos), o nº MÁXIMO de amostras possíveis
+            # (janela_treino - 8 de lookback) pode ficar abaixo do mínimo
+            # acima — travando o ML pra sempre, não importa quantas rodadas
+            # a sessão tenha (o gargalo é estrutural da janela, não da
+            # quantidade de histórico). O teto abaixo evita essa trava
+            # silenciosa; loga um aviso quando é o teto estrutural (e não o
+            # mínimo por features) que está decidindo o valor.
+            teto_estrutural = max(15, janela_treino - 9)
+            if teto_estrutural < minimo_amostras:
+                logging.warning(f"⚠️ ml_janela_treino={janela_treino} só permite ~{teto_estrutural} amostras — abaixo do ideal para {n_features_atual} features. Considere aumentar ml_janela_treino nesse setup.")
+            minimo_amostras = min(minimo_amostras, teto_estrutural)
             # 🆕 Exposto para a UI poder mostrar "ML: X/Y amostras" em vez de
             # só "aguardando", já que a mensagem de fallback não sabia
             # explicar quanto faltava para o ML propriamente dito treinar.
@@ -3573,7 +3592,12 @@ with st.sidebar:
         st.success(f"🧠 ML V15 | Acc: {acc:.1%}" if acc > 0 else f"🧠 ML CARREGADO 💾 | R{sis.duzia_ai.ultimo_treino_ml}")
     else:
         n = len(sis.historico_numeros)
-        st.info(f"🧠 Aguardando... ({n}/30 rod)")
+        progresso = getattr(sis.duzia_ai, '_ml_progresso_amostras', None)
+        if progresso:
+            atual, minimo = progresso
+            st.info(f"🧠 Aguardando amostras de treino ({atual}/{minimo})")
+        else:
+            st.info(f"🧠 Aguardando histórico inicial ({n}/30 rod)")
 
     if sis.duzia_ai._drift_ativo:
         reset_em = sis.duzia_ai.drift_rodadas_auto_reset - sis.duzia_ai._rodadas_sem_entrada
