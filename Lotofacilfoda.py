@@ -677,7 +677,7 @@ SETUP_BASE = {
     'decaimento_padroes_ativo': True, 'decaimento_fator': 0.97, 'decaimento_a_cada': 5,
     'drift_janela': 15, 'drift_taxa_minima': 0.30,
     'drift_alertar_apos': 5,
-    'drift_rodadas_auto_reset': 20,
+    'drift_rodadas_auto_reset': 2,
     'streak_ativo': True, 'streak_min_len': 2, 'streak_peso_feature': 1.0,
     'padrao_qualidade_min_p2': 15,
     'padrao_qualidade_min_p3': 10,
