@@ -3116,7 +3116,20 @@ class SistemaBot:
             if acerto_zero: self.acertos_zero += 1
             elif nr == 0: self.erros_zero += 1
 
-            if acerto_primaria or acerto_zero: self.acertos_primaria += 1; self.acertos_duzia += 1
+            # 🛠️ CORREÇÃO: os contadores abaixo (acertos_duzia, sessão,
+            # desempenho por mesa/horário) representam o resultado REAL da
+            # aposta — e quando o modo 2 dúzias está ativo, a aposta ganha
+            # se caiu na principal OU na cobertura. Antes eles só olhavam
+            # acerto_primaria, então uma rodada em que só a cobertura
+            # acertava era contabilizada como ERRO, mesmo a aposta tendo
+            # sido paga. acerto_primaria continua existindo à parte, isolado,
+            # só para o ML interno (drift/threshold), que precisa saber se a
+            # previsão PRINCIPAL específica acertou, independente da cobertura.
+            acerto_cobertura_dupla = acerto_primaria or acerto_secundaria or acerto_zero
+            resultado_real = acerto_cobertura_dupla
+
+            if acerto_primaria: self.acertos_primaria += 1
+            if resultado_real: self.acertos_duzia += 1
             elif nr != 0: self.erros_duzia += 1
 
             # Estatística da 2ª torre só é contabilizada nas rodadas em que a
@@ -3125,24 +3138,20 @@ class SistemaBot:
                 if acerto_secundaria: self.acertos_secundaria += 1
                 else: self.erros_secundaria += 1
 
-            acertou_duzia = acerto_primaria
-            # "Acerto combinado": o resultado que importa para o CAIXA quando
-            # se está apostando nas duas dúzias ao mesmo tempo — ganhou se
-            # caiu na principal OU na de cobertura (ou zero, se coberto).
-            acerto_cobertura_dupla = acerto_primaria or acerto_secundaria or acerto_zero
+            acertou_duzia = acerto_primaria  # usado só para registrar_resultado() (ML interno)
 
             self.rodadas_na_sessao += 1
-            if acertou_duzia or acerto_zero: self.acertos_sessao += 1
+            if resultado_real: self.acertos_sessao += 1
             else: self.erros_sessao += 1
 
             if self.entrada_ativa.get('fonte', 'ml') == 'ml':
                 self.duzia_ai.registrar_resultado(duzia_real, acertou_duzia, acerto_numero_exato, acerto_zero, table_id, eh_raio, multiplicador)
 
-            if acertou_duzia or acerto_zero: self.performance_por_mesa[table_id]['acertos'] += 1
+            if resultado_real: self.performance_por_mesa[table_id]['acertos'] += 1
             else: self.performance_por_mesa[table_id]['erros'] += 1
             hora = datetime.now().hour
             turno = "manhã" if 6 <= hora < 12 else "tarde" if 12 <= hora < 18 else "noite"
-            if acertou_duzia or acerto_zero: self.performance_por_horario[turno]['acertos'] += 1
+            if resultado_real: self.performance_por_horario[turno]['acertos'] += 1
             else: self.performance_por_horario[turno]['erros'] += 1
 
             if acerto_zero: status_visual = '🟢'
@@ -3156,7 +3165,7 @@ class SistemaBot:
                 'rodada': self.numero_rodada, 'hora': formatar_hora_brasilia(), 'numero': nr,
                 'duzia_real': duzia_real if nr != 0 else 0,
                 'duzia_prevista': duzia_prevista, 'duzia_sec_prevista': duzia_sec_prevista,
-                'acerto_duzia': acertou_duzia, 'acerto_primaria': acerto_primaria,
+                'acerto_duzia': resultado_real, 'acerto_primaria': acerto_primaria,
                 'acerto_secundaria': acerto_secundaria, 'acerto_cobertura_dupla': acerto_cobertura_dupla,
                 'acerto_numero': acerto_numero_exato,
                 'acerto_zero': acerto_zero, 'eh_raio': eh_raio, 'multiplicador': multiplicador,
@@ -3755,7 +3764,14 @@ total_numeros = sis.acertos_numero + sis.erros_numero
 tx_numeros = (sis.acertos_numero / total_numeros * 100) if total_numeros > 0 else 0
 c1.metric("🎯 Nº Exato", sis.acertos_numero, f"{tx_numeros:.0f}%")
 c2.metric("✅ Acertos", int(sis.acertos_duzia), f"{tx_duzias:.0f}%")
-c3.metric("🎯 Dúzia", sis.acertos_primaria)
+# 🛠️ CORREÇÃO: este card mostrava sis.acertos_primaria (só a principal) sob
+# o rótulo genérico "🎯 Dúzia", bem ao lado de "✅ Acertos" (que já é o total
+# correto, principal + cobertura). Dava a falsa impressão de que a
+# cobertura "não contava" — na real, os dois cards mediam coisas
+# diferentes e não estava claro. Rótulo explícito agora deixa claro que
+# este é só um diagnóstico à parte (quantas vezes a PRINCIPAL bateu
+# sozinha), não a métrica principal de acerto.
+c3.metric("🎯 Só Principal", sis.acertos_primaria, help="Quantas vezes a dúzia PRINCIPAL bateu sozinha (não conta cobertura). A métrica real de acerto é '✅ Acertos' ao lado.")
 c4.metric("❌ Erros", sis.erros_duzia)
 c5.metric("🟢 Zeros", f"{sis.acertos_zero}/{sis.acertos_zero + sis.erros_zero}")
 c6.metric("📦 Total", total_duzias)
