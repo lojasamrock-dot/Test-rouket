@@ -515,15 +515,31 @@ def extrair_features_consenso(consenso_info):
 # ficam próximos do padrão, apenas com um leve reforço, para não travar
 # o ritmo de entradas.
 
+# 🛠️ CORREÇÃO: as três funções de ajuste de config (_aplicar_ajuste_meio_termo,
+# _aplicar_ajuste_fino_immersive) tinham cada uma sua própria closure local
+# quase idêntica para "blend" (multiplicar % com piso mínimo) e para "puxar
+# para o original" (interpolar de volta em direção a um valor de referência).
+# Unificadas aqui como funções de módulo reutilizáveis.
+def _blend_percentual(cfg, chave, delta_pct, minimo=None):
+    """Multiplica cfg[chave] por (1 + delta_pct), com piso opcional. Modifica cfg in-place."""
+    if chave in cfg and cfg[chave] is not None:
+        novo = cfg[chave] * (1 + delta_pct)
+        if minimo is not None:
+            novo = max(minimo, novo)
+        cfg[chave] = novo
+
+def _puxar_para_valor_referencia(cfg, referencia, chave, peso_referencia=0.45, minimo=None):
+    """Interpola cfg[chave] em direção a referencia[chave], com piso opcional. Modifica cfg in-place."""
+    if chave in cfg and chave in referencia and referencia[chave] is not None:
+        novo = cfg[chave] + peso_referencia * (referencia[chave] - cfg[chave])
+        if minimo is not None:
+            novo = max(minimo, novo)
+        cfg[chave] = novo
+
+
 def _aplicar_ajuste_meio_termo(config):
     cfg = config.copy()
-
-    def blend(chave, delta_pct, minimo=None):
-        if chave in cfg and cfg[chave] is not None:
-            novo = cfg[chave] * (1 + delta_pct)
-            if minimo is not None:
-                novo = max(minimo, novo)
-            cfg[chave] = novo
+    blend = lambda chave, delta_pct, minimo=None: _blend_percentual(cfg, chave, delta_pct, minimo)
 
     # --- Barreira de entrada (score/confiança) - quase neutra ---
     blend('ml_score_minimo_entrada', 0.0, minimo=18)
@@ -578,20 +594,8 @@ def _aplicar_ajuste_meio_termo(config):
 
 def _aplicar_ajuste_fino_immersive(config, original):
     cfg = config.copy()
-
-    def blend_mais_solto(chave, delta_pct_extra, minimo=None):
-        if chave in cfg and cfg[chave] is not None:
-            novo = cfg[chave] * (1 + delta_pct_extra)
-            if minimo is not None:
-                novo = max(minimo, novo)
-            cfg[chave] = novo
-
-    def puxar_para_original(chave, peso_original=0.45, minimo=None):
-        if chave in cfg and chave in original and original[chave] is not None:
-            novo = cfg[chave] + peso_original * (original[chave] - cfg[chave])
-            if minimo is not None:
-                novo = max(minimo, novo)
-            cfg[chave] = novo
+    blend_mais_solto = lambda chave, delta_pct_extra, minimo=None: _blend_percentual(cfg, chave, delta_pct_extra, minimo)
+    puxar_para_original = lambda chave, peso_original=0.45, minimo=None: _puxar_para_valor_referencia(cfg, original, chave, peso_original, minimo)
 
     # --- 1) Destrava temporizadores, mas sem enfraquecer demais a rede de segurança ---
     cfg['drift_rodadas_auto_reset'] = max(6, int(round(cfg.get('drift_rodadas_auto_reset', 10) * 0.75)))
@@ -706,6 +710,12 @@ SETUP_BASE = {
     'threshold_adaptativo_max': 16.0,
     'anti_erro_min_erros_consecutivos': 2,
     'transicao_confianca_multiplicador': 1.10,
+    # 🆕 MODO 2 DÚZIAS (Torre Principal + Torre de Cobertura): a dúzia
+    # secundária só é adicionada à entrada se o próprio score dela (2º
+    # colocado no ranking, mesma escala pós-normalização 0-100) superar
+    # este mínimo — senão estaríamos "cobrindo" uma dúzia sem nenhum sinal
+    # acima do acaso só para preencher a segunda torre.
+    'cobertura_score_minimo': 22,
 }
 
 SETUP_XXXTREME = {
@@ -1284,7 +1294,8 @@ def salvar_sessao():
                          'total_sessoes': sis.total_sessoes,
                          'acertos_sessao': sis.acertos_sessao, 'erros_sessao': sis.erros_sessao,
                          'ultimo_treino_ml': sis.duzia_ai.ultimo_treino_ml,
-                         'acertos_primaria': sis.acertos_primaria, 'acertos_secundaria': sis.acertos_secundaria}, f)
+                         'acertos_primaria': sis.acertos_primaria, 'acertos_secundaria': sis.acertos_secundaria,
+                         'erros_secundaria': sis.erros_secundaria}, f)
         if sis.duzia_ai.modelo_ml is not None:
             salvar_modelo_ml(sis.duzia_ai.modelo_ml, api_name)
         salvar_config_global()
@@ -1351,20 +1362,24 @@ def enviar_previsao_auto(previsao):
         numeros = sorted(previsao.get('numeros_apostar', []))
         incluir_zero = previsao.get('incluir_zero', False)
         duzia_principal = previsao.get('duzia', 0)
+        duzia_secundaria = previsao.get('duzia_secundaria')
         streak_info = previsao.get('streak_info', None)
-        d1n = [n for n in numeros if 1 <= n <= 12]
-        d2n = [n for n in numeros if 13 <= n <= 24]
-        d3n = [n for n in numeros if 25 <= n <= 36]
+        nomes_duzia = {1: 'D1 (1-12)', 2: 'D2 (13-24)', 3: 'D3 (25-36)'}
         prefixo = "⚠️🎯 " if incluir_zero else "🎯 "
-        if d1n: msg = f"{prefixo}Entrada: D1 (1-12)"
-        elif d2n: msg = f"{prefixo}Entrada: D2 (13-24)"
-        elif d3n: msg = f"{prefixo}Entrada: D3 (25-36)"
-        else: msg = f"{prefixo}Entrada: {numeros}"
+        if duzia_secundaria:
+            msg = f"{prefixo}Entrada: {nomes_duzia.get(duzia_principal, '?')} 🗼Principal + {nomes_duzia.get(duzia_secundaria, '?')} 🛡️Cobertura"
+        elif duzia_principal in nomes_duzia:
+            msg = f"{prefixo}Entrada: {nomes_duzia[duzia_principal]}"
+        else:
+            msg = f"{prefixo}Entrada: {numeros}"
         if incluir_zero: msg += " + 🟢 ZERO"
         if streak_info: msg += f" | 🔥 Streak: {streak_info}"
         numeros_completos = previsao.get('numeros_completos', [])
         melhores_principal = _selecionar_melhores_numeros(duzia_principal, numeros_completos, 6)
         melhores_str = " ".join(map(str, melhores_principal))
+        if duzia_secundaria:
+            melhores_secundaria = _selecionar_melhores_numeros(duzia_secundaria, numeros_completos, 6)
+            melhores_str += " | 🛡️ " + " ".join(map(str, melhores_secundaria))
         st.toast(msg)
         if st.session_state.get('telegram_token') and st.session_state.get('telegram_chat_id'):
             enviar_telegram(f"🔔 {msg}\n🔢 {melhores_str}", st.session_state.telegram_token, st.session_state.telegram_chat_id)
@@ -2882,13 +2897,26 @@ class DuziaAI:
 
         if confianca < 0.75: pode_entrar = False; motivo = f"Confiança crítica ({confianca:.2f})"
 
-        duzia_secundaria_final = None  # 🆕 Sem cobertura: o bot opera só com a dúzia principal
-        # Apenas informativo (exibição) — não influencia mais a previsão/score.
+        # 🆕 MODO 2 DÚZIAS: quando ativado pelo usuário, a entrada cobre a
+        # dúzia principal (d1) + a dúzia de cobertura (d2, o 2º colocado no
+        # ranking pós-normalização) — só quando o próprio d2 tem score acima
+        # do mínimo configurado. Isso evita cobrir uma dúzia "morta" (score
+        # próximo de zero) só para preencher a segunda torre: se d2 não tem
+        # nenhum sinal, a cobertura simplesmente não é ativada nessa rodada
+        # e o bot opera só com a principal, como antes.
+        modo_2_duzias = st.session_state.get('modo_cobertura_2_duzias', False)
+        duzia_secundaria_final = None
+        if modo_2_duzias and pode_entrar:
+            score_cobertura_min = config.get('cobertura_score_minimo', 22)
+            if s2 >= score_cobertura_min:
+                duzia_secundaria_final = d2
+
         streak_aplicado = bool(self.streak_config_ativo and streak_len >= self.streak_min_len and streak_duzia != 0)
 
         previsao = {
             "entrar": pode_entrar, "motivo": motivo, "score": scores,
             "confianca": round(confianca, 2), "duzia": d1, "duzia_secundaria": duzia_secundaria_final,
+            "score_secundaria": round(s2, 1) if duzia_secundaria_final else None,
             "gatilho_ativo": "ML" if modo_base == 'ml' else "Fallback",
             "incluir_zero": incluir_zero, "modo_anti_erro": self.erros_consecutivos > 0,
             "numeros_completos": list(self.numeros_completos), "modo_previsao": modo,
@@ -2941,7 +2969,7 @@ class SistemaBot:
         self.acertos_duzia = 0; self.erros_duzia = 0
         self.acertos_numero = 0; self.erros_numero = 0
         self.acertos_zero = 0; self.erros_zero = 0
-        self.acertos_primaria = 0; self.acertos_secundaria = 0
+        self.acertos_primaria = 0; self.acertos_secundaria = 0; self.erros_secundaria = 0
         self.ultimo_numero = None; self.sinais_grafico = []; self.numero_rodada = 0
         self.performance_por_mesa = defaultdict(lambda: {'acertos': 0, 'erros': 0})
         self.performance_por_horario = defaultdict(lambda: {'acertos': 0, 'erros': 0})
@@ -3022,10 +3050,17 @@ class SistemaBot:
         if self.entrada_ativa:
             duzia_real = get_duzia(nr)
             duzia_prevista = self.entrada_ativa.get('duzia_prevista')
+            duzia_sec_prevista = self.entrada_ativa.get('duzia_sec_prevista')
             numeros_apostados = self.entrada_ativa.get('numeros_apostar', [])
             incluir_zero = self.entrada_ativa.get('incluir_zero', False)
 
             acerto_primaria = (duzia_real == duzia_prevista) if duzia_prevista and nr != 0 else False
+            # 🆕 MODO 2 DÚZIAS: acerto da torre de COBERTURA, calculado à parte
+            # do acerto_primaria — não deve alimentar registrar_resultado()
+            # (isso contaminaria o drift/threshold adaptativo do ML, que
+            # precisa saber se a previsão PRINCIPAL (d1) acertou, independente
+            # de estarmos cobrindo uma 2ª dúzia ou não).
+            acerto_secundaria = (duzia_real == duzia_sec_prevista) if duzia_sec_prevista and nr != 0 else False
             acerto_numero_exato = nr in numeros_apostados if nr != 0 else False
             acerto_zero = (nr == 0 and incluir_zero)
             if acerto_zero: acerto_primaria = True
@@ -3038,7 +3073,17 @@ class SistemaBot:
             if acerto_primaria or acerto_zero: self.acertos_primaria += 1; self.acertos_duzia += 1
             elif nr != 0: self.erros_duzia += 1
 
+            # Estatística da 2ª torre só é contabilizada nas rodadas em que a
+            # cobertura realmente estava ativa (duzia_sec_prevista setada).
+            if duzia_sec_prevista and nr != 0:
+                if acerto_secundaria: self.acertos_secundaria += 1
+                else: self.erros_secundaria += 1
+
             acertou_duzia = acerto_primaria
+            # "Acerto combinado": o resultado que importa para o CAIXA quando
+            # se está apostando nas duas dúzias ao mesmo tempo — ganhou se
+            # caiu na principal OU na de cobertura (ou zero, se coberto).
+            acerto_cobertura_dupla = acerto_primaria or acerto_secundaria or acerto_zero
 
             self.rodadas_na_sessao += 1
             if acertou_duzia or acerto_zero: self.acertos_sessao += 1
@@ -3056,16 +3101,18 @@ class SistemaBot:
 
             if acerto_zero: status_visual = '🟢'
             elif acerto_numero_exato and eh_raio: status_visual = '⚡'
-            elif acerto_numero_exato: status_visual = '🎯'
+            elif acerto_numero_exato and acerto_primaria: status_visual = '🎯'
             elif acerto_primaria: status_visual = '✅'
+            elif acerto_secundaria: status_visual = '🛡️'  # acertou só a torre de cobertura
             else: status_visual = '❌'
 
             self.historico_entradas.append({
                 'rodada': self.numero_rodada, 'hora': formatar_hora_brasilia(), 'numero': nr,
                 'duzia_real': duzia_real if nr != 0 else 0,
-                'duzia_prevista': duzia_prevista, 'duzia_sec_prevista': None,
+                'duzia_prevista': duzia_prevista, 'duzia_sec_prevista': duzia_sec_prevista,
                 'acerto_duzia': acertou_duzia, 'acerto_primaria': acerto_primaria,
-                'acerto_secundaria': False, 'acerto_numero': acerto_numero_exato,
+                'acerto_secundaria': acerto_secundaria, 'acerto_cobertura_dupla': acerto_cobertura_dupla,
+                'acerto_numero': acerto_numero_exato,
                 'acerto_zero': acerto_zero, 'eh_raio': eh_raio, 'multiplicador': multiplicador,
                 'status': status_visual, 'confianca': self.entrada_ativa.get('confianca', 0),
                 'prob_ml_bruta': self.entrada_ativa.get('prob_ml_bruta'),
@@ -3079,7 +3126,7 @@ class SistemaBot:
             })
             if len(self.historico_entradas) > 100: self.historico_entradas = self.historico_entradas[-100:]
 
-            enviar_resultado_auto(nr, acertou_duzia, acerto_numero_exato, acerto_zero, eh_raio, multiplicador)
+            enviar_resultado_auto(nr, acerto_cobertura_dupla, acerto_numero_exato, acerto_zero, eh_raio, multiplicador)
             self.entrada_ativa = None
 
             if not self.pode_processar(): salvar_sessao(); return
@@ -3134,6 +3181,9 @@ class SistemaBot:
                 if previsao['entrar']:
                     duzia_map = {1: list(range(1,13)), 2: list(range(13,25)), 3: list(range(25,37))}
                     numeros_apostar = list(duzia_map.get(previsao['duzia'], []))
+                    duzia_secundaria = previsao.get('duzia_secundaria')
+                    if duzia_secundaria:
+                        numeros_apostar = numeros_apostar + list(duzia_map.get(duzia_secundaria, []))
 
                     if previsao.get('incluir_zero', False) and 0 not in numeros_apostar:
                         numeros_apostar = [0] + numeros_apostar
@@ -3141,7 +3191,8 @@ class SistemaBot:
                     self.entrada_ativa = {
                         'numeros_apostar': numeros_apostar,
                         'duzia_prevista': previsao['duzia'],
-                        'duzia_sec_prevista': None,
+                        'duzia_sec_prevista': duzia_secundaria,
+                        'score_secundaria': previsao.get('score_secundaria'),
                         'confianca': previsao.get('confianca', 0),
                         'prob_ml_bruta': previsao.get('prob_ml_bruta'),
                         'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
@@ -3158,7 +3209,7 @@ class SistemaBot:
                         'numeros_apostar': numeros_apostar,
                         'incluir_zero': previsao.get('incluir_zero', False),
                         'duzia': previsao['duzia'],
-                        'duzia_secundaria': None,
+                        'duzia_secundaria': duzia_secundaria,
                         'numeros_completos': list(self.historico_numeros),
                         'streak_info': previsao.get('streak_info'),
                     })
@@ -3167,7 +3218,7 @@ class SistemaBot:
         self.acertos_duzia = self.erros_duzia = 0
         self.acertos_numero = self.erros_numero = 0
         self.acertos_zero = self.erros_zero = 0
-        self.acertos_primaria = self.acertos_secundaria = 0
+        self.acertos_primaria = self.acertos_secundaria = self.erros_secundaria = 0
         self.historico_entradas = []; self.historico_numeros.clear()
         self.entrada_ativa = None; self.ultimo_numero = None
         self.sinais_grafico = []; self.numero_rodada = 0
@@ -3268,8 +3319,8 @@ def carregar_config_global():
 # =============================
 # APLICAÇÃO STREAMLIT
 # =============================
-st.set_page_config(page_title="🎰 DuziaAI V15 - Alta Precisão (1 Dúzia)", layout="wide")
-st.title("🎰 DuziaAI V15 — Alta Precisão | 1 Dúzia, sem cobertura, só entradas de alta confiança")
+st.set_page_config(page_title="🎰 DuziaAI V15 - Alta Precisão (1-2 Dúzias)", layout="wide")
+st.title("🎰 DuziaAI V15 — Alta Precisão | 1 Dúzia (ou 2, com cobertura opcional) | entradas de alta confiança")
 
 config_global = carregar_config_global()
 
@@ -3297,7 +3348,7 @@ def _carregar_sistema(api_name):
         for n in dados.get('historico_numeros', []):
             sis.duzia_ai.adicionar(n); sis.historico_numeros.append(n)
         sis.numero_rodada = dados.get('numero_rodada', len(dados.get('historico_numeros', [])))
-        for campo in ['acertos_duzia','erros_duzia','acertos_numero','erros_numero','acertos_zero','erros_zero','acertos_primaria','acertos_secundaria']:
+        for campo in ['acertos_duzia','erros_duzia','acertos_numero','erros_numero','acertos_zero','erros_zero','acertos_primaria','acertos_secundaria','erros_secundaria']:
             setattr(sis, campo, dados.get(campo, 0))
         sis.entrada_ativa = dados.get('entrada_ativa', None)
         sis.historico_entradas = dados.get('historico_entradas', [])
@@ -3382,6 +3433,21 @@ with st.sidebar:
         "Crupiê trocou agora", value=st.session_state.get('gatilho_troca_crupie_manual', False)
     )
     st.caption("⚠️ Gatilhos numéricos são heurísticas de padrão, sem edge estatístico comprovado em RNG. A taxa histórica exibida vem de backtest real da sessão.")
+
+    st.markdown("---")
+    st.markdown("### 🗼 Modo 2 Dúzias (Principal + Cobertura)")
+    st.session_state['modo_cobertura_2_duzias'] = st.checkbox(
+        "Ativar 2ª torre de cobertura",
+        value=st.session_state.get('modo_cobertura_2_duzias', False),
+        key='checkbox_modo_cobertura',
+        help="Quando ativo, além da dúzia principal (maior score do ML), o bot também cobre a 2ª dúzia do ranking — se o score dela superar o mínimo configurado. Cobre até 24/37 números (dúzia principal + cobertura), reduzindo a variância à custa de um payout líquido menor quando a principal acerta."
+    )
+    if st.session_state['modo_cobertura_2_duzias']:
+        st.caption("🗼 Principal = maior score do ML | 🛡️ Cobertura = 2º colocado, só se score ≥ mínimo configurado. Sem cobertura, o bot volta a operar só a dúzia principal naquela rodada.")
+        acs = sis.acertos_secundaria; ers = sis.erros_secundaria
+        if acs + ers > 0:
+            taxa_cob = acs / (acs + ers) * 100
+            st.caption(f"🛡️ Torre de cobertura (isolada): {acs}/{acs+ers} ({taxa_cob:.0f}%)")
 
     st.markdown("---")
     st.markdown("### 🔄 Regime Atual")
@@ -3739,30 +3805,36 @@ with ce:
     if sis.entrada_ativa and sis.sessao_ativa:
         e = sis.entrada_ativa
         conf = e.get('confianca', 0); dz_princ = e.get('duzia_prevista', 0)
+        dz_sec = e.get('duzia_sec_prevista')
+        score_sec = e.get('score_secundaria')
         prob_ml = e.get('prob_ml_bruta')
         gatilho = e.get('gatilho_ativo', 'ML')
         padrao_info = e.get('padrao_ativo', {}); streak_ent = e.get('streak_info', None)
         regime_ent = e.get('regime', 'estavel')
         melhores_principal = _selecionar_melhores_numeros(dz_princ, list(sis.historico_numeros), 6)
         cor = "#FF6347" if e.get('modo_anti_erro') else "#00CED1"
-        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else "🤖 ML V15 (1 Dúzia) ✅"
+        icone_modo = "🟡 Fallback" if gatilho == 'Fallback' else ("🤖 ML V15 (2 Dúzias) ✅" if dz_sec else "🤖 ML V15 (1 Dúzia) ✅")
         if e.get('fonte') == 'gatilhos':
             icone_modo = f"🧮 Gatilho Numérico: {gatilho}"
         if regime_ent in ('transicao', 'instavel'):
             icone_modo += f" 🔄{regime_ent}"
         padrao_html = f'<p style="text-align:center; color:#FFD700; font-size:0.8em;">🧩 {padrao_info["resumo"]}</p>' if padrao_info.get('resumo') else ""
         streak_html = f'<p style="text-align:center; color:#FF8C00; font-size:0.85em;">{streak_ent}</p>' if streak_ent else ""
+        titulo_duzia = f"🗼 D{dz_princ} + 🛡️ D{dz_sec}" if dz_sec else f"🎯 Dúzia {dz_princ}"
         st.markdown(f"""
         <div style="background-color:{cor}15; border:2px solid {cor}; border-radius:15px; padding:15px;">
-            <h2 style="color:{cor}; text-align:center;">🎯 Dúzia {dz_princ}</h2>
-            <p style="text-align:center;">Confiança: {conf:.2f}{f' | ProbML: {prob_ml:.0f}%' if prob_ml is not None else ''}</p>
+            <h2 style="color:{cor}; text-align:center;">{titulo_duzia}</h2>
+            <p style="text-align:center;">Confiança: {conf:.2f}{f' | ProbML: {prob_ml:.0f}%' if prob_ml is not None else ''}{f' | Score cobertura: {score_sec:.1f}' if score_sec is not None else ''}</p>
             <p style="text-align:center;">{icone_modo}</p>
             {padrao_html}{streak_html}
         </div>""", unsafe_allow_html=True)
         if e.get('fonte') == 'gatilhos':
             st.write(f"**🎲 Números do gatilho:** {', '.join(map(str, e.get('numeros_apostar', [])))}")
         else:
-            st.write(f"**🎲 D{dz_princ}:** {', '.join(map(str, melhores_principal))}")
+            st.write(f"**🗼 D{dz_princ} (principal):** {', '.join(map(str, melhores_principal))}")
+            if dz_sec:
+                melhores_cobertura = _selecionar_melhores_numeros(dz_sec, list(sis.historico_numeros), 6)
+                st.write(f"**🛡️ D{dz_sec} (cobertura):** {', '.join(map(str, melhores_cobertura))}")
         st.progress(min(1.0, max(0.0, conf / 5.0)))
     else:
         st.info("🔍 Aguardando sinal...")
@@ -3818,6 +3890,7 @@ if sis.historico_entradas:
         dados.append({
             "Rod": e.get('rodada'), "Hora": e.get('hora'), "🎲": nd, "Real": real,
             "Prev": f"D{e.get('duzia_prevista','?')}",
+            "Cob": f"D{e.get('duzia_sec_prevista')}" if e.get('duzia_sec_prevista') else "-",
             "Conf": f"{e.get('confianca',0):.1f}",
             "ProbML": f"{e.get('prob_ml_bruta'):.0f}%" if e.get('prob_ml_bruta') is not None else "-",
             "Gat": e.get('gatilho','ML'),
@@ -3827,6 +3900,8 @@ if sis.historico_entradas:
             "STK": str(e.get('streak_info', '-')) if e.get('streak_info') else '-',
             "Duz": '✅' if e.get('acerto_duzia') else '❌',
             "P1": '✅' if e.get('acerto_primaria') else '-',
+            "Cob✓": '🛡️' if e.get('acerto_secundaria') else ('-' if e.get('duzia_sec_prevista') else ''),
+            "2Torres": '✅' if e.get('acerto_cobertura_dupla') else ('❌' if e.get('duzia_sec_prevista') else '-'),
             "Nº": '🎯' if e.get('acerto_numero') else '-',
             "Zer": '🟢' if e.get('acerto_zero') else '-',
         })
@@ -3857,7 +3932,8 @@ with col_t2:
         st.warning("📢 Telegram Alt NÃO")
 
 config_ativa = ROLETA_CONFIGS.get(api_name, SETUP_XXXTREME)
-st.caption(f"🤖 DuziaAI V15 | {api_name} | ✅ Alta Precisão · 1 Dúzia · sem cobertura | {formatar_hora_brasilia()}")
+modo_txt = "1 Dúzia + Cobertura" if st.session_state.get('modo_cobertura_2_duzias', False) else "1 Dúzia · sem cobertura"
+st.caption(f"🤖 DuziaAI V15 | {api_name} | ✅ Alta Precisão · {modo_txt} | {formatar_hora_brasilia()}")
 
 modelo_path = get_modelo_ml_path(api_name)
 if os.path.exists(modelo_path):
