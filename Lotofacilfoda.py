@@ -715,7 +715,14 @@ SETUP_BASE = {
     # colocado no ranking, mesma escala pós-normalização 0-100) superar
     # este mínimo — senão estaríamos "cobrindo" uma dúzia sem nenhum sinal
     # acima do acaso só para preencher a segunda torre.
-    'cobertura_score_minimo': 22,
+    # 🛠️ CORREÇÃO: 22 estava alto demais na prática — o modo "Alta Precisão"
+    # concentra a maior parte do score na dúzia principal justamente para
+    # filtrar entradas fracas, o que deixava a 2ª colocada quase sempre
+    # abaixo de 22 e a cobertura nunca disparava. Baixado para 12 (ainda
+    # filtra um d2 morto/quase-zero, mas deixa a cobertura funcionar na
+    # prática). Ajuste este valor livremente — agora o score real da 2ª
+    # colocada aparece na tela mesmo quando a cobertura não é ativada.
+    'cobertura_score_minimo': 12,
 }
 
 SETUP_XXXTREME = {
@@ -2922,8 +2929,8 @@ class DuziaAI:
         # e o bot opera só com a principal, como antes.
         modo_2_duzias = st.session_state.get('modo_cobertura_2_duzias', False)
         duzia_secundaria_final = None
+        score_cobertura_min = st.session_state.get('cobertura_score_minimo_ui', config.get('cobertura_score_minimo', 12))
         if modo_2_duzias and pode_entrar:
-            score_cobertura_min = config.get('cobertura_score_minimo', 22)
             if s2 >= score_cobertura_min:
                 duzia_secundaria_final = d2
 
@@ -2933,6 +2940,10 @@ class DuziaAI:
             "entrar": pode_entrar, "motivo": motivo, "score": scores,
             "confianca": round(confianca, 2), "duzia": d1, "duzia_secundaria": duzia_secundaria_final,
             "score_secundaria": round(s2, 1) if duzia_secundaria_final else None,
+            "cobertura_diagnostico": {
+                "modo_ativo": modo_2_duzias, "duzia_candidata": d2, "score_candidato": round(s2, 1),
+                "minimo_exigido": score_cobertura_min, "ativada": duzia_secundaria_final is not None,
+            } if modo_2_duzias else None,
             "gatilho_ativo": "ML" if modo_base == 'ml' else "Fallback",
             "incluir_zero": incluir_zero, "modo_anti_erro": self.erros_consecutivos > 0,
             "numeros_completos": list(self.numeros_completos), "modo_previsao": modo,
@@ -3209,6 +3220,7 @@ class SistemaBot:
                         'duzia_prevista': previsao['duzia'],
                         'duzia_sec_prevista': duzia_secundaria,
                         'score_secundaria': previsao.get('score_secundaria'),
+                        'cobertura_diagnostico': previsao.get('cobertura_diagnostico'),
                         'confianca': previsao.get('confianca', 0),
                         'prob_ml_bruta': previsao.get('prob_ml_bruta'),
                         'gatilho_ativo': previsao.get('gatilho_ativo', 'ML'),
@@ -3459,7 +3471,16 @@ with st.sidebar:
         help="Quando ativo, além da dúzia principal (maior score do ML), o bot também cobre a 2ª dúzia do ranking — se o score dela superar o mínimo configurado. Cobre até 24/37 números (dúzia principal + cobertura), reduzindo a variância à custa de um payout líquido menor quando a principal acerta."
     )
     if st.session_state['modo_cobertura_2_duzias']:
-        st.caption("🗼 Principal = maior score do ML | 🛡️ Cobertura = 2º colocado, só se score ≥ mínimo configurado. Sem cobertura, o bot volta a operar só a dúzia principal naquela rodada.")
+        st.session_state['cobertura_score_minimo_ui'] = st.slider(
+            "Score mínimo da dúzia de cobertura", min_value=0, max_value=40,
+            value=st.session_state.get('cobertura_score_minimo_ui', 12),
+            help="Quanto mais baixo, mais fácil a cobertura ativar (mas cobrindo dúzias com menos sinal). Acompanhe o score ao vivo logo abaixo pra calibrar."
+        )
+        st.caption("🗼 Principal = maior score do ML | 🛡️ Cobertura = 2º colocado, só se score ≥ mínimo acima. Sem cobertura, o bot volta a operar só a dúzia principal naquela rodada.")
+        diag = (sis.entrada_ativa or {}).get('cobertura_diagnostico') if sis.entrada_ativa else None
+        if diag:
+            status_cob = "✅ ativada" if diag['ativada'] else "🚫 não ativada (score abaixo do mínimo)"
+            st.caption(f"📊 Última rodada: D{diag['duzia_candidata']} score {diag['score_candidato']:.1f} / mínimo {diag['minimo_exigido']:.0f} → {status_cob}")
         acs = sis.acertos_secundaria; ers = sis.erros_secundaria
         if acs + ers > 0:
             taxa_cob = acs / (acs + ers) * 100
