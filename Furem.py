@@ -643,6 +643,9 @@ class EstatisticasMegaAvancadas:
 # =====================================================
 # MÓDULO 3: MOTOR DE PONTUAÇÃO ADAPTATIVO - MEGA V10
 # =====================================================
+# =====================================================
+# MÓDULO 3: MOTOR DE PONTUAÇÃO ADAPTATIVO - MEGA V10
+# =====================================================
 
 class MotorPontuacaoAdaptativoMega:
     """Módulo 3 - Motor de Pontuação Adaptativo para Mega-Sena V10"""
@@ -656,18 +659,18 @@ class MotorPontuacaoAdaptativoMega:
         self.pontuacoes = self._calcular_pontuacoes()
         
     def _definir_pesos_base(self):
-        """Define os pesos iniciais do sistema"""
+        """Define os pesos iniciais do sistema - FOCADO NOS ÚLTIMOS 10 CONCURSOS"""
         return {
-            'freq5': 0.15,
-            'freq10': 0.20,
-            'freq20': 0.15,
-            'freq50': 0.10,
-            'atraso': 0.15,
-            'tendencia': 0.10,
-            'colunas': 0.05,
-            'linhas': 0.05,
-            'paridade': 0.03,
-            'soma': 0.02
+            'freq5': 0.15,      # Frequência nos últimos 5 concursos
+            'freq10': 0.35,     # ← PRINCIPAL: Últimos 10 concursos (aumentado)
+            'freq30': 0.10,     # ← NOVO: Últimos 30 concursos (substitui o 20)
+            'freq50': 0.10,     # Últimos 50 concursos
+            'atraso': 0.15,     # Atraso da dezena
+            'tendencia': 0.10,  # Tendência (subindo/caindo)
+            'colunas': 0.05,    # Distribuição por colunas
+            'linhas': 0.05,     # Distribuição por linhas
+            'paridade': 0.03,   # Pares/Ímpares
+            'soma': 0.02        # Soma total
         }
     
     def _carregar_pesos_otimizados(self):
@@ -678,6 +681,17 @@ class MotorPontuacaoAdaptativoMega:
                     dados = json.load(f)
                     self.pesos_otimizados = dados.get('pesos', None)
                     self.historico_desempenho = dados.get('historico', [])
+                    
+                    # Se os pesos antigos existirem, converte para o novo formato
+                    if self.pesos_otimizados and 'freq20' in self.pesos_otimizados:
+                        # Remove freq20 e adiciona freq10 e freq30
+                        self.pesos_otimizados['freq10'] = self.pesos_otimizados.pop('freq20', 0.35)
+                        self.pesos_otimizados['freq30'] = 0.10
+                        # Normaliza novamente
+                        soma = sum(self.pesos_otimizados.values())
+                        if soma > 0:
+                            self.pesos_otimizados = {k: v/soma for k, v in self.pesos_otimizados.items()}
+                        self._salvar_pesos_otimizados()
         except:
             pass
     
@@ -695,39 +709,39 @@ class MotorPontuacaoAdaptativoMega:
             pass
     
     def _calcular_pontuacoes(self):
-        """Calcula pontuações usando pesos atuais"""
+        """Calcula pontuações usando pesos atuais - BASEADO NOS ÚLTIMOS 10 CONCURSOS"""
         pontuacoes = {}
         
         # Usa pesos otimizados se disponíveis, senão usa base
         pesos = self.pesos_otimizados if self.pesos_otimizados else self.pesos_base
         
-        # Normaliza métricas
+        # Normaliza métricas - AGORA COM 10 e 30
         max_freq5 = max(self.estatisticas.frequencias_periodos[5].values()) if 5 in self.estatisticas.frequencias_periodos else 1
         max_freq10 = max(self.estatisticas.frequencias_periodos[10].values()) if 10 in self.estatisticas.frequencias_periodos else 1
-        max_freq20 = max(self.estatisticas.frequencias_periodos[20].values()) if 20 in self.estatisticas.frequencias_periodos else 1
+        max_freq30 = max(self.estatisticas.frequencias_periodos[30].values()) if 30 in self.estatisticas.frequencias_periodos else 1
         max_freq50 = max(self.estatisticas.frequencias_periodos[50].values()) if 50 in self.estatisticas.frequencias_periodos else 1
         max_atraso = max(self.estatisticas.atrasos.values()) if self.estatisticas.atrasos else 1
         
         for num in range(1, 61):
-            # Frequências em diferentes períodos
+            # Frequências em diferentes períodos - AGORA COM 10 e 30
             freq5 = self.estatisticas.frequencias_periodos.get(5, {}).get(num, 0) / max_freq5 if max_freq5 > 0 else 0
             freq10 = self.estatisticas.frequencias_periodos.get(10, {}).get(num, 0) / max_freq10 if max_freq10 > 0 else 0
-            freq20 = self.estatisticas.frequencias_periodos.get(20, {}).get(num, 0) / max_freq20 if max_freq20 > 0 else 0
+            freq30 = self.estatisticas.frequencias_periodos.get(30, {}).get(num, 0) / max_freq30 if max_freq30 > 0 else 0
             freq50 = self.estatisticas.frequencias_periodos.get(50, {}).get(num, 0) / max_freq50 if max_freq50 > 0 else 0
             
-            # Atraso (invertido)
+            # Atraso (invertido - quanto maior o atraso, maior a pontuação)
             atraso = 1 - (self.estatisticas.atrasos.get(num, 0) / max_atraso) if max_atraso > 0 else 0
             
             # Tendência
             tendencia_info = self.estatisticas.tendencias.get(num, {})
             inclinacao = tendencia_info.get('inclinacao', 0)
-            tendencia_norm = (inclinacao + 1) / 2
+            tendencia_norm = (inclinacao + 1) / 2  # Normaliza entre 0 e 1
             
-            # Colunas
+            # Colunas (distribuição horizontal: 1-10, 11-20, 21-30, 31-40, 41-50, 51-60)
             coluna = (num - 1) // 10
             coluna_score = self.estatisticas.distribuicao_colunas[coluna] if coluna < len(self.estatisticas.distribuicao_colunas) else 0
             
-            # Linhas
+            # Linhas (distribuição vertical: 1,11,21,31,41,51 / 2,12,22,32,42,52 / etc)
             linha = (num - 1) % 10
             linha_score = self.estatisticas.distribuicao_linhas[linha] if linha < len(self.estatisticas.distribuicao_linhas) else 0
             
@@ -737,11 +751,11 @@ class MotorPontuacaoAdaptativoMega:
             # Soma (pontuação baseada na soma média)
             soma_media = self.estatisticas.media_soma / 60
             
-            # Pontuação final
+            # Pontuação final - AGORA COM PESOS AJUSTADOS PARA ÚLTIMOS 10
             pontuacao = (
                 freq5 * pesos.get('freq5', 0.15) +
-                freq10 * pesos.get('freq10', 0.20) +
-                freq20 * pesos.get('freq20', 0.15) +
+                freq10 * pesos.get('freq10', 0.35) +    # ← PRINCIPAL (ÚLTIMOS 10)
+                freq30 * pesos.get('freq30', 0.10) +    # ← NOVO (ÚLTIMOS 30)
                 freq50 * pesos.get('freq50', 0.10) +
                 atraso * pesos.get('atraso', 0.15) +
                 tendencia_norm * pesos.get('tendencia', 0.10) +
@@ -818,6 +832,8 @@ class MotorPontuacaoAdaptativoMega:
     def get_pesos_atuais(self):
         """Retorna os pesos atuais (otimizados ou base)"""
         return self.pesos_otimizados if self.pesos_otimizados else self.pesos_base
+
+
 
 # =====================================================
 # MÓDULO 4: IA ESTATÍSTICA - MEGA V10
