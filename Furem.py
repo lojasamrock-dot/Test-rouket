@@ -1702,7 +1702,7 @@ def main():
     with st.sidebar:
         st.header("⚙️ Configurações V10")
         
-        qtd_concursos = st.slider("Qtd concursos históricos", 50, 500, 200)
+        qtd_concursos = st.slider("Qtd concursos históricos", 10, 500, 200)
         
         col1, col2 = st.columns(2)
         with col1:
