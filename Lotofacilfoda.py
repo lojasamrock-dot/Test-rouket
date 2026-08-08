@@ -768,7 +768,7 @@ SETUP_XXXTREME = {
     'alerta_peso_adaptativo_off': True,
     'drift_janela': 12,
     'drift_taxa_minima': 0.25,
-    'drift_alertar_apos': 3,
+    'drift_alertar_apos': 10,
     'drift_rodadas_auto_reset': 15,
     'decaimento_fator': 0.95,
     'decaimento_a_cada': 4,
