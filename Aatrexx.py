@@ -3076,7 +3076,10 @@ def main():
                     "cada ponto testado), quantas das 15 dezenas sorteadas historicamente ficaram FORA de um "
                     "corte Top 21 — ajuda a dimensionar o risco de deixar dezenas de fora, não a prever o futuro."
                 )
-                n_testes_pool = st.slider("Concursos a testar", 10, min(200, max(10, total_concursos_disp - 30)), 50, key="n_testes_pool_fechamento")
+                total_concursos_pool = len(st.session_state.banco_dados.concursos) if st.session_state.banco_dados else 0
+                max_testes_pool = min(200, max(10, total_concursos_pool - 30))
+                valor_padrao_pool = min(50, max_testes_pool)
+                n_testes_pool = st.slider("Concursos a testar", 10, max_testes_pool, valor_padrao_pool, key="n_testes_pool_fechamento")
                 if st.button("Rodar backtest do pool Top 21", key="btn_backtest_pool_fechamento"):
                     backtester = BacktestsLF(st.session_state.banco_dados, stats, st.session_state.filtros)
                     resultado_pool = backtester.testar_pool_fechamento(top_n=21, num_testes=n_testes_pool)
