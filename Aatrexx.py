@@ -1714,12 +1714,64 @@ class MotorPontuacaoLF:
         ranking = sorted(self.pontuacoes.items(), key=lambda x: x[1], reverse=True)
         return ranking[:top_n]
 
+def montar_pool_consenso_lf(estatisticas, tamanho_pool=21):
+    """
+    Método alternativo de seleção do pool: em vez de uma única nota
+    composta (MotorPontuacaoLF, que combina 6 sinais com pesos fixos
+    definidos a priori — e pode ficar sistematicamente enviesada contra
+    algumas dezenas se um dos sinais dominar), este método usa
+    RANQUEAMENTO POR CONSENSO.
+
+    Cada dezena recebe um rank (1 = melhor) dentro de 4 sinais
+    independentes entre si:
+    - Frequência Inteligente (multi-janela)
+    - Atraso (menor atraso = melhor rank)
+    - Força de coocorrência bayesiana
+    - Inclinação de tendência (subindo/caindo)
+
+    A posição final é a MÉDIA dos 4 ranks. Uma dezena só fica de fora
+    do pool se estiver mal posicionada na maioria dos sinais — não
+    basta um único componente (ex.: "atraso") penalizá-la sozinho para
+    excluí-la, como pode acontecer numa nota composta com pesos fixos.
+    Isso reduz o risco de um viés de um sinal só derrubar uma dezena
+    que ainda é forte nos outros.
+
+    IMPORTANTE: isto ainda é uma heurística sobre dados históricos —
+    não há garantia de que reduza erros em sorteios futuros, que são
+    eventos aleatórios independentes. Use o backtest (`testar_pool_fechamento`,
+    parâmetro `metodo='consenso'`) para comparar objetivamente contra o
+    método atual antes de confiar num ou noutro.
+    """
+    atraso_max = max(estatisticas.atrasos.values()) if estatisticas.atrasos else 1
+    atraso_max = atraso_max if atraso_max > 0 else 1
+
+    sinais = {
+        'frequencia': {n: estatisticas.frequencia_inteligente.get(n, 0) for n in range(1, 26)},
+        'atraso_invertido': {n: 1.0 - (estatisticas.atrasos.get(n, 0) / atraso_max) for n in range(1, 26)},
+        'coocorrencia': {n: estatisticas.bayes_forca.get(n, 0) for n in range(1, 26)},
+        'tendencia': {n: estatisticas.tendencias.get(n, {}).get('inclinacao', 0) for n in range(1, 26)},
+    }
+
+    ranks_por_sinal = {}
+    for nome, valores in sinais.items():
+        ordenado = sorted(valores.items(), key=lambda x: x[1], reverse=True)
+        ranks_por_sinal[nome] = {num: pos + 1 for pos, (num, _) in enumerate(ordenado)}
+
+    rank_medio = {}
+    for n in range(1, 26):
+        rank_medio[n] = float(np.mean([ranks_por_sinal[nome][n] for nome in sinais]))
+
+    ranking_consenso = sorted(rank_medio.items(), key=lambda x: x[1])
+    pool = sorted(n for n, _ in ranking_consenso[:tamanho_pool])
+    return pool, ranking_consenso
+
 # =====================================================
 # MÓDULO 4: IA ESTATÍSTICA - LOTOFÁCIL
 # =====================================================
 
 class IAEstatisticaLF:
     """Módulo 4 - IA Estatística para Lotofácil
+
     
     CORREÇÃO CRÍTICA: a versão anterior calculava features (frequência, atraso,
     tendência) usando `self.estatisticas`, que é computada com TODO o histórico
@@ -2535,25 +2587,20 @@ class BacktestsLF:
             resultados[estrategia] = self.testar_estrategia(estrategia, num_testes)
         return resultados
 
-    def testar_pool_fechamento(self, top_n=21, num_testes=50):
+    def testar_pool_fechamento(self, top_n=21, num_testes=50, metodo='motor'):
         """
-        Backtest ponto-no-tempo do POOL FIXO usado na aba de Fechamento
-        ("Top N do Ranking"). A aba de Fechamento monta o pool com o
-        MotorPontuacaoLF calculado sobre TODO o histórico carregado —
-        incluindo os concursos mais recentes — e nunca valida se esse
-        corte em N dezenas historicamente deixa de fora dezenas que
-        realmente saem. Este método corrige isso replicando a mesma
-        lógica anti-vazamento já usada em `testar_estrategia`: para cada
-        concurso testado, recalcula o ranking usando só concursos
-        estritamente anteriores a ele, e mede quantas das dezenas
-        sorteadas ficaram DENTRO e quantas ficaram FORA do Top N daquele
-        momento.
+        Backtest ponto-no-tempo do POOL usado na aba de Fechamento.
+        `metodo` define como o pool é montado em cada ponto do tempo:
+        - 'motor': Top N pelo MotorPontuacaoLF (nota composta, pesos fixos) — método original.
+        - 'consenso': Top N por ranqueamento por consenso (montar_pool_consenso_lf).
 
-        Sem este teste, um pool "ruim" (que sistematicamente deixa de
-        fora dezenas frias que voltam a sair) só é percebido depois do
-        sorteio — como aconteceu ao conferir o concurso 3758, em que 2
-        das 15 dezenas sorteadas (09 e 25) estavam fora do Top 21 usado
-        em todos os fechamentos gerados.
+        Para cada concurso testado, recalcula o pool usando só concursos
+        estritamente anteriores a ele (sem vazamento de dados futuros), e
+        mede quantas das dezenas sorteadas ficaram DENTRO e quantas
+        ficaram FORA do pool daquele momento. Isso permite comparar
+        objetivamente se trocar o método de seleção do pool realmente
+        captura mais dezenas reais no histórico, ou se é só uma variação
+        sem diferença prática.
         """
         historico = self.banco.concursos  # mais recente primeiro
         testes = historico[:min(num_testes, len(historico))]
@@ -2562,7 +2609,7 @@ class BacktestsLF:
         fora_lista = []
         pulados = 0
 
-        progress_bar = st.progress(0, text=f"Executando backtest do pool Top {top_n}...")
+        progress_bar = st.progress(0, text=f"Executando backtest do pool Top {top_n} (método: {metodo})...")
 
         for i, concurso in enumerate(testes):
             dezenas_reais = set(concurso['dezenas'])
@@ -2575,8 +2622,13 @@ class BacktestsLF:
 
             banco_pt = _BancoTemporal(concursos_anteriores)
             estatisticas_pt = EstatisticasLFAvancadas(banco_pt)
-            pontuacao_pt = MotorPontuacaoLF(estatisticas_pt)
-            pool_pt = set(n for n, _ in pontuacao_pt.get_ranking(top_n))
+
+            if metodo == 'consenso':
+                pool_pt, _ = montar_pool_consenso_lf(estatisticas_pt, tamanho_pool=top_n)
+                pool_pt = set(pool_pt)
+            else:
+                pontuacao_pt = MotorPontuacaoLF(estatisticas_pt)
+                pool_pt = set(n for n, _ in pontuacao_pt.get_ranking(top_n))
 
             capturadas_lista.append(len(dezenas_reais & pool_pt))
             fora_lista.append(len(dezenas_reais - pool_pt))
@@ -2592,6 +2644,7 @@ class BacktestsLF:
 
         return {
             'top_n': top_n,
+            'metodo': metodo,
             'total_testes': len(capturadas_lista),
             'media_capturadas': float(np.mean(capturadas_lista)) if capturadas_lista else 0.0,
             'minimo_capturadas': int(min(capturadas_lista)) if capturadas_lista else 0,
@@ -3064,61 +3117,88 @@ def main():
             """, unsafe_allow_html=True)
 
             ranking_completo = pontuacao.get_ranking(25)
-            ranking_top21 = ranking_completo[:21]
-            ranking_risco = ranking_completo[21:25]
-            dezenas_top21 = sorted([n for n, _ in ranking_top21])
+
+            metodo_pool = st.radio(
+                "Método de seleção do pool",
+                ["Top N por Motor de Pontuação (nota composta)", "Top N por Consenso (média de ranks independentes)"],
+                horizontal=True,
+                key="metodo_pool_fechamento",
+                help="O Motor de Pontuação combina 6 sinais numa única nota com pesos fixos. O Consenso ranqueia "
+                     "cada dezena em 4 sinais independentes e usa a posição média — uma dezena só é excluída se "
+                     "estiver mal posicionada na maioria dos sinais, não só num deles."
+            )
+            usar_consenso_pool = metodo_pool.startswith("Top N por Consenso")
+
+            if usar_consenso_pool:
+                dezenas_top21, ranking_consenso_completo = montar_pool_consenso_lf(stats, tamanho_pool=21)
+                ranking_completo = ranking_consenso_completo  # (dezena, rank_medio) — menor rank_medio = melhor
+                ranking_top21 = ranking_completo[:21]
+                ranking_risco = ranking_completo[21:25]
+            else:
+                ranking_top21 = ranking_completo[:21]
+                ranking_risco = ranking_completo[21:25]
+                dezenas_top21 = sorted([n for n, _ in ranking_top21])
 
             with st.expander("🧪 Validar este pool no histórico (backtest ponto-no-tempo)", expanded=False):
                 st.caption(
-                    "O Top 21 acima foi calculado com TODO o histórico carregado. Isso não garante nada "
-                    "sobre o próximo concurso — sorteios da Lotofácil são eventos independentes e aleatórios. "
-                    "Este teste apenas mostra, olhando para concursos passados (sem usar dados futuros em "
-                    "cada ponto testado), quantas das 15 dezenas sorteadas historicamente ficaram FORA de um "
-                    "corte Top 21 — ajuda a dimensionar o risco de deixar dezenas de fora, não a prever o futuro."
+                    "O pool acima foi calculado com TODO o histórico carregado. Isso não garante nada sobre o "
+                    "próximo concurso — sorteios da Lotofácil são eventos independentes e aleatórios. Este teste "
+                    "mostra, olhando para concursos passados (sem usar dados futuros em cada ponto testado), "
+                    "quantas das 15 dezenas sorteadas historicamente ficaram FORA de cada método de pool — e "
+                    "compara os dois métodos lado a lado contra o esperado só por acaso."
                 )
                 total_concursos_pool = len(st.session_state.banco_dados.concursos) if st.session_state.banco_dados else 0
                 max_testes_pool = min(200, max(10, total_concursos_pool - 30))
                 valor_padrao_pool = min(50, max_testes_pool)
                 n_testes_pool = st.slider("Concursos a testar", 10, max_testes_pool, valor_padrao_pool, key="n_testes_pool_fechamento")
-                if st.button("Rodar backtest do pool Top 21", key="btn_backtest_pool_fechamento"):
+                if st.button("Rodar backtest comparando os 2 métodos", key="btn_backtest_pool_fechamento"):
                     backtester = BacktestsLF(st.session_state.banco_dados, stats, st.session_state.filtros)
-                    resultado_pool = backtester.testar_pool_fechamento(top_n=21, num_testes=n_testes_pool)
-                    st.session_state.resultado_backtest_pool = resultado_pool
+                    resultado_motor = backtester.testar_pool_fechamento(top_n=21, num_testes=n_testes_pool, metodo='motor')
+                    resultado_consenso = backtester.testar_pool_fechamento(top_n=21, num_testes=n_testes_pool, metodo='consenso')
+                    st.session_state.resultado_backtest_pool = {'motor': resultado_motor, 'consenso': resultado_consenso}
 
-                resultado_pool = st.session_state.get("resultado_backtest_pool")
-                if resultado_pool and resultado_pool['total_testes'] > 0:
-                    colb1, colb2, colb3 = st.columns(3)
-                    with colb1:
-                        st.metric("Média dentro do pool", f"{resultado_pool['media_capturadas']:.1f} / 15")
-                    with colb2:
-                        st.metric("Esperado só por acaso", f"{resultado_pool['esperado_por_acaso']:.1f} / 15")
-                    with colb3:
-                        st.metric("Pior caso já visto (fora do pool)", resultado_pool['maximo_fora_do_pool'])
-                    diferenca = resultado_pool['media_capturadas'] - resultado_pool['esperado_por_acaso']
-                    if diferenca <= 0.3:
+                resultados_pool = st.session_state.get("resultado_backtest_pool")
+                if resultados_pool and resultados_pool['motor']['total_testes'] > 0:
+                    r_motor, r_consenso = resultados_pool['motor'], resultados_pool['consenso']
+                    df_comp = pd.DataFrame({
+                        'Método': ['Motor de Pontuação', 'Consenso', 'Esperado por acaso'],
+                        'Média capturada (/15)': [
+                            round(r_motor['media_capturadas'], 2),
+                            round(r_consenso['media_capturadas'], 2),
+                            r_motor['esperado_por_acaso']
+                        ],
+                        'Pior caso (fora do pool)': [
+                            r_motor['maximo_fora_do_pool'],
+                            r_consenso['maximo_fora_do_pool'],
+                            '—'
+                        ]
+                    })
+                    st.dataframe(df_comp, use_container_width=True, hide_index=True)
+
+                    melhor_diferenca = max(
+                        r_motor['media_capturadas'] - r_motor['esperado_por_acaso'],
+                        r_consenso['media_capturadas'] - r_motor['esperado_por_acaso']
+                    )
+                    if melhor_diferenca <= 0.3:
                         st.warning(
-                            f"⚠️ Nos {resultado_pool['total_testes']} concursos testados, o Top 21 capturou em média "
-                            f"{resultado_pool['media_capturadas']:.2f} das 15 dezenas — praticamente igual ao "
-                            f"{resultado_pool['esperado_por_acaso']:.2f} esperado por puro acaso (21/25 das dezenas). "
-                            "Ou seja, este ranking não mostrou vantagem histórica mensurável sobre escolher 21 "
-                            "dezenas ao acaso; trate os jogos gerados como exploratórios, não como previsão."
+                            f"⚠️ Nos {r_motor['total_testes']} concursos testados, nenhum dos dois métodos superou "
+                            f"de forma relevante o {r_motor['esperado_por_acaso']:.2f}/15 esperado por puro acaso "
+                            "(21 dezenas escolhidas ao acaso das 25). Isso é uma evidência de que, neste histórico, "
+                            "a montagem do pool não está agregando vantagem mensurável — trate os jogos como "
+                            "exploratórios, não como previsão."
                         )
                     else:
-                        st.info(
-                            f"Nos {resultado_pool['total_testes']} concursos testados, o Top 21 capturou em média "
-                            f"{resultado_pool['media_capturadas']:.2f}/15 dezenas, um pouco acima do "
-                            f"{resultado_pool['esperado_por_acaso']:.2f} esperado por acaso. Mesmo assim, em até "
-                            f"{resultado_pool['maximo_fora_do_pool']} dezena(s) o sorteio real ficou fora do pool "
-                            "em algum concurso testado — considere isso ao decidir o tamanho do pool."
-                        )
+                        melhor_nome = "Consenso" if (r_consenso['media_capturadas'] > r_motor['media_capturadas']) else "Motor de Pontuação"
+                        st.info(f"No histórico testado, **{melhor_nome}** capturou mais dezenas reais em média. Ainda assim, isso descreve o passado — não garante o próximo concurso.")
 
             st.markdown("**⚠️ Zona de risco (dezenas logo fora do Top 21):**")
             if ranking_risco:
                 partes_risco = []
+                rotulo_score = "rank médio" if usar_consenso_pool else "score"
                 for num, score in ranking_risco:
                     saiu_ultimo = stats.repetiu_ultimo_concurso.get(num, False)
                     marcador = " 🔥 saiu no último concurso" if saiu_ultimo else ""
-                    partes_risco.append(f"Dezena {num:02d} (score {score:.2f}){marcador}")
+                    partes_risco.append(f"Dezena {num:02d} ({rotulo_score} {score:.2f}){marcador}")
                 st.caption(" | ".join(partes_risco))
             else:
                 st.caption("Nenhuma dezena pontuada fora do Top 21.")
@@ -3134,8 +3214,10 @@ def main():
             if incluir_seguranca:
                 candidatas_seguranca = [num for num, _ in ranking_risco if stats.repetiu_ultimo_concurso.get(num, False)]
                 if candidatas_seguranca:
-                    top21_por_score_asc = sorted(ranking_top21, key=lambda x: x[1])
-                    trocaveis = [num for num, _ in top21_por_score_asc if not stats.repetiu_ultimo_concurso.get(num, False)]
+                    # No Motor, maior score = melhor (pior fica no início ao ordenar ascendente).
+                    # No Consenso, menor rank médio = melhor (pior fica no início ao ordenar descendente).
+                    top21_por_forca_asc = sorted(ranking_top21, key=lambda x: x[1], reverse=usar_consenso_pool)
+                    trocaveis = [num for num, _ in top21_por_forca_asc if not stats.repetiu_ultimo_concurso.get(num, False)]
 
                     for candidata in candidatas_seguranca:
                         if not trocaveis:
