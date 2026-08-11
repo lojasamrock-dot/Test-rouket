@@ -2535,6 +2535,72 @@ class BacktestsLF:
             resultados[estrategia] = self.testar_estrategia(estrategia, num_testes)
         return resultados
 
+    def testar_pool_fechamento(self, top_n=21, num_testes=50):
+        """
+        Backtest ponto-no-tempo do POOL FIXO usado na aba de Fechamento
+        ("Top N do Ranking"). A aba de Fechamento monta o pool com o
+        MotorPontuacaoLF calculado sobre TODO o histórico carregado —
+        incluindo os concursos mais recentes — e nunca valida se esse
+        corte em N dezenas historicamente deixa de fora dezenas que
+        realmente saem. Este método corrige isso replicando a mesma
+        lógica anti-vazamento já usada em `testar_estrategia`: para cada
+        concurso testado, recalcula o ranking usando só concursos
+        estritamente anteriores a ele, e mede quantas das dezenas
+        sorteadas ficaram DENTRO e quantas ficaram FORA do Top N daquele
+        momento.
+
+        Sem este teste, um pool "ruim" (que sistematicamente deixa de
+        fora dezenas frias que voltam a sair) só é percebido depois do
+        sorteio — como aconteceu ao conferir o concurso 3758, em que 2
+        das 15 dezenas sorteadas (09 e 25) estavam fora do Top 21 usado
+        em todos os fechamentos gerados.
+        """
+        historico = self.banco.concursos  # mais recente primeiro
+        testes = historico[:min(num_testes, len(historico))]
+
+        capturadas_lista = []
+        fora_lista = []
+        pulados = 0
+
+        progress_bar = st.progress(0, text=f"Executando backtest do pool Top {top_n}...")
+
+        for i, concurso in enumerate(testes):
+            dezenas_reais = set(concurso['dezenas'])
+            concursos_anteriores = historico[i + 1:]
+
+            if len(concursos_anteriores) < self.AQUECIMENTO_MINIMO:
+                pulados += 1
+                progress_bar.progress((i + 1) / len(testes))
+                continue
+
+            banco_pt = _BancoTemporal(concursos_anteriores)
+            estatisticas_pt = EstatisticasLFAvancadas(banco_pt)
+            pontuacao_pt = MotorPontuacaoLF(estatisticas_pt)
+            pool_pt = set(n for n, _ in pontuacao_pt.get_ranking(top_n))
+
+            capturadas_lista.append(len(dezenas_reais & pool_pt))
+            fora_lista.append(len(dezenas_reais - pool_pt))
+
+            progress_bar.progress((i + 1) / len(testes))
+
+        progress_bar.empty()
+
+        if pulados:
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) por não terem histórico anterior suficiente ({self.AQUECIMENTO_MINIMO}+ concursos).")
+
+        esperado_acaso = 15 * top_n / 25.0
+
+        return {
+            'top_n': top_n,
+            'total_testes': len(capturadas_lista),
+            'media_capturadas': float(np.mean(capturadas_lista)) if capturadas_lista else 0.0,
+            'minimo_capturadas': int(min(capturadas_lista)) if capturadas_lista else 0,
+            'media_fora_do_pool': float(np.mean(fora_lista)) if fora_lista else 0.0,
+            'maximo_fora_do_pool': int(max(fora_lista)) if fora_lista else 0,
+            'distribuicao_fora_do_pool': dict(Counter(fora_lista)) if fora_lista else {},
+            'esperado_por_acaso': round(esperado_acaso, 2)
+        }
+
 # =====================================================
 # FUNÇÃO PARA TESTAR A GERAÇÃO
 # =====================================================
@@ -3001,6 +3067,47 @@ def main():
             ranking_top21 = ranking_completo[:21]
             ranking_risco = ranking_completo[21:25]
             dezenas_top21 = sorted([n for n, _ in ranking_top21])
+
+            with st.expander("🧪 Validar este pool no histórico (backtest ponto-no-tempo)", expanded=False):
+                st.caption(
+                    "O Top 21 acima foi calculado com TODO o histórico carregado. Isso não garante nada "
+                    "sobre o próximo concurso — sorteios da Lotofácil são eventos independentes e aleatórios. "
+                    "Este teste apenas mostra, olhando para concursos passados (sem usar dados futuros em "
+                    "cada ponto testado), quantas das 15 dezenas sorteadas historicamente ficaram FORA de um "
+                    "corte Top 21 — ajuda a dimensionar o risco de deixar dezenas de fora, não a prever o futuro."
+                )
+                n_testes_pool = st.slider("Concursos a testar", 10, min(200, max(10, total_concursos_disp - 30)), 50, key="n_testes_pool_fechamento")
+                if st.button("Rodar backtest do pool Top 21", key="btn_backtest_pool_fechamento"):
+                    backtester = BacktestsLF(st.session_state.banco_dados, stats, st.session_state.filtros)
+                    resultado_pool = backtester.testar_pool_fechamento(top_n=21, num_testes=n_testes_pool)
+                    st.session_state.resultado_backtest_pool = resultado_pool
+
+                resultado_pool = st.session_state.get("resultado_backtest_pool")
+                if resultado_pool and resultado_pool['total_testes'] > 0:
+                    colb1, colb2, colb3 = st.columns(3)
+                    with colb1:
+                        st.metric("Média dentro do pool", f"{resultado_pool['media_capturadas']:.1f} / 15")
+                    with colb2:
+                        st.metric("Esperado só por acaso", f"{resultado_pool['esperado_por_acaso']:.1f} / 15")
+                    with colb3:
+                        st.metric("Pior caso já visto (fora do pool)", resultado_pool['maximo_fora_do_pool'])
+                    diferenca = resultado_pool['media_capturadas'] - resultado_pool['esperado_por_acaso']
+                    if diferenca <= 0.3:
+                        st.warning(
+                            f"⚠️ Nos {resultado_pool['total_testes']} concursos testados, o Top 21 capturou em média "
+                            f"{resultado_pool['media_capturadas']:.2f} das 15 dezenas — praticamente igual ao "
+                            f"{resultado_pool['esperado_por_acaso']:.2f} esperado por puro acaso (21/25 das dezenas). "
+                            "Ou seja, este ranking não mostrou vantagem histórica mensurável sobre escolher 21 "
+                            "dezenas ao acaso; trate os jogos gerados como exploratórios, não como previsão."
+                        )
+                    else:
+                        st.info(
+                            f"Nos {resultado_pool['total_testes']} concursos testados, o Top 21 capturou em média "
+                            f"{resultado_pool['media_capturadas']:.2f}/15 dezenas, um pouco acima do "
+                            f"{resultado_pool['esperado_por_acaso']:.2f} esperado por acaso. Mesmo assim, em até "
+                            f"{resultado_pool['maximo_fora_do_pool']} dezena(s) o sorteio real ficou fora do pool "
+                            "em algum concurso testado — considere isso ao decidir o tamanho do pool."
+                        )
 
             st.markdown("**⚠️ Zona de risco (dezenas logo fora do Top 21):**")
             if ranking_risco:
