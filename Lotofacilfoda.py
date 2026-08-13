@@ -506,6 +506,34 @@ def extrair_features_consenso(consenso_info):
     return [conf, tipo_peso.get(tipo, 0), duzia]
 
 
+def extrair_features_duracao(duracoes_rodadas, posicao_atual, janela=20):
+    """
+    🆕 Features de timing real da rodada (não é contagem de giro — é a
+    duração medida entre a chegada de um número e a do anterior, único
+    timing que a API realmente expõe). `posicao_atual` é o índice (1-based,
+    == len(historico_numeros) no ponto da extração) até onde o histórico
+    está sendo considerado, pra pegar exatamente as durações já conhecidas
+    naquele momento sem vazar dado futuro em treino.
+
+    Retorna: [duracao_ultima, duracao_media_5, duracao_media_janela,
+              desvio_janela, duracao_relativa_ultima]
+    Valor neutro (0) quando não há dado suficiente — deixa o modelo livre
+    pra aprender que "sem informação" não é sinal de nada.
+    """
+    disponiveis = [d for d in duracoes_rodadas[:posicao_atual] if d is not None]
+    if len(disponiveis) < 3:
+        return [0.0, 0.0, 0.0, 0.0, 0.0]
+
+    janela_dur = disponiveis[-janela:] if len(disponiveis) >= janela else disponiveis
+    duracao_ultima = disponiveis[-1]
+    duracao_media_5 = sum(disponiveis[-5:]) / min(5, len(disponiveis))
+    duracao_media_janela = sum(janela_dur) / len(janela_dur)
+    desvio_janela = float(np.std(janela_dur)) if len(janela_dur) > 1 else 0.0
+    duracao_relativa_ultima = (duracao_ultima - duracao_media_janela) / duracao_media_janela if duracao_media_janela > 0 else 0.0
+
+    return [duracao_ultima, duracao_media_5, duracao_media_janela, desvio_janela, duracao_relativa_ultima]
+
+
 # =============================
 # 🆕 MODO ALTA PRECISÃO (V15.1) — 1 DÚZIA, FOCO NA QUALIDADE DO ML
 # =============================
@@ -974,7 +1002,7 @@ def get_pasta_sessao(api_name):
 # incompatível (ex.: sklearn/numpy de versão diferente) pode travar no nível
 # nativo (Segmentation Fault) ANTES de qualquer checagem em Python conseguir
 # rodar — então descartar por versão só depois de carregar não é seguro.
-_TREINO_SCHEMA_VERSION = 3  # v3: versão embutida no nome do arquivo (evita segfault ao carregar modelo antigo incompatível)
+_TREINO_SCHEMA_VERSION = 4  # v4: +5 features de duracao_rodada (timing real da API); v3: versão embutida no nome do arquivo (evita segfault ao carregar modelo antigo incompatível)
 
 def get_modelo_ml_path(api_name):
     criar_pasta_modelos_ml()
@@ -1594,6 +1622,15 @@ class DuziaAI:
         self._ultimos_lucky_numbers = []
         self._ultimo_multiplicador = 0
 
+        # 🆕 Duração real (segundos) entre rodadas consecutivas, alinhada
+        # 1:1 com historico_completo/numeros_completos (lista simples, sem
+        # maxlen, de propósito — historico_completo também não tem maxlen;
+        # se um dos dois tivesse cap e o outro não, o índice desalinharia
+        # em sessões longas). Alimentada por registrar_duracao(), chamado
+        # de fora a cada novo número, sempre antes de adicionar().
+        self.duracoes_rodadas = []
+        self.usar_feature_duracao = True  # toggle: False remove a feature sem mexer no resto
+
         # THRESHOLD ADAPTATIVO
         self.historico_confianca_resultado = deque(maxlen=100)
         self._threshold_ajuste = 0.0
@@ -1944,7 +1981,12 @@ class DuziaAI:
         features_vies_curto = extrair_features_vies_curto_prazo(historico_duzias)
         features_raio = extrair_features_raio(self.historico_raios)
         features_consenso = extrair_features_consenso(self.consenso_info)
-        
+        features_duracao = (
+            extrair_features_duracao(self.duracoes_rodadas, len(historico_numeros))
+            if getattr(self, 'usar_feature_duracao', True)
+            else [0.0, 0.0, 0.0, 0.0, 0.0]
+        )
+
         config = self._get_config()
         peso_zero = config.get('ml_features_pos_zero_peso', 1.2)
         peso_numero = config.get('ml_features_numero_duzia_peso', 1.0)
@@ -1955,6 +1997,10 @@ class DuziaAI:
         peso_vies = config.get('ml_features_vies_curto_peso', 1.2)
         peso_raio = config.get('ml_features_raio_peso', 1.3)
         peso_consenso = config.get('ml_features_consenso_peso', 1.4)
+        # 🆕 peso baixo por padrão: é feature experimental, sem evidência
+        # prévia de edge — deixa o próprio treino/backtest decidir se ela
+        # merece mais peso, em vez de assumir importância de antemão.
+        peso_duracao = config.get('ml_features_duracao_peso', 0.5)
         
         features_pos_zero = [f * peso_zero for f in features_pos_zero]
         features_numero_duzia = [f * peso_numero for f in features_numero_duzia]
@@ -1965,10 +2011,11 @@ class DuziaAI:
         features_vies_curto = [f * peso_vies for f in features_vies_curto]
         features_raio = [f * peso_raio for f in features_raio]
         features_consenso = [f * peso_consenso for f in features_consenso]
+        features_duracao = [f * peso_duracao for f in features_duracao]
         
         return features_base + features_pos_zero + features_numero_duzia + features_fadiga + \
                features_alternancia + features_ciclos + features_entropia + features_vies_curto + \
-               features_raio + features_consenso
+               features_raio + features_consenso + features_duracao
 
     def _extrair_features_core(self, historico_duzias, historico_numeros,
                                 erros_consec, rodadas_zero, repeticoes_duzia, janela=20, modo_treino=False):
@@ -2359,6 +2406,14 @@ class DuziaAI:
             logging.error(traceback.format_exc())
             self.ultimo_treino_ml = rodada_atual
             return False
+
+    def registrar_duracao(self, duracao_segundos):
+        """Recebe a duração (em segundos) desde a rodada anterior, medida
+        pelo timestamp real de chegada de cada número. Chamado pelo
+        GerenciadorSessoes logo antes de adicionar() para manter o alinhamento
+        1:1 com historico_completo. Se ainda não há duração (primeira rodada
+        da sessão), usa None e a feature cai no valor neutro (0)."""
+        self.duracoes_rodadas.append(duracao_segundos)
 
     def adicionar(self, numero):
         d = get_duzia(numero)
@@ -3010,6 +3065,13 @@ class SistemaBot:
         self.gatilhos_resultado_atual = {}
         self.gatilhos_ultima_avaliacao = None  # cache para conferir no próximo número
         self.historico_numeros = deque(maxlen=500)
+        # 🆕 Timing por rodada: timestamp de cada número recebido e a duração
+        # (em segundos) entre uma rodada e a anterior. Captado automaticamente
+        # a partir da própria chegada do resultado pela API — não depende de
+        # contagem manual de giro. 'giro_estimado' é opcional e só existe se
+        # o usuário preencher manualmente antes do próximo número chegar.
+        self.timestamps_rodadas = deque(maxlen=500)
+        self.duracoes_rodadas = deque(maxlen=500)
         self.entrada_ativa = None
         self.historico_entradas = []
         self.acertos_duzia = 0; self.erros_duzia = 0
@@ -3069,6 +3131,24 @@ class SistemaBot:
 
         if nr is None or not validar_numero(nr): return
 
+        # 🆕 Duração da rodada: tempo real decorrido desde o número anterior,
+        # medido pelo próprio timestamp de chegada (não é o giro contado,
+        # mas é o único timing que a API realmente entrega). Fica disponível
+        # como feature (duracao_rodada) e é logado no histórico/CSV para
+        # análise de correlação com o resultado.
+        agora_rodada = hora_brasilia()
+        duracao_rodada = None
+        if self.timestamps_rodadas:
+            duracao_rodada = round((agora_rodada - self.timestamps_rodadas[-1]).total_seconds(), 1)
+            self.duracoes_rodadas.append(duracao_rodada)
+        self.timestamps_rodadas.append(agora_rodada)
+        # 🆕 Giro observado manualmente pelo usuário (opcional, faixa estimada
+        # a olho antes deste número cair). Não é medido pelo sistema — é só
+        # registrado para permitir comparar depois se tem correlação real com
+        # o resultado. Se o usuário não preencher, fica 'Não informado'.
+        giro_estimado_rodada = st.session_state.get('giro_estimado_atual', 'Não informado')
+        st.session_state['giro_estimado_atual'] = 'Não informado'  # reseta para a próxima rodada
+
         # Confere o número que acabou de sair contra a avaliação de gatilhos
         # feita na rodada ANTERIOR (antes de este número entrar no histórico,
         # para não inflar o backtest comparando um número contra si mesmo).
@@ -3076,6 +3156,7 @@ class SistemaBot:
             self.gatilhos_numericos.conferir_resultado(nr)
 
         self.numero_rodada += 1
+        self.duzia_ai.registrar_duracao(duracao_rodada)
         self.duzia_ai.adicionar(nr)
         self.historico_numeros.append(nr)
         self.ultimo_numero = nr
@@ -3178,6 +3259,8 @@ class SistemaBot:
                 'padrao_info': self.entrada_ativa.get('padrao_ativo'),
                 'streak_info': self.entrada_ativa.get('streak_info'),
                 'regime': self.entrada_ativa.get('regime', self.duzia_ai.regime_atual),
+                'duracao_rodada': duracao_rodada,
+                'giro_estimado': giro_estimado_rodada,
             })
             if len(self.historico_entradas) > 100: self.historico_entradas = self.historico_entradas[-100:]
 
@@ -3298,7 +3381,7 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     try:
         with open(caminho, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Conf','ProbML','Gat','Z','🔄','Mesa','Duz','P1','Num','Zer','St','Regime','Padrões','Streak'])
+            writer.writerow(['Rod','Hora','Nº','Raio','Real','Prev','Conf','ProbML','Gat','Z','🔄','Mesa','Duz','P1','Num','Zer','St','Regime','Padrões','Streak','Duração(s)','Giro'])
             for e in historico_entradas:
                 real = f"D{e.get('duzia_real',0)}" if e.get('duzia_real',0) != 0 else "0"
                 ns = e.get('numero', 0)
@@ -3316,7 +3399,9 @@ def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
                                   '✅' if e.get('acerto_zero') else '-', e.get('status','?'),
                                   e.get('regime', 'estavel')[:8],
                                   str(e.get('padrao_info', {}).get('resumo', '-')) if e.get('padrao_info') else '-',
-                                  str(e.get('streak_info', '-')) if e.get('streak_info') else '-'])
+                                  str(e.get('streak_info', '-')) if e.get('streak_info') else '-',
+                                  e.get('duracao_rodada') if e.get('duracao_rodada') is not None else '-',
+                                  e.get('giro_estimado', 'Não informado')])
         return True
     except Exception as e:
         logging.error(f"Erro CSV: {e}")
@@ -3489,6 +3574,22 @@ with st.sidebar:
         "Crupiê trocou agora", value=st.session_state.get('gatilho_troca_crupie_manual', False)
     )
     st.caption("⚠️ Gatilhos numéricos são heurísticas de padrão, sem edge estatístico comprovado em RNG. A taxa histórica exibida vem de backtest real da sessão.")
+
+    st.markdown("---")
+    st.markdown("### ⏱️ Timing da Rodada (experimental)")
+    sis_side = st.session_state.get('sistema')
+    if sis_side and sis_side.duracoes_rodadas:
+        dur_media = sum(sis_side.duracoes_rodadas) / len(sis_side.duracoes_rodadas)
+        st.caption(f"Duração média entre rodadas: {dur_media:.1f}s (últimas {len(sis_side.duracoes_rodadas)})")
+    st.session_state.setdefault('giro_estimado_atual', 'Não informado')
+    st.session_state['giro_estimado_atual'] = st.selectbox(
+        "🌀 Giro observado nesta rodada (opcional, a olho)",
+        ['Não informado', '14-16', '16-18', '18-20', '20+'],
+        index=['Não informado', '14-16', '16-18', '18-20', '20+'].index(st.session_state['giro_estimado_atual']),
+        key='select_giro_estimado',
+        help="Preencha antes do número cair, se quiser testar a hipótese de correlação com o resultado. Fica logado no histórico/CSV junto com a duração real da rodada. É observação manual sua — o sistema não mede o giro."
+    )
+    st.caption("📌 A duração é capturada automaticamente pela API a cada rodada. O giro é manual/opcional — sem preenchimento, fica 'Não informado' no log. Use a coluna 'Duração(s)' do CSV pra testar correlação real antes de confiar em qualquer padrão.")
 
     st.markdown("---")
     st.markdown("### 🗼 Modo 2 Dúzias (Principal + Cobertura)")
@@ -3981,6 +4082,8 @@ if sis.historico_entradas:
             "2Torres": '✅' if e.get('acerto_cobertura_dupla') else ('❌' if e.get('duzia_sec_prevista') else '-'),
             "Nº": '🎯' if e.get('acerto_numero') else '-',
             "Zer": '🟢' if e.get('acerto_zero') else '-',
+            "Dur(s)": e.get('duracao_rodada') if e.get('duracao_rodada') is not None else '-',
+            "Giro": e.get('giro_estimado', 'Não informado'),
         })
     st.dataframe(dados, width='stretch', height=300)
     if st.button("📥 Exportar CSV", width='stretch'):
