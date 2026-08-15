@@ -1722,14 +1722,15 @@ def montar_pool_consenso_lf(estatisticas, tamanho_pool=21):
     algumas dezenas se um dos sinais dominar), este método usa
     RANQUEAMENTO POR CONSENSO.
 
-    Cada dezena recebe um rank (1 = melhor) dentro de 4 sinais
+    Cada dezena recebe um rank (1 = melhor) dentro de 5 sinais
     independentes entre si:
     - Frequência Inteligente (multi-janela)
     - Atraso (menor atraso = melhor rank)
     - Força de coocorrência bayesiana
     - Inclinação de tendência (subindo/caindo)
+    - Correlação média com o restante do grupo (Módulo 7)
 
-    A posição final é a MÉDIA dos 4 ranks. Uma dezena só fica de fora
+    A posição final é a MÉDIA dos 5 ranks. Uma dezena só fica de fora
     do pool se estiver mal posicionada na maioria dos sinais — não
     basta um único componente (ex.: "atraso") penalizá-la sozinho para
     excluí-la, como pode acontecer numa nota composta com pesos fixos.
@@ -1750,6 +1751,7 @@ def montar_pool_consenso_lf(estatisticas, tamanho_pool=21):
         'atraso_invertido': {n: 1.0 - (estatisticas.atrasos.get(n, 0) / atraso_max) for n in range(1, 26)},
         'coocorrencia': {n: estatisticas.bayes_forca.get(n, 0) for n in range(1, 26)},
         'tendencia': {n: estatisticas.tendencias.get(n, {}).get('inclinacao', 0) for n in range(1, 26)},
+        'correlacao': {n: estatisticas.correlacao_media.get(n, 0) for n in range(1, 26)},
     }
 
     ranks_por_sinal = {}
@@ -2189,6 +2191,43 @@ class IAEstatisticaLF:
                 jogos.append(list(jogo_ordenado))
 
         return jogos, probs_dezenas
+
+def montar_pool_ml_lf(ia, tamanho_pool=21):
+    """
+    Terceiro método de seleção do pool: usa o ensemble de Machine Learning
+    já treinado (Módulo 4 — Random Forest / XGBoost / Voting / Stacking)
+    em vez de estatística descritiva. Chama `ia.prever_probabilidades_dezenas()`,
+    que devolve a probabilidade média prevista pelos modelos treinados
+    para cada uma das 25 dezenas, e usa isso como critério de corte.
+
+    Diferente do Motor de Pontuação e do Consenso — que combinam sinais
+    estatísticos com regras fixas definidas a priori —, aqui quem decide
+    o peso relativo de cada característica (frequência, atraso, tendência,
+    proximidade etc.) é o próprio modelo, aprendido a partir do histórico
+    de concursos durante o treino.
+
+    Requer que os modelos já tenham sido treinados na aba de IA Estatística
+    (Módulo 4). Retorna (None, None) se não houver modelo treinado.
+
+    IMPORTANTE: mesmo um modelo de ML bem treinado só encontra padrões que
+    já existem nos dados de treino — não há garantia de que esses padrões
+    se repitam no próximo sorteio, que é um evento aleatório independente.
+    Este método ainda não está incluído no backtest ponto-no-tempo
+    automático (`testar_pool_fechamento`), porque retreinar o ensemble do
+    zero para cada concurso histórico testado é computacionalmente caro;
+    valide comparando manualmente os resultados, como já vem sendo feito
+    concurso a concurso nesta conversa.
+    """
+    if ia is None or not getattr(ia, 'modelos', None):
+        return None, None
+
+    probs = ia.prever_probabilidades_dezenas()
+    if not probs:
+        return None, None
+
+    ranking_ml = sorted(probs.items(), key=lambda x: x[1], reverse=True)
+    pool = sorted(n for n, _ in ranking_ml[:tamanho_pool])
+    return pool, ranking_ml
 
 # =====================================================
 # MÓDULO 5: FILTROS INTELIGENTES - LOTOFÁCIL
@@ -3148,17 +3187,25 @@ def main():
             """, unsafe_allow_html=True)
 
             ranking_completo = pontuacao.get_ranking(25)
+            ia_disponivel = st.session_state.get('ia') and getattr(st.session_state.ia, 'modelos', None)
+
+            opcoes_metodo_pool = [
+                "Top N por Motor de Pontuação (nota composta)",
+                "Top N por Consenso (média de ranks independentes)",
+                "Top N por Modelo de ML (ensemble treinado)"
+            ]
 
             col_metodo, col_tamanho = st.columns([3, 1])
             with col_metodo:
                 metodo_pool = st.radio(
                     "Método de seleção do pool",
-                    ["Top N por Motor de Pontuação (nota composta)", "Top N por Consenso (média de ranks independentes)"],
+                    opcoes_metodo_pool,
                     horizontal=True,
                     key="metodo_pool_fechamento",
-                    help="O Motor de Pontuação combina 6 sinais numa única nota com pesos fixos. O Consenso ranqueia "
-                         "cada dezena em 4 sinais independentes e usa a posição média — uma dezena só é excluída se "
-                         "estiver mal posicionada na maioria dos sinais, não só num deles."
+                    help="Motor de Pontuação: 6 sinais numa nota composta com pesos fixos. Consenso: 5 sinais "
+                         "independentes ranqueados, usando a posição média — uma dezena só é excluída se estiver "
+                         "mal posicionada na maioria deles. ML: usa o ensemble treinado na aba de IA Estatística "
+                         "(Módulo 4) para prever a probabilidade de cada dezena."
                 )
             with col_tamanho:
                 tamanho_pool_ativo = st.number_input(
@@ -3166,12 +3213,33 @@ def main():
                     key="tamanho_pool_fechamento"
                 )
             usar_consenso_pool = metodo_pool.startswith("Top N por Consenso")
+            usar_ml_pool = metodo_pool.startswith("Top N por Modelo de ML")
+
+            if usar_ml_pool and not ia_disponivel:
+                st.warning(
+                    "⚠️ Nenhum modelo de ML treinado ainda. Vá na aba **IA Estatística** (Módulo 4), treine pelo "
+                    "menos um modelo (Random Forest, XGBoost, Voting ou Stacking) e volte aqui. Usando o Motor de "
+                    "Pontuação por enquanto."
+                )
+                usar_ml_pool = False
 
             if usar_consenso_pool:
                 dezenas_top21, ranking_consenso_completo = montar_pool_consenso_lf(stats, tamanho_pool=tamanho_pool_ativo)
                 ranking_completo = ranking_consenso_completo  # (dezena, rank_medio) — menor rank_medio = melhor
                 ranking_top21 = ranking_completo[:tamanho_pool_ativo]
                 ranking_risco = ranking_completo[tamanho_pool_ativo:tamanho_pool_ativo + 4]
+            elif usar_ml_pool:
+                dezenas_top21, ranking_ml_completo = montar_pool_ml_lf(st.session_state.ia, tamanho_pool=tamanho_pool_ativo)
+                if dezenas_top21 is None:
+                    st.warning("⚠️ Não foi possível obter probabilidades do modelo de ML. Usando Motor de Pontuação.")
+                    ranking_top21 = ranking_completo[:tamanho_pool_ativo]
+                    ranking_risco = ranking_completo[tamanho_pool_ativo:tamanho_pool_ativo + 4]
+                    dezenas_top21 = sorted([n for n, _ in ranking_top21])
+                    usar_ml_pool = False
+                else:
+                    ranking_completo = ranking_ml_completo  # (dezena, probabilidade) — maior prob. = melhor
+                    ranking_top21 = ranking_completo[:tamanho_pool_ativo]
+                    ranking_risco = ranking_completo[tamanho_pool_ativo:tamanho_pool_ativo + 4]
             else:
                 ranking_top21 = ranking_completo[:tamanho_pool_ativo]
                 ranking_risco = ranking_completo[tamanho_pool_ativo:tamanho_pool_ativo + 4]
@@ -3281,7 +3349,7 @@ def main():
             st.markdown(f"**⚠️ Zona de risco (dezenas logo fora do Top {tamanho_pool_ativo}):**")
             if ranking_risco:
                 partes_risco = []
-                rotulo_score = "rank médio" if usar_consenso_pool else "score"
+                rotulo_score = "rank médio" if usar_consenso_pool else ("probabilidade" if usar_ml_pool else "score")
                 for num, score in ranking_risco:
                     saiu_ultimo = stats.repetiu_ultimo_concurso.get(num, False)
                     marcador = " 🔥 saiu no último concurso" if saiu_ultimo else ""
