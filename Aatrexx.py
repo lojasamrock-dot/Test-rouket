@@ -2698,7 +2698,7 @@ class BacktestsLF:
             'vantagem_sobre_acaso': round(media_capturadas - esperado_acaso, 3)
         }
 
-    def recomendar_pool_fechamento(self, num_testes=50, tamanhos=(19, 20, 21, 22, 23), metodos=('motor', 'consenso')):
+    def recomendar_pool_fechamento(self, num_testes=50, tamanhos=(15, 17, 19, 20, 21, 22, 23), metodos=('motor', 'consenso')):
         """
         Varre várias combinações de (método, tamanho do pool) rodando
         `testar_pool_fechamento` para cada uma, e devolve todas as
@@ -3209,8 +3209,16 @@ def main():
                 )
             with col_tamanho:
                 tamanho_pool_ativo = st.number_input(
-                    "Tamanho do pool", min_value=16, max_value=24, value=21, step=1,
+                    "Tamanho do pool (15 = aposta única direta, sem combinatória)",
+                    min_value=15, max_value=24, value=21, step=1,
                     key="tamanho_pool_fechamento"
+                )
+            if tamanho_pool_ativo == 15:
+                st.caption(
+                    "🎯 Pool = 15: você está excluindo as 10 dezenas pior rankeadas e apostando diretamente nas "
+                    "15 restantes — uma aposta única, sem gerar combinações. É a estratégia \"prever quem fica "
+                    "de fora\" formalizada: como pool e aposta viram a mesma coisa, não há espaço para gerar "
+                    "múltiplos jogos combinatórios abaixo desta seção."
                 )
             usar_consenso_pool = metodo_pool.startswith("Top N por Consenso")
             usar_ml_pool = metodo_pool.startswith("Top N por Modelo de ML")
@@ -3274,7 +3282,7 @@ def main():
                     backtester = BacktestsLF(st.session_state.banco_dados, stats, st.session_state.filtros)
                     st.session_state.resultado_recomendacao_pool = backtester.recomendar_pool_fechamento(
                         num_testes=n_testes_pool,
-                        tamanhos=(19, 20, 21, 22, 23),
+                        tamanhos=(15, 17, 19, 20, 21, 22, 23),
                         metodos=('motor', 'consenso')
                     )
                     st.session_state.resultado_backtest_pool = None
@@ -3403,7 +3411,7 @@ def main():
                 )
             with col_f2:
                 max_combinacoes = math.comb(len(dezenas_fechamento), 15) if len(dezenas_fechamento) >= 15 else 0
-                st.metric("Combinações possíveis (21 escolhe 15)", f"{max_combinacoes:,}".replace(",", "."))
+                st.metric("Combinações possíveis", f"{len(dezenas_fechamento)} escolhe 15 = {max_combinacoes:,}".replace(",", "."))
 
             metodo_fechamento = st.radio(
                 "Método do fechamento",
