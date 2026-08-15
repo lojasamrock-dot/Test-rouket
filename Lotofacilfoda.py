@@ -472,6 +472,14 @@ def extrair_features_vies_curto_prazo(historico_duzias, janela_curta=5, janela_l
     return [tendencia_1, tendencia_2, tendencia_3, alta, max(tendencia_1, tendencia_2, tendencia_3), min(tendencia_1, tendencia_2, tendencia_3)]
 
 
+def _bucket_prob(prob_pct):
+    """Agrupa uma probabilidade (0-100) em faixas de 10%: '50-59%' etc."""
+    if prob_pct is None: return None
+    piso = int(prob_pct // 10) * 10
+    piso = max(0, min(90, piso))
+    return f"{piso}-{piso+9}%"
+
+
 def extrair_features_raio(historico_raios, janela=20):
     if not historico_raios or len(historico_raios) < 3:
         return [0, 0, 0, 0, 0]
@@ -1319,6 +1327,12 @@ def salvar_sessao():
         with open(paths['performance_mesa'], 'w') as f: json.dump(dict(sis.performance_por_mesa), f)
         with open(paths['performance_horario'], 'w') as f: json.dump(dict(sis.performance_por_horario), f)
         sis.duzia_ai._salvar_padroes_hibridos()
+        try:
+            paths_cal = get_session_paths(api_name)
+            with open(paths_cal['calibracao_prob'], 'w') as f:
+                json.dump(dict(sis.calibracao_prob), f)
+        except Exception:
+            pass
         with open(paths['sessao_controle'], 'w') as f:
             json.dump({'rodadas_na_sessao': sis.rodadas_na_sessao, 'sessao_ativa': sis.sessao_ativa,
                        'sessao_pausa_ate': sis.sessao_pausa_ate.isoformat() if sis.sessao_pausa_ate else None,
@@ -1360,6 +1374,8 @@ def carregar_dados_persistidos(api_name):
                 with open(paths['performance_horario'], 'r') as f4: dados['performance_por_horario'] = json.load(f4)
             if os.path.exists(paths['sessao_controle']):
                 with open(paths['sessao_controle'], 'r') as f5: dados.update(json.load(f5))
+            if os.path.exists(paths['calibracao_prob']):
+                with open(paths['calibracao_prob'], 'r') as f6: dados['calibracao_prob'] = json.load(f6)
     except: pass
     return dados
 
@@ -3087,6 +3103,11 @@ class SistemaBot:
         self.sessao_pausa_ate = None; self.total_sessoes = 0
         self.acertos_sessao = 0; self.erros_sessao = 0
         self.gerenciador_sessoes = GerenciadorSessoes(api_name)
+        # 🆕 Calibração de probabilidade: acumula, por faixa de 10% de
+        # ProbML, quantas entradas caíram nessa faixa e quantas acertaram.
+        # Serve pra responder "quando o modelo diz X% de confiança, ele
+        # realmente acerta X% das vezes?" — com dado real, não suposição.
+        self.calibracao_prob = defaultdict(lambda: {'acertos': 0, 'total': 0})
 
     def iniciar_sessao(self):
         if self.sessao_pausa_ate and hora_brasilia() < self.sessao_pausa_ate: return False
@@ -3208,6 +3229,18 @@ class SistemaBot:
             # previsão PRINCIPAL específica acertou, independente da cobertura.
             acerto_cobertura_dupla = acerto_primaria or acerto_secundaria or acerto_zero
             resultado_real = acerto_cobertura_dupla
+
+            # 🆕 Calibração: só faz sentido pra entradas via ML (que têm
+            # prob_ml_bruta) e olhando o acerto da dúzia PRIMÁRIA — é essa
+            # que a probabilidade bruta do modelo está estimando, então
+            # misturar com acerto de cobertura (2ª dúzia) contaminaria a
+            # leitura de calibração.
+            prob_bruta_atual = self.entrada_ativa.get('prob_ml_bruta')
+            if self.entrada_ativa.get('fonte', 'ml') == 'ml' and prob_bruta_atual is not None:
+                faixa = _bucket_prob(prob_bruta_atual)
+                self.calibracao_prob[faixa]['total'] += 1
+                if acerto_primaria or acerto_zero:
+                    self.calibracao_prob[faixa]['acertos'] += 1
 
             if acerto_primaria: self.acertos_primaria += 1
             if resultado_real: self.acertos_duzia += 1
@@ -3369,6 +3402,7 @@ class SistemaBot:
         self.gatilhos_numericos.resetar_backtest()
         self.gatilhos_resultado_atual = {}
         self.gatilhos_ultima_avaliacao = None
+        self.calibracao_prob = defaultdict(lambda: {'acertos': 0, 'total': 0})
         salvar_sessao()
 
 
@@ -3376,6 +3410,24 @@ def salvar_resultado_em_arquivo(historico, caminho):
     try:
         with open(caminho, "w", encoding='utf-8') as f: json.dump(historico, f, indent=2)
     except Exception as e: logging.error(f"Erro: {e}")
+
+def exportar_calibracao_csv(calibracao_prob, caminho="calibracao_prob.csv"):
+    """Exporta a tabela de calibração (faixa de ProbML x taxa real de acerto)
+    pra análise externa. Cada linha é uma faixa de 10%, não uma rodada."""
+    try:
+        with open(caminho, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Faixa ProbML', 'Entradas', 'Acertos', 'Taxa Real (%)'])
+            for faixa in sorted(calibracao_prob.keys(), key=lambda fx: int(fx.split('-')[0])):
+                stats = calibracao_prob[faixa]
+                total = stats['total']
+                taxa = round(stats['acertos'] / total * 100, 1) if total else 0
+                writer.writerow([faixa, total, stats['acertos'], taxa])
+        return caminho
+    except Exception as e:
+        logging.error(f"Erro ao exportar calibração: {e}")
+        return None
+
 
 def exportar_historico_csv(historico_entradas, caminho="export_roleta.csv"):
     try:
@@ -3424,6 +3476,7 @@ def get_session_paths(api_name):
         'sessao_controle': f"sessao_controle_{safe}.json",
         'historico_sessoes': f"historico_sessoes_{safe}.json",
         'padroes_hibridos': f"padroes_hibridos_{safe}.json",
+        'calibracao_prob': f"calibracao_prob_{safe}.json",
     }
 
 
@@ -3504,6 +3557,9 @@ def _carregar_sistema(api_name):
             if campo in dados:
                 for k, v in dados[campo].items(): getattr(sis, campo)[k] = v; getattr(sis.duzia_ai, campo)[k] = v
         sis.duzia_ai._carregar_padroes_hibridos()
+        for faixa, stats in dados.get('calibracao_prob', {}).items():
+            sis.calibracao_prob[faixa]['total'] = stats.get('total', 0)
+            sis.calibracao_prob[faixa]['acertos'] = stats.get('acertos', 0)
         paths = get_session_paths(api_name)
         if os.path.exists(paths['historico']):
             with open(paths['historico'], 'r') as f: st.session_state.historico = json.load(f)
@@ -3590,6 +3646,26 @@ with st.sidebar:
         help="Preencha antes do número cair, se quiser testar a hipótese de correlação com o resultado. Fica logado no histórico/CSV junto com a duração real da rodada. É observação manual sua — o sistema não mede o giro."
     )
     st.caption("📌 A duração é capturada automaticamente pela API a cada rodada. O giro é manual/opcional — sem preenchimento, fica 'Não informado' no log. Use a coluna 'Duração(s)' do CSV pra testar correlação real antes de confiar em qualquer padrão.")
+
+    st.markdown("---")
+    st.markdown("### 🎯 Calibração de Probabilidade (ML)")
+    st.caption("Por faixa de ProbML: quantas vezes o modelo disse esse % de confiança e quantas realmente acertou a dúzia primária. Se as faixas altas não acertarem mais que as baixas, a probabilidade não está calibrada.")
+    cal = sis.calibracao_prob
+    if cal:
+        linhas_cal = []
+        for faixa in sorted(cal.keys(), key=lambda f: int(f.split('-')[0])):
+            stats = cal[faixa]
+            total = stats['total']
+            taxa = (stats['acertos'] / total * 100) if total else 0
+            linhas_cal.append({'Faixa': faixa, 'Entradas': total, 'Acertos': stats['acertos'], 'Taxa real': f"{taxa:.0f}%"})
+        st.dataframe(linhas_cal, hide_index=True, use_container_width=True)
+        if st.button("📥 Exportar calibração (CSV)", key="btn_export_calibracao"):
+            caminho_cal = exportar_calibracao_csv(cal)
+            if caminho_cal:
+                with open(caminho_cal, 'rb') as f:
+                    st.download_button("Baixar calibracao.csv", f, file_name="calibracao_prob.csv", key="dl_calibracao")
+    else:
+        st.caption("Ainda sem entradas ML suficientes pra calibração.")
 
     st.markdown("---")
     st.markdown("### 🗼 Modo 2 Dúzias (Principal + Cobertura)")
