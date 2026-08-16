@@ -3407,31 +3407,78 @@ class TelegramClient:
 
 
 class PosterGenerator:
+    # Cache do caminho de fonte resolvido, para não escanear o sistema de
+    # arquivos a cada chamada (um poster chama criar_fonte() dezenas de vezes)
+    _fonte_path_resolvido = None
+    _fonte_aviso_emitido = False
+
     def __init__(self, api_client: APIClient):
         self.api_client = api_client
     
     @staticmethod
     def criar_fonte(tamanho: int) -> ImageFont.ImageFont:
+        # Já sabemos qual caminho funciona nesse servidor: usa direto
+        if PosterGenerator._fonte_path_resolvido:
+            try:
+                return ImageFont.truetype(PosterGenerator._fonte_path_resolvido, tamanho)
+            except Exception:
+                PosterGenerator._fonte_path_resolvido = None  # caminho parou de funcionar, tenta de novo
+
         try:
+            # Pasta "fonts" ao lado do próprio script — garantida de existir se o
+            # arquivo DejaVuSans.ttf for enviado junto com o Futfidao.py, independente
+            # de qual fonte (ou nenhuma) estiver instalada no servidor
+            base_dir = os.path.dirname(os.path.abspath(__file__))
             font_paths = [
+                os.path.join(base_dir, "fonts", "DejaVuSans-Bold.ttf"),
+                os.path.join(base_dir, "fonts", "DejaVuSans.ttf"),
                 "arial.ttf", "Arial.ttf", "arialbd.ttf",
+                # Linux (nomes/pacotes de fonte mais comuns em servidores/containers)
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                "/usr/share/fonts/opentype/noto/NotoSans-Regular.ttf",
+                "/usr/share/fonts/truetype/roboto/Roboto-Regular.ttf",
+                # macOS
                 "/System/Library/Fonts/Arial.ttf",
-                "C:/Windows/Fonts/arial.ttf"
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                # Windows
+                "C:/Windows/Fonts/arial.ttf",
             ]
             
             for font_path in font_paths:
                 try:
                     if os.path.exists(font_path):
-                        return ImageFont.truetype(font_path, tamanho)
+                        fonte = ImageFont.truetype(font_path, tamanho)
+                        PosterGenerator._fonte_path_resolvido = font_path
+                        return fonte
                 except Exception:
                     continue
             
-            return ImageFont.load_default()
+            if not PosterGenerator._fonte_aviso_emitido:
+                logging.warning(
+                    "⚠️ Nenhuma fonte TTF encontrada no servidor — os pôsteres vão usar a "
+                    "fonte padrão do Pillow (pode sair pequena/ilegível). Considere incluir "
+                    "um arquivo .ttf junto do projeto."
+                )
+                PosterGenerator._fonte_aviso_emitido = True
+
+            # Fallback: no Pillow >= 10.1.0 dá pra pedir um tamanho pra fonte padrão,
+            # em vez do bitmap minúsculo fixo que ela usa por padrão
+            try:
+                return ImageFont.load_default(size=tamanho)
+            except TypeError:
+                return ImageFont.load_default()
             
         except Exception as e:
             logging.error(f"Erro ao carregar fonte: {e}")
-            return ImageFont.load_default()
+            try:
+                return ImageFont.load_default(size=tamanho)
+            except TypeError:
+                return ImageFont.load_default()
     
     def _aplicar_bordas_arredondadas(self, img: Image.Image, raio: int = 60) -> Image.Image:
         """Aplica bordas arredondadas na imagem inteira"""
