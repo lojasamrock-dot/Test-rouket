@@ -20,6 +20,7 @@ from collections import defaultdict
 import shutil
 import hashlib
 import random
+import re
 
 # =============================
 # [NOVA] FUNÇÕES DO SISTEMA AUTÔNOMO PRO
@@ -3110,7 +3111,21 @@ class APIClient:
                     logging.warning(f"⏳ Rate limit da API. Esperando {retry_after} segundos...")
                     time.sleep(retry_after)
                     continue
-                    
+
+                # Erros "permanentes" do cliente (liga/temporada inexistente ou fora do
+                # plano da API): tentar de novo não vai resolver, então falha rápido
+                # em vez de gastar 3 tentativas com espera crescente à toa.
+                if response.status_code in (400, 403, 404):
+                    self.api_monitor.log_request(False)
+                    competicao = self._extrair_competicao_da_url(url)
+                    motivo = {
+                        404: "não encontrada (liga ou temporada indisponível nesse plano da API)",
+                        403: "fora do seu plano da API (recurso restrito)",
+                        400: "requisição inválida",
+                    }.get(response.status_code, "indisponível")
+                    logging.warning(f"⚠️ {competicao}: {motivo} ({response.status_code}) — {url}")
+                    return None
+                
                 response.raise_for_status()
                 
                 self.api_monitor.log_request(True)
@@ -3129,6 +3144,9 @@ class APIClient:
                     wait_time = 2 ** attempt
                     logging.info(f"⏳ Esperando {wait_time}s antes de retry...")
                     time.sleep(wait_time)
+                else:
+                    competicao = self._extrair_competicao_da_url(url)
+                    logging.warning(f"⚠️ {competicao}: sem resposta da API (tempo esgotado) após {max_retries} tentativas")
                     
             except requests.RequestException as e:
                 logging.error(f"❌ Erro na tentativa {attempt+1} para {url}: {e}")
@@ -3138,10 +3156,17 @@ class APIClient:
                     wait_time = 2 ** attempt
                     time.sleep(wait_time)
                 else:
-                    st.error(f"❌ Falha após {max_retries} tentativas: {e}")
+                    competicao = self._extrair_competicao_da_url(url)
+                    logging.warning(f"⚠️ {competicao}: não foi possível obter dados da API após {max_retries} tentativas")
                     return None
                     
         return None
+
+    @staticmethod
+    def _extrair_competicao_da_url(url: str) -> str:
+        """Extrai um nome amigável (código da liga) a partir da URL da API, para logs."""
+        m = re.search(r"/competitions/([A-Za-z0-9]+)/", url)
+        return f"Liga {m.group(1)}" if m else "API football-data.org"
     
     def obter_dados_api(self, url: str, timeout: int = 15) -> dict | None:
         return self.obter_dados_api_com_retry(url, timeout, max_retries=3)
@@ -3175,6 +3200,22 @@ class APIClient:
     # "recém-iniciada" e os dados são complementados com a temporada anterior
     LIMITE_JOGOS_TEMPORADA_NOVA = 5
 
+    @staticmethod
+    def _avisar_liga_indisponivel_ui(liga_id: str, contexto: str):
+        """Mostra, uma vez por liga/contexto por sessão, um aviso amigável na interface
+        quando não há dados disponíveis (liga/temporada fora do plano da API), em vez
+        de deixar aparecer um erro técnico ou a tela simplesmente vazia sem explicação."""
+        try:
+            chave = f"_aviso_liga_indisponivel_{liga_id}_{contexto}"
+            if not st.session_state.get(chave):
+                st.session_state[chave] = True
+                st.info(
+                    f"ℹ️ {liga_id}: sem dados de {contexto} disponíveis no momento "
+                    f"(liga ou temporada fora do plano atual da API). Pulando essa liga."
+                )
+        except Exception:
+            pass  # fora de um contexto Streamlit (ex.: execução em background), apenas ignora
+
     def _buscar_standings_temporada(self, liga_id: str, season: int) -> dict:
         """Busca (com cache) a classificação de uma temporada específica, sem fallback."""
         cache_key = f"{liga_id}_{season}"
@@ -3198,6 +3239,7 @@ class APIClient:
                 )
 
         if not data_api:
+            self._avisar_liga_indisponivel_ui(liga_id, "classificação")
             return {}
 
         standings = {}
@@ -3251,20 +3293,23 @@ class APIClient:
         
         url = f"{self.config.BASE_URL_FD}/competitions/{liga_id}/matches?dateFrom={data}&dateTo={data}&season={season}"
         data_api = self.obter_dados_api(url)
+        falhou_com_season = data_api is None
         jogos = data_api.get("matches", []) if data_api else []
 
-        # Alguns planos da API restringem/ignoram o parâmetro `season` nesse endpoint
-        # (retornam vazio ou erro). Se não veio nada, tenta de novo sem ele — a API
-        # já filtra corretamente pelas datas em dateFrom/dateTo mesmo sem season.
-        if not jogos:
+        # Só tenta de novo sem `season` se a chamada COM season realmente falhou
+        # (erro da API) — se ela só voltou vazia porque não há jogos nessa data,
+        # repetir a busca sem season não muda nada e é desperdício de requisição.
+        if falhou_com_season:
             url_sem_season = f"{self.config.BASE_URL_FD}/competitions/{liga_id}/matches?dateFrom={data}&dateTo={data}"
             data_api_fallback = self.obter_dados_api(url_sem_season)
             jogos = data_api_fallback.get("matches", []) if data_api_fallback else []
-            if jogos:
+            if data_api_fallback is not None:
                 logging.warning(
                     f"⚠️ Jogos de {liga_id} só retornaram sem o parâmetro season "
                     f"(temporada {season} pode ser restrita no plano da API)."
                 )
+            else:
+                self._avisar_liga_indisponivel_ui(liga_id, "jogos")
 
         self.jogos_cache.set(key, jogos)
         return jogos
