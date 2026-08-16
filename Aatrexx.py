@@ -1264,6 +1264,21 @@ class DataStorage:
             st.error(f"Erro ao salvar histórico: {e}")
 
 
+def parse_hora_jogo(valor) -> datetime:
+    """Converte o campo 'hora' de um jogo (pode vir como string ISO, já que
+    Jogo.to_dict() serializa assim para permitir salvar os alertas em JSON,
+    ou já como datetime) de volta para um objeto datetime utilizável."""
+    if isinstance(valor, datetime):
+        return valor
+    if isinstance(valor, str) and valor:
+        try:
+            v = valor.replace('Z', '+00:00') if valor.endswith('Z') else valor
+            return datetime.fromisoformat(v)
+        except (ValueError, TypeError):
+            pass
+    return datetime.now()
+
+
 class Jogo:
     def __init__(self, match_data: dict):
         self.id = match_data.get("id")
@@ -3171,6 +3186,17 @@ class APIClient:
 
         url = f"{self.config.BASE_URL_FD}/competitions/{liga_id}/standings?season={season}"
         data_api = self.obter_dados_api(url)
+
+        if not data_api:
+            # Mesmo fallback: plano da API pode restringir o parâmetro season aqui também
+            url_sem_season = f"{self.config.BASE_URL_FD}/competitions/{liga_id}/standings"
+            data_api = self.obter_dados_api(url_sem_season)
+            if data_api:
+                logging.warning(
+                    f"⚠️ Classificação de {liga_id} só retornou sem o parâmetro season "
+                    f"(temporada {season} pode ser restrita no plano da API)."
+                )
+
         if not data_api:
             return {}
 
@@ -3226,6 +3252,20 @@ class APIClient:
         url = f"{self.config.BASE_URL_FD}/competitions/{liga_id}/matches?dateFrom={data}&dateTo={data}&season={season}"
         data_api = self.obter_dados_api(url)
         jogos = data_api.get("matches", []) if data_api else []
+
+        # Alguns planos da API restringem/ignoram o parâmetro `season` nesse endpoint
+        # (retornam vazio ou erro). Se não veio nada, tenta de novo sem ele — a API
+        # já filtra corretamente pelas datas em dateFrom/dateTo mesmo sem season.
+        if not jogos:
+            url_sem_season = f"{self.config.BASE_URL_FD}/competitions/{liga_id}/matches?dateFrom={data}&dateTo={data}"
+            data_api_fallback = self.obter_dados_api(url_sem_season)
+            jogos = data_api_fallback.get("matches", []) if data_api_fallback else []
+            if jogos:
+                logging.warning(
+                    f"⚠️ Jogos de {liga_id} só retornaram sem o parâmetro season "
+                    f"(temporada {season} pode ser restrita no plano da API)."
+                )
+
         self.jogos_cache.set(key, jogos)
         return jogos
     
@@ -4089,10 +4129,10 @@ class PosterGenerator:
             except:
                 draw.text((LARGURA//2 - 150, y0 + 40), liga_text, font=FONTE_SUBTITULO, fill=(200, 200, 200))
 
-            if isinstance(jogo_dict.get("hora"), datetime):
-                data_text = jogo_dict["hora"].strftime("%d/%m/%Y %H:%M")
+            if jogo_dict.get("hora"):
+                data_text = parse_hora_jogo(jogo_dict.get("hora")).strftime("%d/%m/%Y %H:%M")
             else:
-                data_text = str(jogo_dict.get("hora", "Data desconhecida"))
+                data_text = "Data desconhecida"
 
             try:
                 data_bbox = draw.textbbox((0, 0), data_text, font=FONTE_INFO)
@@ -4615,10 +4655,10 @@ class PosterGenerator:
                 draw.text((LARGURA//2 - 150, y0 + 35), liga_text, font=FONTE_INFO, fill=(200, 200, 200))
 
             hora_jogo = jogo.get('hora')
-            if hora_jogo and isinstance(hora_jogo, datetime):
-                data_hora_text = hora_jogo.strftime("%d/%m/%Y %H:%M")
+            if hora_jogo:
+                data_hora_text = parse_hora_jogo(hora_jogo).strftime("%d/%m/%Y %H:%M")
             else:
-                data_hora_text = jogo.get('hora', 'Data não disponível')
+                data_hora_text = 'Data não disponível'
             
             try:
                 data_bbox = draw.textbbox((0, 0), data_hora_text, font=FONTE_HORA)
@@ -5293,11 +5333,8 @@ def gerar_poster_multipla_individual(jogo: dict, mercados: dict, titulo: str = "
     titulo_w = titulo_bbox[2] - titulo_bbox[0]
     draw.text(((LARGURA - titulo_w) // 2, 50), titulo, font=FONTE_TITULO, fill=(255, 215, 0))
     
-    data_hora = jogo.get("hora", datetime.now())
-    if isinstance(data_hora, datetime):
-        data_text = data_hora.strftime("%d/%m/%Y %H:%M")
-    else:
-        data_text = str(data_hora)
+    data_hora = jogo.get("hora")
+    data_text = parse_hora_jogo(data_hora).strftime("%d/%m/%Y %H:%M") if data_hora else "Data não disponível"
     
     data_bbox = draw.textbbox((0, 0), data_text, font=FONTE_DATA)
     data_w = data_bbox[2] - data_bbox[0]
@@ -8500,14 +8537,14 @@ class SistemaAlertasFutebol:
         try:
             jogos_por_data = {}
             for jogo in jogos_conf:
-                data = jogo["hora"].date() if isinstance(jogo["hora"], datetime) else datetime.now().date()
+                data = parse_hora_jogo(jogo["hora"]).date()
                 if data not in jogos_por_data:
                     jogos_por_data[data] = []
                 jogos_por_data[data].append(jogo)
 
             for data, jogos_data in jogos_por_data.items():
                 data_br = data.strftime("%d/%m/%Y")
-                jogos_ordenados = sorted(jogos_data, key=lambda x: x["hora"] if isinstance(x["hora"], datetime) else datetime.now())
+                jogos_ordenados = sorted(jogos_data, key=lambda x: parse_hora_jogo(x["hora"]))
                 lotes = [jogos_ordenados[i:i+3] for i in range(0, len(jogos_ordenados), 3)]
                 total_lotes = len(lotes)
                 
@@ -8598,7 +8635,7 @@ class SistemaAlertasFutebol:
                 if over_jogos:
                     msg += f"📈 <b>OVER ({len(over_jogos)} jogos):</b>\n\n"
                     for j in over_jogos:
-                        hora_format = j["hora"].strftime("%H:%M") if isinstance(j["hora"], datetime) else str(j["hora"])
+                        hora_format = parse_hora_jogo(j["hora"]).strftime("%H:%M")
                         prob = j.get('probabilidade', 50)
                         odd = round(100 / prob, 2) if prob > 0 else 2.0
                         msg += (
@@ -8610,7 +8647,7 @@ class SistemaAlertasFutebol:
                 if under_jogos:
                     msg += f"📉 <b>UNDER ({len(under_jogos)} jogos):</b>\n\n"
                     for j in under_jogos:
-                        hora_format = j["hora"].strftime("%H:%M") if isinstance(j["hora"], datetime) else str(j["hora"])
+                        hora_format = parse_hora_jogo(j["hora"]).strftime("%H:%M")
                         prob = j.get('probabilidade', 50)
                         odd = round(100 / prob, 2) if prob > 0 else 2.0
                         msg += (
@@ -8623,7 +8660,7 @@ class SistemaAlertasFutebol:
                 msg = f"🏆 Jogos Favoritos (Estilo Original) - {data_br}:\n\n"
                 
                 for j in jogos_conf:
-                    hora_format = j["hora"].strftime("%H:%M") if isinstance(j["hora"], datetime) else str(j["hora"])
+                    hora_format = parse_hora_jogo(j["hora"]).strftime("%H:%M")
                     favorito_emoji = "🏠" if j.get('favorito') == "home" else "✈️" if j.get('favorito') == "away" else "🤝"
                     favorito_text = j['home'] if j.get('favorito') == "home" else j['away'] if j.get('favorito') == "away" else "EMPATE"
                     prob_fav = j.get('confianca_vitoria', 50)
@@ -8639,7 +8676,7 @@ class SistemaAlertasFutebol:
                 msg = f"⏰ Jogos Gols HT (Estilo Original) - {data_br}:\n\n"
                 
                 for j in jogos_conf:
-                    hora_format = j["hora"].strftime("%H:%M") if isinstance(j["hora"], datetime) else str(j["hora"])
+                    hora_format = parse_hora_jogo(j["hora"]).strftime("%H:%M")
                     tipo_emoji_ht = "⚡" if "OVER" in j.get('tendencia_ht', '') else "🛡️"
                     prob_ht = j.get('confianca_ht', 50)
                     odd = round(100 / prob_ht, 2) if prob_ht > 0 else 2.0
@@ -8654,7 +8691,7 @@ class SistemaAlertasFutebol:
                 msg = f"🤝 Jogos Ambas Marcam (Estilo Original) - {data_br}:\n\n"
                 
                 for j in jogos_conf:
-                    hora_format = j["hora"].strftime("%H:%M") if isinstance(j["hora"], datetime) else str(j["hora"])
+                    hora_format = parse_hora_jogo(j["hora"]).strftime("%H:%M")
                     tipo_emoji_am = "🤝" if j.get('tendencia_ambas_marcam') == "SIM" else "🚫"
                     prob_am = j.get('confianca_ambas_marcam', 50)
                     odd = round(100 / prob_am, 2) if prob_am > 0 else 2.0
