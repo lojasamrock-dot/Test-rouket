@@ -2336,7 +2336,36 @@ def analisar_ultimos_n_concursos_lf(banco, n=10):
     }
 
 
-def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None):
+PESOS_ESPECIALISTA_PADRAO = {
+    'freq': 0.30, 'atraso': 0.20, 'tendencia': 0.15,
+    'atraso_hist': 0.15, 'freq_hist': 0.10,
+    'bonus_regressao': 0.10, 'ml': 0.30
+}
+
+
+def gerar_pesos_aleatorios_especialista(rng):
+    """
+    Módulo 4B - gera uma combinação aleatória de pesos para o Jogo
+    Especialista, usada na busca automática (`buscar_melhores_pesos_especialista_lf`).
+    Os 5 componentes principais são sorteados em faixas plausíveis e depois
+    normalizados para somar 1.0; o bônus de regressão à média e o peso do
+    ML (só usado se houver modelo treinado) são sorteados à parte.
+    """
+    brutos = {
+        'freq': rng.uniform(0.10, 0.45),
+        'atraso': rng.uniform(0.05, 0.35),
+        'tendencia': rng.uniform(0.05, 0.30),
+        'atraso_hist': rng.uniform(0.05, 0.30),
+        'freq_hist': rng.uniform(0.05, 0.25),
+    }
+    soma = sum(brutos.values()) or 1.0
+    pesos = {k: v / soma for k, v in brutos.items()}
+    pesos['bonus_regressao'] = rng.uniform(0.0, 0.15)
+    pesos['ml'] = rng.uniform(0.15, 0.45)
+    return pesos
+
+
+def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None, pesos=None):
     """
     Módulo 4B - combina todas as leituras de `analisar_ultimos_n_concursos_lf`
     com o perfil histórico completo (frequência e atraso de todo o
@@ -2344,7 +2373,13 @@ def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None):
     treinados na aba de IA Estatística, a probabilidade média prevista pelo
     ensemble de ML — tudo isso resumido em uma única pontuação de 0 a 1 por
     dezena.
+
+    `pesos` (opcional) permite sobrescrever os pesos padrão de cada
+    componente — usado pela busca automática (`buscar_melhores_pesos_especialista_lf`)
+    para testar combinações diferentes num backtest ponto-no-tempo.
     """
+    pesos = pesos or PESOS_ESPECIALISTA_PADRAO
+
     freq_janela = analise_janela['freq_janela']
     atraso_janela = analise_janela['atraso_janela']
     tendencia = analise_janela['tendencia']
@@ -2364,16 +2399,16 @@ def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None):
         freq_hist_score = estatisticas.frequencias.get(num, 0) / freq_hist_max
 
         score = (
-            freq_score * 0.30 +
-            atraso_score * 0.20 +
-            tendencia_score * 0.15 +
-            atraso_hist_score * 0.15 +
-            freq_hist_score * 0.10
+            freq_score * pesos.get('freq', 0.30) +
+            atraso_score * pesos.get('atraso', 0.20) +
+            tendencia_score * pesos.get('tendencia', 0.15) +
+            atraso_hist_score * pesos.get('atraso_hist', 0.15) +
+            freq_hist_score * pesos.get('freq_hist', 0.10)
         )
 
         # Regressão à média: dezena historicamente forte que sumiu da janela recente
         if num in ausentes and freq_hist_score > 0.6:
-            score += 0.10
+            score += pesos.get('bonus_regressao', 0.10)
 
         scores[num] = max(0.0, min(1.0, score))
 
@@ -2381,15 +2416,16 @@ def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None):
         probs_ml = ia.prever_probabilidades_dezenas()
         if probs_ml:
             max_p = max(probs_ml.values()) or 1
+            peso_ml = pesos.get('ml', 0.30)
             for num in range(1, 26):
                 ml_score = probs_ml.get(num, 0) / max_p
-                scores[num] = scores[num] * 0.70 + ml_score * 0.30
+                scores[num] = scores[num] * (1 - peso_ml) + ml_score * peso_ml
 
     return scores
 
 
 def gerar_jogo_especialista_lf(banco, estatisticas, ia=None, n_concursos=10,
-                                tamanho_jogo=15, max_tentativas=30000, semente=None):
+                                tamanho_jogo=15, max_tentativas=30000, semente=None, pesos=None):
     """
     Módulo 4B - Jogo Especialista.
 
@@ -2402,6 +2438,10 @@ def gerar_jogo_especialista_lf(banco, estatisticas, ia=None, n_concursos=10,
     (pares, soma, primos, repetição em relação ao último concurso) que essa
     mesma janela de 10 jogos mostrou ser típico.
 
+    `pesos` (opcional) sobrescreve os pesos padrão de cada componente da
+    pontuação — ver `buscar_melhores_pesos_especialista_lf` para encontrar
+    a combinação com melhor desempenho no histórico real.
+
     IMPORTANTE: a Lotofácil é um sorteio aleatório e nenhuma análise
     estatística garante 14 ou 15 acertos — o método apenas maximiza a
     aderência do jogo ao perfil que um especialista levaria em conta.
@@ -2410,7 +2450,7 @@ def gerar_jogo_especialista_lf(banco, estatisticas, ia=None, n_concursos=10,
     if not analise_janela:
         return None, None
 
-    scores = pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=ia)
+    scores = pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=ia, pesos=pesos)
 
     # Faixas-alvo derivadas do perfil médio observado nos últimos N concursos
     pares_min = max(5, round(analise_janela['pares_medio']) - 1)
@@ -2500,6 +2540,151 @@ def gerar_jogo_especialista_lf(banco, estatisticas, ia=None, n_concursos=10,
     }
 
     return melhor_jogo, relatorio
+
+
+def preparar_pontos_backtest_especialista_lf(banco, num_testes=40, aquecimento_minimo=30, mostrar_progresso=True):
+    """
+    Módulo 4B - Backtest do Especialista (preparação).
+
+    Pré-calcula, para os `num_testes` concursos mais recentes, o estado
+    "ponto-no-tempo" necessário pra testar o Jogo Especialista sem
+    look-ahead bias: um banco de dados e um `EstatisticasLFAvancadas`
+    recalculados usando SOMENTE concursos estritamente anteriores ao
+    testado — replicando o que estaria disponível no momento real da
+    aposta (mesmo padrão já usado em `BacktestsLF.testar_estrategia`).
+
+    Feito uma única vez e reaproveitado por várias combinações de pesos
+    em `buscar_melhores_pesos_especialista_lf`, pra não pagar de novo o
+    custo de recalcular as estatísticas a cada combinação testada.
+    """
+    historico = banco.concursos  # mais recente primeiro
+    testes = historico[:min(num_testes, len(historico))]
+
+    pontos = []
+    pulados = 0
+
+    progress_bar = st.progress(0, text="Preparando pontos-no-tempo do backtest...") if mostrar_progresso else None
+
+    for i, concurso in enumerate(testes):
+        concursos_anteriores = historico[i + 1:]
+        if len(concursos_anteriores) < aquecimento_minimo:
+            pulados += 1
+        else:
+            banco_pt = _BancoTemporal(concursos_anteriores)
+            estatisticas_pt = EstatisticasLFAvancadas(banco_pt)
+            pontos.append({
+                'banco_pt': banco_pt,
+                'estatisticas_pt': estatisticas_pt,
+                'dezenas_reais': concurso['dezenas'],
+                'numero_concurso': concurso['numero']
+            })
+        if progress_bar:
+            progress_bar.progress((i + 1) / len(testes))
+
+    if progress_bar:
+        progress_bar.empty()
+
+    return pontos, pulados
+
+
+def backtest_especialista_lf(pontos, n_concursos=10, pesos=None, max_tentativas=1500, semente=42):
+    """
+    Módulo 4B - Backtest do Especialista (execução).
+
+    Roda `gerar_jogo_especialista_lf` em cada ponto-no-tempo já preparado
+    por `preparar_pontos_backtest_especialista_lf`, usando uma janela
+    (`n_concursos`) e combinação de `pesos` específicas, e mede quantos
+    acertos cada jogo gerado teria feito contra o resultado real daquele
+    concurso. Retorna a média, mediana, desvio padrão e distribuição de
+    acertos — a métrica usada pra comparar combinações diferentes.
+    """
+    resultados = []
+    for ponto in pontos:
+        jogo_pt, _ = gerar_jogo_especialista_lf(
+            ponto['banco_pt'], ponto['estatisticas_pt'], ia=None,
+            n_concursos=n_concursos, pesos=pesos,
+            max_tentativas=max_tentativas, semente=semente
+        )
+        if jogo_pt:
+            resultados.append(len(set(jogo_pt) & set(ponto['dezenas_reais'])))
+
+    if not resultados:
+        return None
+
+    return {
+        'n_concursos': n_concursos,
+        'pesos': pesos or dict(PESOS_ESPECIALISTA_PADRAO),
+        'total_testes': len(resultados),
+        'media': float(np.mean(resultados)),
+        'mediana': float(np.median(resultados)),
+        'std': float(np.std(resultados)),
+        'max': int(max(resultados)),
+        'min': int(min(resultados)),
+        'distribuicao': dict(sorted(Counter(resultados).items()))
+    }
+
+
+def buscar_melhores_pesos_especialista_lf(banco, num_testes=40, num_combinacoes=25,
+                                           janelas_candidatas=(5, 8, 10, 12, 15, 20),
+                                           max_tentativas_por_teste=1500, semente=42,
+                                           mostrar_progresso=True):
+    """
+    Módulo 4B - Busca Automática de Pesos.
+
+    Faz uma busca aleatória (random search) sobre combinações de pesos das
+    5 componentes estatísticas do Jogo Especialista (frequência na janela,
+    atraso na janela, tendência, atraso histórico, frequência histórica) e
+    o tamanho da janela de concursos analisada, avaliando cada combinação
+    com `backtest_especialista_lf` nos `num_testes` concursos reais mais
+    recentes — sempre ponto-no-tempo, sem vazar dado futuro. Os pontos de
+    teste são preparados uma única vez e reaproveitados por todas as
+    combinações, pra manter o custo controlado.
+
+    Retorna todas as combinações testadas (incluindo sempre os pesos
+    padrão atuais, como referência) ordenadas pela média de acertos.
+
+    IMPORTANTE: mesmo a melhor combinação encontrada está ajustada a um
+    histórico específico — algum grau de overfitting é inevitável em
+    qualquer busca deste tipo. O ganho esperado sobre os pesos padrão é
+    marginal (frações de acerto na média), nunca um salto para 14-15
+    pontos consistentes, porque cada concurso da Lotofácil é um sorteio
+    aleatório independente dos anteriores.
+    """
+    pontos, pulados = preparar_pontos_backtest_especialista_lf(
+        banco, num_testes=num_testes, mostrar_progresso=mostrar_progresso
+    )
+    if not pontos:
+        return [], pulados
+
+    rng = random.Random(semente)
+
+    combinacoes = [{'pesos': dict(PESOS_ESPECIALISTA_PADRAO), 'n_concursos': 10, 'rotulo': 'Padrão atual'}]
+    for i in range(num_combinacoes):
+        combinacoes.append({
+            'pesos': gerar_pesos_aleatorios_especialista(rng),
+            'n_concursos': rng.choice(janelas_candidatas),
+            'rotulo': f'Combinação #{i + 1}'
+        })
+
+    resultados = []
+    progress_bar = st.progress(0, text="Testando combinações de pesos...") if mostrar_progresso else None
+
+    for idx, combo in enumerate(combinacoes):
+        stats_combo = backtest_especialista_lf(
+            pontos, n_concursos=combo['n_concursos'], pesos=combo['pesos'],
+            max_tentativas=max_tentativas_por_teste, semente=semente
+        )
+        if stats_combo:
+            stats_combo['rotulo'] = combo['rotulo']
+            resultados.append(stats_combo)
+        if progress_bar:
+            progress_bar.progress((idx + 1) / len(combinacoes))
+
+    if progress_bar:
+        progress_bar.empty()
+
+    resultados.sort(key=lambda r: r['media'], reverse=True)
+    return resultados, pulados
 
 # =====================================================
 # MÓDULO 5: FILTROS INTELIGENTES - LOTOFÁCIL
@@ -3081,6 +3266,14 @@ def main():
         st.session_state.jogo_especialista = None
     if "relatorio_especialista" not in st.session_state:
         st.session_state.relatorio_especialista = None
+    if "pesos_especialista_ativos" not in st.session_state:
+        st.session_state.pesos_especialista_ativos = None
+    if "n_concursos_especialista_ativo" not in st.session_state:
+        st.session_state.n_concursos_especialista_ativo = None
+    if "resultados_busca_pesos_especialista" not in st.session_state:
+        st.session_state.resultados_busca_pesos_especialista = None
+    if "pulados_busca_pesos_especialista" not in st.session_state:
+        st.session_state.pulados_busca_pesos_especialista = 0
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -4113,9 +4306,20 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
+            pesos_ativos = st.session_state.get("pesos_especialista_ativos")
+            n_janela_ativa_backtest = st.session_state.get("n_concursos_especialista_ativo")
+
+            if pesos_ativos:
+                st.caption(f"🔧 Usando pesos otimizados pelo backtest (janela ideal encontrada: {n_janela_ativa_backtest} concursos). "
+                           "O slider abaixo é ignorado enquanto os pesos otimizados estiverem ativos.")
+                if st.button("↩️ Voltar aos pesos padrão", key="resetar_pesos_especialista_btn"):
+                    st.session_state.pesos_especialista_ativos = None
+                    st.session_state.n_concursos_especialista_ativo = None
+                    st.rerun()
+
             n_janela_especialista = st.slider(
                 "Quantidade de concursos recentes a analisar", 5, 20, 10,
-                key="n_janela_especialista_slider"
+                key="n_janela_especialista_slider", disabled=bool(pesos_ativos)
             )
 
             if st.button("🏆 GERAR JOGO ESPECIALISTA", use_container_width=True,
@@ -4125,7 +4329,8 @@ def main():
                         st.session_state.banco_dados,
                         st.session_state.estatisticas,
                         ia=ia,
-                        n_concursos=n_janela_especialista
+                        n_concursos=n_janela_ativa_backtest or n_janela_especialista,
+                        pesos=pesos_ativos
                     )
                     if jogo_especialista:
                         st.session_state.jogo_especialista = jogo_especialista
@@ -4192,6 +4397,103 @@ def main():
                         st.session_state.jogo_especialista = None
                         st.session_state.relatorio_especialista = None
                         st.rerun()
+
+            # ---- Backtest & Busca Automática de Pesos do Especialista ----
+            st.markdown("---")
+            st.markdown("### 🔬 Backtest & Ajuste Automático de Pesos")
+            st.markdown("""
+            <div class="ia-lf-highlight">
+                Testa o Jogo Especialista em vários concursos reais <strong>ponto-no-tempo</strong>
+                (usando, pra cada um, só dados anteriores a ele — sem vazar resultado futuro) e
+                faz uma busca aleatória por combinações de pesos e tamanho de janela que tiveram a
+                <strong>melhor média de acertos</strong> nesse histórico.<br>
+                <small style='color:#aaa;'>⚠️ Mesmo a melhor combinação encontrada está ajustada a um
+                histórico específico — o ganho esperado sobre os pesos padrão é marginal (frações de
+                acerto na média), não um salto para 14-15 pontos consistentes. A Lotofácil é um
+                sorteio aleatório independente concurso a concurso.</small>
+            </div>
+            """, unsafe_allow_html=True)
+
+            col_bt1, col_bt2 = st.columns(2)
+            with col_bt1:
+                num_testes_backtest = st.slider(
+                    "Concursos recentes para testar", 15, 100, 40,
+                    key="num_testes_backtest_especialista_slider"
+                )
+            with col_bt2:
+                num_combinacoes_backtest = st.slider(
+                    "Combinações de pesos a testar", 5, 60, 25,
+                    key="num_combinacoes_backtest_especialista_slider"
+                )
+
+            st.caption("ℹ️ Quanto maior os dois valores, mais confiável o resultado — e mais tempo o backtest leva pra rodar.")
+
+            if st.button("🔬 RODAR BACKTEST E BUSCAR MELHORES PESOS", use_container_width=True,
+                         key="buscar_pesos_especialista_btn"):
+                with st.spinner("Rodando backtest ponto-no-tempo e testando combinações de pesos..."):
+                    resultados_busca, pulados_busca = buscar_melhores_pesos_especialista_lf(
+                        st.session_state.banco_dados,
+                        num_testes=num_testes_backtest,
+                        num_combinacoes=num_combinacoes_backtest
+                    )
+                    st.session_state.resultados_busca_pesos_especialista = resultados_busca
+                    st.session_state.pulados_busca_pesos_especialista = pulados_busca
+                    if resultados_busca:
+                        st.success(f"✅ {len(resultados_busca)} combinação(ões) testada(s) em {resultados_busca[0]['total_testes']} concurso(s) reais!")
+                    else:
+                        st.error("❌ Não foi possível rodar o backtest (carregue mais concursos — é preciso um histórico mínimo antes de cada ponto testado).")
+
+            resultados_busca = st.session_state.get("resultados_busca_pesos_especialista")
+            if resultados_busca:
+                pulados_busca = st.session_state.get("pulados_busca_pesos_especialista", 0)
+                if pulados_busca:
+                    st.caption(f"ℹ️ {pulados_busca} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
+
+                melhor = resultados_busca[0]
+                padrao = next((r for r in resultados_busca if r['rotulo'] == 'Padrão atual'), None)
+
+                col_r1, col_r2, col_r3 = st.columns(3)
+                with col_r1:
+                    st.metric("Melhor média de acertos", f"{melhor['media']:.2f}", melhor['rotulo'])
+                with col_r2:
+                    if padrao:
+                        delta = melhor['media'] - padrao['media']
+                        st.metric("Média dos pesos padrão", f"{padrao['media']:.2f}", f"{delta:+.2f} vs. melhor")
+                with col_r3:
+                    st.metric("Janela ideal encontrada", f"{melhor['n_concursos']} concursos")
+
+                df_ranking_busca = pd.DataFrame([{
+                    'Combinação': r['rotulo'],
+                    'Janela': r['n_concursos'],
+                    'Média': round(r['media'], 2),
+                    'Mediana': round(r['mediana'], 2),
+                    'Desvio': round(r['std'], 2),
+                    'Máx.': r['max'],
+                    'Mín.': r['min']
+                } for r in resultados_busca[:15]])
+                st.markdown("#### 📋 Ranking das combinações testadas (top 15)")
+                st.dataframe(df_ranking_busca, use_container_width=True, hide_index=True)
+
+                with st.expander("📊 Distribuição de acertos da melhor combinação"):
+                    dist = melhor['distribuicao']
+                    df_dist = pd.DataFrame({
+                        'Acertos': list(dist.keys()),
+                        'Ocorrências': list(dist.values())
+                    })
+                    fig_dist = px.bar(df_dist, x='Acertos', y='Ocorrências',
+                                      title=f"Distribuição de acertos — {melhor['rotulo']} (janela: {melhor['n_concursos']})")
+                    st.plotly_chart(fig_dist, use_container_width=True)
+                    st.json(melhor['pesos'])
+
+                if melhor['rotulo'] != 'Padrão atual':
+                    if st.button("✅ Aplicar estes pesos ao Jogo Especialista", use_container_width=True,
+                                 type="primary", key="aplicar_pesos_especialista_btn"):
+                        st.session_state.pesos_especialista_ativos = melhor['pesos']
+                        st.session_state.n_concursos_especialista_ativo = melhor['n_concursos']
+                        st.success("✅ Pesos aplicados! Gere um novo Jogo Especialista acima pra usá-los.")
+                        st.rerun()
+                else:
+                    st.info("ℹ️ Os pesos padrão já foram a melhor combinação encontrada nesta busca — nada a aplicar.")
 
     # ================= TAB 4: GERADOR PREMIUM =================
     with tabs[3]:
