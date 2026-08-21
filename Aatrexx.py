@@ -2230,6 +2230,278 @@ def montar_pool_ml_lf(ia, tamanho_pool=21):
     return pool, ranking_ml
 
 # =====================================================
+# MÓDULO 4B: JOGO ESPECIALISTA (ANÁLISE DOS ÚLTIMOS 10 CONCURSOS)
+# =====================================================
+
+def analisar_ultimos_n_concursos_lf(banco, n=10):
+    """
+    Módulo 4B - Análise dos Últimos N Concursos (estilo "jogador especialista").
+
+    Reproduz a revisão manual que um apostador profissional de Lotofácil faz
+    antes de fechar o jogo dele: pega os `n` concursos mais recentes (10 por
+    padrão) e cruza várias leituras só sobre essa janela curta —
+    independente do restante do histórico:
+
+    - frequência de cada dezena dentro da janela (quem está "quente" agora);
+    - atraso de cada dezena dentro da janela (quantos desses concursos ela
+      ficou sem sair);
+    - tendência (comparando a metade mais recente da janela com a mais
+      antiga, pra ver se a dezena está subindo ou caindo de frequência);
+    - repetição média de dezenas de um concurso para o seguinte, dentro da
+      janela;
+    - perfil estrutural típico desses últimos jogos (pares/ímpares, soma,
+      primos, fibonacci, consecutivos, distribuição por linhas/colunas/
+      faixas do painel);
+    - dezenas historicamente fortes que sumiram da janela recente
+      (candidatas a "voltar" por regressão à média);
+    - coocorrência: quais pares de dezenas mais saíram juntos nesses `n`
+      concursos.
+
+    Retorna um dicionário com todas essas leituras, usado depois por
+    `gerar_jogo_especialista_lf` para fechar um único jogo.
+    """
+    concursos = banco.concursos[:n]  # já ordenados do mais recente para o mais antigo
+    dezenas_listas = [c['dezenas'] for c in concursos]
+    qtd = len(dezenas_listas)
+    if qtd == 0:
+        return None
+
+    freq_janela = Counter()
+    for d in dezenas_listas:
+        freq_janela.update(d)
+
+    atraso_janela = {}
+    for num in range(1, 26):
+        atraso = 0
+        saiu = False
+        for d in dezenas_listas:
+            if num in d:
+                saiu = True
+                break
+            atraso += 1
+        atraso_janela[num] = atraso if saiu else qtd
+
+    metade = max(1, qtd // 2)
+    freq_recente = Counter()
+    for d in dezenas_listas[:metade]:
+        freq_recente.update(d)
+    freq_antiga = Counter()
+    for d in dezenas_listas[metade:]:
+        freq_antiga.update(d)
+    tendencia = {num: freq_recente.get(num, 0) - freq_antiga.get(num, 0) for num in range(1, 26)}
+
+    repeticoes = []
+    for i in range(qtd - 1):
+        repeticoes.append(len(set(dezenas_listas[i]) & set(dezenas_listas[i + 1])))
+    media_repeticao = float(np.mean(repeticoes)) if repeticoes else 9.0
+
+    pares_medio = float(np.mean([contar_pares_lf(d) for d in dezenas_listas]))
+    soma_media = float(np.mean([sum(d) for d in dezenas_listas]))
+    soma_desvio = float(np.std([sum(d) for d in dezenas_listas])) if qtd > 1 else 8.0
+    primos_medio = float(np.mean([contar_primos_lf(d) for d in dezenas_listas]))
+    fib_medio = float(np.mean([contar_fibonacci_lf(d) for d in dezenas_listas]))
+    consecutivos_medio = float(np.mean([contar_consecutivos_lf(d) for d in dezenas_listas]))
+    linhas_medias = np.mean([distribuir_linhas_lf(d) for d in dezenas_listas], axis=0).tolist()
+    colunas_medias = np.mean([distribuir_colunas_lf(d) for d in dezenas_listas], axis=0).tolist()
+    faixas_medias = np.mean([distribuir_faixas_lf(d) for d in dezenas_listas], axis=0).tolist()
+
+    ausentes_na_janela = [num for num in range(1, 26) if freq_janela.get(num, 0) == 0]
+
+    coocorrencia = Counter()
+    for d in dezenas_listas:
+        d_ordenado = sorted(d)
+        for i in range(len(d_ordenado)):
+            for j in range(i + 1, len(d_ordenado)):
+                coocorrencia[(d_ordenado[i], d_ordenado[j])] += 1
+
+    return {
+        'qtd_concursos': qtd,
+        'concursos_numeros': [c['numero'] for c in concursos],
+        'freq_janela': dict(freq_janela),
+        'atraso_janela': atraso_janela,
+        'tendencia': tendencia,
+        'media_repeticao': media_repeticao,
+        'pares_medio': pares_medio,
+        'soma_media': soma_media,
+        'soma_desvio': soma_desvio,
+        'primos_medio': primos_medio,
+        'fib_medio': fib_medio,
+        'consecutivos_medio': consecutivos_medio,
+        'linhas_medias': linhas_medias,
+        'colunas_medias': colunas_medias,
+        'faixas_medias': faixas_medias,
+        'ausentes_na_janela': ausentes_na_janela,
+        'coocorrencia': coocorrencia,
+        'ultimo_concurso': dezenas_listas[0] if dezenas_listas else []
+    }
+
+
+def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None):
+    """
+    Módulo 4B - combina todas as leituras de `analisar_ultimos_n_concursos_lf`
+    com o perfil histórico completo (frequência e atraso de todo o
+    histórico, já calculados em `estatisticas`) e, se já houver modelos
+    treinados na aba de IA Estatística, a probabilidade média prevista pelo
+    ensemble de ML — tudo isso resumido em uma única pontuação de 0 a 1 por
+    dezena.
+    """
+    freq_janela = analise_janela['freq_janela']
+    atraso_janela = analise_janela['atraso_janela']
+    tendencia = analise_janela['tendencia']
+    ausentes = set(analise_janela['ausentes_na_janela'])
+
+    freq_max = max(freq_janela.values()) if freq_janela else 1
+    atraso_max = analise_janela['qtd_concursos'] or 1
+    tend_max = max((abs(v) for v in tendencia.values()), default=0) or 1
+    freq_hist_max = max(estatisticas.frequencias.values()) if estatisticas.frequencias else 1
+
+    scores = {}
+    for num in range(1, 26):
+        freq_score = freq_janela.get(num, 0) / freq_max
+        atraso_score = atraso_janela.get(num, 0) / atraso_max
+        tendencia_score = (tendencia.get(num, 0) / tend_max + 1) / 2
+        atraso_hist_score = estatisticas.atraso_relativo.get(num, 0.5)
+        freq_hist_score = estatisticas.frequencias.get(num, 0) / freq_hist_max
+
+        score = (
+            freq_score * 0.30 +
+            atraso_score * 0.20 +
+            tendencia_score * 0.15 +
+            atraso_hist_score * 0.15 +
+            freq_hist_score * 0.10
+        )
+
+        # Regressão à média: dezena historicamente forte que sumiu da janela recente
+        if num in ausentes and freq_hist_score > 0.6:
+            score += 0.10
+
+        scores[num] = max(0.0, min(1.0, score))
+
+    if ia is not None and getattr(ia, 'modelos', None):
+        probs_ml = ia.prever_probabilidades_dezenas()
+        if probs_ml:
+            max_p = max(probs_ml.values()) or 1
+            for num in range(1, 26):
+                ml_score = probs_ml.get(num, 0) / max_p
+                scores[num] = scores[num] * 0.70 + ml_score * 0.30
+
+    return scores
+
+
+def gerar_jogo_especialista_lf(banco, estatisticas, ia=None, n_concursos=10,
+                                tamanho_jogo=15, max_tentativas=30000, semente=None):
+    """
+    Módulo 4B - Jogo Especialista.
+
+    Fecha um ÚNICO jogo de 15 dezenas tentando reproduzir o que um jogador
+    profissional de Lotofácil faria: analisar os `n_concursos` últimos
+    resultados (10 por padrão) sob todos os ângulos possíveis
+    (`analisar_ultimos_n_concursos_lf`), pontuar as 25 dezenas com base
+    nisso (`pontuar_dezenas_janela_lf`) e montar o jogo priorizando as
+    dezenas mais bem pontuadas, mas respeitando o perfil estrutural
+    (pares, soma, primos, repetição em relação ao último concurso) que essa
+    mesma janela de 10 jogos mostrou ser típico.
+
+    IMPORTANTE: a Lotofácil é um sorteio aleatório e nenhuma análise
+    estatística garante 14 ou 15 acertos — o método apenas maximiza a
+    aderência do jogo ao perfil que um especialista levaria em conta.
+    """
+    analise_janela = analisar_ultimos_n_concursos_lf(banco, n=n_concursos)
+    if not analise_janela:
+        return None, None
+
+    scores = pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=ia)
+
+    # Faixas-alvo derivadas do perfil médio observado nos últimos N concursos
+    pares_min = max(5, round(analise_janela['pares_medio']) - 1)
+    pares_max = min(10, round(analise_janela['pares_medio']) + 1)
+    soma_min = max(150, round(analise_janela['soma_media'] - analise_janela['soma_desvio']))
+    soma_max = min(240, round(analise_janela['soma_media'] + analise_janela['soma_desvio']))
+    primos_min = max(1, round(analise_janela['primos_medio']) - 1)
+    primos_max = min(8, round(analise_janela['primos_medio']) + 1)
+    repet_min = max(0, round(analise_janela['media_repeticao']) - 2)
+    repet_max = min(14, round(analise_janela['media_repeticao']) + 2)
+    ultimo_concurso = analise_janela['ultimo_concurso']
+
+    # Pool de candidatas: as dezenas mais bem pontuadas (um pouco maior que
+    # 15 pra dar espaço de combinação sem se afastar muito do ranking)
+    ranking = sorted(range(1, 26), key=lambda n: scores[n], reverse=True)
+    pool = ranking[:20]
+    pesos_pool = [max(scores[n], 1e-6) for n in pool]
+
+    def _valido(jogo, folga=0):
+        pares = contar_pares_lf(jogo)
+        if not (pares_min - folga <= pares <= pares_max + folga):
+            return False
+        soma = sum(jogo)
+        if not (soma_min - folga * 5 <= soma <= soma_max + folga * 5):
+            return False
+        primos = contar_primos_lf(jogo)
+        if not (primos_min - folga <= primos <= primos_max + folga):
+            return False
+        if ultimo_concurso:
+            repetidas = len(set(jogo) & set(ultimo_concurso))
+            if not (repet_min - folga <= repetidas <= repet_max + folga):
+                return False
+        if contar_consecutivos_lf(jogo) > 6:
+            return False
+        if folga == 0:
+            linhas = distribuir_linhas_lf(jogo)
+            colunas = distribuir_colunas_lf(jogo)
+            if min(linhas) == 0 or min(colunas) == 0:
+                return False
+        return True
+
+    rng = random.Random(semente)
+    melhor_jogo = None
+    melhor_nota = -1.0
+    nivel_relaxamento = 0
+
+    tentativas = 0
+    while tentativas < max_tentativas:
+        tentativas += 1
+        pool_restante = list(pool)
+        pesos_restante = list(pesos_pool)
+        candidato = []
+        for _ in range(tamanho_jogo):
+            escolhido = rng.choices(pool_restante, weights=pesos_restante, k=1)[0]
+            idx = pool_restante.index(escolhido)
+            candidato.append(escolhido)
+            pool_restante.pop(idx)
+            pesos_restante.pop(idx)
+
+        if _valido(candidato, folga=nivel_relaxamento):
+            nota = float(np.mean([scores[n] for n in candidato]))
+            if nota > melhor_nota:
+                melhor_nota = nota
+                melhor_jogo = sorted(candidato)
+
+        # Se depois de boa parte das tentativas ainda não achou nada válido,
+        # relaxa gradualmente as faixas-alvo pra não travar sem resultado
+        if melhor_jogo is None and tentativas % 3000 == 0:
+            nivel_relaxamento += 1
+
+    if melhor_jogo is None:
+        # Fallback final: usa direto o Top 15 do ranking por pontuação
+        melhor_jogo = sorted(ranking[:tamanho_jogo])
+        melhor_nota = float(np.mean([scores[n] for n in melhor_jogo]))
+
+    relatorio = {
+        'analise_janela': analise_janela,
+        'scores': scores,
+        'nota_media_score': round(melhor_nota * 100, 2),
+        'tentativas': tentativas,
+        'faixas_alvo': {
+            'pares': (pares_min, pares_max),
+            'soma': (soma_min, soma_max),
+            'primos': (primos_min, primos_max),
+            'repeticao_ultimo': (repet_min, repet_max)
+        }
+    }
+
+    return melhor_jogo, relatorio
+
+# =====================================================
 # MÓDULO 5: FILTROS INTELIGENTES - LOTOFÁCIL
 # =====================================================
 
@@ -2805,6 +3077,10 @@ def main():
         st.session_state.jogos_ia = []
     if "probs_ia_dezenas" not in st.session_state:
         st.session_state.probs_ia_dezenas = {}
+    if "jogo_especialista" not in st.session_state:
+        st.session_state.jogo_especialista = None
+    if "relatorio_especialista" not in st.session_state:
+        st.session_state.relatorio_especialista = None
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -3819,6 +4095,103 @@ def main():
                             st.rerun()
             else:
                 st.info("ℹ️ Treine ao menos um modelo (Random Forest ou XGBoost) nesta aba para poder gerar jogos com base na IA.")
+
+            # ---- Jogo Especialista: análise dos últimos 10 concursos ----
+            st.markdown("---")
+            st.markdown("### 🏆 Jogo Especialista (Últimos 10 Concursos)")
+            st.markdown("""
+            <div class="ia-lf-highlight">
+                <strong>🎯 Como um apostador profissional faria:</strong><br>
+                Analisa os últimos concursos sob todos os ângulos possíveis — frequência recente,
+                atraso dentro da janela, tendência de alta/baixa, repetição média em relação ao
+                concurso anterior, perfil estrutural típico (pares, soma, primos, distribuição pelo
+                painel) e dezenas historicamente fortes que sumiram da janela — e fecha um
+                <strong>único jogo</strong> tentando reproduzir esse perfil, visando 14-15 pontos.<br>
+                <small style='color:#aaa;'>⚠️ A Lotofácil é um sorteio aleatório: nenhuma análise
+                estatística garante acerto. Este jogo maximiza a aderência ao perfil observado,
+                não a certeza do resultado.</small>
+            </div>
+            """, unsafe_allow_html=True)
+
+            n_janela_especialista = st.slider(
+                "Quantidade de concursos recentes a analisar", 5, 20, 10,
+                key="n_janela_especialista_slider"
+            )
+
+            if st.button("🏆 GERAR JOGO ESPECIALISTA", use_container_width=True,
+                         type="primary", key="gerar_jogo_especialista_btn"):
+                with st.spinner("Analisando os últimos concursos sob todos os ângulos..."):
+                    jogo_especialista, relatorio_especialista = gerar_jogo_especialista_lf(
+                        st.session_state.banco_dados,
+                        st.session_state.estatisticas,
+                        ia=ia,
+                        n_concursos=n_janela_especialista
+                    )
+                    if jogo_especialista:
+                        st.session_state.jogo_especialista = jogo_especialista
+                        st.session_state.relatorio_especialista = relatorio_especialista
+                        st.success("✅ Jogo especialista gerado!")
+                    else:
+                        st.error("❌ Não foi possível gerar o jogo especialista (carregue mais concursos).")
+
+            if st.session_state.get("jogo_especialista"):
+                jogo_esp = st.session_state.jogo_especialista
+                rel_esp = st.session_state.get("relatorio_especialista", {})
+                analise_esp = rel_esp.get('analise_janela', {})
+
+                pares_esp = contar_pares_lf(jogo_esp)
+                soma_esp = sum(jogo_esp)
+                primos_esp = contar_primos_lf(jogo_esp)
+                repetidas_esp = len(set(jogo_esp) & set(analise_esp.get('ultimo_concurso', [])))
+
+                st.markdown(f"""
+                <div class='card'>
+                    🏆 <strong>Jogo Especialista</strong><br>
+                    {formatar_jogo_html_lf(jogo_esp)}<br>
+                    <small style='color:#aaa;'>⚖️ {pares_esp}p/{15-pares_esp}i | ➕ {soma_esp} | 🔢 {primos_esp} primos |
+                    🔁 {repetidas_esp} repetidas do último concurso | 📈 Nota especialista: {rel_esp.get('nota_media_score', 0):.1f}</small>
+                </div>
+                """, unsafe_allow_html=True)
+
+                with st.expander(f"📊 Análise dos últimos {analise_esp.get('qtd_concursos', 0)} concursos usada na geração"):
+                    st.markdown(f"**Concursos analisados:** {analise_esp.get('concursos_numeros', [])}")
+                    col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+                    with col_e1:
+                        st.metric("Pares médio (janela)", f"{analise_esp.get('pares_medio', 0):.1f}")
+                    with col_e2:
+                        st.metric("Soma média (janela)", f"{analise_esp.get('soma_media', 0):.0f}")
+                    with col_e3:
+                        st.metric("Primos médio (janela)", f"{analise_esp.get('primos_medio', 0):.1f}")
+                    with col_e4:
+                        st.metric("Repetição média", f"{analise_esp.get('media_repeticao', 0):.1f}")
+
+                    df_freq_janela = pd.DataFrame({
+                        'Dezena': list(range(1, 26)),
+                        'Freq. na janela': [analise_esp.get('freq_janela', {}).get(n, 0) for n in range(1, 26)],
+                        'Atraso na janela': [analise_esp.get('atraso_janela', {}).get(n, 0) for n in range(1, 26)],
+                        'Pontuação especialista': [round(rel_esp.get('scores', {}).get(n, 0) * 100, 1) for n in range(1, 26)]
+                    }).sort_values('Pontuação especialista', ascending=False)
+                    st.dataframe(df_freq_janela, use_container_width=True, hide_index=True)
+
+                    ausentes = analise_esp.get('ausentes_na_janela', [])
+                    if ausentes:
+                        st.caption(f"🔄 Dezenas historicamente fortes ausentes na janela (candidatas a regressão à média): {ausentes}")
+
+                col_esp1, col_esp2 = st.columns(2)
+                with col_esp1:
+                    if st.button("💾 Salvar Jogo Especialista", key="salvar_jogo_especialista_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_esp], {
+                            'tipo': 'jogo_especialista_ultimos_n',
+                            'n_concursos_analisados': analise_esp.get('qtd_concursos', 0),
+                            'nota_especialista': rel_esp.get('nota_media_score', 0)
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogo especialista salvo! ID: {jogo_id}")
+                with col_esp2:
+                    if st.button("🗑️ Limpar Jogo Especialista", key="limpar_jogo_especialista_btn", use_container_width=True):
+                        st.session_state.jogo_especialista = None
+                        st.session_state.relatorio_especialista = None
+                        st.rerun()
 
     # ================= TAB 4: GERADOR PREMIUM =================
     with tabs[3]:
