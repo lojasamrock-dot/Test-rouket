@@ -79,6 +79,24 @@ st.caption("Sistema Avançado de Análise Estatística, IA e Geração Inteligen
 # FUNÇÕES AUXILIARES
 # =====================================================
 
+# Tabela oficial de preços da aposta simples da Lotofácil (Caixa), por
+# quantidade de dezenas marcadas numa ÚNICA aposta oficial (15 a 20 — o
+# máximo permitido pela Caixa por bilhete). Valores de referência vigentes
+# em 2026; a Caixa reajusta periodicamente — confira no app oficial antes
+# de apostar valores altos. Pools maiores que 20 dezenas neste sistema só
+# podem virar múltiplos jogos separados de 15 dezenas (fechamento), já que
+# a Caixa não aceita mais que 20 números numa aposta única.
+PRECO_OFICIAL_LOTOFACIL_LF = {
+    15: 3.50,
+    16: 56.00,
+    17: 476.00,
+    18: 2856.00,
+    19: 13566.00,
+    20: 54264.00
+}
+PRECO_APOSTA_SIMPLES_LF = PRECO_OFICIAL_LOTOFACIL_LF[15]
+
+
 def convert_numpy_types(obj):
     if isinstance(obj, np.integer):
         return int(obj)
@@ -2686,6 +2704,182 @@ def buscar_melhores_pesos_especialista_lf(banco, num_testes=40, num_combinacoes=
     resultados.sort(key=lambda r: r['media'], reverse=True)
     return resultados, pulados
 
+
+# =====================================================
+# MÓDULO 4C: CAMADAS POR RECORRÊNCIA (NÚCLEO QUENTE/MÉDIO/FRIO)
+# =====================================================
+
+def classificar_dezenas_por_recorrencia_lf(banco, n_concursos=4):
+    """
+    Módulo 4C - Camadas por Recorrência.
+
+    Formaliza a leitura manual que o usuário fez nos concursos 3768-3771:
+    olhar os `n_concursos` últimos resultados e separar as 25 dezenas em
+    três grupos pela frequência bruta dentro dessa janela curta:
+
+    - núcleo quente: saiu em pelo menos 75% desses concursos;
+    - núcleo médio: saiu em 50% a 75% deles;
+    - núcleo frio: saiu em menos da metade (ou nenhuma vez).
+
+    IMPORTANTE: com uma janela pequena (3-6 concursos), é estatisticamente
+    comum que várias dezenas apareçam em todos eles só por acaso — isso
+    NÃO é evidência de que essas dezenas vão continuar saindo. É uma
+    fotografia de curtíssimo prazo, não uma tendência validada. Use o
+    backtest desta seção antes de confiar na estratégia.
+    """
+    concursos = banco.concursos[:n_concursos]
+    dezenas_listas = [c['dezenas'] for c in concursos]
+    qtd = len(dezenas_listas)
+    if qtd == 0:
+        return None
+
+    freq = Counter()
+    for d in dezenas_listas:
+        freq.update(d)
+
+    freq_por_dezena = {num: freq.get(num, 0) for num in range(1, 26)}
+    tiers = {'quente': [], 'medio': [], 'frio': []}
+    for num in range(1, 26):
+        proporcao = freq_por_dezena[num] / qtd
+        if proporcao >= 0.75:
+            tiers['quente'].append(num)
+        elif proporcao >= 0.5:
+            tiers['medio'].append(num)
+        else:
+            tiers['frio'].append(num)
+
+    for tier in tiers.values():
+        tier.sort(key=lambda n: freq_por_dezena[n], reverse=True)
+
+    return {
+        'qtd_concursos': qtd,
+        'concursos_numeros': [c['numero'] for c in concursos],
+        'freq_por_dezena': freq_por_dezena,
+        'tiers': tiers,
+        'ultimo_concurso': dezenas_listas[0] if dezenas_listas else []
+    }
+
+
+def gerar_jogos_camadas_recorrencia_lf(banco, n_concursos=4, qtd_quente=5, qtd_medio=5, qtd_frio=5,
+                                        gerar_rotacao=True, qtd_rotacao=5):
+    """
+    Módulo 4C - gera o Jogo A (núcleo estável) e, opcionalmente, o Jogo B
+    (rotação controlada) a partir de `classificar_dezenas_por_recorrencia_lf`.
+
+    Jogo A: pega as `qtd_quente` dezenas mais recorrentes do núcleo
+    quente, `qtd_medio` do médio e `qtd_frio` do frio (completa com o
+    próximo melhor disponível na janela se algum núcleo não tiver dezenas
+    suficientes).
+
+    Jogo B (se `gerar_rotacao=True`): mantém o núcleo quente e o médio do
+    Jogo A, e troca as `qtd_rotacao` dezenas mais fracas do núcleo frio
+    pelas próximas dezenas mais recorrentes da janela que ficaram de fora
+    — a "rotação controlada" descrita pelo usuário, calculada de novo a
+    cada execução (nunca fixada em dezenas específicas de um concurso já
+    passado).
+
+    IMPORTANTE: nenhuma classificação por recorrência recente supera a
+    natureza aleatória da Lotofácil. Esta estratégia é mais uma forma de
+    montar jogos com base em padrões de curto prazo — não uma previsão
+    validada. Rode o backtest desta seção para ver a média real de
+    acertos antes de usar em apostas.
+    """
+    classificacao = classificar_dezenas_por_recorrencia_lf(banco, n_concursos=n_concursos)
+    if not classificacao:
+        return None, None, None
+
+    tiers = classificacao['tiers']
+    freq_por_dezena = classificacao['freq_por_dezena']
+    ranking_geral = sorted(range(1, 26), key=lambda n: freq_por_dezena[n], reverse=True)
+
+    def _pegar(tier_nome, qtd, excluir):
+        candidatos = [n for n in tiers[tier_nome] if n not in excluir]
+        escolhidos = candidatos[:qtd]
+        if len(escolhidos) < qtd:
+            reserva = [n for n in ranking_geral if n not in excluir and n not in escolhidos]
+            escolhidos += reserva[:qtd - len(escolhidos)]
+        return escolhidos
+
+    usados = set()
+    nucleo_quente = _pegar('quente', qtd_quente, usados)
+    usados |= set(nucleo_quente)
+    nucleo_medio = _pegar('medio', qtd_medio, usados)
+    usados |= set(nucleo_medio)
+    nucleo_frio = _pegar('frio', qtd_frio, usados)
+    usados |= set(nucleo_frio)
+
+    jogo_a = sorted(nucleo_quente + nucleo_medio + nucleo_frio)
+
+    relatorio = {
+        'classificacao': classificacao,
+        'nucleo_quente': nucleo_quente,
+        'nucleo_medio': nucleo_medio,
+        'nucleo_frio': nucleo_frio
+    }
+
+    jogo_b = None
+    if gerar_rotacao and nucleo_frio:
+        qtd_rot = min(qtd_rotacao, len(nucleo_frio))
+        frio_fraco_primeiro = sorted(nucleo_frio, key=lambda n: freq_por_dezena[n])
+        a_trocar = frio_fraco_primeiro[:qtd_rot]
+        candidatas_entrada = [n for n in ranking_geral if n not in jogo_a][:qtd_rot]
+        jogo_b = sorted((set(jogo_a) - set(a_trocar)) | set(candidatas_entrada))
+        relatorio['rotacao'] = {'saiu': a_trocar, 'entrou': candidatas_entrada}
+
+    return jogo_a, jogo_b, relatorio
+
+
+def preparar_e_rodar_backtest_camadas_lf(banco, num_testes=40, n_concursos=4,
+                                          qtd_quente=5, qtd_medio=5, qtd_frio=5,
+                                          aquecimento_minimo=10, mostrar_progresso=True):
+    """
+    Módulo 4C - Backtest das Camadas por Recorrência.
+
+    Roda o Jogo A gerado por `gerar_jogos_camadas_recorrencia_lf` em cada um
+    dos `num_testes` concursos mais recentes, ponto-no-tempo (só com dados
+    anteriores ao concurso testado), e mede a distribuição de acertos
+    contra o resultado real — mesma lógica de validação já usada no Jogo
+    Especialista (Módulo 4B) e nos pools de Fechamento.
+    """
+    historico = banco.concursos
+    testes = historico[:min(num_testes, len(historico))]
+    resultados = []
+    pulados = 0
+
+    progress_bar = st.progress(0, text="Rodando backtest das Camadas por Recorrência...") if mostrar_progresso else None
+
+    for i, concurso in enumerate(testes):
+        concursos_anteriores = historico[i + 1:]
+        if len(concursos_anteriores) < max(aquecimento_minimo, n_concursos):
+            pulados += 1
+        else:
+            banco_pt = _BancoTemporal(concursos_anteriores)
+            jogo_a, _, _ = gerar_jogos_camadas_recorrencia_lf(
+                banco_pt, n_concursos=n_concursos,
+                qtd_quente=qtd_quente, qtd_medio=qtd_medio, qtd_frio=qtd_frio,
+                gerar_rotacao=False
+            )
+            if jogo_a:
+                resultados.append(len(set(jogo_a) & set(concurso['dezenas'])))
+        if progress_bar:
+            progress_bar.progress((i + 1) / len(testes))
+
+    if progress_bar:
+        progress_bar.empty()
+
+    if not resultados:
+        return None, pulados
+
+    return {
+        'total_testes': len(resultados),
+        'media': float(np.mean(resultados)),
+        'mediana': float(np.median(resultados)),
+        'std': float(np.std(resultados)),
+        'max': int(max(resultados)),
+        'min': int(min(resultados)),
+        'distribuicao': dict(sorted(Counter(resultados).items()))
+    }, pulados
+
 # =====================================================
 # MÓDULO 5: FILTROS INTELIGENTES - LOTOFÁCIL
 # =====================================================
@@ -3274,6 +3468,12 @@ def main():
         st.session_state.resultados_busca_pesos_especialista = None
     if "pulados_busca_pesos_especialista" not in st.session_state:
         st.session_state.pulados_busca_pesos_especialista = 0
+    if "resultado_camadas" not in st.session_state:
+        st.session_state.resultado_camadas = None
+    if "resultado_backtest_camadas" not in st.session_state:
+        st.session_state.resultado_backtest_camadas = None
+    if "pulados_backtest_camadas" not in st.session_state:
+        st.session_state.pulados_backtest_camadas = 0
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -3380,7 +3580,8 @@ def main():
         "🔬 Backtests",
         "📈 Análise Avançada",
         "🔍 Conferência",
-        "💾 Salvos"
+        "💾 Salvos",
+        "🧬 Camadas"
     ])
 
     # ================= TAB 1: DASHBOARD =================
@@ -3795,9 +3996,19 @@ def main():
                         'Média capturada (/15)': round(r['media_capturadas'], 2),
                         'Esperado por acaso': r['esperado_por_acaso'],
                         'Vantagem sobre o acaso': r['vantagem_sobre_acaso'],
-                        'Pior caso (fora do pool)': r['maximo_fora_do_pool']
+                        'Pior caso (fora do pool)': r['maximo_fora_do_pool'],
+                        'Aposta oficial única (Caixa)': (
+                            f"R$ {PRECO_OFICIAL_LOTOFACIL_LF[r['top_n']]:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
+                            if r['top_n'] in PRECO_OFICIAL_LOTOFACIL_LF else "— (só como fechamento)"
+                        )
                     } for r in recomendacao_pool])
                     st.dataframe(df_rec, use_container_width=True, hide_index=True)
+                    st.caption(
+                        "💰 'Aposta oficial única' é o preço de marcar todas as dezenas do pool numa ÚNICA aposta "
+                        "oficial da Caixa (garante 100% das combinações dentro dela). Pools acima de 20 dezenas não "
+                        "cabem numa aposta oficial — só servem para gerar vários jogos separados de 15 dezenas "
+                        "(fechamento), cada um custando R$ 3,50."
+                    )
 
                     melhor = recomendacao_pool[0]
                     if melhor['vantagem_sobre_acaso'] <= 0.3:
@@ -3881,6 +4092,31 @@ def main():
             with col_f2:
                 max_combinacoes = math.comb(len(dezenas_fechamento), 15) if len(dezenas_fechamento) >= 15 else 0
                 st.metric("Combinações possíveis", f"{len(dezenas_fechamento)} escolhe 15 = {max_combinacoes:,}".replace(",", "."))
+
+            custo_fechamento_gerado = qtd_fechamento * PRECO_APOSTA_SIMPLES_LF
+            tamanho_dezenas_fechamento = len(dezenas_fechamento)
+            col_custo1, col_custo2 = st.columns(2)
+            with col_custo1:
+                st.metric(
+                    f"💰 Custo do fechamento ({qtd_fechamento} jogos separados)",
+                    f"R$ {custo_fechamento_gerado:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
+                )
+            with col_custo2:
+                if tamanho_dezenas_fechamento in PRECO_OFICIAL_LOTOFACIL_LF:
+                    preco_oficial = PRECO_OFICIAL_LOTOFACIL_LF[tamanho_dezenas_fechamento]
+                    st.metric(
+                        f"💰 Alternativa: aposta oficial única ({tamanho_dezenas_fechamento} dezenas)",
+                        f"R$ {preco_oficial:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
+                    )
+                else:
+                    st.metric(f"💰 Aposta oficial única ({tamanho_dezenas_fechamento} dezenas)", "Não permitido (máx. 20)")
+            st.caption(
+                "A aposta oficial única marca todas as dezenas do pool num só bilhete da Caixa e garante 100% das "
+                f"combinações dentro dele — mas só é aceita até 20 dezenas. Gerar {qtd_fechamento} jogos separados de "
+                "15 dezenas é mais barato, porém cobre apenas uma amostra heurística das combinações possíveis, sem "
+                "garantia formal. Nenhuma das duas opções muda a probabilidade de acerto de cada dezena individual — "
+                "só a forma como a cobertura é paga."
+            )
 
             metodo_fechamento = st.radio(
                 "Método do fechamento",
@@ -4993,6 +5229,169 @@ def main():
                     <strong>Jogos:</strong> {len(jogo['jogos'])}
                 </div>
                 """, unsafe_allow_html=True)
+
+    # ================= TAB 9: CAMADAS POR RECORRÊNCIA =================
+    with tabs[8]:
+        st.markdown("### 🧬 Camadas por Recorrência (Núcleo Quente/Médio/Frio)")
+        st.markdown("""
+        <div class="ia-lf-highlight">
+            Formaliza a leitura de <strong>núcleo quente / médio / frio</strong>: olha os últimos
+            concursos e separa as 25 dezenas pela frequência bruta nessa janela curta. O
+            <strong>Jogo A</strong> combina um pouco de cada núcleo; o <strong>Jogo B</strong> mantém o
+            que foi mais estável e faz uma rotação controlada no núcleo frio.<br>
+            <small style='color:#aaa;'>⚠️ Com uma janela curta (poucos concursos), é normal que várias
+            dezenas apareçam em todos eles só por acaso — isso não é uma tendência validada, é uma
+            fotografia de curtíssimo prazo. Rode o backtest abaixo antes de confiar na estratégia.</small>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if not st.session_state.banco_dados or not st.session_state.banco_dados.concursos:
+            st.warning("⚠️ Carregue o histórico de concursos primeiro (aba Dashboard).")
+        else:
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                n_concursos_camadas = st.slider(
+                    "Quantos concursos recentes analisar", 3, 15, 4,
+                    key="n_concursos_camadas_slider"
+                )
+            with col_c2:
+                st.caption(
+                    "🔥 Quente: saiu em ≥75% desses concursos · 🟡 Médio: 50-75% · ❄️ Frio: <50%. "
+                    "Os cortes são fixos; o que muda é o conjunto de dezenas em cada faixa."
+                )
+
+            col_q, col_m, col_f = st.columns(3)
+            with col_q:
+                qtd_quente_camadas = st.number_input("Dezenas do núcleo quente", 0, 15, 5, key="qtd_quente_camadas")
+            with col_m:
+                qtd_medio_camadas = st.number_input("Dezenas do núcleo médio", 0, 15, 5, key="qtd_medio_camadas")
+            with col_f:
+                qtd_frio_camadas = st.number_input("Dezenas do núcleo frio", 0, 15, 5, key="qtd_frio_camadas")
+
+            total_dezenas_camadas = qtd_quente_camadas + qtd_medio_camadas + qtd_frio_camadas
+            if total_dezenas_camadas != 15:
+                st.warning(f"⚠️ A soma dos três núcleos precisa dar 15 (está em {total_dezenas_camadas}).")
+
+            gerar_rotacao_camadas = st.checkbox("Gerar também o Jogo B (rotação controlada no núcleo frio)", value=True, key="gerar_rotacao_camadas_chk")
+            qtd_rotacao_camadas = st.slider("Dezenas trocadas na rotação do Jogo B", 1, 10, 5, key="qtd_rotacao_camadas_slider") if gerar_rotacao_camadas else 0
+
+            if st.button("🧬 GERAR JOGOS POR CAMADAS", use_container_width=True, type="primary",
+                         key="gerar_camadas_btn", disabled=(total_dezenas_camadas != 15)):
+                jogo_a_camadas, jogo_b_camadas, relatorio_camadas = gerar_jogos_camadas_recorrencia_lf(
+                    st.session_state.banco_dados, n_concursos=n_concursos_camadas,
+                    qtd_quente=qtd_quente_camadas, qtd_medio=qtd_medio_camadas, qtd_frio=qtd_frio_camadas,
+                    gerar_rotacao=gerar_rotacao_camadas, qtd_rotacao=qtd_rotacao_camadas
+                )
+                st.session_state.resultado_camadas = {
+                    'jogo_a': jogo_a_camadas, 'jogo_b': jogo_b_camadas, 'relatorio': relatorio_camadas
+                }
+
+            resultado_camadas = st.session_state.get("resultado_camadas")
+            if resultado_camadas and resultado_camadas.get('jogo_a'):
+                jogo_a_c = resultado_camadas['jogo_a']
+                jogo_b_c = resultado_camadas['jogo_b']
+                rel_c = resultado_camadas['relatorio']
+                classif_c = rel_c['classificacao']
+
+                st.markdown(f"""
+                <div class='card'>
+                    🅰️ <strong>Jogo A — Núcleo Estável</strong><br>
+                    {formatar_jogo_html_lf(jogo_a_c)}
+                </div>
+                """, unsafe_allow_html=True)
+
+                if jogo_b_c:
+                    st.markdown(f"""
+                    <div class='card'>
+                        🅱️ <strong>Jogo B — Rotação Controlada</strong><br>
+                        {formatar_jogo_html_lf(jogo_b_c)}<br>
+                        <small style='color:#aaa;'>🔄 Saíram do frio: {rel_c['rotacao']['saiu']} | Entraram: {rel_c['rotacao']['entrou']}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with st.expander(f"📊 Classificação usada (últimos {classif_c['qtd_concursos']} concursos: {classif_c['concursos_numeros']})"):
+                    col_t1, col_t2, col_t3 = st.columns(3)
+                    with col_t1:
+                        st.markdown("**🔥 Núcleo quente**")
+                        st.write(rel_c['nucleo_quente'])
+                    with col_t2:
+                        st.markdown("**🟡 Núcleo médio**")
+                        st.write(rel_c['nucleo_medio'])
+                    with col_t3:
+                        st.markdown("**❄️ Núcleo frio**")
+                        st.write(rel_c['nucleo_frio'])
+
+                    df_freq_camadas = pd.DataFrame({
+                        'Dezena': list(range(1, 26)),
+                        f"Freq. (/{classif_c['qtd_concursos']})": [classif_c['freq_por_dezena'][n] for n in range(1, 26)]
+                    }).sort_values(f"Freq. (/{classif_c['qtd_concursos']})", ascending=False)
+                    st.dataframe(df_freq_camadas, use_container_width=True, hide_index=True)
+
+                col_sc1, col_sc2 = st.columns(2)
+                with col_sc1:
+                    if st.button("💾 Salvar Jogo A", key="salvar_camadas_a_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_a_c], {
+                            'tipo': 'camadas_recorrencia_jogo_a', 'n_concursos_analisados': classif_c['qtd_concursos']
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogo A salvo! ID: {jogo_id}")
+                with col_sc2:
+                    if jogo_b_c and st.button("💾 Salvar Jogo B", key="salvar_camadas_b_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_b_c], {
+                            'tipo': 'camadas_recorrencia_jogo_b', 'n_concursos_analisados': classif_c['qtd_concursos']
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogo B salvo! ID: {jogo_id}")
+
+            st.markdown("---")
+            st.markdown("#### 🔬 Backtest das Camadas por Recorrência")
+            st.caption(
+                "Testa o Jogo A (sem rotação) ponto-no-tempo em vários concursos reais recentes, pra ver a média "
+                "real de acertos dessa estratégia — em vez de julgar por 1 ou 2 jogos isolados."
+            )
+            total_concursos_camadas = len(st.session_state.banco_dados.concursos)
+            max_testes_camadas = min(150, max(10, total_concursos_camadas - 15))
+            n_testes_camadas = st.slider("Concursos a testar", 10, max_testes_camadas, min(40, max_testes_camadas), key="n_testes_camadas_slider")
+
+            if st.button("🔬 RODAR BACKTEST DAS CAMADAS", use_container_width=True, key="backtest_camadas_btn",
+                         disabled=(total_dezenas_camadas != 15)):
+                with st.spinner("Rodando backtest ponto-no-tempo..."):
+                    stats_camadas, pulados_camadas = preparar_e_rodar_backtest_camadas_lf(
+                        st.session_state.banco_dados, num_testes=n_testes_camadas, n_concursos=n_concursos_camadas,
+                        qtd_quente=qtd_quente_camadas, qtd_medio=qtd_medio_camadas, qtd_frio=qtd_frio_camadas
+                    )
+                    st.session_state.resultado_backtest_camadas = stats_camadas
+                    st.session_state.pulados_backtest_camadas = pulados_camadas
+
+            stats_camadas = st.session_state.get("resultado_backtest_camadas")
+            if stats_camadas:
+                pulados_c = st.session_state.get("pulados_backtest_camadas", 0)
+                if pulados_c:
+                    st.caption(f"ℹ️ {pulados_c} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
+
+                col_bc1, col_bc2, col_bc3, col_bc4 = st.columns(4)
+                with col_bc1:
+                    st.metric("Média de acertos", f"{stats_camadas['media']:.2f}")
+                with col_bc2:
+                    st.metric("Mediana", f"{stats_camadas['mediana']:.1f}")
+                with col_bc3:
+                    st.metric("Máximo", stats_camadas['max'])
+                with col_bc4:
+                    st.metric("Mínimo", stats_camadas['min'])
+
+                st.caption(
+                    f"Comparação: escolhendo 15 dezenas totalmente ao acaso, o esperado é 9,00/15. "
+                    f"Esta estratégia teve média de {stats_camadas['media']:.2f}/15 em {stats_camadas['total_testes']} "
+                    "concurso(s) testado(s) — isso descreve o passado, não garante o próximo concurso."
+                )
+
+                df_dist_camadas = pd.DataFrame({
+                    'Acertos': list(stats_camadas['distribuicao'].keys()),
+                    'Ocorrências': list(stats_camadas['distribuicao'].values())
+                })
+                fig_dist_camadas = px.bar(df_dist_camadas, x='Acertos', y='Ocorrências',
+                                          title="Distribuição de acertos — Camadas por Recorrência (Jogo A)")
+                st.plotly_chart(fig_dist_camadas, use_container_width=True)
 
 if __name__ == "__main__":
     main()
