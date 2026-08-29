@@ -2325,6 +2325,20 @@ def analisar_ultimos_n_concursos_lf(banco, n=10):
 
     ausentes_na_janela = [num for num in range(1, 26) if freq_janela.get(num, 0) == 0]
 
+    # Sequência atual: nº de concursos consecutivos, contando a partir do
+    # mais recente pra trás, em que a dezena apareceu sem interrupção.
+    # 0 se ela não saiu no concurso mais recente da janela. Formaliza a
+    # leitura de "aceleração/persistência" (streak) descrita pelo usuário.
+    sequencia_atual = {}
+    for num in range(1, 26):
+        seq = 0
+        for d in dezenas_listas:
+            if num in d:
+                seq += 1
+            else:
+                break
+        sequencia_atual[num] = seq
+
     coocorrencia = Counter()
     for d in dezenas_listas:
         d_ordenado = sorted(d)
@@ -2349,6 +2363,7 @@ def analisar_ultimos_n_concursos_lf(banco, n=10):
         'colunas_medias': colunas_medias,
         'faixas_medias': faixas_medias,
         'ausentes_na_janela': ausentes_na_janela,
+        'sequencia_atual': sequencia_atual,
         'coocorrencia': coocorrencia,
         'ultimo_concurso': dezenas_listas[0] if dezenas_listas else []
     }
@@ -2356,7 +2371,7 @@ def analisar_ultimos_n_concursos_lf(banco, n=10):
 
 PESOS_ESPECIALISTA_PADRAO = {
     'freq': 0.30, 'atraso': 0.20, 'tendencia': 0.15,
-    'atraso_hist': 0.15, 'freq_hist': 0.10,
+    'atraso_hist': 0.15, 'freq_hist': 0.10, 'sequencia': 0.0,
     'bonus_regressao': 0.10, 'ml': 0.30
 }
 
@@ -2365,7 +2380,9 @@ def gerar_pesos_aleatorios_especialista(rng):
     """
     Módulo 4B - gera uma combinação aleatória de pesos para o Jogo
     Especialista, usada na busca automática (`buscar_melhores_pesos_especialista_lf`).
-    Os 5 componentes principais são sorteados em faixas plausíveis e depois
+    Os 6 componentes principais (incluindo `sequencia`, o comprimento da
+    sequência atual de aparições consecutivas — hipótese de "persistência/
+    aceleração" descrita pelo usuário) são sorteados em faixas plausíveis e
     normalizados para somar 1.0; o bônus de regressão à média e o peso do
     ML (só usado se houver modelo treinado) são sorteados à parte.
     """
@@ -2375,6 +2392,7 @@ def gerar_pesos_aleatorios_especialista(rng):
         'tendencia': rng.uniform(0.05, 0.30),
         'atraso_hist': rng.uniform(0.05, 0.30),
         'freq_hist': rng.uniform(0.05, 0.25),
+        'sequencia': rng.uniform(0.0, 0.35),
     }
     soma = sum(brutos.values()) or 1.0
     pesos = {k: v / soma for k, v in brutos.items()}
@@ -2394,19 +2412,24 @@ def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None, pesos=None)
 
     `pesos` (opcional) permite sobrescrever os pesos padrão de cada
     componente — usado pela busca automática (`buscar_melhores_pesos_especialista_lf`)
-    para testar combinações diferentes num backtest ponto-no-tempo.
+    para testar combinações diferentes num backtest ponto-no-tempo,
+    incluindo o peso de `sequencia` (comprimento da sequência atual de
+    aparições consecutivas — 0 por padrão, ou seja, desligado até o
+    backtest mostrar que vale a pena ativar).
     """
     pesos = pesos or PESOS_ESPECIALISTA_PADRAO
 
     freq_janela = analise_janela['freq_janela']
     atraso_janela = analise_janela['atraso_janela']
     tendencia = analise_janela['tendencia']
+    sequencia_atual = analise_janela.get('sequencia_atual', {})
     ausentes = set(analise_janela['ausentes_na_janela'])
 
     freq_max = max(freq_janela.values()) if freq_janela else 1
     atraso_max = analise_janela['qtd_concursos'] or 1
     tend_max = max((abs(v) for v in tendencia.values()), default=0) or 1
     freq_hist_max = max(estatisticas.frequencias.values()) if estatisticas.frequencias else 1
+    seq_max = max(sequencia_atual.values(), default=0) or 1
 
     scores = {}
     for num in range(1, 26):
@@ -2415,13 +2438,15 @@ def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None, pesos=None)
         tendencia_score = (tendencia.get(num, 0) / tend_max + 1) / 2
         atraso_hist_score = estatisticas.atraso_relativo.get(num, 0.5)
         freq_hist_score = estatisticas.frequencias.get(num, 0) / freq_hist_max
+        sequencia_score = sequencia_atual.get(num, 0) / seq_max
 
         score = (
             freq_score * pesos.get('freq', 0.30) +
             atraso_score * pesos.get('atraso', 0.20) +
             tendencia_score * pesos.get('tendencia', 0.15) +
             atraso_hist_score * pesos.get('atraso_hist', 0.15) +
-            freq_hist_score * pesos.get('freq_hist', 0.10)
+            freq_hist_score * pesos.get('freq_hist', 0.10) +
+            sequencia_score * pesos.get('sequencia', 0.0)
         )
 
         # Regressão à média: dezena historicamente forte que sumiu da janela recente
@@ -4610,6 +4635,7 @@ def main():
                         'Dezena': list(range(1, 26)),
                         'Freq. na janela': [analise_esp.get('freq_janela', {}).get(n, 0) for n in range(1, 26)],
                         'Atraso na janela': [analise_esp.get('atraso_janela', {}).get(n, 0) for n in range(1, 26)],
+                        'Sequência atual': [analise_esp.get('sequencia_atual', {}).get(n, 0) for n in range(1, 26)],
                         'Pontuação especialista': [round(rel_esp.get('scores', {}).get(n, 0) * 100, 1) for n in range(1, 26)]
                     }).sort_values('Pontuação especialista', ascending=False)
                     st.dataframe(df_freq_janela, use_container_width=True, hide_index=True)
@@ -4720,6 +4746,13 @@ def main():
                                       title=f"Distribuição de acertos — {melhor['rotulo']} (janela: {melhor['n_concursos']})")
                     st.plotly_chart(fig_dist, use_container_width=True)
                     st.json(melhor['pesos'])
+                    peso_seq_melhor = melhor['pesos'].get('sequencia', 0.0)
+                    if peso_seq_melhor > 0.15:
+                        st.caption(f"📈 A melhor combinação deu peso relevante à 'sequência atual' ({peso_seq_melhor:.2f}) — "
+                                   "sinal de que aparições consecutivas recentes tiveram algum valor neste histórico.")
+                    else:
+                        st.caption(f"📉 A melhor combinação deu pouco ou nenhum peso à 'sequência atual' ({peso_seq_melhor:.2f}) — "
+                                   "neste histórico, isso não se mostrou um critério relevante.")
 
                 if melhor['rotulo'] != 'Padrão atual':
                     if st.button("✅ Aplicar estes pesos ao Jogo Especialista", use_container_width=True,
