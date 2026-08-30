@@ -2905,6 +2905,173 @@ def preparar_e_rodar_backtest_camadas_lf(banco, num_testes=40, n_concursos=4,
         'distribuicao': dict(sorted(Counter(resultados).items()))
     }, pulados
 
+
+def classificar_dezenas_por_persistencia_lf(banco, n_concursos=6):
+    """
+    Módulo 4C - Classificação por Persistência (frequência + sequência).
+
+    Cruza a frequência bruta na janela com a SEQUÊNCIA ATUAL de aparições
+    consecutivas (quantos concursos seguidos, contando do mais recente pra
+    trás, a dezena vem saindo sem interrupção — mesmo cálculo usado no
+    Jogo Especialista). Separa 4 comportamentos que a frequência sozinha
+    não diferencia, formalizando a leitura manual que o usuário fez na
+    matriz dos concursos 3768-3774:
+
+    - persistente: frequência alta (≥75%) E ainda numa sequência ativa
+      forte (vem saindo nos concursos mais recentes, incluindo o último);
+    - quebrando: frequência alta/média (≥50%), mas NÃO saiu no concurso
+      mais recente (a sequência ativa foi interrompida);
+    - retorno: frequência baixa (<50%), mas SAIU no concurso mais recente
+      (voltou depois de um período de ausência);
+    - atrasada: frequência baixa (<50%) e também não saiu no concurso mais
+      recente.
+
+    IMPORTANTE: janela deliberadamente curta. Com poucos concursos, uma
+    sequência "impressionante" acontece por puro acaso com frequência
+    maior do que a intuição sugere — rode o backtest desta seção antes de
+    confiar na classificação.
+    """
+    base = analisar_ultimos_n_concursos_lf(banco, n=n_concursos)
+    if not base:
+        return None
+
+    freq_por_dezena = {num: base['freq_janela'].get(num, 0) for num in range(1, 26)}
+    sequencia_atual = base['sequencia_atual']
+    qtd = base['qtd_concursos']
+    limiar_seq_forte = max(1, math.ceil(qtd * 0.5))
+
+    grupos = {'persistente': [], 'quebrando': [], 'retorno': [], 'atrasada': [], 'medio': []}
+    for num in range(1, 26):
+        proporcao = freq_por_dezena[num] / qtd
+        seq = sequencia_atual[num]
+
+        if proporcao >= 0.75 and seq >= limiar_seq_forte:
+            grupos['persistente'].append(num)
+        elif proporcao >= 0.5 and seq == 0:
+            grupos['quebrando'].append(num)
+        elif proporcao < 0.5 and seq >= 1:
+            grupos['retorno'].append(num)
+        elif proporcao < 0.5 and seq == 0:
+            grupos['atrasada'].append(num)
+        else:
+            grupos['medio'].append(num)
+
+    for grupo in grupos.values():
+        grupo.sort(key=lambda n: (freq_por_dezena[n], sequencia_atual[n]), reverse=True)
+
+    return {
+        'qtd_concursos': qtd,
+        'concursos_numeros': base['concursos_numeros'],
+        'freq_por_dezena': freq_por_dezena,
+        'sequencia_atual': sequencia_atual,
+        'grupos': grupos,
+        'ultimo_concurso': base['ultimo_concurso']
+    }
+
+
+def gerar_jogos_persistencia_lf(banco, n_concursos=6,
+                                 qtd_persistente_a=6, qtd_quebrando_a=4, qtd_retorno_a=3, qtd_atrasada_a=2,
+                                 qtd_persistente_b=3, qtd_quebrando_b=2, qtd_retorno_b=5, qtd_atrasada_b=5):
+    """
+    Módulo 4C - gera dois jogos a partir de `classificar_dezenas_por_persistencia_lf`:
+
+    Jogo A ("continuidade"): prioriza dezenas persistentes e em quebra
+    recente — aposta que o padrão recente continua.
+    Jogo B ("rotação"): prioriza dezenas de retorno e atrasadas — aposta
+    numa reversão/expansão para dezenas pouco usadas na janela recente.
+
+    As quantidades de cada grupo por jogo são parâmetros ajustáveis; se um
+    grupo não tiver dezenas suficientes, completa com a próxima melhor
+    disponível (por frequência na janela) fora do que já foi usado.
+
+    IMPORTANTE: nenhuma classificação por persistência supera a natureza
+    aleatória da Lotofácil — rode o backtest desta seção antes de apostar
+    com base nela.
+    """
+    classificacao = classificar_dezenas_por_persistencia_lf(banco, n_concursos=n_concursos)
+    if not classificacao:
+        return None, None, None
+
+    grupos = classificacao['grupos']
+    freq_por_dezena = classificacao['freq_por_dezena']
+    ranking_geral = sorted(range(1, 26), key=lambda n: freq_por_dezena[n], reverse=True)
+
+    def _montar(qtds):
+        usados = set()
+        resultado = []
+        for grupo_nome, qtd_grupo in qtds:
+            candidatos = [n for n in grupos.get(grupo_nome, []) if n not in usados]
+            escolhidos = candidatos[:qtd_grupo]
+            if len(escolhidos) < qtd_grupo:
+                reserva = [n for n in ranking_geral if n not in usados and n not in escolhidos]
+                escolhidos += reserva[:qtd_grupo - len(escolhidos)]
+            usados |= set(escolhidos)
+            resultado.extend(escolhidos)
+        return sorted(resultado)
+
+    jogo_a = _montar([
+        ('persistente', qtd_persistente_a), ('quebrando', qtd_quebrando_a),
+        ('retorno', qtd_retorno_a), ('atrasada', qtd_atrasada_a)
+    ])
+    jogo_b = _montar([
+        ('persistente', qtd_persistente_b), ('quebrando', qtd_quebrando_b),
+        ('retorno', qtd_retorno_b), ('atrasada', qtd_atrasada_b)
+    ])
+
+    return jogo_a, jogo_b, {'classificacao': classificacao}
+
+
+def preparar_e_rodar_backtest_persistencia_lf(banco, num_testes=40, n_concursos=6,
+                                               qtd_persistente=6, qtd_quebrando=4, qtd_retorno=3, qtd_atrasada=2,
+                                               aquecimento_minimo=10, mostrar_progresso=True):
+    """
+    Módulo 4C - Backtest da Classificação por Persistência.
+
+    Roda o Jogo A (continuidade) ponto-no-tempo nos `num_testes` concursos
+    mais recentes, usando só dados anteriores a cada um deles, e mede a
+    distribuição de acertos contra o resultado real — mesma validação já
+    usada nas Camadas por Recorrência e no Jogo Especialista.
+    """
+    historico = banco.concursos
+    testes = historico[:min(num_testes, len(historico))]
+    resultados = []
+    pulados = 0
+
+    progress_bar = st.progress(0, text="Rodando backtest de Persistência...") if mostrar_progresso else None
+
+    for i, concurso in enumerate(testes):
+        concursos_anteriores = historico[i + 1:]
+        if len(concursos_anteriores) < max(aquecimento_minimo, n_concursos):
+            pulados += 1
+        else:
+            banco_pt = _BancoTemporal(concursos_anteriores)
+            jogo_a, _, _ = gerar_jogos_persistencia_lf(
+                banco_pt, n_concursos=n_concursos,
+                qtd_persistente_a=qtd_persistente, qtd_quebrando_a=qtd_quebrando,
+                qtd_retorno_a=qtd_retorno, qtd_atrasada_a=qtd_atrasada,
+                qtd_persistente_b=0, qtd_quebrando_b=0, qtd_retorno_b=0, qtd_atrasada_b=0
+            )
+            if jogo_a:
+                resultados.append(len(set(jogo_a) & set(concurso['dezenas'])))
+        if progress_bar:
+            progress_bar.progress((i + 1) / len(testes))
+
+    if progress_bar:
+        progress_bar.empty()
+
+    if not resultados:
+        return None, pulados
+
+    return {
+        'total_testes': len(resultados),
+        'media': float(np.mean(resultados)),
+        'mediana': float(np.median(resultados)),
+        'std': float(np.std(resultados)),
+        'max': int(max(resultados)),
+        'min': int(min(resultados)),
+        'distribuicao': dict(sorted(Counter(resultados).items()))
+    }, pulados
+
 # =====================================================
 # MÓDULO 5: FILTROS INTELIGENTES - LOTOFÁCIL
 # =====================================================
@@ -3499,6 +3666,12 @@ def main():
         st.session_state.resultado_backtest_camadas = None
     if "pulados_backtest_camadas" not in st.session_state:
         st.session_state.pulados_backtest_camadas = 0
+    if "resultado_persistencia" not in st.session_state:
+        st.session_state.resultado_persistencia = None
+    if "resultado_backtest_persist" not in st.session_state:
+        st.session_state.resultado_backtest_persist = None
+    if "pulados_backtest_persist" not in st.session_state:
+        st.session_state.pulados_backtest_persist = 0
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -5265,22 +5438,32 @@ def main():
 
     # ================= TAB 9: CAMADAS POR RECORRÊNCIA =================
     with tabs[8]:
-        st.markdown("### 🧬 Camadas por Recorrência (Núcleo Quente/Médio/Frio)")
+        st.markdown("### 🧬 Camadas: Recorrência & Persistência")
         st.markdown("""
         <div class="ia-lf-highlight">
-            Formaliza a leitura de <strong>núcleo quente / médio / frio</strong>: olha os últimos
-            concursos e separa as 25 dezenas pela frequência bruta nessa janela curta. O
-            <strong>Jogo A</strong> combina um pouco de cada núcleo; o <strong>Jogo B</strong> mantém o
-            que foi mais estável e faz uma rotação controlada no núcleo frio.<br>
+            Dois modos de separar as dezenas em grupos para montar jogos com hipóteses
+            complementares (continuidade × rotação):<br>
+            <strong>Frequência simples</strong> — quente/médio/frio, só pela frequência bruta na janela.<br>
+            <strong>Frequência + Sequência (persistência)</strong> — cruza frequência com a sequência
+            atual de aparições consecutivas, separando "persistente", "quebrando", "retorno" e
+            "atrasada".<br>
             <small style='color:#aaa;'>⚠️ Com uma janela curta (poucos concursos), é normal que várias
-            dezenas apareçam em todos eles só por acaso — isso não é uma tendência validada, é uma
-            fotografia de curtíssimo prazo. Rode o backtest abaixo antes de confiar na estratégia.</small>
+            dezenas pareçam ter um padrão forte só por acaso. Rode o backtest de cada modo antes de
+            confiar na estratégia.</small>
         </div>
         """, unsafe_allow_html=True)
 
         if not st.session_state.banco_dados or not st.session_state.banco_dados.concursos:
             st.warning("⚠️ Carregue o histórico de concursos primeiro (aba Dashboard).")
         else:
+            modo_camadas = st.radio(
+                "Modo de classificação",
+                ["Frequência simples (quente/médio/frio)", "Frequência + Sequência (persistência)"],
+                horizontal=True, key="modo_camadas_radio"
+            )
+            st.markdown("---")
+
+        if st.session_state.banco_dados and st.session_state.banco_dados.concursos and modo_camadas.startswith("Frequência simples"):
             col_c1, col_c2 = st.columns(2)
             with col_c1:
                 n_concursos_camadas = st.slider(
@@ -5425,6 +5608,178 @@ def main():
                 fig_dist_camadas = px.bar(df_dist_camadas, x='Acertos', y='Ocorrências',
                                           title="Distribuição de acertos — Camadas por Recorrência (Jogo A)")
                 st.plotly_chart(fig_dist_camadas, use_container_width=True)
+
+        if st.session_state.banco_dados and st.session_state.banco_dados.concursos and modo_camadas.startswith("Frequência + Sequência"):
+            st.caption(
+                "🟢 Persistente: freq. ≥75% e ainda em sequência ativa forte · 🟠 Quebrando: freq. ≥50% mas "
+                "não saiu no último concurso · 🔵 Retorno: freq. <50% mas saiu no último concurso · "
+                "🔴 Atrasada: freq. <50% e não saiu no último."
+            )
+
+            n_concursos_persist = st.slider(
+                "Quantos concursos recentes analisar", 4, 15, 6, key="n_concursos_persist_slider"
+            )
+
+            st.markdown("**Composição do Jogo A (continuidade)**")
+            col_pa1, col_pa2, col_pa3, col_pa4 = st.columns(4)
+            with col_pa1:
+                qtd_persist_a = st.number_input("Persistente", 0, 15, 6, key="qtd_persist_a")
+            with col_pa2:
+                qtd_quebra_a = st.number_input("Quebrando", 0, 15, 4, key="qtd_quebra_a")
+            with col_pa3:
+                qtd_retorno_a = st.number_input("Retorno", 0, 15, 3, key="qtd_retorno_a")
+            with col_pa4:
+                qtd_atrasada_a = st.number_input("Atrasada", 0, 15, 2, key="qtd_atrasada_a")
+            total_a_persist = qtd_persist_a + qtd_quebra_a + qtd_retorno_a + qtd_atrasada_a
+            if total_a_persist != 15:
+                st.warning(f"⚠️ A soma do Jogo A precisa dar 15 (está em {total_a_persist}).")
+
+            gerar_jogo_b_persist = st.checkbox("Gerar também o Jogo B (rotação)", value=True, key="gerar_jogo_b_persist_chk")
+            total_b_persist = 15
+            if gerar_jogo_b_persist:
+                st.markdown("**Composição do Jogo B (rotação)**")
+                col_pb1, col_pb2, col_pb3, col_pb4 = st.columns(4)
+                with col_pb1:
+                    qtd_persist_b = st.number_input("Persistente ", 0, 15, 3, key="qtd_persist_b")
+                with col_pb2:
+                    qtd_quebra_b = st.number_input("Quebrando ", 0, 15, 2, key="qtd_quebra_b")
+                with col_pb3:
+                    qtd_retorno_b = st.number_input("Retorno ", 0, 15, 5, key="qtd_retorno_b")
+                with col_pb4:
+                    qtd_atrasada_b = st.number_input("Atrasada ", 0, 15, 5, key="qtd_atrasada_b")
+                total_b_persist = qtd_persist_b + qtd_quebra_b + qtd_retorno_b + qtd_atrasada_b
+                if total_b_persist != 15:
+                    st.warning(f"⚠️ A soma do Jogo B precisa dar 15 (está em {total_b_persist}).")
+            else:
+                qtd_persist_b = qtd_quebra_b = qtd_retorno_b = qtd_atrasada_b = 0
+
+            pode_gerar_persist = (total_a_persist == 15) and (not gerar_jogo_b_persist or total_b_persist == 15)
+
+            if st.button("🧬 GERAR JOGOS POR PERSISTÊNCIA", use_container_width=True, type="primary",
+                         key="gerar_persist_btn", disabled=not pode_gerar_persist):
+                jogo_a_p, jogo_b_p, relatorio_p = gerar_jogos_persistencia_lf(
+                    st.session_state.banco_dados, n_concursos=n_concursos_persist,
+                    qtd_persistente_a=qtd_persist_a, qtd_quebrando_a=qtd_quebra_a,
+                    qtd_retorno_a=qtd_retorno_a, qtd_atrasada_a=qtd_atrasada_a,
+                    qtd_persistente_b=qtd_persist_b, qtd_quebrando_b=qtd_quebra_b,
+                    qtd_retorno_b=qtd_retorno_b, qtd_atrasada_b=qtd_atrasada_b
+                )
+                st.session_state.resultado_persistencia = {
+                    'jogo_a': jogo_a_p, 'jogo_b': jogo_b_p if gerar_jogo_b_persist else None, 'relatorio': relatorio_p
+                }
+
+            resultado_persist = st.session_state.get("resultado_persistencia")
+            if resultado_persist and resultado_persist.get('jogo_a'):
+                jogo_a_pp = resultado_persist['jogo_a']
+                jogo_b_pp = resultado_persist['jogo_b']
+                rel_pp = resultado_persist['relatorio']
+                classif_pp = rel_pp['classificacao']
+                grupos_pp = classif_pp['grupos']
+
+                st.markdown(f"""
+                <div class='card'>
+                    🅰️ <strong>Jogo A — Continuidade</strong><br>
+                    {formatar_jogo_html_lf(jogo_a_pp)}
+                </div>
+                """, unsafe_allow_html=True)
+
+                if jogo_b_pp:
+                    st.markdown(f"""
+                    <div class='card'>
+                        🅱️ <strong>Jogo B — Rotação</strong><br>
+                        {formatar_jogo_html_lf(jogo_b_pp)}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with st.expander(f"📊 Classificação usada (últimos {classif_pp['qtd_concursos']} concursos: {classif_pp['concursos_numeros']})"):
+                    col_g1, col_g2, col_g3, col_g4 = st.columns(4)
+                    with col_g1:
+                        st.markdown("**🟢 Persistente**")
+                        st.write(grupos_pp['persistente'])
+                    with col_g2:
+                        st.markdown("**🟠 Quebrando**")
+                        st.write(grupos_pp['quebrando'])
+                    with col_g3:
+                        st.markdown("**🔵 Retorno**")
+                        st.write(grupos_pp['retorno'])
+                    with col_g4:
+                        st.markdown("**🔴 Atrasada**")
+                        st.write(grupos_pp['atrasada'])
+
+                    df_persist = pd.DataFrame({
+                        'Dezena': list(range(1, 26)),
+                        f"Freq. (/{classif_pp['qtd_concursos']})": [classif_pp['freq_por_dezena'][n] for n in range(1, 26)],
+                        'Sequência atual': [classif_pp['sequencia_atual'][n] for n in range(1, 26)]
+                    }).sort_values('Sequência atual', ascending=False)
+                    st.dataframe(df_persist, use_container_width=True, hide_index=True)
+
+                col_sp1, col_sp2 = st.columns(2)
+                with col_sp1:
+                    if st.button("💾 Salvar Jogo A", key="salvar_persist_a_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_a_pp], {
+                            'tipo': 'persistencia_jogo_a', 'n_concursos_analisados': classif_pp['qtd_concursos']
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogo A salvo! ID: {jogo_id}")
+                with col_sp2:
+                    if jogo_b_pp and st.button("💾 Salvar Jogo B", key="salvar_persist_b_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_b_pp], {
+                            'tipo': 'persistencia_jogo_b', 'n_concursos_analisados': classif_pp['qtd_concursos']
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogo B salvo! ID: {jogo_id}")
+
+            st.markdown("---")
+            st.markdown("#### 🔬 Backtest da Persistência")
+            st.caption(
+                "Testa o Jogo A (continuidade) ponto-no-tempo em vários concursos reais recentes — a única "
+                "forma confiável de saber se 'sequência atual' realmente ajuda ou se foi coincidência de amostra pequena."
+            )
+            total_concursos_persist = len(st.session_state.banco_dados.concursos)
+            max_testes_persist = min(150, max(10, total_concursos_persist - 15))
+            n_testes_persist = st.slider("Concursos a testar", 10, max_testes_persist, min(40, max_testes_persist), key="n_testes_persist_slider")
+
+            if st.button("🔬 RODAR BACKTEST DA PERSISTÊNCIA", use_container_width=True, key="backtest_persist_btn",
+                         disabled=(total_a_persist != 15)):
+                with st.spinner("Rodando backtest ponto-no-tempo..."):
+                    stats_persist, pulados_persist = preparar_e_rodar_backtest_persistencia_lf(
+                        st.session_state.banco_dados, num_testes=n_testes_persist, n_concursos=n_concursos_persist,
+                        qtd_persistente=qtd_persist_a, qtd_quebrando=qtd_quebra_a,
+                        qtd_retorno=qtd_retorno_a, qtd_atrasada=qtd_atrasada_a
+                    )
+                    st.session_state.resultado_backtest_persist = stats_persist
+                    st.session_state.pulados_backtest_persist = pulados_persist
+
+            stats_persist = st.session_state.get("resultado_backtest_persist")
+            if stats_persist:
+                pulados_p = st.session_state.get("pulados_backtest_persist", 0)
+                if pulados_p:
+                    st.caption(f"ℹ️ {pulados_p} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
+
+                col_bp1, col_bp2, col_bp3, col_bp4 = st.columns(4)
+                with col_bp1:
+                    st.metric("Média de acertos", f"{stats_persist['media']:.2f}")
+                with col_bp2:
+                    st.metric("Mediana", f"{stats_persist['mediana']:.1f}")
+                with col_bp3:
+                    st.metric("Máximo", stats_persist['max'])
+                with col_bp4:
+                    st.metric("Mínimo", stats_persist['min'])
+
+                st.caption(
+                    f"Comparação: escolhendo 15 dezenas totalmente ao acaso, o esperado é 9,00/15. Esta estratégia "
+                    f"teve média de {stats_persist['media']:.2f}/15 em {stats_persist['total_testes']} concurso(s) "
+                    "testado(s). Se esse número não ficar visivelmente acima da média do modo Frequência Simples, "
+                    "a hipótese de 'sequência atual' não se sustentou fora da amostra pequena onde foi observada."
+                )
+
+                df_dist_persist = pd.DataFrame({
+                    'Acertos': list(stats_persist['distribuicao'].keys()),
+                    'Ocorrências': list(stats_persist['distribuicao'].values())
+                })
+                fig_dist_persist = px.bar(df_dist_persist, x='Acertos', y='Ocorrências',
+                                          title="Distribuição de acertos — Persistência (Jogo A)")
+                st.plotly_chart(fig_dist_persist, use_container_width=True)
 
 if __name__ == "__main__":
     main()
