@@ -79,24 +79,6 @@ st.caption("Sistema Avançado de Análise Estatística, IA e Geração Inteligen
 # FUNÇÕES AUXILIARES
 # =====================================================
 
-# Tabela oficial de preços da aposta simples da Lotofácil (Caixa), por
-# quantidade de dezenas marcadas numa ÚNICA aposta oficial (15 a 20 — o
-# máximo permitido pela Caixa por bilhete). Valores de referência vigentes
-# em 2026; a Caixa reajusta periodicamente — confira no app oficial antes
-# de apostar valores altos. Pools maiores que 20 dezenas neste sistema só
-# podem virar múltiplos jogos separados de 15 dezenas (fechamento), já que
-# a Caixa não aceita mais que 20 números numa aposta única.
-PRECO_OFICIAL_LOTOFACIL_LF = {
-    15: 3.50,
-    16: 56.00,
-    17: 476.00,
-    18: 2856.00,
-    19: 13566.00,
-    20: 54264.00
-}
-PRECO_APOSTA_SIMPLES_LF = PRECO_OFICIAL_LOTOFACIL_LF[15]
-
-
 def convert_numpy_types(obj):
     if isinstance(obj, np.integer):
         return int(obj)
@@ -808,84 +790,21 @@ def gerar_fechamento_genetico_lf(dezenas_pool, qtd_jogos, estatisticas, pontuaca
 # FUNÇÃO PARA BUSCAR DADOS DA LOTOFÁCIL
 # =====================================================
 
-# APIs espelho conhecidas para o histórico da Lotofácil. São mantidas pela
-# comunidade em cima do Heroku, que não tem mais dyno gratuito garantido —
-# por isso a própria documentação delas recomenda ter mais de uma URL como
-# fallback. Tentamos cada uma nesta ordem até uma responder com dados
-# válidos. Se as duas caírem, dá pra sobrescrever com uma nova URL no
-# campo abaixo (sidebar) sem precisar mexer no código.
-MIRRORS_API_LOTOFACIL = [
-    "https://loteriascaixa-api.herokuapp.com/api/lotofacil",
-    "https://loterias-gutotech.herokuapp.com/api/lotofacil",
-]
-
-
-def _diagnosticar_resposta_lotofacil(url, response=None, excecao=None):
-    """Traduz o motivo real da falha numa mensagem legível, em vez do
-    genérico 'Erro na requisição' — timeout, HTTP de erro, JSON inválido
-    (a API costuma devolver uma página HTML de erro do Heroku nesse caso)
-    ou formato inesperado são causas bem diferentes e pedem ações diferentes."""
-    if excecao is not None:
-        nome_excecao = type(excecao).__name__
-        if "Timeout" in nome_excecao:
-            return f"{url} → tempo esgotado (API não respondeu a tempo)"
-        if "ConnectionError" in nome_excecao:
-            return f"{url} → não foi possível conectar (API fora do ar ou DNS falhou)"
-        return f"{url} → erro de conexão: {excecao}"
-    if response is not None:
-        if response.status_code != 200:
-            return f"{url} → HTTP {response.status_code} (API respondeu, mas com erro)"
-        return f"{url} → respondeu 200, mas o conteúdo não é uma lista de concursos válida (JSON inválido ou formato mudou)"
-    return f"{url} → falha desconhecida"
-
-
-def buscar_historico_lotofacil(quantidade=300, url_customizada=None):
-    """
-    Busca o histórico de concursos da Lotofácil, tentando várias APIs
-    espelho em sequência (`MIRRORS_API_LOTOFACIL`, mais uma
-    `url_customizada` opcional na frente da fila, se fornecida) até uma
-    responder com uma lista de concursos válida — cada um precisa ter a
-    chave 'dezenas'. Se todas falharem, mostra o motivo específico de cada
-    tentativa (timeout, HTTP de erro, JSON inválido) em vez de uma
-    mensagem genérica, para dar uma pista real do que está errado.
-    """
-    urls_tentativas = ([url_customizada] if url_customizada else []) + MIRRORS_API_LOTOFACIL
-    diagnosticos = []
-
-    for url_lista in urls_tentativas:
-        try:
-            response = requests.get(url_lista, timeout=15)
-        except Exception as e:
-            diagnosticos.append(_diagnosticar_resposta_lotofacil(url_lista, excecao=e))
-            continue
-
-        if response.status_code != 200:
-            diagnosticos.append(_diagnosticar_resposta_lotofacil(url_lista, response=response))
-            continue
-
-        try:
+def buscar_historico_lotofacil(quantidade=300):
+    try:
+        url_lista = "https://loteriascaixa-api.herokuapp.com/api/lotofacil"
+        response = requests.get(url_lista, timeout=10)
+        
+        if response.status_code == 200:
             dados = response.json()
-        except Exception:
-            diagnosticos.append(
-                f"{url_lista} → respondeu 200, mas o corpo não é JSON válido "
-                "(provavelmente uma página de erro em HTML — sinal de que o serviço está fora do ar)"
-            )
-            continue
-
-        if isinstance(dados, list) and dados and 'dezenas' in dados[0]:
-            return dados[:quantidade]
-        elif isinstance(dados, dict) and 'dezenas' in dados:
-            return [dados]
-        else:
-            diagnosticos.append(_diagnosticar_resposta_lotofacil(url_lista, response=response))
-
-    st.error(
-        "❌ Não foi possível buscar o histórico em nenhuma das APIs disponíveis. Detalhe de cada tentativa:\n\n"
-        + "\n".join(f"- {d}" for d in diagnosticos)
-        + "\n\nSe todas as URLs acima estiverem fora do ar, você pode informar uma nova URL de API "
-        "(mesmo formato: retorna uma lista de concursos com a chave 'dezenas') no campo da barra lateral."
-    )
-    return None
+            if isinstance(dados, list):
+                return dados[:quantidade]
+            elif isinstance(dados, dict):
+                return [dados]
+        return None
+    except Exception as e:
+        st.error(f"❌ Erro na requisição: {e}")
+        return None
 
 # =====================================================
 # MÓDULO 1: BANCO DE DADOS INTELIGENTE - LOTOFÁCIL
@@ -2388,20 +2307,6 @@ def analisar_ultimos_n_concursos_lf(banco, n=10):
 
     ausentes_na_janela = [num for num in range(1, 26) if freq_janela.get(num, 0) == 0]
 
-    # Sequência atual: nº de concursos consecutivos, contando a partir do
-    # mais recente pra trás, em que a dezena apareceu sem interrupção.
-    # 0 se ela não saiu no concurso mais recente da janela. Formaliza a
-    # leitura de "aceleração/persistência" (streak) descrita pelo usuário.
-    sequencia_atual = {}
-    for num in range(1, 26):
-        seq = 0
-        for d in dezenas_listas:
-            if num in d:
-                seq += 1
-            else:
-                break
-        sequencia_atual[num] = seq
-
     coocorrencia = Counter()
     for d in dezenas_listas:
         d_ordenado = sorted(d)
@@ -2426,45 +2331,12 @@ def analisar_ultimos_n_concursos_lf(banco, n=10):
         'colunas_medias': colunas_medias,
         'faixas_medias': faixas_medias,
         'ausentes_na_janela': ausentes_na_janela,
-        'sequencia_atual': sequencia_atual,
         'coocorrencia': coocorrencia,
         'ultimo_concurso': dezenas_listas[0] if dezenas_listas else []
     }
 
 
-PESOS_ESPECIALISTA_PADRAO = {
-    'freq': 0.30, 'atraso': 0.20, 'tendencia': 0.15,
-    'atraso_hist': 0.15, 'freq_hist': 0.10, 'sequencia': 0.0,
-    'bonus_regressao': 0.10, 'ml': 0.30
-}
-
-
-def gerar_pesos_aleatorios_especialista(rng):
-    """
-    Módulo 4B - gera uma combinação aleatória de pesos para o Jogo
-    Especialista, usada na busca automática (`buscar_melhores_pesos_especialista_lf`).
-    Os 6 componentes principais (incluindo `sequencia`, o comprimento da
-    sequência atual de aparições consecutivas — hipótese de "persistência/
-    aceleração" descrita pelo usuário) são sorteados em faixas plausíveis e
-    normalizados para somar 1.0; o bônus de regressão à média e o peso do
-    ML (só usado se houver modelo treinado) são sorteados à parte.
-    """
-    brutos = {
-        'freq': rng.uniform(0.10, 0.45),
-        'atraso': rng.uniform(0.05, 0.35),
-        'tendencia': rng.uniform(0.05, 0.30),
-        'atraso_hist': rng.uniform(0.05, 0.30),
-        'freq_hist': rng.uniform(0.05, 0.25),
-        'sequencia': rng.uniform(0.0, 0.35),
-    }
-    soma = sum(brutos.values()) or 1.0
-    pesos = {k: v / soma for k, v in brutos.items()}
-    pesos['bonus_regressao'] = rng.uniform(0.0, 0.15)
-    pesos['ml'] = rng.uniform(0.15, 0.45)
-    return pesos
-
-
-def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None, pesos=None):
+def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None):
     """
     Módulo 4B - combina todas as leituras de `analisar_ultimos_n_concursos_lf`
     com o perfil histórico completo (frequência e atraso de todo o
@@ -2472,27 +2344,16 @@ def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None, pesos=None)
     treinados na aba de IA Estatística, a probabilidade média prevista pelo
     ensemble de ML — tudo isso resumido em uma única pontuação de 0 a 1 por
     dezena.
-
-    `pesos` (opcional) permite sobrescrever os pesos padrão de cada
-    componente — usado pela busca automática (`buscar_melhores_pesos_especialista_lf`)
-    para testar combinações diferentes num backtest ponto-no-tempo,
-    incluindo o peso de `sequencia` (comprimento da sequência atual de
-    aparições consecutivas — 0 por padrão, ou seja, desligado até o
-    backtest mostrar que vale a pena ativar).
     """
-    pesos = pesos or PESOS_ESPECIALISTA_PADRAO
-
     freq_janela = analise_janela['freq_janela']
     atraso_janela = analise_janela['atraso_janela']
     tendencia = analise_janela['tendencia']
-    sequencia_atual = analise_janela.get('sequencia_atual', {})
     ausentes = set(analise_janela['ausentes_na_janela'])
 
     freq_max = max(freq_janela.values()) if freq_janela else 1
     atraso_max = analise_janela['qtd_concursos'] or 1
     tend_max = max((abs(v) for v in tendencia.values()), default=0) or 1
     freq_hist_max = max(estatisticas.frequencias.values()) if estatisticas.frequencias else 1
-    seq_max = max(sequencia_atual.values(), default=0) or 1
 
     scores = {}
     for num in range(1, 26):
@@ -2501,20 +2362,18 @@ def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None, pesos=None)
         tendencia_score = (tendencia.get(num, 0) / tend_max + 1) / 2
         atraso_hist_score = estatisticas.atraso_relativo.get(num, 0.5)
         freq_hist_score = estatisticas.frequencias.get(num, 0) / freq_hist_max
-        sequencia_score = sequencia_atual.get(num, 0) / seq_max
 
         score = (
-            freq_score * pesos.get('freq', 0.30) +
-            atraso_score * pesos.get('atraso', 0.20) +
-            tendencia_score * pesos.get('tendencia', 0.15) +
-            atraso_hist_score * pesos.get('atraso_hist', 0.15) +
-            freq_hist_score * pesos.get('freq_hist', 0.10) +
-            sequencia_score * pesos.get('sequencia', 0.0)
+            freq_score * 0.30 +
+            atraso_score * 0.20 +
+            tendencia_score * 0.15 +
+            atraso_hist_score * 0.15 +
+            freq_hist_score * 0.10
         )
 
         # Regressão à média: dezena historicamente forte que sumiu da janela recente
         if num in ausentes and freq_hist_score > 0.6:
-            score += pesos.get('bonus_regressao', 0.10)
+            score += 0.10
 
         scores[num] = max(0.0, min(1.0, score))
 
@@ -2522,16 +2381,15 @@ def pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=None, pesos=None)
         probs_ml = ia.prever_probabilidades_dezenas()
         if probs_ml:
             max_p = max(probs_ml.values()) or 1
-            peso_ml = pesos.get('ml', 0.30)
             for num in range(1, 26):
                 ml_score = probs_ml.get(num, 0) / max_p
-                scores[num] = scores[num] * (1 - peso_ml) + ml_score * peso_ml
+                scores[num] = scores[num] * 0.70 + ml_score * 0.30
 
     return scores
 
 
 def gerar_jogo_especialista_lf(banco, estatisticas, ia=None, n_concursos=10,
-                                tamanho_jogo=15, max_tentativas=30000, semente=None, pesos=None):
+                                tamanho_jogo=15, max_tentativas=30000, semente=None):
     """
     Módulo 4B - Jogo Especialista.
 
@@ -2544,10 +2402,6 @@ def gerar_jogo_especialista_lf(banco, estatisticas, ia=None, n_concursos=10,
     (pares, soma, primos, repetição em relação ao último concurso) que essa
     mesma janela de 10 jogos mostrou ser típico.
 
-    `pesos` (opcional) sobrescreve os pesos padrão de cada componente da
-    pontuação — ver `buscar_melhores_pesos_especialista_lf` para encontrar
-    a combinação com melhor desempenho no histórico real.
-
     IMPORTANTE: a Lotofácil é um sorteio aleatório e nenhuma análise
     estatística garante 14 ou 15 acertos — o método apenas maximiza a
     aderência do jogo ao perfil que um especialista levaria em conta.
@@ -2556,7 +2410,7 @@ def gerar_jogo_especialista_lf(banco, estatisticas, ia=None, n_concursos=10,
     if not analise_janela:
         return None, None
 
-    scores = pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=ia, pesos=pesos)
+    scores = pontuar_dezenas_janela_lf(analise_janela, estatisticas, ia=ia)
 
     # Faixas-alvo derivadas do perfil médio observado nos últimos N concursos
     pares_min = max(5, round(analise_janela['pares_medio']) - 1)
@@ -2646,734 +2500,6 @@ def gerar_jogo_especialista_lf(banco, estatisticas, ia=None, n_concursos=10,
     }
 
     return melhor_jogo, relatorio
-
-
-def preparar_pontos_backtest_especialista_lf(banco, num_testes=40, aquecimento_minimo=30, mostrar_progresso=True):
-    """
-    Módulo 4B - Backtest do Especialista (preparação).
-
-    Pré-calcula, para os `num_testes` concursos mais recentes, o estado
-    "ponto-no-tempo" necessário pra testar o Jogo Especialista sem
-    look-ahead bias: um banco de dados e um `EstatisticasLFAvancadas`
-    recalculados usando SOMENTE concursos estritamente anteriores ao
-    testado — replicando o que estaria disponível no momento real da
-    aposta (mesmo padrão já usado em `BacktestsLF.testar_estrategia`).
-
-    Feito uma única vez e reaproveitado por várias combinações de pesos
-    em `buscar_melhores_pesos_especialista_lf`, pra não pagar de novo o
-    custo de recalcular as estatísticas a cada combinação testada.
-    """
-    historico = banco.concursos  # mais recente primeiro
-    testes = historico[:min(num_testes, len(historico))]
-
-    pontos = []
-    pulados = 0
-
-    progress_bar = st.progress(0, text="Preparando pontos-no-tempo do backtest...") if mostrar_progresso else None
-
-    for i, concurso in enumerate(testes):
-        concursos_anteriores = historico[i + 1:]
-        if len(concursos_anteriores) < aquecimento_minimo:
-            pulados += 1
-        else:
-            banco_pt = _BancoTemporal(concursos_anteriores)
-            estatisticas_pt = EstatisticasLFAvancadas(banco_pt)
-            pontos.append({
-                'banco_pt': banco_pt,
-                'estatisticas_pt': estatisticas_pt,
-                'dezenas_reais': concurso['dezenas'],
-                'numero_concurso': concurso['numero']
-            })
-        if progress_bar:
-            progress_bar.progress((i + 1) / len(testes))
-
-    if progress_bar:
-        progress_bar.empty()
-
-    return pontos, pulados
-
-
-def backtest_especialista_lf(pontos, n_concursos=10, pesos=None, max_tentativas=1500, semente=42):
-    """
-    Módulo 4B - Backtest do Especialista (execução).
-
-    Roda `gerar_jogo_especialista_lf` em cada ponto-no-tempo já preparado
-    por `preparar_pontos_backtest_especialista_lf`, usando uma janela
-    (`n_concursos`) e combinação de `pesos` específicas, e mede quantos
-    acertos cada jogo gerado teria feito contra o resultado real daquele
-    concurso. Retorna a média, mediana, desvio padrão e distribuição de
-    acertos — a métrica usada pra comparar combinações diferentes.
-    """
-    resultados = []
-    for ponto in pontos:
-        jogo_pt, _ = gerar_jogo_especialista_lf(
-            ponto['banco_pt'], ponto['estatisticas_pt'], ia=None,
-            n_concursos=n_concursos, pesos=pesos,
-            max_tentativas=max_tentativas, semente=semente
-        )
-        if jogo_pt:
-            resultados.append(len(set(jogo_pt) & set(ponto['dezenas_reais'])))
-
-    if not resultados:
-        return None
-
-    return {
-        'n_concursos': n_concursos,
-        'pesos': pesos or dict(PESOS_ESPECIALISTA_PADRAO),
-        'total_testes': len(resultados),
-        'media': float(np.mean(resultados)),
-        'mediana': float(np.median(resultados)),
-        'std': float(np.std(resultados)),
-        'max': int(max(resultados)),
-        'min': int(min(resultados)),
-        'distribuicao': dict(sorted(Counter(resultados).items()))
-    }
-
-
-def buscar_melhores_pesos_especialista_lf(banco, num_testes=40, num_combinacoes=25,
-                                           janelas_candidatas=(5, 8, 10, 12, 15, 20),
-                                           max_tentativas_por_teste=1500, semente=42,
-                                           mostrar_progresso=True):
-    """
-    Módulo 4B - Busca Automática de Pesos.
-
-    Faz uma busca aleatória (random search) sobre combinações de pesos das
-    5 componentes estatísticas do Jogo Especialista (frequência na janela,
-    atraso na janela, tendência, atraso histórico, frequência histórica) e
-    o tamanho da janela de concursos analisada, avaliando cada combinação
-    com `backtest_especialista_lf` nos `num_testes` concursos reais mais
-    recentes — sempre ponto-no-tempo, sem vazar dado futuro. Os pontos de
-    teste são preparados uma única vez e reaproveitados por todas as
-    combinações, pra manter o custo controlado.
-
-    Retorna todas as combinações testadas (incluindo sempre os pesos
-    padrão atuais, como referência) ordenadas pela média de acertos.
-
-    IMPORTANTE: mesmo a melhor combinação encontrada está ajustada a um
-    histórico específico — algum grau de overfitting é inevitável em
-    qualquer busca deste tipo. O ganho esperado sobre os pesos padrão é
-    marginal (frações de acerto na média), nunca um salto para 14-15
-    pontos consistentes, porque cada concurso da Lotofácil é um sorteio
-    aleatório independente dos anteriores.
-    """
-    pontos, pulados = preparar_pontos_backtest_especialista_lf(
-        banco, num_testes=num_testes, mostrar_progresso=mostrar_progresso
-    )
-    if not pontos:
-        return [], pulados
-
-    rng = random.Random(semente)
-
-    combinacoes = [{'pesos': dict(PESOS_ESPECIALISTA_PADRAO), 'n_concursos': 10, 'rotulo': 'Padrão atual'}]
-    for i in range(num_combinacoes):
-        combinacoes.append({
-            'pesos': gerar_pesos_aleatorios_especialista(rng),
-            'n_concursos': rng.choice(janelas_candidatas),
-            'rotulo': f'Combinação #{i + 1}'
-        })
-
-    resultados = []
-    progress_bar = st.progress(0, text="Testando combinações de pesos...") if mostrar_progresso else None
-
-    for idx, combo in enumerate(combinacoes):
-        stats_combo = backtest_especialista_lf(
-            pontos, n_concursos=combo['n_concursos'], pesos=combo['pesos'],
-            max_tentativas=max_tentativas_por_teste, semente=semente
-        )
-        if stats_combo:
-            stats_combo['rotulo'] = combo['rotulo']
-            resultados.append(stats_combo)
-        if progress_bar:
-            progress_bar.progress((idx + 1) / len(combinacoes))
-
-    if progress_bar:
-        progress_bar.empty()
-
-    resultados.sort(key=lambda r: r['media'], reverse=True)
-    return resultados, pulados
-
-
-# =====================================================
-# MÓDULO 4C: CAMADAS POR RECORRÊNCIA (NÚCLEO QUENTE/MÉDIO/FRIO)
-# =====================================================
-
-def classificar_dezenas_por_recorrencia_lf(banco, n_concursos=4):
-    """
-    Módulo 4C - Camadas por Recorrência.
-
-    Formaliza a leitura manual que o usuário fez nos concursos 3768-3771:
-    olhar os `n_concursos` últimos resultados e separar as 25 dezenas em
-    três grupos pela frequência bruta dentro dessa janela curta:
-
-    - núcleo quente: saiu em pelo menos 75% desses concursos;
-    - núcleo médio: saiu em 50% a 75% deles;
-    - núcleo frio: saiu em menos da metade (ou nenhuma vez).
-
-    IMPORTANTE: com uma janela pequena (3-6 concursos), é estatisticamente
-    comum que várias dezenas apareçam em todos eles só por acaso — isso
-    NÃO é evidência de que essas dezenas vão continuar saindo. É uma
-    fotografia de curtíssimo prazo, não uma tendência validada. Use o
-    backtest desta seção antes de confiar na estratégia.
-    """
-    concursos = banco.concursos[:n_concursos]
-    dezenas_listas = [c['dezenas'] for c in concursos]
-    qtd = len(dezenas_listas)
-    if qtd == 0:
-        return None
-
-    freq = Counter()
-    for d in dezenas_listas:
-        freq.update(d)
-
-    freq_por_dezena = {num: freq.get(num, 0) for num in range(1, 26)}
-    tiers = {'quente': [], 'medio': [], 'frio': []}
-    for num in range(1, 26):
-        proporcao = freq_por_dezena[num] / qtd
-        if proporcao >= 0.75:
-            tiers['quente'].append(num)
-        elif proporcao >= 0.5:
-            tiers['medio'].append(num)
-        else:
-            tiers['frio'].append(num)
-
-    for tier in tiers.values():
-        tier.sort(key=lambda n: freq_por_dezena[n], reverse=True)
-
-    return {
-        'qtd_concursos': qtd,
-        'concursos_numeros': [c['numero'] for c in concursos],
-        'freq_por_dezena': freq_por_dezena,
-        'tiers': tiers,
-        'ultimo_concurso': dezenas_listas[0] if dezenas_listas else []
-    }
-
-
-def gerar_jogos_camadas_recorrencia_lf(banco, n_concursos=4, qtd_quente=5, qtd_medio=5, qtd_frio=5,
-                                        gerar_rotacao=True, qtd_rotacao=5):
-    """
-    Módulo 4C - gera o Jogo A (núcleo estável) e, opcionalmente, o Jogo B
-    (rotação controlada) a partir de `classificar_dezenas_por_recorrencia_lf`.
-
-    Jogo A: pega as `qtd_quente` dezenas mais recorrentes do núcleo
-    quente, `qtd_medio` do médio e `qtd_frio` do frio (completa com o
-    próximo melhor disponível na janela se algum núcleo não tiver dezenas
-    suficientes).
-
-    Jogo B (se `gerar_rotacao=True`): mantém o núcleo quente e o médio do
-    Jogo A, e troca as `qtd_rotacao` dezenas mais fracas do núcleo frio
-    pelas próximas dezenas mais recorrentes da janela que ficaram de fora
-    — a "rotação controlada" descrita pelo usuário, calculada de novo a
-    cada execução (nunca fixada em dezenas específicas de um concurso já
-    passado).
-
-    IMPORTANTE: nenhuma classificação por recorrência recente supera a
-    natureza aleatória da Lotofácil. Esta estratégia é mais uma forma de
-    montar jogos com base em padrões de curto prazo — não uma previsão
-    validada. Rode o backtest desta seção para ver a média real de
-    acertos antes de usar em apostas.
-    """
-    classificacao = classificar_dezenas_por_recorrencia_lf(banco, n_concursos=n_concursos)
-    if not classificacao:
-        return None, None, None
-
-    tiers = classificacao['tiers']
-    freq_por_dezena = classificacao['freq_por_dezena']
-    ranking_geral = sorted(range(1, 26), key=lambda n: freq_por_dezena[n], reverse=True)
-
-    def _pegar(tier_nome, qtd, excluir):
-        candidatos = [n for n in tiers[tier_nome] if n not in excluir]
-        escolhidos = candidatos[:qtd]
-        if len(escolhidos) < qtd:
-            reserva = [n for n in ranking_geral if n not in excluir and n not in escolhidos]
-            escolhidos += reserva[:qtd - len(escolhidos)]
-        return escolhidos
-
-    usados = set()
-    nucleo_quente = _pegar('quente', qtd_quente, usados)
-    usados |= set(nucleo_quente)
-    nucleo_medio = _pegar('medio', qtd_medio, usados)
-    usados |= set(nucleo_medio)
-    nucleo_frio = _pegar('frio', qtd_frio, usados)
-    usados |= set(nucleo_frio)
-
-    jogo_a = sorted(nucleo_quente + nucleo_medio + nucleo_frio)
-
-    relatorio = {
-        'classificacao': classificacao,
-        'nucleo_quente': nucleo_quente,
-        'nucleo_medio': nucleo_medio,
-        'nucleo_frio': nucleo_frio
-    }
-
-    jogo_b = None
-    if gerar_rotacao and nucleo_frio:
-        qtd_rot = min(qtd_rotacao, len(nucleo_frio))
-        frio_fraco_primeiro = sorted(nucleo_frio, key=lambda n: freq_por_dezena[n])
-        a_trocar = frio_fraco_primeiro[:qtd_rot]
-        candidatas_entrada = [n for n in ranking_geral if n not in jogo_a][:qtd_rot]
-        jogo_b = sorted((set(jogo_a) - set(a_trocar)) | set(candidatas_entrada))
-        relatorio['rotacao'] = {'saiu': a_trocar, 'entrou': candidatas_entrada}
-
-    return jogo_a, jogo_b, relatorio
-
-
-def preparar_e_rodar_backtest_camadas_lf(banco, num_testes=40, n_concursos=4,
-                                          qtd_quente=5, qtd_medio=5, qtd_frio=5,
-                                          aquecimento_minimo=10, mostrar_progresso=True):
-    """
-    Módulo 4C - Backtest das Camadas por Recorrência.
-
-    Roda o Jogo A gerado por `gerar_jogos_camadas_recorrencia_lf` em cada um
-    dos `num_testes` concursos mais recentes, ponto-no-tempo (só com dados
-    anteriores ao concurso testado), e mede a distribuição de acertos
-    contra o resultado real — mesma lógica de validação já usada no Jogo
-    Especialista (Módulo 4B) e nos pools de Fechamento.
-    """
-    historico = banco.concursos
-    testes = historico[:min(num_testes, len(historico))]
-    resultados = []
-    pulados = 0
-
-    progress_bar = st.progress(0, text="Rodando backtest das Camadas por Recorrência...") if mostrar_progresso else None
-
-    for i, concurso in enumerate(testes):
-        concursos_anteriores = historico[i + 1:]
-        if len(concursos_anteriores) < max(aquecimento_minimo, n_concursos):
-            pulados += 1
-        else:
-            banco_pt = _BancoTemporal(concursos_anteriores)
-            jogo_a, _, _ = gerar_jogos_camadas_recorrencia_lf(
-                banco_pt, n_concursos=n_concursos,
-                qtd_quente=qtd_quente, qtd_medio=qtd_medio, qtd_frio=qtd_frio,
-                gerar_rotacao=False
-            )
-            if jogo_a:
-                resultados.append(len(set(jogo_a) & set(concurso['dezenas'])))
-        if progress_bar:
-            progress_bar.progress((i + 1) / len(testes))
-
-    if progress_bar:
-        progress_bar.empty()
-
-    if not resultados:
-        return None, pulados
-
-    return {
-        'total_testes': len(resultados),
-        'media': float(np.mean(resultados)),
-        'mediana': float(np.median(resultados)),
-        'std': float(np.std(resultados)),
-        'max': int(max(resultados)),
-        'min': int(min(resultados)),
-        'distribuicao': dict(sorted(Counter(resultados).items()))
-    }, pulados
-
-
-def classificar_dezenas_por_persistencia_lf(banco, n_concursos=6):
-    """
-    Módulo 4C - Classificação por Persistência (frequência + sequência).
-
-    Cruza a frequência bruta na janela com a SEQUÊNCIA ATUAL de aparições
-    consecutivas (quantos concursos seguidos, contando do mais recente pra
-    trás, a dezena vem saindo sem interrupção — mesmo cálculo usado no
-    Jogo Especialista). Separa 4 comportamentos que a frequência sozinha
-    não diferencia, formalizando a leitura manual que o usuário fez na
-    matriz dos concursos 3768-3774:
-
-    - persistente: frequência alta (≥75%) E ainda numa sequência ativa
-      forte (vem saindo nos concursos mais recentes, incluindo o último);
-    - quebrando: frequência alta/média (≥50%), mas NÃO saiu no concurso
-      mais recente (a sequência ativa foi interrompida);
-    - retorno: frequência baixa (<50%), mas SAIU no concurso mais recente
-      (voltou depois de um período de ausência);
-    - atrasada: frequência baixa (<50%) e também não saiu no concurso mais
-      recente.
-
-    IMPORTANTE: janela deliberadamente curta. Com poucos concursos, uma
-    sequência "impressionante" acontece por puro acaso com frequência
-    maior do que a intuição sugere — rode o backtest desta seção antes de
-    confiar na classificação.
-    """
-    base = analisar_ultimos_n_concursos_lf(banco, n=n_concursos)
-    if not base:
-        return None
-
-    freq_por_dezena = {num: base['freq_janela'].get(num, 0) for num in range(1, 26)}
-    sequencia_atual = base['sequencia_atual']
-    qtd = base['qtd_concursos']
-    limiar_seq_forte = max(1, math.ceil(qtd * 0.5))
-
-    grupos = {'persistente': [], 'quebrando': [], 'retorno': [], 'atrasada': [], 'medio': []}
-    for num in range(1, 26):
-        proporcao = freq_por_dezena[num] / qtd
-        seq = sequencia_atual[num]
-
-        if proporcao >= 0.75 and seq >= limiar_seq_forte:
-            grupos['persistente'].append(num)
-        elif proporcao >= 0.5 and seq == 0:
-            grupos['quebrando'].append(num)
-        elif proporcao < 0.5 and seq >= 1:
-            grupos['retorno'].append(num)
-        elif proporcao < 0.5 and seq == 0:
-            grupos['atrasada'].append(num)
-        else:
-            grupos['medio'].append(num)
-
-    for grupo in grupos.values():
-        grupo.sort(key=lambda n: (freq_por_dezena[n], sequencia_atual[n]), reverse=True)
-
-    return {
-        'qtd_concursos': qtd,
-        'concursos_numeros': base['concursos_numeros'],
-        'freq_por_dezena': freq_por_dezena,
-        'sequencia_atual': sequencia_atual,
-        'grupos': grupos,
-        'ultimo_concurso': base['ultimo_concurso']
-    }
-
-
-def gerar_jogos_persistencia_lf(banco, n_concursos=6,
-                                 qtd_persistente_a=6, qtd_quebrando_a=4, qtd_retorno_a=3, qtd_atrasada_a=2,
-                                 qtd_persistente_b=3, qtd_quebrando_b=2, qtd_retorno_b=5, qtd_atrasada_b=5):
-    """
-    Módulo 4C - gera dois jogos a partir de `classificar_dezenas_por_persistencia_lf`:
-
-    Jogo A ("continuidade"): prioriza dezenas persistentes e em quebra
-    recente — aposta que o padrão recente continua.
-    Jogo B ("rotação"): prioriza dezenas de retorno e atrasadas — aposta
-    numa reversão/expansão para dezenas pouco usadas na janela recente.
-
-    As quantidades de cada grupo por jogo são parâmetros ajustáveis; se um
-    grupo não tiver dezenas suficientes, completa com a próxima melhor
-    disponível (por frequência na janela) fora do que já foi usado.
-
-    IMPORTANTE: nenhuma classificação por persistência supera a natureza
-    aleatória da Lotofácil — rode o backtest desta seção antes de apostar
-    com base nela.
-    """
-    classificacao = classificar_dezenas_por_persistencia_lf(banco, n_concursos=n_concursos)
-    if not classificacao:
-        return None, None, None
-
-    grupos = classificacao['grupos']
-    freq_por_dezena = classificacao['freq_por_dezena']
-    ranking_geral = sorted(range(1, 26), key=lambda n: freq_por_dezena[n], reverse=True)
-
-    def _montar(qtds):
-        usados = set()
-        resultado = []
-        for grupo_nome, qtd_grupo in qtds:
-            candidatos = [n for n in grupos.get(grupo_nome, []) if n not in usados]
-            escolhidos = candidatos[:qtd_grupo]
-            if len(escolhidos) < qtd_grupo:
-                reserva = [n for n in ranking_geral if n not in usados and n not in escolhidos]
-                escolhidos += reserva[:qtd_grupo - len(escolhidos)]
-            usados |= set(escolhidos)
-            resultado.extend(escolhidos)
-        return sorted(resultado)
-
-    jogo_a = _montar([
-        ('persistente', qtd_persistente_a), ('quebrando', qtd_quebrando_a),
-        ('retorno', qtd_retorno_a), ('atrasada', qtd_atrasada_a)
-    ])
-    jogo_b = _montar([
-        ('persistente', qtd_persistente_b), ('quebrando', qtd_quebrando_b),
-        ('retorno', qtd_retorno_b), ('atrasada', qtd_atrasada_b)
-    ])
-
-    return jogo_a, jogo_b, {'classificacao': classificacao}
-
-
-def preparar_e_rodar_backtest_persistencia_lf(banco, num_testes=40, n_concursos=6,
-                                               qtd_persistente=6, qtd_quebrando=4, qtd_retorno=3, qtd_atrasada=2,
-                                               aquecimento_minimo=10, mostrar_progresso=True):
-    """
-    Módulo 4C - Backtest da Classificação por Persistência.
-
-    Roda o Jogo A (continuidade) ponto-no-tempo nos `num_testes` concursos
-    mais recentes, usando só dados anteriores a cada um deles, e mede a
-    distribuição de acertos contra o resultado real — mesma validação já
-    usada nas Camadas por Recorrência e no Jogo Especialista.
-    """
-    historico = banco.concursos
-    testes = historico[:min(num_testes, len(historico))]
-    resultados = []
-    pulados = 0
-
-    progress_bar = st.progress(0, text="Rodando backtest de Persistência...") if mostrar_progresso else None
-
-    for i, concurso in enumerate(testes):
-        concursos_anteriores = historico[i + 1:]
-        if len(concursos_anteriores) < max(aquecimento_minimo, n_concursos):
-            pulados += 1
-        else:
-            banco_pt = _BancoTemporal(concursos_anteriores)
-            jogo_a, _, _ = gerar_jogos_persistencia_lf(
-                banco_pt, n_concursos=n_concursos,
-                qtd_persistente_a=qtd_persistente, qtd_quebrando_a=qtd_quebrando,
-                qtd_retorno_a=qtd_retorno, qtd_atrasada_a=qtd_atrasada,
-                qtd_persistente_b=0, qtd_quebrando_b=0, qtd_retorno_b=0, qtd_atrasada_b=0
-            )
-            if jogo_a:
-                resultados.append(len(set(jogo_a) & set(concurso['dezenas'])))
-        if progress_bar:
-            progress_bar.progress((i + 1) / len(testes))
-
-    if progress_bar:
-        progress_bar.empty()
-
-    if not resultados:
-        return None, pulados
-
-    return {
-        'total_testes': len(resultados),
-        'media': float(np.mean(resultados)),
-        'mediana': float(np.median(resultados)),
-        'std': float(np.std(resultados)),
-        'max': int(max(resultados)),
-        'min': int(min(resultados)),
-        'distribuicao': dict(sorted(Counter(resultados).items()))
-    }, pulados
-
-
-# =====================================================
-# MÓDULO 4D: MATRIZ DE TRANSIÇÃO (PERSISTÊNCIA × RECUPERAÇÃO)
-# =====================================================
-
-PESOS_MATRIZ_TRANSICAO_PADRAO = {
-    'freq_curto': 0.15, 'freq_2': 0.15, 'freq_3': 0.15,
-    'sequencia': 0.15, 'atraso': 0.10,
-    'prob_pos_saida': 0.15, 'prob_pos_ausencia': 0.15
-}
-
-
-def calcular_matriz_transicao_lf(banco, n_curto=7):
-    """
-    Módulo 4D - Matriz de Transição.
-
-    Monta, para cada uma das 25 dezenas, uma "ficha" com várias leituras de
-    curtíssimo e de longo prazo, formalizando a distinção entre
-    PERSISTÊNCIA (a dezena vem aparecendo nos concursos mais recentes) e
-    RECUPERAÇÃO (voltou depois de ausência, mas sem necessariamente
-    repetir) — a peça que faltava, segundo a análise do usuário comparando
-    13/22 (recuperação sem continuidade) com 14/18/24 (persistência real):
-
-    - freq_curto: frequência nos últimos `n_curto` concursos (padrão 7);
-    - freq_2 / freq_3: frequência nos últimos 2 e nos últimos 3 concursos
-      (persistência de curtíssimo prazo, o que o usuário pediu para pesar
-      mais que uma janela de 5-6);
-    - sequencia_atual: aparições consecutivas terminando no concurso mais
-      recente;
-    - atraso_atual: há quantos concursos a dezena não aparece (0 se saiu
-      no último concurso da janela);
-    - prob_pos_saida: no HISTÓRICO COMPLETO (não só a janela curta), a
-      proporção de vezes em que a dezena voltou a aparecer no concurso
-      seguinte a uma aparição dela — mede persistência com amostra grande;
-    - prob_pos_ausencia: no histórico completo, a proporção de vezes em
-      que a dezena apareceu no concurso seguinte a uma ausência dela —
-      mede "retorno" com amostra grande.
-
-    IMPORTANTE: numa Lotofácil genuinamente aleatória (concursos
-    independentes), `prob_pos_saida` e `prob_pos_ausencia` deveriam ficar
-    próximas uma da outra e próximas da frequência geral de cada dezena
-    (~60% em média). Uma diferença grande entre elas, se aparecer, é o
-    único tipo de sinal aqui que mereceria mais investigação — e mesmo
-    assim precisa ser validada em backtest antes de virar estratégia.
-    """
-    historico = banco.concursos  # mais recente primeiro
-    if len(historico) < 3:
-        return None
-
-    concursos_curto = historico[:n_curto]
-    dezenas_curto = [c['dezenas'] for c in concursos_curto]
-    qtd_curto = len(dezenas_curto)
-
-    freq_curto = Counter()
-    for d in dezenas_curto:
-        freq_curto.update(d)
-
-    def _freq_janela(qtd_janela):
-        sub = dezenas_curto[:qtd_janela]
-        f = Counter()
-        for d in sub:
-            f.update(d)
-        return {num: f.get(num, 0) for num in range(1, 26)}
-
-    freq_2 = _freq_janela(2)
-    freq_3 = _freq_janela(3)
-
-    sequencia_atual = {}
-    atraso_atual = {}
-    for num in range(1, 26):
-        seq = 0
-        for d in dezenas_curto:
-            if num in d:
-                seq += 1
-            else:
-                break
-        sequencia_atual[num] = seq
-
-        atraso = 0
-        achou = False
-        for c in historico:
-            if num in c['dezenas']:
-                achou = True
-                break
-            atraso += 1
-        atraso_atual[num] = atraso if achou else len(historico)
-
-    # Transição pós-saída / pós-ausência calculada em TODO o histórico
-    pos_saida_sim = Counter()
-    pos_saida_total = Counter()
-    pos_ausencia_sim = Counter()
-    pos_ausencia_total = Counter()
-
-    for j in range(len(historico) - 1):
-        atual = set(historico[j]['dezenas'])
-        anterior = set(historico[j + 1]['dezenas'])
-        for num in range(1, 26):
-            if num in anterior:
-                pos_saida_total[num] += 1
-                if num in atual:
-                    pos_saida_sim[num] += 1
-            else:
-                pos_ausencia_total[num] += 1
-                if num in atual:
-                    pos_ausencia_sim[num] += 1
-
-    prob_pos_saida = {}
-    prob_pos_ausencia = {}
-    for num in range(1, 26):
-        prob_pos_saida[num] = (pos_saida_sim[num] / pos_saida_total[num]) if pos_saida_total[num] else 0.6
-        prob_pos_ausencia[num] = (pos_ausencia_sim[num] / pos_ausencia_total[num]) if pos_ausencia_total[num] else 0.6
-
-    return {
-        'qtd_curto': qtd_curto,
-        'concursos_numeros': [c['numero'] for c in concursos_curto],
-        'freq_curto': {num: freq_curto.get(num, 0) for num in range(1, 26)},
-        'freq_2': freq_2,
-        'freq_3': freq_3,
-        'sequencia_atual': sequencia_atual,
-        'atraso_atual': atraso_atual,
-        'prob_pos_saida': prob_pos_saida,
-        'prob_pos_ausencia': prob_pos_ausencia,
-        'ultimo_concurso': dezenas_curto[0] if dezenas_curto else []
-    }
-
-
-def pontuar_dezenas_matriz_transicao_lf(matriz, pesos=None):
-    """
-    Módulo 4D - combina todos os componentes de `calcular_matriz_transicao_lf`
-    numa única pontuação de 0 a 1 por dezena, usando os pesos fornecidos
-    (ou `PESOS_MATRIZ_TRANSICAO_PADRAO`).
-    """
-    pesos = pesos or PESOS_MATRIZ_TRANSICAO_PADRAO
-    freq_curto_max = max(matriz['freq_curto'].values(), default=0) or 1
-    seq_max = max(matriz['sequencia_atual'].values(), default=0) or 1
-    atraso_max = max(matriz['atraso_atual'].values(), default=0) or 1
-
-    scores = {}
-    for num in range(1, 26):
-        freq_curto_score = matriz['freq_curto'][num] / freq_curto_max
-        freq_2_score = matriz['freq_2'][num] / 2
-        freq_3_score = matriz['freq_3'][num] / 3
-        seq_score = matriz['sequencia_atual'][num] / seq_max
-        atraso_score = matriz['atraso_atual'][num] / atraso_max if atraso_max else 0
-        prob_saida_score = matriz['prob_pos_saida'][num]
-        prob_ausencia_score = matriz['prob_pos_ausencia'][num]
-
-        score = (
-            freq_curto_score * pesos.get('freq_curto', 0.15) +
-            freq_2_score * pesos.get('freq_2', 0.15) +
-            freq_3_score * pesos.get('freq_3', 0.15) +
-            seq_score * pesos.get('sequencia', 0.15) +
-            atraso_score * pesos.get('atraso', 0.10) +
-            prob_saida_score * pesos.get('prob_pos_saida', 0.15) +
-            prob_ausencia_score * pesos.get('prob_pos_ausencia', 0.15)
-        )
-        scores[num] = max(0.0, min(1.0, score))
-
-    return scores
-
-
-def gerar_jogos_matriz_transicao_lf(banco, n_curto=7, pesos=None, tamanho_jogo=15,
-                                     gerar_rotacao=True, qtd_rotacao=5):
-    """
-    Módulo 4D - gera o Jogo A (top-15 pela pontuação da matriz de
-    transição) e, opcionalmente, o Jogo B (rotação: troca as `qtd_rotacao`
-    dezenas mais fracas do Jogo A pelas próximas melhores que ficaram de
-    fora), a partir de `calcular_matriz_transicao_lf` +
-    `pontuar_dezenas_matriz_transicao_lf`.
-    """
-    matriz = calcular_matriz_transicao_lf(banco, n_curto=n_curto)
-    if not matriz:
-        return None, None, None
-
-    scores = pontuar_dezenas_matriz_transicao_lf(matriz, pesos=pesos)
-    ranking = sorted(range(1, 26), key=lambda n: scores[n], reverse=True)
-    jogo_a = sorted(ranking[:tamanho_jogo])
-
-    relatorio = {'matriz': matriz, 'scores': scores}
-
-    jogo_b = None
-    if gerar_rotacao:
-        qtd_rot = min(qtd_rotacao, tamanho_jogo)
-        fraco_primeiro = sorted(jogo_a, key=lambda n: scores[n])
-        a_trocar = fraco_primeiro[:qtd_rot]
-        candidatas_entrada = [n for n in ranking if n not in jogo_a][:qtd_rot]
-        jogo_b = sorted((set(jogo_a) - set(a_trocar)) | set(candidatas_entrada))
-        relatorio['rotacao'] = {'saiu': a_trocar, 'entrou': candidatas_entrada}
-
-    return jogo_a, jogo_b, relatorio
-
-
-def preparar_e_rodar_backtest_matriz_transicao_lf(banco, num_testes=40, n_curto=7, pesos=None,
-                                                   aquecimento_minimo=15, mostrar_progresso=True):
-    """
-    Módulo 4D - Backtest da Matriz de Transição.
-
-    Roda o Jogo A (sem rotação) ponto-no-tempo nos `num_testes` concursos
-    mais recentes, usando só dados anteriores a cada um deles (inclusive
-    para as probabilidades pós-saída/pós-ausência, recalculadas a cada
-    ponto com o histórico disponível até ali), e mede a distribuição de
-    acertos contra o resultado real.
-    """
-    historico = banco.concursos
-    testes = historico[:min(num_testes, len(historico))]
-    resultados = []
-    pulados = 0
-
-    progress_bar = st.progress(0, text="Rodando backtest da Matriz de Transição...") if mostrar_progresso else None
-
-    for i, concurso in enumerate(testes):
-        concursos_anteriores = historico[i + 1:]
-        if len(concursos_anteriores) < max(aquecimento_minimo, n_curto):
-            pulados += 1
-        else:
-            banco_pt = _BancoTemporal(concursos_anteriores)
-            jogo_a, _, _ = gerar_jogos_matriz_transicao_lf(
-                banco_pt, n_curto=n_curto, pesos=pesos, gerar_rotacao=False
-            )
-            if jogo_a:
-                resultados.append(len(set(jogo_a) & set(concurso['dezenas'])))
-        if progress_bar:
-            progress_bar.progress((i + 1) / len(testes))
-
-    if progress_bar:
-        progress_bar.empty()
-
-    if not resultados:
-        return None, pulados
-
-    return {
-        'total_testes': len(resultados),
-        'media': float(np.mean(resultados)),
-        'mediana': float(np.median(resultados)),
-        'std': float(np.std(resultados)),
-        'max': int(max(resultados)),
-        'min': int(min(resultados)),
-        'distribuicao': dict(sorted(Counter(resultados).items()))
-    }, pulados
 
 # =====================================================
 # MÓDULO 5: FILTROS INTELIGENTES - LOTOFÁCIL
@@ -3955,32 +3081,6 @@ def main():
         st.session_state.jogo_especialista = None
     if "relatorio_especialista" not in st.session_state:
         st.session_state.relatorio_especialista = None
-    if "pesos_especialista_ativos" not in st.session_state:
-        st.session_state.pesos_especialista_ativos = None
-    if "n_concursos_especialista_ativo" not in st.session_state:
-        st.session_state.n_concursos_especialista_ativo = None
-    if "resultados_busca_pesos_especialista" not in st.session_state:
-        st.session_state.resultados_busca_pesos_especialista = None
-    if "pulados_busca_pesos_especialista" not in st.session_state:
-        st.session_state.pulados_busca_pesos_especialista = 0
-    if "resultado_camadas" not in st.session_state:
-        st.session_state.resultado_camadas = None
-    if "resultado_backtest_camadas" not in st.session_state:
-        st.session_state.resultado_backtest_camadas = None
-    if "pulados_backtest_camadas" not in st.session_state:
-        st.session_state.pulados_backtest_camadas = 0
-    if "resultado_persistencia" not in st.session_state:
-        st.session_state.resultado_persistencia = None
-    if "resultado_backtest_persist" not in st.session_state:
-        st.session_state.resultado_backtest_persist = None
-    if "pulados_backtest_persist" not in st.session_state:
-        st.session_state.pulados_backtest_persist = 0
-    if "resultado_matriz" not in st.session_state:
-        st.session_state.resultado_matriz = None
-    if "resultado_backtest_matriz" not in st.session_state:
-        st.session_state.resultado_backtest_matriz = None
-    if "pulados_backtest_matriz" not in st.session_state:
-        st.session_state.pulados_backtest_matriz = 0
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -3991,27 +3091,12 @@ def main():
         st.header("⚙️ Configurações")
         
         qtd_concursos = st.slider("Qtd concursos históricos", 50, 500, 200)
-
-        with st.expander("🔧 API alternativa (só se o carregamento falhar)"):
-            url_api_customizada = st.text_input(
-                "URL customizada da API (opcional)",
-                value="", key="url_api_customizada_input",
-                placeholder="https://sua-api-espelho.exemplo.com/api/lotofacil"
-            )
-            st.caption(
-                "Deixe em branco para usar as APIs padrão. Se o carregamento abaixo falhar, a mensagem de "
-                "erro vai mostrar o motivo específico de cada tentativa — cole aqui uma URL alternativa "
-                "(mesmo formato: lista de concursos com a chave 'dezenas') se precisar contornar."
-            )
-
+        
         col1, col2 = st.columns(2)
         with col1:
             if st.button("📥 Carregar Lotofácil", use_container_width=True):
                 with st.spinner("Carregando dados da Lotofácil..."):
-                    dados = buscar_historico_lotofacil(
-                        qtd_concursos,
-                        url_customizada=url_api_customizada.strip() or None
-                    )
+                    dados = buscar_historico_lotofacil(qtd_concursos)
                     if dados and len(dados) > 0:
                         st.session_state.dados_api = dados
                         
@@ -4102,8 +3187,7 @@ def main():
         "🔬 Backtests",
         "📈 Análise Avançada",
         "🔍 Conferência",
-        "💾 Salvos",
-        "🧬 Camadas"
+        "💾 Salvos"
     ])
 
     # ================= TAB 1: DASHBOARD =================
@@ -4518,19 +3602,9 @@ def main():
                         'Média capturada (/15)': round(r['media_capturadas'], 2),
                         'Esperado por acaso': r['esperado_por_acaso'],
                         'Vantagem sobre o acaso': r['vantagem_sobre_acaso'],
-                        'Pior caso (fora do pool)': r['maximo_fora_do_pool'],
-                        'Aposta oficial única (Caixa)': (
-                            f"R$ {PRECO_OFICIAL_LOTOFACIL_LF[r['top_n']]:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
-                            if r['top_n'] in PRECO_OFICIAL_LOTOFACIL_LF else "— (só como fechamento)"
-                        )
+                        'Pior caso (fora do pool)': r['maximo_fora_do_pool']
                     } for r in recomendacao_pool])
                     st.dataframe(df_rec, use_container_width=True, hide_index=True)
-                    st.caption(
-                        "💰 'Aposta oficial única' é o preço de marcar todas as dezenas do pool numa ÚNICA aposta "
-                        "oficial da Caixa (garante 100% das combinações dentro dela). Pools acima de 20 dezenas não "
-                        "cabem numa aposta oficial — só servem para gerar vários jogos separados de 15 dezenas "
-                        "(fechamento), cada um custando R$ 3,50."
-                    )
 
                     melhor = recomendacao_pool[0]
                     if melhor['vantagem_sobre_acaso'] <= 0.3:
@@ -4614,31 +3688,6 @@ def main():
             with col_f2:
                 max_combinacoes = math.comb(len(dezenas_fechamento), 15) if len(dezenas_fechamento) >= 15 else 0
                 st.metric("Combinações possíveis", f"{len(dezenas_fechamento)} escolhe 15 = {max_combinacoes:,}".replace(",", "."))
-
-            custo_fechamento_gerado = qtd_fechamento * PRECO_APOSTA_SIMPLES_LF
-            tamanho_dezenas_fechamento = len(dezenas_fechamento)
-            col_custo1, col_custo2 = st.columns(2)
-            with col_custo1:
-                st.metric(
-                    f"💰 Custo do fechamento ({qtd_fechamento} jogos separados)",
-                    f"R$ {custo_fechamento_gerado:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
-                )
-            with col_custo2:
-                if tamanho_dezenas_fechamento in PRECO_OFICIAL_LOTOFACIL_LF:
-                    preco_oficial = PRECO_OFICIAL_LOTOFACIL_LF[tamanho_dezenas_fechamento]
-                    st.metric(
-                        f"💰 Alternativa: aposta oficial única ({tamanho_dezenas_fechamento} dezenas)",
-                        f"R$ {preco_oficial:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
-                    )
-                else:
-                    st.metric(f"💰 Aposta oficial única ({tamanho_dezenas_fechamento} dezenas)", "Não permitido (máx. 20)")
-            st.caption(
-                "A aposta oficial única marca todas as dezenas do pool num só bilhete da Caixa e garante 100% das "
-                f"combinações dentro dele — mas só é aceita até 20 dezenas. Gerar {qtd_fechamento} jogos separados de "
-                "15 dezenas é mais barato, porém cobre apenas uma amostra heurística das combinações possíveis, sem "
-                "garantia formal. Nenhuma das duas opções muda a probabilidade de acerto de cada dezena individual — "
-                "só a forma como a cobertura é paga."
-            )
 
             metodo_fechamento = st.radio(
                 "Método do fechamento",
@@ -5064,20 +4113,9 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-            pesos_ativos = st.session_state.get("pesos_especialista_ativos")
-            n_janela_ativa_backtest = st.session_state.get("n_concursos_especialista_ativo")
-
-            if pesos_ativos:
-                st.caption(f"🔧 Usando pesos otimizados pelo backtest (janela ideal encontrada: {n_janela_ativa_backtest} concursos). "
-                           "O slider abaixo é ignorado enquanto os pesos otimizados estiverem ativos.")
-                if st.button("↩️ Voltar aos pesos padrão", key="resetar_pesos_especialista_btn"):
-                    st.session_state.pesos_especialista_ativos = None
-                    st.session_state.n_concursos_especialista_ativo = None
-                    st.rerun()
-
             n_janela_especialista = st.slider(
                 "Quantidade de concursos recentes a analisar", 5, 20, 10,
-                key="n_janela_especialista_slider", disabled=bool(pesos_ativos)
+                key="n_janela_especialista_slider"
             )
 
             if st.button("🏆 GERAR JOGO ESPECIALISTA", use_container_width=True,
@@ -5087,8 +4125,7 @@ def main():
                         st.session_state.banco_dados,
                         st.session_state.estatisticas,
                         ia=ia,
-                        n_concursos=n_janela_ativa_backtest or n_janela_especialista,
-                        pesos=pesos_ativos
+                        n_concursos=n_janela_especialista
                     )
                     if jogo_especialista:
                         st.session_state.jogo_especialista = jogo_especialista
@@ -5132,7 +4169,6 @@ def main():
                         'Dezena': list(range(1, 26)),
                         'Freq. na janela': [analise_esp.get('freq_janela', {}).get(n, 0) for n in range(1, 26)],
                         'Atraso na janela': [analise_esp.get('atraso_janela', {}).get(n, 0) for n in range(1, 26)],
-                        'Sequência atual': [analise_esp.get('sequencia_atual', {}).get(n, 0) for n in range(1, 26)],
                         'Pontuação especialista': [round(rel_esp.get('scores', {}).get(n, 0) * 100, 1) for n in range(1, 26)]
                     }).sort_values('Pontuação especialista', ascending=False)
                     st.dataframe(df_freq_janela, use_container_width=True, hide_index=True)
@@ -5156,110 +4192,6 @@ def main():
                         st.session_state.jogo_especialista = None
                         st.session_state.relatorio_especialista = None
                         st.rerun()
-
-            # ---- Backtest & Busca Automática de Pesos do Especialista ----
-            st.markdown("---")
-            st.markdown("### 🔬 Backtest & Ajuste Automático de Pesos")
-            st.markdown("""
-            <div class="ia-lf-highlight">
-                Testa o Jogo Especialista em vários concursos reais <strong>ponto-no-tempo</strong>
-                (usando, pra cada um, só dados anteriores a ele — sem vazar resultado futuro) e
-                faz uma busca aleatória por combinações de pesos e tamanho de janela que tiveram a
-                <strong>melhor média de acertos</strong> nesse histórico.<br>
-                <small style='color:#aaa;'>⚠️ Mesmo a melhor combinação encontrada está ajustada a um
-                histórico específico — o ganho esperado sobre os pesos padrão é marginal (frações de
-                acerto na média), não um salto para 14-15 pontos consistentes. A Lotofácil é um
-                sorteio aleatório independente concurso a concurso.</small>
-            </div>
-            """, unsafe_allow_html=True)
-
-            col_bt1, col_bt2 = st.columns(2)
-            with col_bt1:
-                num_testes_backtest = st.slider(
-                    "Concursos recentes para testar", 15, 100, 40,
-                    key="num_testes_backtest_especialista_slider"
-                )
-            with col_bt2:
-                num_combinacoes_backtest = st.slider(
-                    "Combinações de pesos a testar", 5, 60, 25,
-                    key="num_combinacoes_backtest_especialista_slider"
-                )
-
-            st.caption("ℹ️ Quanto maior os dois valores, mais confiável o resultado — e mais tempo o backtest leva pra rodar.")
-
-            if st.button("🔬 RODAR BACKTEST E BUSCAR MELHORES PESOS", use_container_width=True,
-                         key="buscar_pesos_especialista_btn"):
-                with st.spinner("Rodando backtest ponto-no-tempo e testando combinações de pesos..."):
-                    resultados_busca, pulados_busca = buscar_melhores_pesos_especialista_lf(
-                        st.session_state.banco_dados,
-                        num_testes=num_testes_backtest,
-                        num_combinacoes=num_combinacoes_backtest
-                    )
-                    st.session_state.resultados_busca_pesos_especialista = resultados_busca
-                    st.session_state.pulados_busca_pesos_especialista = pulados_busca
-                    if resultados_busca:
-                        st.success(f"✅ {len(resultados_busca)} combinação(ões) testada(s) em {resultados_busca[0]['total_testes']} concurso(s) reais!")
-                    else:
-                        st.error("❌ Não foi possível rodar o backtest (carregue mais concursos — é preciso um histórico mínimo antes de cada ponto testado).")
-
-            resultados_busca = st.session_state.get("resultados_busca_pesos_especialista")
-            if resultados_busca:
-                pulados_busca = st.session_state.get("pulados_busca_pesos_especialista", 0)
-                if pulados_busca:
-                    st.caption(f"ℹ️ {pulados_busca} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
-
-                melhor = resultados_busca[0]
-                padrao = next((r for r in resultados_busca if r['rotulo'] == 'Padrão atual'), None)
-
-                col_r1, col_r2, col_r3 = st.columns(3)
-                with col_r1:
-                    st.metric("Melhor média de acertos", f"{melhor['media']:.2f}", melhor['rotulo'])
-                with col_r2:
-                    if padrao:
-                        delta = melhor['media'] - padrao['media']
-                        st.metric("Média dos pesos padrão", f"{padrao['media']:.2f}", f"{delta:+.2f} vs. melhor")
-                with col_r3:
-                    st.metric("Janela ideal encontrada", f"{melhor['n_concursos']} concursos")
-
-                df_ranking_busca = pd.DataFrame([{
-                    'Combinação': r['rotulo'],
-                    'Janela': r['n_concursos'],
-                    'Média': round(r['media'], 2),
-                    'Mediana': round(r['mediana'], 2),
-                    'Desvio': round(r['std'], 2),
-                    'Máx.': r['max'],
-                    'Mín.': r['min']
-                } for r in resultados_busca[:15]])
-                st.markdown("#### 📋 Ranking das combinações testadas (top 15)")
-                st.dataframe(df_ranking_busca, use_container_width=True, hide_index=True)
-
-                with st.expander("📊 Distribuição de acertos da melhor combinação"):
-                    dist = melhor['distribuicao']
-                    df_dist = pd.DataFrame({
-                        'Acertos': list(dist.keys()),
-                        'Ocorrências': list(dist.values())
-                    })
-                    fig_dist = px.bar(df_dist, x='Acertos', y='Ocorrências',
-                                      title=f"Distribuição de acertos — {melhor['rotulo']} (janela: {melhor['n_concursos']})")
-                    st.plotly_chart(fig_dist, use_container_width=True)
-                    st.json(melhor['pesos'])
-                    peso_seq_melhor = melhor['pesos'].get('sequencia', 0.0)
-                    if peso_seq_melhor > 0.15:
-                        st.caption(f"📈 A melhor combinação deu peso relevante à 'sequência atual' ({peso_seq_melhor:.2f}) — "
-                                   "sinal de que aparições consecutivas recentes tiveram algum valor neste histórico.")
-                    else:
-                        st.caption(f"📉 A melhor combinação deu pouco ou nenhum peso à 'sequência atual' ({peso_seq_melhor:.2f}) — "
-                                   "neste histórico, isso não se mostrou um critério relevante.")
-
-                if melhor['rotulo'] != 'Padrão atual':
-                    if st.button("✅ Aplicar estes pesos ao Jogo Especialista", use_container_width=True,
-                                 type="primary", key="aplicar_pesos_especialista_btn"):
-                        st.session_state.pesos_especialista_ativos = melhor['pesos']
-                        st.session_state.n_concursos_especialista_ativo = melhor['n_concursos']
-                        st.success("✅ Pesos aplicados! Gere um novo Jogo Especialista acima pra usá-los.")
-                        st.rerun()
-                else:
-                    st.info("ℹ️ Os pesos padrão já foram a melhor combinação encontrada nesta busca — nada a aplicar.")
 
     # ================= TAB 4: GERADOR PREMIUM =================
     with tabs[3]:
@@ -5759,497 +4691,6 @@ def main():
                     <strong>Jogos:</strong> {len(jogo['jogos'])}
                 </div>
                 """, unsafe_allow_html=True)
-
-    # ================= TAB 9: CAMADAS POR RECORRÊNCIA =================
-    with tabs[8]:
-        st.markdown("### 🧬 Camadas: Recorrência & Persistência")
-        st.markdown("""
-        <div class="ia-lf-highlight">
-            Dois modos de separar as dezenas em grupos para montar jogos com hipóteses
-            complementares (continuidade × rotação):<br>
-            <strong>Frequência simples</strong> — quente/médio/frio, só pela frequência bruta na janela.<br>
-            <strong>Frequência + Sequência (persistência)</strong> — cruza frequência com a sequência
-            atual de aparições consecutivas, separando "persistente", "quebrando", "retorno" e
-            "atrasada".<br>
-            <small style='color:#aaa;'>⚠️ Com uma janela curta (poucos concursos), é normal que várias
-            dezenas pareçam ter um padrão forte só por acaso. Rode o backtest de cada modo antes de
-            confiar na estratégia.</small>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if not st.session_state.banco_dados or not st.session_state.banco_dados.concursos:
-            st.warning("⚠️ Carregue o histórico de concursos primeiro (aba Dashboard).")
-        else:
-            modo_camadas = st.radio(
-                "Modo de classificação",
-                ["Frequência simples (quente/médio/frio)", "Frequência + Sequência (persistência)",
-                 "Matriz de Transição (avançado)"],
-                horizontal=True, key="modo_camadas_radio"
-            )
-            st.markdown("---")
-
-        if st.session_state.banco_dados and st.session_state.banco_dados.concursos and modo_camadas.startswith("Frequência simples"):
-            col_c1, col_c2 = st.columns(2)
-            with col_c1:
-                n_concursos_camadas = st.slider(
-                    "Quantos concursos recentes analisar", 3, 15, 4,
-                    key="n_concursos_camadas_slider"
-                )
-            with col_c2:
-                st.caption(
-                    "🔥 Quente: saiu em ≥75% desses concursos · 🟡 Médio: 50-75% · ❄️ Frio: <50%. "
-                    "Os cortes são fixos; o que muda é o conjunto de dezenas em cada faixa."
-                )
-
-            col_q, col_m, col_f = st.columns(3)
-            with col_q:
-                qtd_quente_camadas = st.number_input("Dezenas do núcleo quente", 0, 15, 5, key="qtd_quente_camadas")
-            with col_m:
-                qtd_medio_camadas = st.number_input("Dezenas do núcleo médio", 0, 15, 5, key="qtd_medio_camadas")
-            with col_f:
-                qtd_frio_camadas = st.number_input("Dezenas do núcleo frio", 0, 15, 5, key="qtd_frio_camadas")
-
-            total_dezenas_camadas = qtd_quente_camadas + qtd_medio_camadas + qtd_frio_camadas
-            if total_dezenas_camadas != 15:
-                st.warning(f"⚠️ A soma dos três núcleos precisa dar 15 (está em {total_dezenas_camadas}).")
-
-            gerar_rotacao_camadas = st.checkbox("Gerar também o Jogo B (rotação controlada no núcleo frio)", value=True, key="gerar_rotacao_camadas_chk")
-            qtd_rotacao_camadas = st.slider("Dezenas trocadas na rotação do Jogo B", 1, 10, 5, key="qtd_rotacao_camadas_slider") if gerar_rotacao_camadas else 0
-
-            if st.button("🧬 GERAR JOGOS POR CAMADAS", use_container_width=True, type="primary",
-                         key="gerar_camadas_btn", disabled=(total_dezenas_camadas != 15)):
-                jogo_a_camadas, jogo_b_camadas, relatorio_camadas = gerar_jogos_camadas_recorrencia_lf(
-                    st.session_state.banco_dados, n_concursos=n_concursos_camadas,
-                    qtd_quente=qtd_quente_camadas, qtd_medio=qtd_medio_camadas, qtd_frio=qtd_frio_camadas,
-                    gerar_rotacao=gerar_rotacao_camadas, qtd_rotacao=qtd_rotacao_camadas
-                )
-                st.session_state.resultado_camadas = {
-                    'jogo_a': jogo_a_camadas, 'jogo_b': jogo_b_camadas, 'relatorio': relatorio_camadas
-                }
-
-            resultado_camadas = st.session_state.get("resultado_camadas")
-            if resultado_camadas and resultado_camadas.get('jogo_a'):
-                jogo_a_c = resultado_camadas['jogo_a']
-                jogo_b_c = resultado_camadas['jogo_b']
-                rel_c = resultado_camadas['relatorio']
-                classif_c = rel_c['classificacao']
-
-                st.markdown(f"""
-                <div class='card'>
-                    🅰️ <strong>Jogo A — Núcleo Estável</strong><br>
-                    {formatar_jogo_html_lf(jogo_a_c)}
-                </div>
-                """, unsafe_allow_html=True)
-
-                if jogo_b_c:
-                    st.markdown(f"""
-                    <div class='card'>
-                        🅱️ <strong>Jogo B — Rotação Controlada</strong><br>
-                        {formatar_jogo_html_lf(jogo_b_c)}<br>
-                        <small style='color:#aaa;'>🔄 Saíram do frio: {rel_c['rotacao']['saiu']} | Entraram: {rel_c['rotacao']['entrou']}</small>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                with st.expander(f"📊 Classificação usada (últimos {classif_c['qtd_concursos']} concursos: {classif_c['concursos_numeros']})"):
-                    col_t1, col_t2, col_t3 = st.columns(3)
-                    with col_t1:
-                        st.markdown("**🔥 Núcleo quente**")
-                        st.write(rel_c['nucleo_quente'])
-                    with col_t2:
-                        st.markdown("**🟡 Núcleo médio**")
-                        st.write(rel_c['nucleo_medio'])
-                    with col_t3:
-                        st.markdown("**❄️ Núcleo frio**")
-                        st.write(rel_c['nucleo_frio'])
-
-                    df_freq_camadas = pd.DataFrame({
-                        'Dezena': list(range(1, 26)),
-                        f"Freq. (/{classif_c['qtd_concursos']})": [classif_c['freq_por_dezena'][n] for n in range(1, 26)]
-                    }).sort_values(f"Freq. (/{classif_c['qtd_concursos']})", ascending=False)
-                    st.dataframe(df_freq_camadas, use_container_width=True, hide_index=True)
-
-                col_sc1, col_sc2 = st.columns(2)
-                with col_sc1:
-                    if st.button("💾 Salvar Jogo A", key="salvar_camadas_a_btn", use_container_width=True):
-                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_a_c], {
-                            'tipo': 'camadas_recorrencia_jogo_a', 'n_concursos_analisados': classif_c['qtd_concursos']
-                        })
-                        if arquivo:
-                            st.success(f"✅ Jogo A salvo! ID: {jogo_id}")
-                with col_sc2:
-                    if jogo_b_c and st.button("💾 Salvar Jogo B", key="salvar_camadas_b_btn", use_container_width=True):
-                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_b_c], {
-                            'tipo': 'camadas_recorrencia_jogo_b', 'n_concursos_analisados': classif_c['qtd_concursos']
-                        })
-                        if arquivo:
-                            st.success(f"✅ Jogo B salvo! ID: {jogo_id}")
-
-            st.markdown("---")
-            st.markdown("#### 🔬 Backtest das Camadas por Recorrência")
-            st.caption(
-                "Testa o Jogo A (sem rotação) ponto-no-tempo em vários concursos reais recentes, pra ver a média "
-                "real de acertos dessa estratégia — em vez de julgar por 1 ou 2 jogos isolados."
-            )
-            total_concursos_camadas = len(st.session_state.banco_dados.concursos)
-            max_testes_camadas = min(150, max(10, total_concursos_camadas - 15))
-            n_testes_camadas = st.slider("Concursos a testar", 10, max_testes_camadas, min(40, max_testes_camadas), key="n_testes_camadas_slider")
-
-            if st.button("🔬 RODAR BACKTEST DAS CAMADAS", use_container_width=True, key="backtest_camadas_btn",
-                         disabled=(total_dezenas_camadas != 15)):
-                with st.spinner("Rodando backtest ponto-no-tempo..."):
-                    stats_camadas, pulados_camadas = preparar_e_rodar_backtest_camadas_lf(
-                        st.session_state.banco_dados, num_testes=n_testes_camadas, n_concursos=n_concursos_camadas,
-                        qtd_quente=qtd_quente_camadas, qtd_medio=qtd_medio_camadas, qtd_frio=qtd_frio_camadas
-                    )
-                    st.session_state.resultado_backtest_camadas = stats_camadas
-                    st.session_state.pulados_backtest_camadas = pulados_camadas
-
-            stats_camadas = st.session_state.get("resultado_backtest_camadas")
-            if stats_camadas:
-                pulados_c = st.session_state.get("pulados_backtest_camadas", 0)
-                if pulados_c:
-                    st.caption(f"ℹ️ {pulados_c} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
-
-                col_bc1, col_bc2, col_bc3, col_bc4 = st.columns(4)
-                with col_bc1:
-                    st.metric("Média de acertos", f"{stats_camadas['media']:.2f}")
-                with col_bc2:
-                    st.metric("Mediana", f"{stats_camadas['mediana']:.1f}")
-                with col_bc3:
-                    st.metric("Máximo", stats_camadas['max'])
-                with col_bc4:
-                    st.metric("Mínimo", stats_camadas['min'])
-
-                st.caption(
-                    f"Comparação: escolhendo 15 dezenas totalmente ao acaso, o esperado é 9,00/15. "
-                    f"Esta estratégia teve média de {stats_camadas['media']:.2f}/15 em {stats_camadas['total_testes']} "
-                    "concurso(s) testado(s) — isso descreve o passado, não garante o próximo concurso."
-                )
-
-                df_dist_camadas = pd.DataFrame({
-                    'Acertos': list(stats_camadas['distribuicao'].keys()),
-                    'Ocorrências': list(stats_camadas['distribuicao'].values())
-                })
-                fig_dist_camadas = px.bar(df_dist_camadas, x='Acertos', y='Ocorrências',
-                                          title="Distribuição de acertos — Camadas por Recorrência (Jogo A)")
-                st.plotly_chart(fig_dist_camadas, use_container_width=True)
-
-        if st.session_state.banco_dados and st.session_state.banco_dados.concursos and modo_camadas.startswith("Frequência + Sequência"):
-            st.caption(
-                "🟢 Persistente: freq. ≥75% e ainda em sequência ativa forte · 🟠 Quebrando: freq. ≥50% mas "
-                "não saiu no último concurso · 🔵 Retorno: freq. <50% mas saiu no último concurso · "
-                "🔴 Atrasada: freq. <50% e não saiu no último."
-            )
-
-            n_concursos_persist = st.slider(
-                "Quantos concursos recentes analisar", 4, 15, 6, key="n_concursos_persist_slider"
-            )
-
-            st.markdown("**Composição do Jogo A (continuidade)**")
-            col_pa1, col_pa2, col_pa3, col_pa4 = st.columns(4)
-            with col_pa1:
-                qtd_persist_a = st.number_input("Persistente", 0, 15, 6, key="qtd_persist_a")
-            with col_pa2:
-                qtd_quebra_a = st.number_input("Quebrando", 0, 15, 4, key="qtd_quebra_a")
-            with col_pa3:
-                qtd_retorno_a = st.number_input("Retorno", 0, 15, 3, key="qtd_retorno_a")
-            with col_pa4:
-                qtd_atrasada_a = st.number_input("Atrasada", 0, 15, 2, key="qtd_atrasada_a")
-            total_a_persist = qtd_persist_a + qtd_quebra_a + qtd_retorno_a + qtd_atrasada_a
-            if total_a_persist != 15:
-                st.warning(f"⚠️ A soma do Jogo A precisa dar 15 (está em {total_a_persist}).")
-
-            gerar_jogo_b_persist = st.checkbox("Gerar também o Jogo B (rotação)", value=True, key="gerar_jogo_b_persist_chk")
-            total_b_persist = 15
-            if gerar_jogo_b_persist:
-                st.markdown("**Composição do Jogo B (rotação)**")
-                col_pb1, col_pb2, col_pb3, col_pb4 = st.columns(4)
-                with col_pb1:
-                    qtd_persist_b = st.number_input("Persistente ", 0, 15, 3, key="qtd_persist_b")
-                with col_pb2:
-                    qtd_quebra_b = st.number_input("Quebrando ", 0, 15, 2, key="qtd_quebra_b")
-                with col_pb3:
-                    qtd_retorno_b = st.number_input("Retorno ", 0, 15, 5, key="qtd_retorno_b")
-                with col_pb4:
-                    qtd_atrasada_b = st.number_input("Atrasada ", 0, 15, 5, key="qtd_atrasada_b")
-                total_b_persist = qtd_persist_b + qtd_quebra_b + qtd_retorno_b + qtd_atrasada_b
-                if total_b_persist != 15:
-                    st.warning(f"⚠️ A soma do Jogo B precisa dar 15 (está em {total_b_persist}).")
-            else:
-                qtd_persist_b = qtd_quebra_b = qtd_retorno_b = qtd_atrasada_b = 0
-
-            pode_gerar_persist = (total_a_persist == 15) and (not gerar_jogo_b_persist or total_b_persist == 15)
-
-            if st.button("🧬 GERAR JOGOS POR PERSISTÊNCIA", use_container_width=True, type="primary",
-                         key="gerar_persist_btn", disabled=not pode_gerar_persist):
-                jogo_a_p, jogo_b_p, relatorio_p = gerar_jogos_persistencia_lf(
-                    st.session_state.banco_dados, n_concursos=n_concursos_persist,
-                    qtd_persistente_a=qtd_persist_a, qtd_quebrando_a=qtd_quebra_a,
-                    qtd_retorno_a=qtd_retorno_a, qtd_atrasada_a=qtd_atrasada_a,
-                    qtd_persistente_b=qtd_persist_b, qtd_quebrando_b=qtd_quebra_b,
-                    qtd_retorno_b=qtd_retorno_b, qtd_atrasada_b=qtd_atrasada_b
-                )
-                st.session_state.resultado_persistencia = {
-                    'jogo_a': jogo_a_p, 'jogo_b': jogo_b_p if gerar_jogo_b_persist else None, 'relatorio': relatorio_p
-                }
-
-            resultado_persist = st.session_state.get("resultado_persistencia")
-            if resultado_persist and resultado_persist.get('jogo_a'):
-                jogo_a_pp = resultado_persist['jogo_a']
-                jogo_b_pp = resultado_persist['jogo_b']
-                rel_pp = resultado_persist['relatorio']
-                classif_pp = rel_pp['classificacao']
-                grupos_pp = classif_pp['grupos']
-
-                st.markdown(f"""
-                <div class='card'>
-                    🅰️ <strong>Jogo A — Continuidade</strong><br>
-                    {formatar_jogo_html_lf(jogo_a_pp)}
-                </div>
-                """, unsafe_allow_html=True)
-
-                if jogo_b_pp:
-                    st.markdown(f"""
-                    <div class='card'>
-                        🅱️ <strong>Jogo B — Rotação</strong><br>
-                        {formatar_jogo_html_lf(jogo_b_pp)}
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                with st.expander(f"📊 Classificação usada (últimos {classif_pp['qtd_concursos']} concursos: {classif_pp['concursos_numeros']})"):
-                    col_g1, col_g2, col_g3, col_g4 = st.columns(4)
-                    with col_g1:
-                        st.markdown("**🟢 Persistente**")
-                        st.write(grupos_pp['persistente'])
-                    with col_g2:
-                        st.markdown("**🟠 Quebrando**")
-                        st.write(grupos_pp['quebrando'])
-                    with col_g3:
-                        st.markdown("**🔵 Retorno**")
-                        st.write(grupos_pp['retorno'])
-                    with col_g4:
-                        st.markdown("**🔴 Atrasada**")
-                        st.write(grupos_pp['atrasada'])
-
-                    df_persist = pd.DataFrame({
-                        'Dezena': list(range(1, 26)),
-                        f"Freq. (/{classif_pp['qtd_concursos']})": [classif_pp['freq_por_dezena'][n] for n in range(1, 26)],
-                        'Sequência atual': [classif_pp['sequencia_atual'][n] for n in range(1, 26)]
-                    }).sort_values('Sequência atual', ascending=False)
-                    st.dataframe(df_persist, use_container_width=True, hide_index=True)
-
-                col_sp1, col_sp2 = st.columns(2)
-                with col_sp1:
-                    if st.button("💾 Salvar Jogo A", key="salvar_persist_a_btn", use_container_width=True):
-                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_a_pp], {
-                            'tipo': 'persistencia_jogo_a', 'n_concursos_analisados': classif_pp['qtd_concursos']
-                        })
-                        if arquivo:
-                            st.success(f"✅ Jogo A salvo! ID: {jogo_id}")
-                with col_sp2:
-                    if jogo_b_pp and st.button("💾 Salvar Jogo B", key="salvar_persist_b_btn", use_container_width=True):
-                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_b_pp], {
-                            'tipo': 'persistencia_jogo_b', 'n_concursos_analisados': classif_pp['qtd_concursos']
-                        })
-                        if arquivo:
-                            st.success(f"✅ Jogo B salvo! ID: {jogo_id}")
-
-            st.markdown("---")
-            st.markdown("#### 🔬 Backtest da Persistência")
-            st.caption(
-                "Testa o Jogo A (continuidade) ponto-no-tempo em vários concursos reais recentes — a única "
-                "forma confiável de saber se 'sequência atual' realmente ajuda ou se foi coincidência de amostra pequena."
-            )
-            total_concursos_persist = len(st.session_state.banco_dados.concursos)
-            max_testes_persist = min(150, max(10, total_concursos_persist - 15))
-            n_testes_persist = st.slider("Concursos a testar", 10, max_testes_persist, min(40, max_testes_persist), key="n_testes_persist_slider")
-
-            if st.button("🔬 RODAR BACKTEST DA PERSISTÊNCIA", use_container_width=True, key="backtest_persist_btn",
-                         disabled=(total_a_persist != 15)):
-                with st.spinner("Rodando backtest ponto-no-tempo..."):
-                    stats_persist, pulados_persist = preparar_e_rodar_backtest_persistencia_lf(
-                        st.session_state.banco_dados, num_testes=n_testes_persist, n_concursos=n_concursos_persist,
-                        qtd_persistente=qtd_persist_a, qtd_quebrando=qtd_quebra_a,
-                        qtd_retorno=qtd_retorno_a, qtd_atrasada=qtd_atrasada_a
-                    )
-                    st.session_state.resultado_backtest_persist = stats_persist
-                    st.session_state.pulados_backtest_persist = pulados_persist
-
-            stats_persist = st.session_state.get("resultado_backtest_persist")
-            if stats_persist:
-                pulados_p = st.session_state.get("pulados_backtest_persist", 0)
-                if pulados_p:
-                    st.caption(f"ℹ️ {pulados_p} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
-
-                col_bp1, col_bp2, col_bp3, col_bp4 = st.columns(4)
-                with col_bp1:
-                    st.metric("Média de acertos", f"{stats_persist['media']:.2f}")
-                with col_bp2:
-                    st.metric("Mediana", f"{stats_persist['mediana']:.1f}")
-                with col_bp3:
-                    st.metric("Máximo", stats_persist['max'])
-                with col_bp4:
-                    st.metric("Mínimo", stats_persist['min'])
-
-                st.caption(
-                    f"Comparação: escolhendo 15 dezenas totalmente ao acaso, o esperado é 9,00/15. Esta estratégia "
-                    f"teve média de {stats_persist['media']:.2f}/15 em {stats_persist['total_testes']} concurso(s) "
-                    "testado(s). Se esse número não ficar visivelmente acima da média do modo Frequência Simples, "
-                    "a hipótese de 'sequência atual' não se sustentou fora da amostra pequena onde foi observada."
-                )
-
-                df_dist_persist = pd.DataFrame({
-                    'Acertos': list(stats_persist['distribuicao'].keys()),
-                    'Ocorrências': list(stats_persist['distribuicao'].values())
-                })
-                fig_dist_persist = px.bar(df_dist_persist, x='Acertos', y='Ocorrências',
-                                          title="Distribuição de acertos — Persistência (Jogo A)")
-                st.plotly_chart(fig_dist_persist, use_container_width=True)
-
-        if st.session_state.banco_dados and st.session_state.banco_dados.concursos and modo_camadas.startswith("Matriz de Transição"):
-            st.caption(
-                "Combina frequência de curtíssimo prazo (últimos 2-3 concursos), sequência atual, atraso e "
-                "duas probabilidades calculadas em TODO o histórico: a chance de repetir depois de sair "
-                "('pós-saída') e a chance de aparecer depois de ficar fora ('pós-ausência')."
-            )
-
-            n_curto_matriz = st.slider("Concursos recentes para as leituras de curto prazo", 4, 15, 7, key="n_curto_matriz_slider")
-
-            with st.expander("⚙️ Pesos de cada componente (ajuste fino)"):
-                col_pw1, col_pw2 = st.columns(2)
-                with col_pw1:
-                    peso_freq_curto = st.slider("Frequência (janela toda)", 0.0, 0.40, 0.15, 0.01, key="peso_freq_curto_matriz")
-                    peso_freq_2 = st.slider("Frequência últimos 2", 0.0, 0.40, 0.15, 0.01, key="peso_freq_2_matriz")
-                    peso_freq_3 = st.slider("Frequência últimos 3", 0.0, 0.40, 0.15, 0.01, key="peso_freq_3_matriz")
-                    peso_sequencia_matriz = st.slider("Sequência atual", 0.0, 0.40, 0.15, 0.01, key="peso_sequencia_matriz")
-                with col_pw2:
-                    peso_atraso_matriz = st.slider("Atraso atual", 0.0, 0.40, 0.10, 0.01, key="peso_atraso_matriz")
-                    peso_pos_saida = st.slider("Prob. pós-saída (histórico completo)", 0.0, 0.40, 0.15, 0.01, key="peso_pos_saida_matriz")
-                    peso_pos_ausencia = st.slider("Prob. pós-ausência (histórico completo)", 0.0, 0.40, 0.15, 0.01, key="peso_pos_ausencia_matriz")
-
-            pesos_matriz_ativos = {
-                'freq_curto': peso_freq_curto, 'freq_2': peso_freq_2, 'freq_3': peso_freq_3,
-                'sequencia': peso_sequencia_matriz, 'atraso': peso_atraso_matriz,
-                'prob_pos_saida': peso_pos_saida, 'prob_pos_ausencia': peso_pos_ausencia
-            }
-
-            gerar_rotacao_matriz = st.checkbox("Gerar também o Jogo B (rotação)", value=True, key="gerar_rotacao_matriz_chk")
-            qtd_rotacao_matriz = st.slider("Dezenas trocadas na rotação do Jogo B", 1, 10, 5, key="qtd_rotacao_matriz_slider") if gerar_rotacao_matriz else 0
-
-            if st.button("🧬 GERAR JOGOS PELA MATRIZ DE TRANSIÇÃO", use_container_width=True, type="primary", key="gerar_matriz_btn"):
-                jogo_a_m, jogo_b_m, relatorio_m = gerar_jogos_matriz_transicao_lf(
-                    st.session_state.banco_dados, n_curto=n_curto_matriz, pesos=pesos_matriz_ativos,
-                    gerar_rotacao=gerar_rotacao_matriz, qtd_rotacao=qtd_rotacao_matriz
-                )
-                st.session_state.resultado_matriz = {'jogo_a': jogo_a_m, 'jogo_b': jogo_b_m, 'relatorio': relatorio_m}
-
-            resultado_matriz = st.session_state.get("resultado_matriz")
-            if resultado_matriz and resultado_matriz.get('jogo_a'):
-                jogo_a_mm = resultado_matriz['jogo_a']
-                jogo_b_mm = resultado_matriz['jogo_b']
-                rel_mm = resultado_matriz['relatorio']
-                matriz_mm = rel_mm['matriz']
-
-                st.markdown(f"""
-                <div class='card'>
-                    🅰️ <strong>Jogo A — Matriz de Transição</strong><br>
-                    {formatar_jogo_html_lf(jogo_a_mm)}
-                </div>
-                """, unsafe_allow_html=True)
-
-                if jogo_b_mm:
-                    st.markdown(f"""
-                    <div class='card'>
-                        🅱️ <strong>Jogo B — Rotação</strong><br>
-                        {formatar_jogo_html_lf(jogo_b_mm)}<br>
-                        <small style='color:#aaa;'>🔄 Saíram: {rel_mm['rotacao']['saiu']} | Entraram: {rel_mm['rotacao']['entrou']}</small>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                with st.expander(f"📊 Ficha completa por dezena (últimos {matriz_mm['qtd_curto']} concursos: {matriz_mm['concursos_numeros']})"):
-                    df_matriz = pd.DataFrame({
-                        'Dezena': list(range(1, 26)),
-                        'Freq. janela': [matriz_mm['freq_curto'][n] for n in range(1, 26)],
-                        'Freq. últ. 2': [matriz_mm['freq_2'][n] for n in range(1, 26)],
-                        'Freq. últ. 3': [matriz_mm['freq_3'][n] for n in range(1, 26)],
-                        'Sequência atual': [matriz_mm['sequencia_atual'][n] for n in range(1, 26)],
-                        'Atraso atual': [matriz_mm['atraso_atual'][n] for n in range(1, 26)],
-                        'Prob. pós-saída': [round(matriz_mm['prob_pos_saida'][n] * 100, 1) for n in range(1, 26)],
-                        'Prob. pós-ausência': [round(matriz_mm['prob_pos_ausencia'][n] * 100, 1) for n in range(1, 26)],
-                        'Pontuação': [round(rel_mm['scores'][n] * 100, 1) for n in range(1, 26)]
-                    }).sort_values('Pontuação', ascending=False)
-                    st.dataframe(df_matriz, use_container_width=True, hide_index=True)
-                    st.caption(
-                        "Se 'Prob. pós-saída' e 'Prob. pós-ausência' estiverem bem próximas para a maioria das "
-                        "dezenas, isso é evidência de que a Lotofácil não guarda memória de concurso a concurso — "
-                        "o esperado para um sorteio genuinamente aleatório."
-                    )
-
-                col_sm1, col_sm2 = st.columns(2)
-                with col_sm1:
-                    if st.button("💾 Salvar Jogo A", key="salvar_matriz_a_btn", use_container_width=True):
-                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_a_mm], {
-                            'tipo': 'matriz_transicao_jogo_a', 'n_curto_analisado': matriz_mm['qtd_curto']
-                        })
-                        if arquivo:
-                            st.success(f"✅ Jogo A salvo! ID: {jogo_id}")
-                with col_sm2:
-                    if jogo_b_mm and st.button("💾 Salvar Jogo B", key="salvar_matriz_b_btn", use_container_width=True):
-                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_b_mm], {
-                            'tipo': 'matriz_transicao_jogo_b', 'n_curto_analisado': matriz_mm['qtd_curto']
-                        })
-                        if arquivo:
-                            st.success(f"✅ Jogo B salvo! ID: {jogo_id}")
-
-            st.markdown("---")
-            st.markdown("#### 🔬 Backtest da Matriz de Transição")
-            st.caption(
-                "Testa o Jogo A (sem rotação) ponto-no-tempo em vários concursos reais — a única forma "
-                "confiável de saber se essa combinação de sinais bate a Frequência Simples e a Persistência."
-            )
-            total_concursos_matriz = len(st.session_state.banco_dados.concursos)
-            max_testes_matriz = min(150, max(15, total_concursos_matriz - 20))
-            n_testes_matriz = st.slider("Concursos a testar", 15, max_testes_matriz, min(40, max_testes_matriz), key="n_testes_matriz_slider")
-
-            if st.button("🔬 RODAR BACKTEST DA MATRIZ DE TRANSIÇÃO", use_container_width=True, key="backtest_matriz_btn"):
-                with st.spinner("Rodando backtest ponto-no-tempo (recalculando as probabilidades históricas a cada ponto)..."):
-                    stats_matriz, pulados_matriz = preparar_e_rodar_backtest_matriz_transicao_lf(
-                        st.session_state.banco_dados, num_testes=n_testes_matriz, n_curto=n_curto_matriz,
-                        pesos=pesos_matriz_ativos
-                    )
-                    st.session_state.resultado_backtest_matriz = stats_matriz
-                    st.session_state.pulados_backtest_matriz = pulados_matriz
-
-            stats_matriz = st.session_state.get("resultado_backtest_matriz")
-            if stats_matriz:
-                pulados_m = st.session_state.get("pulados_backtest_matriz", 0)
-                if pulados_m:
-                    st.caption(f"ℹ️ {pulados_m} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
-
-                col_bm1, col_bm2, col_bm3, col_bm4 = st.columns(4)
-                with col_bm1:
-                    st.metric("Média de acertos", f"{stats_matriz['media']:.2f}")
-                with col_bm2:
-                    st.metric("Mediana", f"{stats_matriz['mediana']:.1f}")
-                with col_bm3:
-                    st.metric("Máximo", stats_matriz['max'])
-                with col_bm4:
-                    st.metric("Mínimo", stats_matriz['min'])
-
-                st.caption(
-                    f"Comparação: escolhendo 15 dezenas ao acaso, o esperado é 9,00/15. Esta estratégia teve "
-                    f"média de {stats_matriz['media']:.2f}/15 em {stats_matriz['total_testes']} concurso(s) "
-                    "testado(s). Compare esse número com os backtests dos outros dois modos (mesma janela de "
-                    "teste) antes de decidir qual usar."
-                )
-
-                df_dist_matriz = pd.DataFrame({
-                    'Acertos': list(stats_matriz['distribuicao'].keys()),
-                    'Ocorrências': list(stats_matriz['distribuicao'].values())
-                })
-                fig_dist_matriz = px.bar(df_dist_matriz, x='Acertos', y='Ocorrências',
-                                         title="Distribuição de acertos — Matriz de Transição (Jogo A)")
-                st.plotly_chart(fig_dist_matriz, use_container_width=True)
 
 if __name__ == "__main__":
     main()
