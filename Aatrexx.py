@@ -786,24 +786,53 @@ def gerar_fechamento_genetico_lf(dezenas_pool, qtd_jogos, estatisticas, pontuaca
 
     return [list(j) for j in selecionados]
 
-# =====================================================
+# # =====================================================
 # FUNÇÃO PARA BUSCAR DADOS DA LOTOFÁCIL
 # =====================================================
 
 def buscar_historico_lotofacil(quantidade=300):
     try:
-        url_lista = "https://loteriascaixa-api.herokuapp.com/api/lotofacil"
-        response = requests.get(url_lista, timeout=10)
-        
+        # Nova API
+        url_lista = "https://apiloterias.com/app/api/resultados"
+
+        response = requests.get(
+            url_lista,
+            timeout=15
+        )
+
         if response.status_code == 200:
             dados = response.json()
+
+            # Caso a API retorne uma lista diretamente
             if isinstance(dados, list):
                 return dados[:quantidade]
+
+            # Caso a API retorne um dicionário contendo os resultados
             elif isinstance(dados, dict):
+
+                # Tenta localizar automaticamente a lista
+                for chave in ["resultados", "data", "results", "concursos"]:
+                    if chave in dados and isinstance(dados[chave], list):
+                        return dados[chave][:quantidade]
+
+                # Se for apenas um concurso
                 return [dados]
+
+        st.error(
+            f"❌ Erro na API. Status HTTP: {response.status_code}"
+        )
         return None
-    except Exception as e:
+
+    except requests.exceptions.Timeout:
+        st.error("⏱️ A API demorou demais para responder.")
+        return None
+
+    except requests.exceptions.RequestException as e:
         st.error(f"❌ Erro na requisição: {e}")
+        return None
+
+    except Exception as e:
+        st.error(f"❌ Erro ao processar os dados: {e}")
         return None
 
 # =====================================================
