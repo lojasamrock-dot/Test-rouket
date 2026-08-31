@@ -819,6 +819,32 @@ MIRRORS_API_LOTOFACIL = [
     "https://loterias-gutotech.herokuapp.com/api/lotofacil",
 ]
 
+# Fonte alternativa de infraestrutura DIFERENTE dos mirrors acima: um
+# arquivo JSON estático mantido pelo repositório guilhermeasn/loteria.json,
+# atualizado automaticamente todo dia, servido direto pelo GitHub. Não
+# depende de nenhum servidor de aplicação "vivo" (ao contrário das APIs
+# Heroku acima) — só da disponibilidade do próprio GitHub, que costuma ser
+# bem mais alta. Formato: um objeto único com TODO o histórico, chaveado
+# pelo número do concurso ("1", "2", ... "N"), cada valor é a lista das
+# dezenas sorteadas (como strings, não necessariamente ordenadas).
+URL_HISTORICO_GITHUB_LOTOFACIL = "https://raw.githubusercontent.com/guilhermeasn/loteria.json/master/data/lotofacil.json"
+
+
+def _buscar_via_github_raw_lf(quantidade=300):
+    """
+    Busca o histórico completo da Lotofácil no arquivo estático do GitHub
+    e adapta pro mesmo formato usado pelas outras fontes (lista de dicts
+    com as chaves 'concurso' e 'dezenas'), retornando só os `quantidade`
+    concursos mais recentes. Lança exceção se a requisição ou o parse
+    falharem — quem chama trata e registra o diagnóstico.
+    """
+    response = requests.get(URL_HISTORICO_GITHUB_LOTOFACIL, timeout=20)
+    response.raise_for_status()
+    bruto = response.json()  # {"1": ["18","20",...], "2": [...], ...}
+    numeros_ordenados = sorted((int(k) for k in bruto.keys()), reverse=True)
+    selecionados = numeros_ordenados[:quantidade]
+    return [{'concurso': n, 'dezenas': bruto[str(n)], 'data': ''} for n in selecionados]
+
 
 def _diagnosticar_resposta_lotofacil(url, response=None, excecao=None):
     """Traduz o motivo real da falha numa mensagem legível, em vez do
@@ -828,26 +854,30 @@ def _diagnosticar_resposta_lotofacil(url, response=None, excecao=None):
     if excecao is not None:
         nome_excecao = type(excecao).__name__
         if "Timeout" in nome_excecao:
-            return f"{url} → tempo esgotado (API não respondeu a tempo)"
+            return f"{url} → tempo esgotado (fonte não respondeu a tempo)"
         if "ConnectionError" in nome_excecao:
-            return f"{url} → não foi possível conectar (API fora do ar ou DNS falhou)"
+            return f"{url} → não foi possível conectar (fonte fora do ar ou DNS falhou)"
         return f"{url} → erro de conexão: {excecao}"
     if response is not None:
         if response.status_code != 200:
-            return f"{url} → HTTP {response.status_code} (API respondeu, mas com erro)"
+            return f"{url} → HTTP {response.status_code} (fonte respondeu, mas com erro)"
         return f"{url} → respondeu 200, mas o conteúdo não é uma lista de concursos válida (JSON inválido ou formato mudou)"
     return f"{url} → falha desconhecida"
 
 
 def buscar_historico_lotofacil(quantidade=300, url_customizada=None):
     """
-    Busca o histórico de concursos da Lotofácil, tentando várias APIs
-    espelho em sequência (`MIRRORS_API_LOTOFACIL`, mais uma
-    `url_customizada` opcional na frente da fila, se fornecida) até uma
-    responder com uma lista de concursos válida — cada um precisa ter a
-    chave 'dezenas'. Se todas falharem, mostra o motivo específico de cada
-    tentativa (timeout, HTTP de erro, JSON inválido) em vez de uma
-    mensagem genérica, para dar uma pista real do que está errado.
+    Busca o histórico de concursos da Lotofácil, tentando várias fontes em
+    sequência até uma responder com dados válidos:
+    1. `url_customizada`, se fornecida (prioridade máxima);
+    2. as APIs espelho em `MIRRORS_API_LOTOFACIL` (Heroku);
+    3. o arquivo estático do GitHub (`_buscar_via_github_raw_lf`), que tem
+       um modo de falha independente das duas primeiras (não depende do
+       Heroku de forma alguma).
+
+    Se todas falharem, mostra o motivo específico de cada tentativa
+    (timeout, HTTP de erro, JSON inválido) em vez de uma mensagem
+    genérica, para dar uma pista real do que está errado.
     """
     urls_tentativas = ([url_customizada] if url_customizada else []) + MIRRORS_API_LOTOFACIL
     diagnosticos = []
@@ -879,10 +909,19 @@ def buscar_historico_lotofacil(quantidade=300, url_customizada=None):
         else:
             diagnosticos.append(_diagnosticar_resposta_lotofacil(url_lista, response=response))
 
+    # Última tentativa: fonte com infraestrutura totalmente diferente (GitHub estático)
+    try:
+        dados_github = _buscar_via_github_raw_lf(quantidade)
+        if dados_github:
+            return dados_github
+        diagnosticos.append(f"{URL_HISTORICO_GITHUB_LOTOFACIL} → resposta vazia")
+    except Exception as e:
+        diagnosticos.append(_diagnosticar_resposta_lotofacil(URL_HISTORICO_GITHUB_LOTOFACIL, excecao=e))
+
     st.error(
-        "❌ Não foi possível buscar o histórico em nenhuma das APIs disponíveis. Detalhe de cada tentativa:\n\n"
+        "❌ Não foi possível buscar o histórico em nenhuma das fontes disponíveis. Detalhe de cada tentativa:\n\n"
         + "\n".join(f"- {d}" for d in diagnosticos)
-        + "\n\nSe todas as URLs acima estiverem fora do ar, você pode informar uma nova URL de API "
+        + "\n\nSe todas as fontes acima estiverem fora do ar, você pode informar uma nova URL de API "
         "(mesmo formato: retorna uma lista de concursos com a chave 'dezenas') no campo da barra lateral."
     )
     return None
