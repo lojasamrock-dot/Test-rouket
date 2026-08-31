@@ -3316,6 +3316,102 @@ def preparar_e_rodar_backtest_persistencia_lf(banco, num_testes=40, n_concursos=
     }, pulados
 
 
+def gerar_jogos_continuidade_reversao_lf(banco, n_concursos=8,
+                                          usar_nucleo_intocavel=True, limiar_freq_intocavel=1.0,
+                                          limiar_sequencia_intocavel_frac=0.75):
+    """
+    Módulo 4C - Continuidade × Reversão.
+
+    Versão dedicada e já configurada de `gerar_jogos_persistencia_lf`,
+    formalizando exatamente a estratégia de duas hipóteses descrita pelo
+    usuário: Jogo 1 (Continuidade) prioriza dezenas persistentes e em
+    quebra recente; Jogo 2 (Reversão) prioriza dezenas de retorno e
+    atrasadas. O núcleo intocável (dezenas com comportamento excepcional,
+    tipo uma dezena 8/8 ou em 6 aparições consecutivas) vem ligado por
+    padrão nos dois jogos, para não descartar um caso excepcional só
+    porque a cota do grupo dele está cheia.
+
+    Retorna (jogo_continuidade, jogo_reversao, relatório).
+    """
+    return gerar_jogos_persistencia_lf(
+        banco, n_concursos=n_concursos,
+        qtd_persistente_a=6, qtd_quebrando_a=4, qtd_retorno_a=3, qtd_atrasada_a=2,
+        qtd_persistente_b=3, qtd_quebrando_b=2, qtd_retorno_b=5, qtd_atrasada_b=5,
+        usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+        limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+    )
+
+
+def preparar_e_rodar_backtest_continuidade_reversao_lf(banco, num_testes=40, n_concursos=8,
+                                                        usar_nucleo_intocavel=True, limiar_freq_intocavel=1.0,
+                                                        limiar_sequencia_intocavel_frac=0.75,
+                                                        aquecimento_minimo=10, mostrar_progresso=True):
+    """
+    Módulo 4C - Backtest Continuidade × Reversão (cabeça a cabeça).
+
+    Em vez de só medir a média de acertos de cada jogo separadamente,
+    responde diretamente à pergunta que o usuário fez: qual das duas
+    hipóteses tende a vencer mais vezes? Em cada um dos `num_testes`
+    concursos mais recentes (ponto-no-tempo), gera os dois jogos e
+    registra qual teve mais acertos naquele concurso específico —
+    somando vitórias de Continuidade, vitórias de Reversão e empates, além
+    da média/distribuição de cada um.
+    """
+    historico = banco.concursos
+    testes = historico[:min(num_testes, len(historico))]
+    acertos_continuidade = []
+    acertos_reversao = []
+    vitorias_continuidade = 0
+    vitorias_reversao = 0
+    empates = 0
+    pulados = 0
+
+    progress_bar = st.progress(0, text="Rodando backtest Continuidade × Reversão...") if mostrar_progresso else None
+
+    for i, concurso in enumerate(testes):
+        concursos_anteriores = historico[i + 1:]
+        if len(concursos_anteriores) < max(aquecimento_minimo, n_concursos):
+            pulados += 1
+        else:
+            banco_pt = _BancoTemporal(concursos_anteriores)
+            jogo_a, jogo_b, _ = gerar_jogos_continuidade_reversao_lf(
+                banco_pt, n_concursos=n_concursos,
+                usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+                limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+            )
+            if jogo_a and jogo_b:
+                dezenas_reais = set(concurso['dezenas'])
+                ac_a = len(set(jogo_a) & dezenas_reais)
+                ac_b = len(set(jogo_b) & dezenas_reais)
+                acertos_continuidade.append(ac_a)
+                acertos_reversao.append(ac_b)
+                if ac_a > ac_b:
+                    vitorias_continuidade += 1
+                elif ac_b > ac_a:
+                    vitorias_reversao += 1
+                else:
+                    empates += 1
+        if progress_bar:
+            progress_bar.progress((i + 1) / len(testes))
+
+    if progress_bar:
+        progress_bar.empty()
+
+    if not acertos_continuidade:
+        return None, pulados
+
+    return {
+        'total_testes': len(acertos_continuidade),
+        'vitorias_continuidade': vitorias_continuidade,
+        'vitorias_reversao': vitorias_reversao,
+        'empates': empates,
+        'media_continuidade': float(np.mean(acertos_continuidade)),
+        'media_reversao': float(np.mean(acertos_reversao)),
+        'distribuicao_continuidade': dict(sorted(Counter(acertos_continuidade).items())),
+        'distribuicao_reversao': dict(sorted(Counter(acertos_reversao).items()))
+    }, pulados
+
+
 # =====================================================
 # MÓDULO 4D: MATRIZ DE TRANSIÇÃO (PERSISTÊNCIA × RECUPERAÇÃO)
 # =====================================================
@@ -4161,6 +4257,12 @@ def main():
         st.session_state.resultado_backtest_matriz = None
     if "pulados_backtest_matriz" not in st.session_state:
         st.session_state.pulados_backtest_matriz = 0
+    if "resultado_continuidade_reversao" not in st.session_state:
+        st.session_state.resultado_continuidade_reversao = None
+    if "resultado_backtest_cr" not in st.session_state:
+        st.session_state.resultado_backtest_cr = None
+    if "pulados_backtest_cr" not in st.session_state:
+        st.session_state.pulados_backtest_cr = 0
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -5963,7 +6065,7 @@ def main():
             modo_camadas = st.radio(
                 "Modo de classificação",
                 ["Frequência simples (quente/médio/frio)", "Frequência + Sequência (persistência)",
-                 "Matriz de Transição (avançado)"],
+                 "Matriz de Transição (avançado)", "Continuidade × Reversão"],
                 horizontal=True, key="modo_camadas_radio"
             )
             st.markdown("---")
@@ -6459,6 +6561,153 @@ def main():
                 fig_dist_matriz = px.bar(df_dist_matriz, x='Acertos', y='Ocorrências',
                                          title="Distribuição de acertos — Matriz de Transição (Jogo A)")
                 st.plotly_chart(fig_dist_matriz, use_container_width=True)
+
+        if st.session_state.banco_dados and st.session_state.banco_dados.concursos and modo_camadas == "Continuidade × Reversão":
+            st.caption(
+                "Duas hipóteses concorrentes para o mesmo concurso: **Jogo 1 (Continuidade)** aposta que o bloco "
+                "que vem funcionando continua; **Jogo 2 (Reversão)** aposta numa nova rotação. Dezenas com "
+                "comportamento excepcional (tipo uma 8/8 ou 6 aparições seguidas) entram nos dois por padrão."
+            )
+
+            n_concursos_cr = st.slider("Quantos concursos recentes analisar", 4, 15, 8, key="n_concursos_cr_slider")
+
+            col_cr1, col_cr2 = st.columns(2)
+            with col_cr1:
+                usar_nucleo_cr = st.checkbox("Ativar núcleo intocável", value=True, key="usar_nucleo_cr_chk")
+            with col_cr2:
+                st.caption("Ligado por padrão nesta estratégia — desligue se quiser que as cotas normais valham para todas as dezenas.")
+
+            col_cr3, col_cr4 = st.columns(2)
+            with col_cr3:
+                limiar_freq_cr = st.slider("Frequência mínima p/ intocável (%)", 50, 100, 100, 5, key="limiar_freq_cr_slider", disabled=not usar_nucleo_cr) / 100
+            with col_cr4:
+                limiar_seq_cr = st.slider("Sequência mínima p/ intocável (% da janela)", 30, 100, 75, 5, key="limiar_seq_cr_slider", disabled=not usar_nucleo_cr) / 100
+
+            if st.button("🔀 GERAR JOGO 1 (CONTINUIDADE) E JOGO 2 (REVERSÃO)", use_container_width=True, type="primary", key="gerar_cr_btn"):
+                jogo_a_cr, jogo_b_cr, relatorio_cr = gerar_jogos_continuidade_reversao_lf(
+                    st.session_state.banco_dados, n_concursos=n_concursos_cr,
+                    usar_nucleo_intocavel=usar_nucleo_cr, limiar_freq_intocavel=limiar_freq_cr,
+                    limiar_sequencia_intocavel_frac=limiar_seq_cr
+                )
+                st.session_state.resultado_continuidade_reversao = {
+                    'jogo_a': jogo_a_cr, 'jogo_b': jogo_b_cr, 'relatorio': relatorio_cr
+                }
+
+            resultado_cr = st.session_state.get("resultado_continuidade_reversao")
+            if resultado_cr and resultado_cr.get('jogo_a'):
+                jogo_a_crr = resultado_cr['jogo_a']
+                jogo_b_crr = resultado_cr['jogo_b']
+                rel_crr = resultado_cr['relatorio']
+                classif_crr = rel_crr['classificacao']
+                nucleo_crr = rel_crr.get('nucleo_intocavel', [])
+
+                if nucleo_crr:
+                    st.caption(f"🔒 Núcleo intocável identificado (presente nos dois jogos): {nucleo_crr}")
+
+                st.markdown(f"""
+                <div class='card'>
+                    🎯 <strong>Jogo 1 — Continuidade</strong><br>
+                    {formatar_jogo_html_lf(jogo_a_crr)}
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div class='card'>
+                    🧨 <strong>Jogo 2 — Reversão</strong><br>
+                    {formatar_jogo_html_lf(jogo_b_crr)}
+                </div>
+                """, unsafe_allow_html=True)
+
+                compartilhadas_crr = sorted(set(jogo_a_crr) & set(jogo_b_crr))
+                st.caption(f"🔗 Dezenas compartilhadas pelos dois jogos: {compartilhadas_crr}")
+
+                with st.expander(f"📊 Classificação usada (últimos {classif_crr['qtd_concursos']} concursos: {classif_crr['concursos_numeros']})"):
+                    grupos_crr = classif_crr['grupos']
+                    col_gc1, col_gc2, col_gc3, col_gc4 = st.columns(4)
+                    with col_gc1:
+                        st.markdown("**🟢 Persistente**")
+                        st.write(grupos_crr['persistente'])
+                    with col_gc2:
+                        st.markdown("**🟠 Quebrando**")
+                        st.write(grupos_crr['quebrando'])
+                    with col_gc3:
+                        st.markdown("**🔵 Retorno**")
+                        st.write(grupos_crr['retorno'])
+                    with col_gc4:
+                        st.markdown("**🔴 Atrasada**")
+                        st.write(grupos_crr['atrasada'])
+
+                col_scr1, col_scr2 = st.columns(2)
+                with col_scr1:
+                    if st.button("💾 Salvar Jogo 1 (Continuidade)", key="salvar_cr_a_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_a_crr], {
+                            'tipo': 'continuidade_reversao_jogo1', 'n_concursos_analisados': classif_crr['qtd_concursos']
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogo 1 salvo! ID: {jogo_id}")
+                with col_scr2:
+                    if st.button("💾 Salvar Jogo 2 (Reversão)", key="salvar_cr_b_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_b_crr], {
+                            'tipo': 'continuidade_reversao_jogo2', 'n_concursos_analisados': classif_crr['qtd_concursos']
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogo 2 salvo! ID: {jogo_id}")
+
+            st.markdown("---")
+            st.markdown("#### 🔬 Backtest Continuidade × Reversão (cabeça a cabeça)")
+            st.caption(
+                "Em vez de só medir a média de cada jogo, conta diretamente quantas vezes Continuidade venceu "
+                "Reversão (e vice-versa) em concursos reais — a resposta direta pra pergunta 'qual caminho usar'."
+            )
+            total_concursos_cr = len(st.session_state.banco_dados.concursos)
+            max_testes_cr = min(150, max(15, total_concursos_cr - 20))
+            n_testes_cr = st.slider("Concursos a testar", 15, max_testes_cr, min(40, max_testes_cr), key="n_testes_cr_slider")
+
+            if st.button("🔬 RODAR BACKTEST CABEÇA A CABEÇA", use_container_width=True, key="backtest_cr_btn"):
+                with st.spinner("Rodando backtest ponto-no-tempo..."):
+                    stats_cr, pulados_cr = preparar_e_rodar_backtest_continuidade_reversao_lf(
+                        st.session_state.banco_dados, num_testes=n_testes_cr, n_concursos=n_concursos_cr,
+                        usar_nucleo_intocavel=usar_nucleo_cr, limiar_freq_intocavel=limiar_freq_cr,
+                        limiar_sequencia_intocavel_frac=limiar_seq_cr
+                    )
+                    st.session_state.resultado_backtest_cr = stats_cr
+                    st.session_state.pulados_backtest_cr = pulados_cr
+
+            stats_cr = st.session_state.get("resultado_backtest_cr")
+            if stats_cr:
+                pulados_crb = st.session_state.get("pulados_backtest_cr", 0)
+                if pulados_crb:
+                    st.caption(f"ℹ️ {pulados_crb} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
+
+                col_hc1, col_hc2, col_hc3 = st.columns(3)
+                with col_hc1:
+                    st.metric("🎯 Continuidade venceu", f"{stats_cr['vitorias_continuidade']}x", f"média {stats_cr['media_continuidade']:.2f}")
+                with col_hc2:
+                    st.metric("🧨 Reversão venceu", f"{stats_cr['vitorias_reversao']}x", f"média {stats_cr['media_reversao']:.2f}")
+                with col_hc3:
+                    st.metric("🤝 Empates", f"{stats_cr['empates']}x")
+
+                total_cr_testado = stats_cr['total_testes']
+                if stats_cr['vitorias_continuidade'] > stats_cr['vitorias_reversao']:
+                    veredito = f"**Continuidade** venceu mais vezes ({stats_cr['vitorias_continuidade']} de {total_cr_testado})."
+                elif stats_cr['vitorias_reversao'] > stats_cr['vitorias_continuidade']:
+                    veredito = f"**Reversão** venceu mais vezes ({stats_cr['vitorias_reversao']} de {total_cr_testado})."
+                else:
+                    veredito = "As duas hipóteses empataram em número de vitórias."
+                st.info(
+                    f"📌 Em {total_cr_testado} concursos testados: {veredito} Diferenças pequenas (poucos pontos "
+                    "percentuais) não são conclusivas — a Lotofácil é um sorteio aleatório, e alguma oscilação "
+                    "entre as duas hipóteses é esperada mesmo que nenhuma tenha vantagem real."
+                )
+
+                df_dist_cr = pd.DataFrame({
+                    'Acertos': sorted(set(list(stats_cr['distribuicao_continuidade'].keys()) + list(stats_cr['distribuicao_reversao'].keys())))
+                })
+                df_dist_cr['Continuidade'] = df_dist_cr['Acertos'].map(lambda a: stats_cr['distribuicao_continuidade'].get(a, 0))
+                df_dist_cr['Reversão'] = df_dist_cr['Acertos'].map(lambda a: stats_cr['distribuicao_reversao'].get(a, 0))
+                fig_dist_cr = px.bar(df_dist_cr, x='Acertos', y=['Continuidade', 'Reversão'], barmode='group',
+                                     title="Distribuição de acertos — Continuidade vs. Reversão")
+                st.plotly_chart(fig_dist_cr, use_container_width=True)
 
 if __name__ == "__main__":
     main()
