@@ -819,15 +819,74 @@ MIRRORS_API_LOTOFACIL = [
     "https://loterias-gutotech.herokuapp.com/api/lotofacil",
 ]
 
-# Fonte alternativa de infraestrutura DIFERENTE dos mirrors acima: um
-# arquivo JSON estático mantido pelo repositório guilhermeasn/loteria.json,
-# atualizado automaticamente todo dia, servido direto pelo GitHub. Não
-# depende de nenhum servidor de aplicação "vivo" (ao contrário das APIs
-# Heroku acima) — só da disponibilidade do próprio GitHub, que costuma ser
-# bem mais alta. Formato: um objeto único com TODO o histórico, chaveado
-# pelo número do concurso ("1", "2", ... "N"), cada valor é a lista das
-# dezenas sorteadas (como strings, não necessariamente ordenadas).
+# API oficial da própria Caixa Econômica Federal. É a fonte mais
+# autoritativa possível (é o sistema que publica o resultado), então é a
+# que menos deveria ficar desatualizada — mas só retorna um concurso por
+# requisição (não uma lista), então buscar vários concursos exige uma
+# requisição por concurso, caminhando pra trás a partir do mais recente.
+# Por isso ela só entra depois dos mirrors (mais rápidos quando funcionam),
+# mas antes do arquivo estático do GitHub (mais rápido ainda, porém sem
+# garantia de estar atualizado).
+URL_API_OFICIAL_CAIXA_LOTOFACIL = "https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil"
+
+# Fonte de infraestrutura DIFERENTE de tudo acima: um arquivo JSON estático
+# mantido pelo repositório guilhermeasn/loteria.json, servido direto pelo
+# GitHub — não depende de nenhum servidor de aplicação "vivo". Em troca,
+# depende do cron job do mantenedor continuar rodando; se ele parar, o
+# arquivo fica com o histórico desatualizado sem retornar erro nenhum, por
+# isso é a ÚLTIMA opção tentada, e o resultado vem com aviso.
 URL_HISTORICO_GITHUB_LOTOFACIL = "https://raw.githubusercontent.com/guilhermeasn/loteria.json/master/data/lotofacil.json"
+
+
+def _buscar_via_api_oficial_caixa_lf(quantidade=300, mostrar_progresso=True):
+    """
+    Busca o histórico direto na API oficial da Caixa. Primeiro pega o
+    concurso mais recente (uma requisição), depois caminha pra trás
+    concurso por concurso até juntar `quantidade` resultados (ou até
+    esbarrar no concurso 1). Concursos individuais que falharem são
+    simplesmente pulados — o importante é não travar o carregamento
+    inteiro por causa de um único concurso com problema.
+    """
+    session = requests.Session()
+    resp_latest = session.get(URL_API_OFICIAL_CAIXA_LOTOFACIL, timeout=15)
+    resp_latest.raise_for_status()
+    mais_recente = resp_latest.json()
+    if 'listaDezenas' not in mais_recente or 'numero' not in mais_recente:
+        raise ValueError("resposta da API oficial não contém 'listaDezenas'/'numero' (formato mudou)")
+
+    numero_atual = mais_recente['numero']
+    resultados = [{
+        'concurso': numero_atual,
+        'dezenas': mais_recente['listaDezenas'],
+        'data': mais_recente.get('dataApuracao', '')
+    }]
+
+    total_a_buscar = max(0, min(quantidade, numero_atual) - 1)
+    progress_bar = st.progress(0, text="Buscando histórico na API oficial da Caixa (um concurso por vez)...") if mostrar_progresso else None
+
+    for i in range(total_a_buscar):
+        concurso_num = numero_atual - 1 - i
+        if concurso_num < 1:
+            break
+        try:
+            resp = session.get(f"{URL_API_OFICIAL_CAIXA_LOTOFACIL}/{concurso_num}", timeout=15)
+            if resp.status_code == 200:
+                dados = resp.json()
+                if 'listaDezenas' in dados and 'numero' in dados:
+                    resultados.append({
+                        'concurso': dados['numero'],
+                        'dezenas': dados['listaDezenas'],
+                        'data': dados.get('dataApuracao', '')
+                    })
+        except Exception:
+            pass  # um concurso individual falhou; segue pros demais
+        if progress_bar:
+            progress_bar.progress((i + 1) / total_a_buscar)
+
+    if progress_bar:
+        progress_bar.empty()
+
+    return resultados
 
 
 def _buscar_via_github_raw_lf(quantidade=300):
@@ -835,15 +894,17 @@ def _buscar_via_github_raw_lf(quantidade=300):
     Busca o histórico completo da Lotofácil no arquivo estático do GitHub
     e adapta pro mesmo formato usado pelas outras fontes (lista de dicts
     com as chaves 'concurso' e 'dezenas'), retornando só os `quantidade`
-    concursos mais recentes. Lança exceção se a requisição ou o parse
-    falharem — quem chama trata e registra o diagnóstico.
+    concursos mais recentes QUE O ARQUIVO TIVER — sem garantia de que isso
+    inclua o concurso mais recente de verdade (ver aviso em
+    `buscar_historico_lotofacil`). Lança exceção se a requisição ou o
+    parse falharem — quem chama trata e registra o diagnóstico.
     """
     response = requests.get(URL_HISTORICO_GITHUB_LOTOFACIL, timeout=20)
     response.raise_for_status()
     bruto = response.json()  # {"1": ["18","20",...], "2": [...], ...}
     numeros_ordenados = sorted((int(k) for k in bruto.keys()), reverse=True)
     selecionados = numeros_ordenados[:quantidade]
-    return [{'concurso': n, 'dezenas': bruto[str(n)], 'data': ''} for n in selecionados]
+    return [{'concurso': n, 'dezenas': bruto[str(n)], 'data': ''} for n in selecionados], (numeros_ordenados[0] if numeros_ordenados else None)
 
 
 def _diagnosticar_resposta_lotofacil(url, response=None, excecao=None):
@@ -870,10 +931,15 @@ def buscar_historico_lotofacil(quantidade=300, url_customizada=None):
     Busca o histórico de concursos da Lotofácil, tentando várias fontes em
     sequência até uma responder com dados válidos:
     1. `url_customizada`, se fornecida (prioridade máxima);
-    2. as APIs espelho em `MIRRORS_API_LOTOFACIL` (Heroku);
-    3. o arquivo estático do GitHub (`_buscar_via_github_raw_lf`), que tem
-       um modo de falha independente das duas primeiras (não depende do
-       Heroku de forma alguma).
+    2. as APIs espelho em `MIRRORS_API_LOTOFACIL` (Heroku, rápidas quando
+       funcionam, mas historicamente instáveis);
+    3. a API oficial da Caixa (`_buscar_via_api_oficial_caixa_lf`) — mais
+       lenta (uma requisição por concurso), mas é a fonte que menos
+       deveria estar desatualizada, por ser o sistema oficial;
+    4. o arquivo estático do GitHub, como último recurso — rápido, mas sem
+       garantia de estar atualizado (depende do cron job de terceiros
+       continuar rodando). Se usado, mostra um aviso comparando o
+       concurso mais recente do arquivo com o esperado.
 
     Se todas falharem, mostra o motivo específico de cada tentativa
     (timeout, HTTP de erro, JSON inválido) em vez de uma mensagem
@@ -909,10 +975,25 @@ def buscar_historico_lotofacil(quantidade=300, url_customizada=None):
         else:
             diagnosticos.append(_diagnosticar_resposta_lotofacil(url_lista, response=response))
 
-    # Última tentativa: fonte com infraestrutura totalmente diferente (GitHub estático)
+    # Segunda tentativa: API oficial da Caixa (mais lenta, mais confiável quanto a estar atualizada)
     try:
-        dados_github = _buscar_via_github_raw_lf(quantidade)
+        dados_oficial = _buscar_via_api_oficial_caixa_lf(quantidade)
+        if dados_oficial:
+            st.success(f"✅ Histórico obtido direto da API oficial da Caixa (concurso mais recente: {dados_oficial[0]['concurso']}).")
+            return dados_oficial
+        diagnosticos.append(f"{URL_API_OFICIAL_CAIXA_LOTOFACIL} → resposta vazia")
+    except Exception as e:
+        diagnosticos.append(_diagnosticar_resposta_lotofacil(URL_API_OFICIAL_CAIXA_LOTOFACIL, excecao=e))
+
+    # Última tentativa: arquivo estático do GitHub — pode estar desatualizado, avisamos se for usado
+    try:
+        dados_github, concurso_mais_recente_arquivo = _buscar_via_github_raw_lf(quantidade)
         if dados_github:
+            st.warning(
+                f"⚠️ Histórico obtido de uma fonte de reserva (arquivo estático) cujo concurso mais recente é o "
+                f"{concurso_mais_recente_arquivo}. Se esse número estiver bem abaixo do concurso mais recente real "
+                "da Lotofácil, esta fonte está desatualizada — os resultados mais recentes não estarão no histórico."
+            )
             return dados_github
         diagnosticos.append(f"{URL_HISTORICO_GITHUB_LOTOFACIL} → resposta vazia")
     except Exception as e:
