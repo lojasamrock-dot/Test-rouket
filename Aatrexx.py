@@ -3696,6 +3696,156 @@ def preparar_e_rodar_backtest_oscilacao_lf(banco, num_testes=40, n_concursos=9,
 
 
 # =====================================================
+# MÓDULO 4F: CONSENSO DOS 5 MODOS
+# =====================================================
+
+def gerar_jogo_consenso_5_modos_lf(banco, n_concursos=8,
+                                    usar_nucleo_intocavel=True, limiar_freq_intocavel=1.0,
+                                    limiar_sequencia_intocavel_frac=0.75):
+    """
+    Módulo 4F - Consenso dos 5 Modos.
+
+    Roda as cinco estratégias de classificação já implementadas nesta aba
+    — Frequência Simples, Persistência, Matriz de Transição, Continuidade
+    × Reversão e Oscilação — cada uma gerando seu próprio "Jogo A" com a
+    mesma janela `n_concursos`, e faz uma votação: cada dezena ganha 1
+    voto por modo que a incluiu no seu jogo (de 0 a 5 votos).
+
+    Jogo 1 (Consenso): as 15 dezenas mais votadas — o que a maioria das
+    abordagens concorda que deveria estar no jogo, com desempate pela
+    frequência na janela.
+    Jogo 2 (Divergência): as 15 dezenas com voto mais "no meio do caminho"
+    (nem unanimidade a favor, nem unanimidade contra) — a zona onde os
+    modos discordam entre si, generalizando a lógica de Continuidade ×
+    Reversão para as cinco leituras ao mesmo tempo.
+
+    Retorna (jogo_consenso, jogo_divergencia, relatório com os votos de
+    cada dezena e o jogo gerado por cada modo individualmente).
+    """
+    jogos_por_modo = {}
+
+    jogo_freq, _, _ = gerar_jogos_camadas_recorrencia_lf(banco, n_concursos=n_concursos, gerar_rotacao=False)
+    if jogo_freq:
+        jogos_por_modo['Frequência Simples'] = jogo_freq
+
+    jogo_persist, _, _ = gerar_jogos_persistencia_lf(
+        banco, n_concursos=n_concursos,
+        usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+        limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+    )
+    if jogo_persist:
+        jogos_por_modo['Persistência'] = jogo_persist
+
+    jogo_matriz, _, _ = gerar_jogos_matriz_transicao_lf(banco, n_curto=n_concursos, gerar_rotacao=False)
+    if jogo_matriz:
+        jogos_por_modo['Matriz de Transição'] = jogo_matriz
+
+    jogo_cr, _, _ = gerar_jogos_continuidade_reversao_lf(
+        banco, n_concursos=n_concursos,
+        usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+        limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+    )
+    if jogo_cr:
+        jogos_por_modo['Continuidade × Reversão'] = jogo_cr
+
+    jogo_osc, _, _ = gerar_jogos_oscilacao_lf(
+        banco, n_concursos=max(n_concursos, 3),
+        usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+        limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+    )
+    if jogo_osc:
+        jogos_por_modo['Oscilação'] = jogo_osc
+
+    if not jogos_por_modo:
+        return None, None, None
+
+    votos = Counter()
+    for jogo in jogos_por_modo.values():
+        votos.update(jogo)
+    for num in range(1, 26):
+        votos.setdefault(num, 0)
+
+    freq_hist_janela = Counter()
+    for c in banco.concursos[:n_concursos]:
+        freq_hist_janela.update(c['dezenas'])
+
+    num_modos = len(jogos_por_modo)
+
+    ranking_votos = sorted(range(1, 26), key=lambda n: (votos[n], freq_hist_janela.get(n, 0)), reverse=True)
+    jogo_consenso = sorted(ranking_votos[:15])
+
+    ranking_divergencia = sorted(
+        range(1, 26),
+        key=lambda n: (-abs(votos[n] - num_modos / 2), freq_hist_janela.get(n, 0)),
+        reverse=True
+    )
+    jogo_divergencia = sorted(ranking_divergencia[:15])
+
+    relatorio = {
+        'votos': dict(votos),
+        'jogos_por_modo': jogos_por_modo,
+        'num_modos': num_modos
+    }
+
+    return jogo_consenso, jogo_divergencia, relatorio
+
+
+def preparar_e_rodar_backtest_consenso_5_modos_lf(banco, num_testes=30, n_concursos=8,
+                                                   usar_nucleo_intocavel=True, limiar_freq_intocavel=1.0,
+                                                   limiar_sequencia_intocavel_frac=0.75,
+                                                   aquecimento_minimo=15, mostrar_progresso=True):
+    """
+    Módulo 4F - Backtest do Consenso dos 5 Modos.
+
+    Roda o Jogo Consenso e o Jogo Divergência ponto-no-tempo nos
+    `num_testes` concursos mais recentes, usando só dados anteriores a
+    cada um deles (as cinco estratégias internas são recalculadas do zero
+    em cada ponto), e mede a distribuição de acertos de cada um contra o
+    resultado real. É o backtest mais pesado desta aba — roda 5 modos por
+    ponto testado — por isso o padrão de concursos testados é menor.
+    """
+    historico = banco.concursos
+    testes = historico[:min(num_testes, len(historico))]
+    resultados_consenso = []
+    resultados_divergencia = []
+    pulados = 0
+
+    progress_bar = st.progress(0, text="Rodando backtest do Consenso dos 5 Modos (mais lento — roda 5 estratégias por ponto)...") if mostrar_progresso else None
+
+    for i, concurso in enumerate(testes):
+        concursos_anteriores = historico[i + 1:]
+        if len(concursos_anteriores) < max(aquecimento_minimo, n_concursos, 3):
+            pulados += 1
+        else:
+            banco_pt = _BancoTemporal(concursos_anteriores)
+            jogo_consenso, jogo_divergencia, _ = gerar_jogo_consenso_5_modos_lf(
+                banco_pt, n_concursos=n_concursos,
+                usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+                limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+            )
+            if jogo_consenso and jogo_divergencia:
+                dezenas_reais = set(concurso['dezenas'])
+                resultados_consenso.append(len(set(jogo_consenso) & dezenas_reais))
+                resultados_divergencia.append(len(set(jogo_divergencia) & dezenas_reais))
+        if progress_bar:
+            progress_bar.progress((i + 1) / len(testes))
+
+    if progress_bar:
+        progress_bar.empty()
+
+    if not resultados_consenso:
+        return None, pulados
+
+    return {
+        'total_testes': len(resultados_consenso),
+        'media_consenso': float(np.mean(resultados_consenso)),
+        'media_divergencia': float(np.mean(resultados_divergencia)),
+        'distribuicao_consenso': dict(sorted(Counter(resultados_consenso).items())),
+        'distribuicao_divergencia': dict(sorted(Counter(resultados_divergencia).items()))
+    }, pulados
+
+
+# =====================================================
 # MÓDULO 4D: MATRIZ DE TRANSIÇÃO (PERSISTÊNCIA × RECUPERAÇÃO)
 # =====================================================
 
@@ -4556,6 +4706,12 @@ def main():
         st.session_state.resultado_backtest_osc = None
     if "pulados_backtest_osc" not in st.session_state:
         st.session_state.pulados_backtest_osc = 0
+    if "resultado_consenso" not in st.session_state:
+        st.session_state.resultado_consenso = None
+    if "resultado_backtest_consenso" not in st.session_state:
+        st.session_state.resultado_backtest_consenso = None
+    if "pulados_backtest_consenso" not in st.session_state:
+        st.session_state.pulados_backtest_consenso = 0
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -6358,7 +6514,8 @@ def main():
             modo_camadas = st.radio(
                 "Modo de classificação",
                 ["Frequência simples (quente/médio/frio)", "Frequência + Sequência (persistência)",
-                 "Matriz de Transição (avançado)", "Continuidade × Reversão", "Oscilação (sai-fica fora-volta)"],
+                 "Matriz de Transição (avançado)", "Continuidade × Reversão", "Oscilação (sai-fica fora-volta)",
+                 "Consenso dos 5 Modos"],
                 horizontal=True, key="modo_camadas_radio"
             )
             st.markdown("---")
@@ -7233,6 +7390,137 @@ def main():
                 fig_dist_osc = px.bar(df_dist_osc, x='Acertos', y='Ocorrências',
                                       title="Distribuição de acertos — Oscilação (Jogo A)")
                 st.plotly_chart(fig_dist_osc, use_container_width=True)
+
+        if st.session_state.banco_dados and st.session_state.banco_dados.concursos and modo_camadas == "Consenso dos 5 Modos":
+            st.caption(
+                "Roda as cinco estratégias desta aba (Frequência Simples, Persistência, Matriz de Transição, "
+                "Continuidade × Reversão e Oscilação) ao mesmo tempo, cada uma gerando seu próprio jogo, e vota: "
+                "**Jogo 1 (Consenso)** = dezenas que a maioria dos modos escolheria. **Jogo 2 (Divergência)** = "
+                "dezenas onde os modos mais discordam entre si — a zona de maior incerteza/transição."
+            )
+
+            n_concursos_consenso = st.slider("Quantos concursos recentes analisar (janela usada pelos 5 modos)", 5, 15, 8, key="n_concursos_consenso_slider")
+
+            col_nc1, col_nc2 = st.columns(2)
+            with col_nc1:
+                usar_nucleo_consenso = st.checkbox("Ativar núcleo intocável nos modos internos", value=True, key="usar_nucleo_consenso_chk")
+            with col_nc2:
+                st.caption("Aplicado aos modos Persistência, Continuidade×Reversão e Oscilação (os que suportam esse recurso).")
+
+            col_nc3, col_nc4 = st.columns(2)
+            with col_nc3:
+                limiar_freq_consenso = st.slider("Frequência mínima p/ intocável (%)", 50, 100, 100, 5, key="limiar_freq_consenso_slider", disabled=not usar_nucleo_consenso) / 100
+            with col_nc4:
+                limiar_seq_consenso = st.slider("Sequência mínima p/ intocável (% da janela)", 30, 100, 75, 5, key="limiar_seq_consenso_slider", disabled=not usar_nucleo_consenso) / 100
+
+            if st.button("🗳️ GERAR JOGOS POR CONSENSO DOS 5 MODOS", use_container_width=True, type="primary", key="gerar_consenso_btn"):
+                with st.spinner("Rodando as cinco estratégias e computando a votação..."):
+                    jogo_consenso_g, jogo_divergencia_g, relatorio_consenso_g = gerar_jogo_consenso_5_modos_lf(
+                        st.session_state.banco_dados, n_concursos=n_concursos_consenso,
+                        usar_nucleo_intocavel=usar_nucleo_consenso, limiar_freq_intocavel=limiar_freq_consenso,
+                        limiar_sequencia_intocavel_frac=limiar_seq_consenso
+                    )
+                    st.session_state.resultado_consenso = {
+                        'jogo_consenso': jogo_consenso_g, 'jogo_divergencia': jogo_divergencia_g, 'relatorio': relatorio_consenso_g
+                    }
+
+            resultado_consenso = st.session_state.get("resultado_consenso")
+            if resultado_consenso and resultado_consenso.get('jogo_consenso'):
+                jogo_consenso_r = resultado_consenso['jogo_consenso']
+                jogo_divergencia_r = resultado_consenso['jogo_divergencia']
+                rel_consenso_r = resultado_consenso['relatorio']
+                votos_r = rel_consenso_r['votos']
+                num_modos_r = rel_consenso_r['num_modos']
+
+                st.markdown(f"""
+                <div class='card'>
+                    🗳️ <strong>Jogo 1 — Consenso</strong><br>
+                    {formatar_jogo_html_lf(jogo_consenso_r)}
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div class='card'>
+                    ⚡ <strong>Jogo 2 — Divergência</strong><br>
+                    {formatar_jogo_html_lf(jogo_divergencia_r)}
+                </div>
+                """, unsafe_allow_html=True)
+
+                compartilhadas_consenso = sorted(set(jogo_consenso_r) & set(jogo_divergencia_r))
+                st.caption(f"🔗 Dezenas presentes nos dois jogos: {compartilhadas_consenso}")
+
+                with st.expander(f"📊 Votos de cada dezena (0 a {num_modos_r} modos)"):
+                    df_votos = pd.DataFrame({
+                        'Dezena': list(range(1, 26)),
+                        'Votos': [votos_r.get(n, 0) for n in range(1, 26)],
+                        'No Jogo Consenso': [n in jogo_consenso_r for n in range(1, 26)],
+                        'No Jogo Divergência': [n in jogo_divergencia_r for n in range(1, 26)]
+                    }).sort_values('Votos', ascending=False)
+                    st.dataframe(df_votos, use_container_width=True, hide_index=True)
+
+                with st.expander("🧩 Jogo gerado por cada modo individualmente"):
+                    for nome_modo, jogo_modo in rel_consenso_r['jogos_por_modo'].items():
+                        st.markdown(f"**{nome_modo}:** {sorted(jogo_modo)}")
+
+                col_scon1, col_scon2 = st.columns(2)
+                with col_scon1:
+                    if st.button("💾 Salvar Jogo 1 (Consenso)", key="salvar_consenso_a_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_consenso_r], {'tipo': 'consenso_5_modos_jogo1'})
+                        if arquivo:
+                            st.success(f"✅ Jogo 1 salvo! ID: {jogo_id}")
+                with col_scon2:
+                    if st.button("💾 Salvar Jogo 2 (Divergência)", key="salvar_consenso_b_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_divergencia_r], {'tipo': 'consenso_5_modos_jogo2'})
+                        if arquivo:
+                            st.success(f"✅ Jogo 2 salvo! ID: {jogo_id}")
+
+            st.markdown("---")
+            st.markdown("#### 🔬 Backtest do Consenso dos 5 Modos")
+            st.caption(
+                "⚠️ Este é o backtest mais lento da aba — roda as cinco estratégias internas em cada concurso "
+                "testado. Use uma janela de teste menor que nos outros modos se notar demora."
+            )
+            total_concursos_consenso = len(st.session_state.banco_dados.concursos)
+            max_testes_consenso = min(80, max(15, total_concursos_consenso - 20))
+            n_testes_consenso = st.slider("Concursos a testar", 15, max_testes_consenso, min(30, max_testes_consenso), key="n_testes_consenso_slider")
+
+            if st.button("🔬 RODAR BACKTEST DO CONSENSO", use_container_width=True, key="backtest_consenso_btn"):
+                with st.spinner("Rodando backtest ponto-no-tempo (5 estratégias por concurso testado — pode demorar)..."):
+                    stats_consenso, pulados_consenso = preparar_e_rodar_backtest_consenso_5_modos_lf(
+                        st.session_state.banco_dados, num_testes=n_testes_consenso, n_concursos=n_concursos_consenso,
+                        usar_nucleo_intocavel=usar_nucleo_consenso, limiar_freq_intocavel=limiar_freq_consenso,
+                        limiar_sequencia_intocavel_frac=limiar_seq_consenso
+                    )
+                    st.session_state.resultado_backtest_consenso = stats_consenso
+                    st.session_state.pulados_backtest_consenso = pulados_consenso
+
+            stats_consenso = st.session_state.get("resultado_backtest_consenso")
+            if stats_consenso:
+                pulados_consb = st.session_state.get("pulados_backtest_consenso", 0)
+                if pulados_consb:
+                    st.caption(f"ℹ️ {pulados_consb} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
+
+                col_bcs1, col_bcs2 = st.columns(2)
+                with col_bcs1:
+                    st.metric("Média — Jogo Consenso", f"{stats_consenso['media_consenso']:.2f}")
+                with col_bcs2:
+                    st.metric("Média — Jogo Divergência", f"{stats_consenso['media_divergencia']:.2f}")
+
+                st.caption(
+                    f"Comparação: escolhendo 15 dezenas ao acaso, o esperado é 9,00/15. Em "
+                    f"{stats_consenso['total_testes']} concurso(s) testado(s), compare essas médias com as dos "
+                    "outros cinco modos individuais (mesma janela de teste) para saber se o consenso realmente "
+                    "supera as estratégias isoladas ou só reproduz a mais comum entre elas."
+                )
+
+                df_dist_consenso = pd.DataFrame({
+                    'Acertos': sorted(set(list(stats_consenso['distribuicao_consenso'].keys()) + list(stats_consenso['distribuicao_divergencia'].keys())))
+                })
+                df_dist_consenso['Consenso'] = df_dist_consenso['Acertos'].map(lambda a: stats_consenso['distribuicao_consenso'].get(a, 0))
+                df_dist_consenso['Divergência'] = df_dist_consenso['Acertos'].map(lambda a: stats_consenso['distribuicao_divergencia'].get(a, 0))
+                fig_dist_consenso = px.bar(df_dist_consenso, x='Acertos', y=['Consenso', 'Divergência'], barmode='group',
+                                           title="Distribuição de acertos — Consenso vs. Divergência")
+                st.plotly_chart(fig_dist_consenso, use_container_width=True)
 
 if __name__ == "__main__":
     main()
