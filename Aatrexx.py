@@ -3513,6 +3513,189 @@ def rodar_retroteste_progressivo_cr_lf(banco, num_testes=15, n_concursos=8,
 
 
 # =====================================================
+# MÓDULO 4E: OSCILAÇÃO (SAI → FICA FORA → VOLTA)
+# =====================================================
+
+def classificar_dezenas_por_oscilacao_lf(banco, n_concursos=9):
+    """
+    Módulo 4E - Classificação por Oscilação.
+
+    Formaliza a categoria "dezena oscilante" identificada pelo usuário ao
+    comparar 16/07/14/24 (padrão sai → fica fora → volta nos últimos 3
+    concursos) com uma dezena "atrasada comum" como 22 (fica fora por
+    vários concursos, sem esse ciclo curto específico). Separa 4 grupos:
+
+    - persistente: frequência alta (≥75%) na janela de `n_concursos`;
+    - oscilante: presente no concurso mais recente, AUSENTE no penúltimo
+      e presente no antepenúltimo — o padrão exato "saiu, sumiu, voltou"
+      nos últimos 3 concursos, distinto de frequência ou sequência longa;
+    - retorno_potencial: apareceu ao menos uma vez na janela, mas não se
+      encaixa nem em persistente nem em oscilante;
+    - atrasada: não apareceu nenhuma vez na janela.
+
+    IMPORTANTE: o padrão de oscilação usa só 3 concursos — MENOS amostra
+    ainda que os outros modos desta aba. É a leitura mais específica e
+    mais sujeita a coincidência de todas; rode o backtest antes de
+    confiar nela para apostar.
+    """
+    base = analisar_ultimos_n_concursos_lf(banco, n=n_concursos)
+    if not base or base['qtd_concursos'] < 3:
+        return None
+
+    concursos = banco.concursos[:n_concursos]
+    dezenas_listas = [c['dezenas'] for c in concursos]
+    freq_por_dezena = {num: base['freq_janela'].get(num, 0) for num in range(1, 26)}
+    qtd = base['qtd_concursos']
+
+    t0 = set(dezenas_listas[0])  # concurso mais recente
+    t1 = set(dezenas_listas[1])  # penúltimo
+    t2 = set(dezenas_listas[2])  # antepenúltimo
+
+    grupos = {'persistente': [], 'oscilante': [], 'retorno_potencial': [], 'atrasada': []}
+    for num in range(1, 26):
+        proporcao = freq_por_dezena[num] / qtd
+        if proporcao >= 0.75:
+            grupos['persistente'].append(num)
+        elif num in t0 and num not in t1 and num in t2:
+            grupos['oscilante'].append(num)
+        elif freq_por_dezena[num] >= 1:
+            grupos['retorno_potencial'].append(num)
+        else:
+            grupos['atrasada'].append(num)
+
+    for grupo in grupos.values():
+        grupo.sort(key=lambda n: freq_por_dezena[n], reverse=True)
+
+    return {
+        'qtd_concursos': qtd,
+        'concursos_numeros': base['concursos_numeros'],
+        'freq_por_dezena': freq_por_dezena,
+        'sequencia_atual': base['sequencia_atual'],
+        'grupos': grupos,
+        'ultimo_concurso': base['ultimo_concurso']
+    }
+
+
+def gerar_jogos_oscilacao_lf(banco, n_concursos=9,
+                              qtd_persistente_a=7, qtd_oscilante_a=4, qtd_retorno_a=4,
+                              qtd_persistente_b=6, qtd_oscilante_b=3, qtd_retorno_b=6,
+                              usar_nucleo_intocavel=True, limiar_freq_intocavel=1.0,
+                              limiar_sequencia_intocavel_frac=0.75):
+    """
+    Módulo 4E - gera Jogo A ("Persistência + Oscilação") e Jogo B
+    ("Rotação") a partir de `classificar_dezenas_por_oscilacao_lf`. As
+    cotas padrão seguem a regra proposta pelo usuário para o Jogo A: 7
+    persistentes + 4 oscilantes + 4 retornos = 15; o Jogo B é mais
+    agressivo no bloco de retorno potencial. O núcleo intocável (dezenas
+    com frequência/sequência excepcional) entra nos dois jogos por
+    padrão, igual aos outros modos desta aba.
+
+    IMPORTANTE: nenhuma classificação por oscilação supera a natureza
+    aleatória da Lotofácil — rode o backtest desta seção antes de apostar
+    com base nela.
+    """
+    classificacao = classificar_dezenas_por_oscilacao_lf(banco, n_concursos=n_concursos)
+    if not classificacao:
+        return None, None, None
+
+    grupos = classificacao['grupos']
+    freq_por_dezena = classificacao['freq_por_dezena']
+    ranking_geral = sorted(range(1, 26), key=lambda n: freq_por_dezena[n], reverse=True)
+
+    nucleo_intocavel = []
+    if usar_nucleo_intocavel:
+        nucleo_intocavel = identificar_nucleo_intocavel_lf(
+            classificacao, limiar_freq=limiar_freq_intocavel,
+            limiar_sequencia_frac=limiar_sequencia_intocavel_frac
+        )[:15]
+
+    def _montar(qtds, tamanho_jogo=15):
+        usados = set(nucleo_intocavel)
+        base_jogo = list(nucleo_intocavel)
+        fila = []
+        for grupo_nome, qtd_grupo in qtds:
+            candidatos = [n for n in grupos.get(grupo_nome, []) if n not in usados]
+            escolhidos = candidatos[:qtd_grupo]
+            if len(escolhidos) < qtd_grupo:
+                reserva = [n for n in ranking_geral if n not in usados and n not in escolhidos and n not in fila]
+                escolhidos += reserva[:qtd_grupo - len(escolhidos)]
+            for n in escolhidos:
+                if n not in usados:
+                    fila.append(n)
+                    usados.add(n)
+        slots_restantes = max(0, tamanho_jogo - len(base_jogo))
+        resultado = base_jogo + fila[:slots_restantes]
+        if len(resultado) < tamanho_jogo:
+            reserva = [n for n in ranking_geral if n not in resultado]
+            resultado += reserva[:tamanho_jogo - len(resultado)]
+        return sorted(resultado[:tamanho_jogo])
+
+    jogo_a = _montar([
+        ('persistente', qtd_persistente_a), ('oscilante', qtd_oscilante_a), ('retorno_potencial', qtd_retorno_a)
+    ])
+    jogo_b = _montar([
+        ('persistente', qtd_persistente_b), ('oscilante', qtd_oscilante_b), ('retorno_potencial', qtd_retorno_b)
+    ])
+
+    return jogo_a, jogo_b, {'classificacao': classificacao, 'nucleo_intocavel': nucleo_intocavel}
+
+
+def preparar_e_rodar_backtest_oscilacao_lf(banco, num_testes=40, n_concursos=9,
+                                            qtd_persistente=7, qtd_oscilante=4, qtd_retorno=4,
+                                            usar_nucleo_intocavel=True, limiar_freq_intocavel=1.0,
+                                            limiar_sequencia_intocavel_frac=0.75,
+                                            aquecimento_minimo=10, mostrar_progresso=True):
+    """
+    Módulo 4E - Backtest da Oscilação.
+
+    Roda o Jogo A ("Persistência + Oscilação") ponto-no-tempo nos
+    `num_testes` concursos mais recentes, usando só dados anteriores a
+    cada um deles, e mede a distribuição de acertos contra o resultado
+    real — mesma validação já usada nos outros modos desta aba.
+    """
+    historico = banco.concursos
+    testes = historico[:min(num_testes, len(historico))]
+    resultados = []
+    pulados = 0
+
+    progress_bar = st.progress(0, text="Rodando backtest de Oscilação...") if mostrar_progresso else None
+
+    for i, concurso in enumerate(testes):
+        concursos_anteriores = historico[i + 1:]
+        if len(concursos_anteriores) < max(aquecimento_minimo, n_concursos, 3):
+            pulados += 1
+        else:
+            banco_pt = _BancoTemporal(concursos_anteriores)
+            jogo_a, _, _ = gerar_jogos_oscilacao_lf(
+                banco_pt, n_concursos=n_concursos,
+                qtd_persistente_a=qtd_persistente, qtd_oscilante_a=qtd_oscilante, qtd_retorno_a=qtd_retorno,
+                qtd_persistente_b=0, qtd_oscilante_b=0, qtd_retorno_b=0,
+                usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+                limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+            )
+            if jogo_a:
+                resultados.append(len(set(jogo_a) & set(concurso['dezenas'])))
+        if progress_bar:
+            progress_bar.progress((i + 1) / len(testes))
+
+    if progress_bar:
+        progress_bar.empty()
+
+    if not resultados:
+        return None, pulados
+
+    return {
+        'total_testes': len(resultados),
+        'media': float(np.mean(resultados)),
+        'mediana': float(np.median(resultados)),
+        'std': float(np.std(resultados)),
+        'max': int(max(resultados)),
+        'min': int(min(resultados)),
+        'distribuicao': dict(sorted(Counter(resultados).items()))
+    }, pulados
+
+
+# =====================================================
 # MÓDULO 4D: MATRIZ DE TRANSIÇÃO (PERSISTÊNCIA × RECUPERAÇÃO)
 # =====================================================
 
@@ -4367,6 +4550,12 @@ def main():
         st.session_state.resultado_wf_cr = None
     if "pulados_wf_cr" not in st.session_state:
         st.session_state.pulados_wf_cr = 0
+    if "resultado_oscilacao" not in st.session_state:
+        st.session_state.resultado_oscilacao = None
+    if "resultado_backtest_osc" not in st.session_state:
+        st.session_state.resultado_backtest_osc = None
+    if "pulados_backtest_osc" not in st.session_state:
+        st.session_state.pulados_backtest_osc = 0
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -6169,7 +6358,7 @@ def main():
             modo_camadas = st.radio(
                 "Modo de classificação",
                 ["Frequência simples (quente/médio/frio)", "Frequência + Sequência (persistência)",
-                 "Matriz de Transição (avançado)", "Continuidade × Reversão"],
+                 "Matriz de Transição (avançado)", "Continuidade × Reversão", "Oscilação (sai-fica fora-volta)"],
                 horizontal=True, key="modo_camadas_radio"
             )
             st.markdown("---")
@@ -6881,6 +7070,169 @@ def main():
                     barmode='group', title="Entrantes capturadas por concurso testado (Jogo A / B / Combinado vs. total real)"
                 )
                 st.plotly_chart(fig_wf, use_container_width=True)
+
+        if st.session_state.banco_dados and st.session_state.banco_dados.concursos and modo_camadas.startswith("Oscilação"):
+            st.caption(
+                "🔥 Persistente: freq. ≥75% na janela · ⚡ Oscilante: saiu no concurso mais recente, ficou fora no "
+                "penúltimo e tinha saído no antepenúltimo (o padrão 'sai → some → volta') · 🔄 Retorno potencial: "
+                "apareceu ao menos 1x na janela, mas não se encaixa nos dois anteriores · 🧊 Atrasada: ausente na janela inteira."
+            )
+
+            n_concursos_osc = st.slider("Quantos concursos recentes analisar", 5, 15, 9, key="n_concursos_osc_slider")
+
+            with st.expander("🔒 Núcleo intocável (persistência excepcional automática)"):
+                usar_nucleo_osc = st.checkbox("Ativar núcleo intocável", value=True, key="usar_nucleo_osc_chk")
+                col_no1, col_no2 = st.columns(2)
+                with col_no1:
+                    limiar_freq_osc = st.slider("Frequência mínima p/ intocável (%)", 50, 100, 100, 5, key="limiar_freq_osc_slider", disabled=not usar_nucleo_osc) / 100
+                with col_no2:
+                    limiar_seq_osc = st.slider("Sequência mínima p/ intocável (% da janela)", 30, 100, 75, 5, key="limiar_seq_osc_slider", disabled=not usar_nucleo_osc) / 100
+
+            st.markdown("**Composição do Jogo A (Persistência + Oscilação)**")
+            col_oa1, col_oa2, col_oa3 = st.columns(3)
+            with col_oa1:
+                qtd_persist_osc_a = st.number_input("Persistentes", 0, 15, 7, key="qtd_persist_osc_a")
+            with col_oa2:
+                qtd_oscilante_a = st.number_input("Oscilantes", 0, 15, 4, key="qtd_oscilante_a")
+            with col_oa3:
+                qtd_retorno_osc_a = st.number_input("Retornos", 0, 15, 4, key="qtd_retorno_osc_a")
+            total_a_osc = qtd_persist_osc_a + qtd_oscilante_a + qtd_retorno_osc_a
+            if total_a_osc != 15:
+                st.warning(f"⚠️ A soma do Jogo A precisa dar 15 (está em {total_a_osc}).")
+
+            st.markdown("**Composição do Jogo B (Rotação)**")
+            col_ob1, col_ob2, col_ob3 = st.columns(3)
+            with col_ob1:
+                qtd_persist_osc_b = st.number_input("Persistentes ", 0, 15, 6, key="qtd_persist_osc_b")
+            with col_ob2:
+                qtd_oscilante_b = st.number_input("Oscilantes ", 0, 15, 3, key="qtd_oscilante_b")
+            with col_ob3:
+                qtd_retorno_osc_b = st.number_input("Retornos ", 0, 15, 6, key="qtd_retorno_osc_b")
+            total_b_osc = qtd_persist_osc_b + qtd_oscilante_b + qtd_retorno_osc_b
+            if total_b_osc != 15:
+                st.warning(f"⚠️ A soma do Jogo B precisa dar 15 (está em {total_b_osc}).")
+
+            pode_gerar_osc = (total_a_osc == 15) and (total_b_osc == 15)
+
+            if st.button("⚡ GERAR JOGOS POR OSCILAÇÃO", use_container_width=True, type="primary",
+                         key="gerar_osc_btn", disabled=not pode_gerar_osc):
+                jogo_a_o, jogo_b_o, relatorio_o = gerar_jogos_oscilacao_lf(
+                    st.session_state.banco_dados, n_concursos=n_concursos_osc,
+                    qtd_persistente_a=qtd_persist_osc_a, qtd_oscilante_a=qtd_oscilante_a, qtd_retorno_a=qtd_retorno_osc_a,
+                    qtd_persistente_b=qtd_persist_osc_b, qtd_oscilante_b=qtd_oscilante_b, qtd_retorno_b=qtd_retorno_osc_b,
+                    usar_nucleo_intocavel=usar_nucleo_osc, limiar_freq_intocavel=limiar_freq_osc,
+                    limiar_sequencia_intocavel_frac=limiar_seq_osc
+                )
+                st.session_state.resultado_oscilacao = {'jogo_a': jogo_a_o, 'jogo_b': jogo_b_o, 'relatorio': relatorio_o}
+
+            resultado_osc = st.session_state.get("resultado_oscilacao")
+            if resultado_osc and resultado_osc.get('jogo_a'):
+                jogo_a_oo = resultado_osc['jogo_a']
+                jogo_b_oo = resultado_osc['jogo_b']
+                rel_oo = resultado_osc['relatorio']
+                classif_oo = rel_oo['classificacao']
+                grupos_oo = classif_oo['grupos']
+                nucleo_oo = rel_oo.get('nucleo_intocavel', [])
+
+                if nucleo_oo:
+                    st.caption(f"🔒 Núcleo intocável identificado (presente nos dois jogos): {nucleo_oo}")
+
+                st.markdown(f"""
+                <div class='card'>
+                    🅰️ <strong>Jogo A — Persistência + Oscilação</strong><br>
+                    {formatar_jogo_html_lf(jogo_a_oo)}
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div class='card'>
+                    🅱️ <strong>Jogo B — Rotação</strong><br>
+                    {formatar_jogo_html_lf(jogo_b_oo)}
+                </div>
+                """, unsafe_allow_html=True)
+
+                with st.expander(f"📊 Classificação usada (últimos {classif_oo['qtd_concursos']} concursos: {classif_oo['concursos_numeros']})"):
+                    col_go1, col_go2, col_go3, col_go4 = st.columns(4)
+                    with col_go1:
+                        st.markdown("**🔥 Persistente**")
+                        st.write(grupos_oo['persistente'])
+                    with col_go2:
+                        st.markdown("**⚡ Oscilante**")
+                        st.write(grupos_oo['oscilante'])
+                    with col_go3:
+                        st.markdown("**🔄 Retorno potencial**")
+                        st.write(grupos_oo['retorno_potencial'])
+                    with col_go4:
+                        st.markdown("**🧊 Atrasada**")
+                        st.write(grupos_oo['atrasada'])
+
+                col_so1, col_so2 = st.columns(2)
+                with col_so1:
+                    if st.button("💾 Salvar Jogo A", key="salvar_osc_a_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_a_oo], {
+                            'tipo': 'oscilacao_jogo_a', 'n_concursos_analisados': classif_oo['qtd_concursos']
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogo A salvo! ID: {jogo_id}")
+                with col_so2:
+                    if st.button("💾 Salvar Jogo B", key="salvar_osc_b_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_lf_elite([jogo_b_oo], {
+                            'tipo': 'oscilacao_jogo_b', 'n_concursos_analisados': classif_oo['qtd_concursos']
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogo B salvo! ID: {jogo_id}")
+
+            st.markdown("---")
+            st.markdown("#### 🔬 Backtest da Oscilação")
+            st.caption(
+                "O padrão de oscilação usa só 3 concursos — a leitura mais específica (e mais sujeita a "
+                "coincidência) de todas nesta aba. Rode com uma janela de teste grande antes de confiar nela."
+            )
+            total_concursos_osc = len(st.session_state.banco_dados.concursos)
+            max_testes_osc = min(150, max(15, total_concursos_osc - 20))
+            n_testes_osc = st.slider("Concursos a testar", 15, max_testes_osc, min(40, max_testes_osc), key="n_testes_osc_slider")
+
+            if st.button("🔬 RODAR BACKTEST DA OSCILAÇÃO", use_container_width=True, key="backtest_osc_btn",
+                         disabled=(total_a_osc != 15)):
+                with st.spinner("Rodando backtest ponto-no-tempo..."):
+                    stats_osc, pulados_osc = preparar_e_rodar_backtest_oscilacao_lf(
+                        st.session_state.banco_dados, num_testes=n_testes_osc, n_concursos=n_concursos_osc,
+                        qtd_persistente=qtd_persist_osc_a, qtd_oscilante=qtd_oscilante_a, qtd_retorno=qtd_retorno_osc_a,
+                        usar_nucleo_intocavel=usar_nucleo_osc, limiar_freq_intocavel=limiar_freq_osc,
+                        limiar_sequencia_intocavel_frac=limiar_seq_osc
+                    )
+                    st.session_state.resultado_backtest_osc = stats_osc
+                    st.session_state.pulados_backtest_osc = pulados_osc
+
+            stats_osc = st.session_state.get("resultado_backtest_osc")
+            if stats_osc:
+                pulados_oscb = st.session_state.get("pulados_backtest_osc", 0)
+                if pulados_oscb:
+                    st.caption(f"ℹ️ {pulados_oscb} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
+
+                col_bo1, col_bo2, col_bo3, col_bo4 = st.columns(4)
+                with col_bo1:
+                    st.metric("Média de acertos", f"{stats_osc['media']:.2f}")
+                with col_bo2:
+                    st.metric("Mediana", f"{stats_osc['mediana']:.1f}")
+                with col_bo3:
+                    st.metric("Máximo", stats_osc['max'])
+                with col_bo4:
+                    st.metric("Mínimo", stats_osc['min'])
+
+                st.caption(
+                    f"Comparação: escolhendo 15 dezenas ao acaso, o esperado é 9,00/15. Esta estratégia teve "
+                    f"média de {stats_osc['media']:.2f}/15 em {stats_osc['total_testes']} concurso(s) testado(s). "
+                    "Compare com os backtests dos outros modos (mesma janela de teste) antes de decidir qual usar."
+                )
+
+                df_dist_osc = pd.DataFrame({
+                    'Acertos': list(stats_osc['distribuicao'].keys()),
+                    'Ocorrências': list(stats_osc['distribuicao'].values())
+                })
+                fig_dist_osc = px.bar(df_dist_osc, x='Acertos', y='Ocorrências',
+                                      title="Distribuição de acertos — Oscilação (Jogo A)")
+                st.plotly_chart(fig_dist_osc, use_container_width=True)
 
 if __name__ == "__main__":
     main()
