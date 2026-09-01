@@ -3412,6 +3412,106 @@ def preparar_e_rodar_backtest_continuidade_reversao_lf(banco, num_testes=40, n_c
     }, pulados
 
 
+def gerar_jogo_combinado_continuidade_reversao_lf(banco, n_concursos=8, usar_nucleo_intocavel=True,
+                                                   limiar_freq_intocavel=1.0, limiar_sequencia_intocavel_frac=0.75):
+    """
+    Módulo 4C - Jogo Combinado (Continuidade + Reversão numa cota só).
+
+    Testa a hipótese levantada na autópsia do concurso 3776: será que
+    concentrar o melhor das duas leituras num ÚNICO jogo (em vez de
+    espalhar as dezenas de transição entre dois jogos separados) captura
+    as "entrantes" de forma mais eficiente? Usa uma cota híbrida — a média
+    arredondada das cotas de Continuidade (6 persistente / 4 quebrando / 3
+    retorno / 2 atrasada) e Reversão (3/2/5/5): 5 persistente, 3
+    quebrando, 4 retorno, 3 atrasada — com o mesmo núcleo intocável.
+    """
+    jogo_hibrido, _, relatorio = gerar_jogos_persistencia_lf(
+        banco, n_concursos=n_concursos,
+        qtd_persistente_a=5, qtd_quebrando_a=3, qtd_retorno_a=4, qtd_atrasada_a=3,
+        qtd_persistente_b=0, qtd_quebrando_b=0, qtd_retorno_b=0, qtd_atrasada_b=0,
+        usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+        limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+    )
+    return jogo_hibrido, relatorio
+
+
+def rodar_retroteste_progressivo_cr_lf(banco, num_testes=15, n_concursos=8,
+                                        usar_nucleo_intocavel=True, limiar_freq_intocavel=1.0,
+                                        limiar_sequencia_intocavel_frac=0.75,
+                                        aquecimento_minimo=10, mostrar_progresso=True):
+    """
+    Módulo 4C - Retroteste Progressivo (Continuidade × Reversão × Combinado).
+
+    Em cada um dos `num_testes` concursos mais recentes (ponto-no-tempo,
+    treinando só com dados anteriores a ele), separa o resultado real em
+    duas categorias — REPETIDAS (dezenas que também saíram no concurso
+    imediatamente anterior) e ENTRANTES (dezenas que não saíram no
+    concurso imediatamente anterior, a "virada" que se quer capturar) — e
+    mede quantas de cada categoria o Jogo A (Continuidade), o Jogo B
+    (Reversão), o Jogo Combinado (cota híbrida) e a UNIÃO de A+B
+    capturaram. Isso responde à pergunta feita na autópsia do 3776: qual
+    estrutura de jogo captura melhor a virada — duas apostas separadas, ou
+    uma única combinada?
+
+    Retorna uma lista de dicts, um por concurso testado, pronta pra virar
+    uma tabela — a agregação (médias, totais) fica a cargo de quem exibe.
+    """
+    historico = banco.concursos
+    testes = historico[:min(num_testes, len(historico))]
+    linhas = []
+    pulados = 0
+
+    progress_bar = st.progress(0, text="Rodando retroteste progressivo...") if mostrar_progresso else None
+
+    for i, concurso in enumerate(testes):
+        concursos_anteriores = historico[i + 1:]
+        if len(concursos_anteriores) < max(aquecimento_minimo, n_concursos + 1):
+            pulados += 1
+        else:
+            banco_pt = _BancoTemporal(concursos_anteriores)
+            dezenas_reais = set(concurso['dezenas'])
+            dezenas_concurso_anterior = set(concursos_anteriores[0]['dezenas'])
+            repetidas_reais = dezenas_reais & dezenas_concurso_anterior
+            entrantes_reais = dezenas_reais - dezenas_concurso_anterior
+
+            jogo_a, jogo_b, _ = gerar_jogos_continuidade_reversao_lf(
+                banco_pt, n_concursos=n_concursos,
+                usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+                limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+            )
+            jogo_c, _ = gerar_jogo_combinado_continuidade_reversao_lf(
+                banco_pt, n_concursos=n_concursos,
+                usar_nucleo_intocavel=usar_nucleo_intocavel, limiar_freq_intocavel=limiar_freq_intocavel,
+                limiar_sequencia_intocavel_frac=limiar_sequencia_intocavel_frac
+            )
+
+            if jogo_a and jogo_b and jogo_c:
+                set_a, set_b, set_c = set(jogo_a), set(jogo_b), set(jogo_c)
+                uniao_ab = set_a | set_b
+                linhas.append({
+                    'concurso': concurso['numero'],
+                    'acertos_a': len(set_a & dezenas_reais),
+                    'acertos_b': len(set_b & dezenas_reais),
+                    'acertos_c': len(set_c & dezenas_reais),
+                    'total_repetidas': len(repetidas_reais),
+                    'repetidas_a': len(set_a & repetidas_reais),
+                    'repetidas_b': len(set_b & repetidas_reais),
+                    'repetidas_c': len(set_c & repetidas_reais),
+                    'total_entrantes': len(entrantes_reais),
+                    'entrantes_a': len(set_a & entrantes_reais),
+                    'entrantes_b': len(set_b & entrantes_reais),
+                    'entrantes_c': len(set_c & entrantes_reais),
+                    'entrantes_uniao_ab': len(uniao_ab & entrantes_reais),
+                })
+        if progress_bar:
+            progress_bar.progress((i + 1) / len(testes))
+
+    if progress_bar:
+        progress_bar.empty()
+
+    return linhas, pulados
+
+
 # =====================================================
 # MÓDULO 4D: MATRIZ DE TRANSIÇÃO (PERSISTÊNCIA × RECUPERAÇÃO)
 # =====================================================
@@ -4263,6 +4363,10 @@ def main():
         st.session_state.resultado_backtest_cr = None
     if "pulados_backtest_cr" not in st.session_state:
         st.session_state.pulados_backtest_cr = 0
+    if "resultado_wf_cr" not in st.session_state:
+        st.session_state.resultado_wf_cr = None
+    if "pulados_wf_cr" not in st.session_state:
+        st.session_state.pulados_wf_cr = 0
     if "jogos_salvos" not in st.session_state:
         st.session_state.jogos_salvos = []
     if "ia_treinada" not in st.session_state:
@@ -6708,6 +6812,75 @@ def main():
                 fig_dist_cr = px.bar(df_dist_cr, x='Acertos', y=['Continuidade', 'Reversão'], barmode='group',
                                      title="Distribuição de acertos — Continuidade vs. Reversão")
                 st.plotly_chart(fig_dist_cr, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("#### 🔬 Retroteste Progressivo (repetição × entrantes)")
+            st.caption(
+                "Em vez de olhar só o total de acertos, separa o resultado real de cada concurso testado em "
+                "REPETIDAS (saíram também no concurso anterior) e ENTRANTES (a 'virada' — não saíram no anterior), "
+                "e mede quanto cada estrutura de jogo captura de cada categoria: Jogo A, Jogo B, um Jogo Combinado "
+                "(cota híbrida, uma única aposta) e a UNIÃO de A+B (o que os dois juntos cobririam)."
+            )
+
+            total_concursos_wf = len(st.session_state.banco_dados.concursos)
+            max_testes_wf = min(60, max(5, total_concursos_wf - n_concursos_cr - 10))
+            n_testes_wf = st.slider("Concursos a testar (retroteste progressivo)", 5, max_testes_wf,
+                                     min(15, max_testes_wf), key="n_testes_wf_slider")
+
+            if st.button("🔬 RODAR RETROTESTE PROGRESSIVO", use_container_width=True, key="backtest_wf_btn"):
+                with st.spinner("Rodando retroteste progressivo (treina numa janela, testa no concurso seguinte, avança)..."):
+                    linhas_wf, pulados_wf = rodar_retroteste_progressivo_cr_lf(
+                        st.session_state.banco_dados, num_testes=n_testes_wf, n_concursos=n_concursos_cr,
+                        usar_nucleo_intocavel=usar_nucleo_cr, limiar_freq_intocavel=limiar_freq_cr,
+                        limiar_sequencia_intocavel_frac=limiar_seq_cr
+                    )
+                    st.session_state.resultado_wf_cr = linhas_wf
+                    st.session_state.pulados_wf_cr = pulados_wf
+
+            linhas_wf = st.session_state.get("resultado_wf_cr")
+            if linhas_wf:
+                pulados_wfb = st.session_state.get("pulados_wf_cr", 0)
+                if pulados_wfb:
+                    st.caption(f"ℹ️ {pulados_wfb} concurso(s) pulado(s) por não terem histórico anterior suficiente.")
+
+                df_wf = pd.DataFrame(linhas_wf)
+
+                media_ac_a = df_wf['acertos_a'].mean()
+                media_ac_b = df_wf['acertos_b'].mean()
+                media_ac_c = df_wf['acertos_c'].mean()
+                total_entrantes = df_wf['total_entrantes'].sum()
+                pct_entrantes_a = 100 * df_wf['entrantes_a'].sum() / total_entrantes if total_entrantes else 0
+                pct_entrantes_b = 100 * df_wf['entrantes_b'].sum() / total_entrantes if total_entrantes else 0
+                pct_entrantes_c = 100 * df_wf['entrantes_c'].sum() / total_entrantes if total_entrantes else 0
+                pct_entrantes_uniao = 100 * df_wf['entrantes_uniao_ab'].sum() / total_entrantes if total_entrantes else 0
+
+                st.markdown(f"**Média de acertos totais** — Jogo A: {media_ac_a:.2f} · Jogo B: {media_ac_b:.2f} · Combinado: {media_ac_c:.2f}")
+
+                col_wf1, col_wf2, col_wf3, col_wf4 = st.columns(4)
+                with col_wf1:
+                    st.metric("% de entrantes capturadas — Jogo A", f"{pct_entrantes_a:.1f}%")
+                with col_wf2:
+                    st.metric("% de entrantes capturadas — Jogo B", f"{pct_entrantes_b:.1f}%")
+                with col_wf3:
+                    st.metric("% de entrantes capturadas — Combinado", f"{pct_entrantes_c:.1f}%")
+                with col_wf4:
+                    st.metric("% de entrantes capturadas — União A+B", f"{pct_entrantes_uniao:.1f}%")
+
+                if pct_entrantes_c > max(pct_entrantes_a, pct_entrantes_b):
+                    st.info("📌 Neste histórico, o **Jogo Combinado** (uma única aposta híbrida) capturou mais entrantes que A ou B isoladamente — sinal de que concentrar em vez de dividir pode valer a pena.")
+                elif pct_entrantes_uniao > pct_entrantes_c + 10:
+                    st.info("📌 Neste histórico, a **União de A+B** (duas apostas separadas) cobre bem mais entrantes que qualquer jogo isolado — mas isso é esperado (é a soma de duas apostas de 15 contra uma só) e não significa que o Combinado seja pior por dezena apostada.")
+                else:
+                    st.info("📌 As diferenças entre as estruturas ficaram pequenas neste histórico — não há sinal forte de que uma capture a virada de forma consistentemente melhor que a outra.")
+
+                with st.expander("📋 Tabela concurso a concurso"):
+                    st.dataframe(df_wf, use_container_width=True, hide_index=True)
+
+                fig_wf = px.bar(
+                    df_wf, x='concurso', y=['entrantes_a', 'entrantes_b', 'entrantes_c', 'total_entrantes'],
+                    barmode='group', title="Entrantes capturadas por concurso testado (Jogo A / B / Combinado vs. total real)"
+                )
+                st.plotly_chart(fig_wf, use_container_width=True)
 
 if __name__ == "__main__":
     main()
