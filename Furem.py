@@ -1628,6 +1628,364 @@ class BacktestsMegaV10:
             return False
 
 # =====================================================
+# MÓDULO 9: ESTRUTURA + SELEÇÃO (CAMADA 1 + CAMADA 2)
+# Baseado no estudo do usuário: em vez de só acertar o "molde"
+# do concurso (zerados/atrasados/médios/quentes), pontua e
+# seleciona individualmente as melhores dezenas dentro de
+# cada categoria antes de montar os jogos.
+# =====================================================
+
+class MotorEstruturaSelecaoMegaV10:
+    """
+    Módulo 9 - Motor de Estrutura + Seleção para Mega-Sena V10
+
+    CAMADA 1 (estrutura): classifica as 60 dezenas em
+    zerado / atrasado / médio / quente com base numa janela
+    curta (últimos 10 concursos) e descobre, retrospectivamente,
+    qual é o "perfil" (quantos de cada categoria) mais comum
+    nos concursos passados — isso vira o perfil esperado do
+    próximo concurso.
+
+    CAMADA 2 (seleção): dentro de cada categoria, pontua cada
+    dezena individualmente com um Score de Seleção que combina:
+    comportamento nos últimos 10, comportamento nos últimos 5,
+    atraso atual, índice de repetição individual (comportamento
+    após sair) e compatibilidade com o perfil estrutural.
+    """
+
+    JANELA_CURTA = 10       # define quente / médio / zerado
+    JANELA_MEDIA = 5        # define médio ativo / envelhecido
+    JANELA_REPETICAO = 3    # concursos seguintes p/ medir repetição individual
+    JANELA_PERFIL = 60      # quantos concursos passados usar p/ achar o perfil típico
+
+    PESOS_SCORE = {
+        'comportamento_10': 0.30,
+        'comportamento_5': 0.25,
+        'atraso': 0.20,
+        'repeticao': 0.15,
+        'compatibilidade': 0.10
+    }
+
+    def __init__(self, banco_dados, estatisticas):
+        self.banco = banco_dados
+        self.estatisticas = estatisticas
+        self.historico = banco_dados.get_historico_dezenas()  # index 0 = mais recente
+        self.classificacao_atual = {}
+        self.perfil_esperado = {}
+        self.distribuicao_perfis = Counter()
+        self.indice_repeticao = {}
+        self.score_selecao = {}
+        self.componentes_score = {}
+        self._concursos_compativeis = 0
+        self._executar_camada1()
+        self._executar_camada2()
+
+    # ---------------- CAMADA 1: ESTRUTURA ----------------
+
+    def _classificar_ponto(self, numero, historico_antes):
+        """Classifica uma dezena usando apenas concursos anteriores a um certo ponto (point-in-time)."""
+        janela10 = historico_antes[:self.JANELA_CURTA]
+        janela5 = historico_antes[:self.JANELA_MEDIA]
+        freq10 = sum(1 for c in janela10 if numero in c)
+        freq5 = sum(1 for c in janela5 if numero in c)
+
+        atraso = len(historico_antes)
+        for idx, c in enumerate(historico_antes):
+            if numero in c:
+                atraso = idx
+                break
+
+        if freq10 >= 2:
+            categoria = 'quente'
+        elif freq10 == 1:
+            categoria = 'medio'
+        else:
+            limite_zerado = max(self.JANELA_CURTA, len(historico_antes) / 10 or self.JANELA_CURTA)
+            categoria = 'zerado' if atraso <= limite_zerado else 'atrasado'
+
+        subgrupo = None
+        if categoria == 'medio':
+            subgrupo = 'ativo' if freq5 >= 1 else 'envelhecido'
+
+        return {'freq10': freq10, 'freq5': freq5, 'atraso': atraso, 'categoria': categoria, 'subgrupo': subgrupo}
+
+    def classificar_todas_atual(self):
+        """Classifica as 60 dezenas com base em todo o histórico disponível (momento atual)."""
+        resultado = {num: self._classificar_ponto(num, self.historico) for num in range(1, 61)}
+        self.classificacao_atual = resultado
+        return resultado
+
+    def _perfil_de_concurso(self, dezenas, historico_antes):
+        contagem = {'zerado': 0, 'atrasado': 0, 'medio': 0, 'quente': 0}
+        for num in dezenas:
+            info = self._classificar_ponto(num, historico_antes)
+            contagem[info['categoria']] += 1
+        return contagem
+
+    def _executar_camada1(self):
+        self.classificar_todas_atual()
+
+        historico = self.historico  # index 0 = mais recente
+        n = len(historico)
+        limite = min(self.JANELA_PERFIL, max(0, n - self.JANELA_CURTA - 1))
+
+        perfis = []
+        for i in range(limite):
+            historico_antes = historico[i + 1:]
+            if len(historico_antes) < self.JANELA_CURTA:
+                continue
+            perfil = self._perfil_de_concurso(historico[i], historico_antes)
+            perfis.append(tuple(sorted(perfil.items())))
+
+        self.distribuicao_perfis = Counter(perfis)
+        if self.distribuicao_perfis:
+            perfil_moda = self.distribuicao_perfis.most_common(1)[0][0]
+            self.perfil_esperado = dict(perfil_moda)
+        else:
+            self.perfil_esperado = {'zerado': 2, 'atrasado': 1, 'medio': 2, 'quente': 1}
+
+    # ---------------- CAMADA 2: SELEÇÃO ----------------
+
+    def _calcular_indice_repeticao(self):
+        """Mede, para cada dezena, a chance histórica de repetir dentro de
+        JANELA_REPETICAO concursos depois de ter saído."""
+        historico_asc = list(reversed(self.historico))  # mais antigo -> mais recente
+        ocorrencias = defaultdict(int)
+        repeticoes = defaultdict(int)
+        for i, dezenas in enumerate(historico_asc):
+            seguintes = historico_asc[i + 1:i + 1 + self.JANELA_REPETICAO]
+            for num in dezenas:
+                ocorrencias[num] += 1
+                if any(num in c for c in seguintes):
+                    repeticoes[num] += 1
+
+        indice = {}
+        for num in range(1, 61):
+            indice[num] = (repeticoes[num] / ocorrencias[num]) if ocorrencias[num] > 0 else 0.0
+        self.indice_repeticao = indice
+        return indice
+
+    def _calcular_compatibilidade_estrutura(self):
+        """Frequência condicional de cada dezena nos concursos históricos cujo
+        perfil estrutural retrospectivo bateu com o perfil esperado atual."""
+        historico = self.historico
+        n = len(historico)
+        limite = min(self.JANELA_PERFIL, max(0, n - self.JANELA_CURTA - 1))
+        alvo = tuple(sorted(self.perfil_esperado.items()))
+
+        contagem = Counter()
+        concursos_compat = 0
+        for i in range(limite):
+            historico_antes = historico[i + 1:]
+            if len(historico_antes) < self.JANELA_CURTA:
+                continue
+            perfil = self._perfil_de_concurso(historico[i], historico_antes)
+            if tuple(sorted(perfil.items())) == alvo:
+                concursos_compat += 1
+                contagem.update(historico[i])
+
+        compat = {}
+        if concursos_compat > 0:
+            maximo = max(contagem.values()) if contagem else 1
+            for num in range(1, 61):
+                compat[num] = contagem.get(num, 0) / maximo
+        else:
+            max_freq10 = max((info['freq10'] for info in self.classificacao_atual.values()), default=1) or 1
+            for num in range(1, 61):
+                compat[num] = self.classificacao_atual.get(num, {}).get('freq10', 0) / max_freq10
+
+        self._concursos_compativeis = concursos_compat
+        return compat
+
+    def _executar_camada2(self):
+        self._calcular_indice_repeticao()
+        compatibilidade = self._calcular_compatibilidade_estrutura()
+
+        max_atraso = max((info['atraso'] for info in self.classificacao_atual.values()), default=1) or 1
+        pesos = self.PESOS_SCORE
+
+        for num in range(1, 61):
+            info = self.classificacao_atual.get(num, {})
+            comp10 = info.get('freq10', 0) / self.JANELA_CURTA
+            comp5 = info.get('freq5', 0) / self.JANELA_MEDIA
+            atraso_norm = info.get('atraso', 0) / max_atraso
+            repeticao = self.indice_repeticao.get(num, 0.0)
+            compat = compatibilidade.get(num, 0.0)
+
+            score = (
+                comp10 * pesos['comportamento_10'] +
+                comp5 * pesos['comportamento_5'] +
+                atraso_norm * pesos['atraso'] +
+                repeticao * pesos['repeticao'] +
+                compat * pesos['compatibilidade']
+            )
+
+            self.componentes_score[num] = {
+                'comportamento_10': round(comp10 * 100, 1),
+                'comportamento_5': round(comp5 * 100, 1),
+                'atraso': round(atraso_norm * 100, 1),
+                'repeticao': round(repeticao * 100, 1),
+                'compatibilidade': round(compat * 100, 1),
+                'categoria': info.get('categoria', 'medio'),
+                'subgrupo': info.get('subgrupo')
+            }
+            self.score_selecao[num] = round(score * 100, 2)
+
+    # ---------------- CANDIDATOS E GERAÇÃO (Etapas 3-7) ----------------
+
+    def get_ranking_por_categoria(self, top_n=5):
+        """Retorna, para cada categoria, as `top_n` dezenas com melhor Score de Seleção."""
+        categorias = defaultdict(list)
+        for num, info in self.componentes_score.items():
+            categorias[info['categoria']].append((num, self.score_selecao[num]))
+        for cat in categorias:
+            categorias[cat].sort(key=lambda x: x[1], reverse=True)
+        return {cat: nums[:top_n] for cat, nums in categorias.items()}
+
+    def _filtro_leve(self, jogo):
+        """Filtros de distribuição (Etapa 6) — mais leves que os filtros gerais
+        porque o próprio perfil estrutural já controla o equilíbrio quente/médio/frio."""
+        pares = contar_pares_mega(jogo)
+        if not (1 <= pares <= 5):
+            return False
+        soma = sum(jogo)
+        soma_stats = self.estatisticas.distribuicao_soma
+        soma_min = max(60, soma_stats.get('percentil_25', 100) - 30)
+        soma_max = min(340, soma_stats.get('percentil_75', 250) + 30)
+        if not (soma_min <= soma <= soma_max):
+            return False
+        if contar_consecutivos_mega(jogo) > 4:
+            return False
+        colunas = distribuir_colunas_mega(jogo)
+        if max(colunas) > 3:
+            return False
+        return True
+
+    def gerar_jogos(self, qtd_jogos=3, top_candidatos=5, perfil_customizado=None, max_tentativas=5000):
+        """
+        Etapas 4-7 do estudo: seleciona os melhores candidatos de cada
+        categoria do perfil, cruza combinações entre eles e gera
+        `qtd_jogos` jogos distintos entre si (em vez de espalhar dezenas
+        aleatoriamente dentro do grupo).
+        """
+        perfil = perfil_customizado or self.perfil_esperado
+        ranking_cat = self.get_ranking_por_categoria(top_n=top_candidatos)
+
+        pool_por_categoria = {}
+        for cat, qtd_necessaria in perfil.items():
+            candidatos = [n for n, _ in ranking_cat.get(cat, [])]
+            if qtd_necessaria > 0 and len(candidatos) < qtd_necessaria:
+                todos_cat = [n for n, info in self.componentes_score.items() if info['categoria'] == cat]
+                todos_cat.sort(key=lambda n: self.score_selecao[n], reverse=True)
+                candidatos = todos_cat
+            pool_por_categoria[cat] = candidatos
+
+        jogos = []
+        jogos_set = set()
+        tentativas = 0
+        rng = random.Random()
+
+        while len(jogos) < qtd_jogos and tentativas < max_tentativas:
+            tentativas += 1
+            jogo = set()
+            valido = True
+            for cat, qtd_necessaria in perfil.items():
+                if qtd_necessaria <= 0:
+                    continue
+                candidatos_disponiveis = [n for n in pool_por_categoria.get(cat, []) if n not in jogo]
+                if len(candidatos_disponiveis) < qtd_necessaria:
+                    valido = False
+                    break
+                jogo.update(rng.sample(candidatos_disponiveis, qtd_necessaria))
+
+            if not valido or len(jogo) != 6:
+                continue
+
+            jogo_final = sorted(jogo)
+            chave = tuple(jogo_final)
+            if chave in jogos_set or not self._filtro_leve(jogo_final):
+                continue
+
+            jogos_set.add(chave)
+            jogos.append(jogo_final)
+
+        return jogos
+
+    # ---------------- RETROTESTE DO SELETOR (Etapa 8) ----------------
+
+    def retrotestar(self, num_testes=30, top_candidatos=5, jogos_por_teste=3):
+        """
+        Simula, para os últimos `num_testes` concursos, o que este seletor
+        teria escolhido usando apenas dados anteriores a cada concurso
+        (ponto-no-tempo), e compara com o método anterior (top-6 do motor
+        de pontuação simples). Se o seletor não superar o método anterior,
+        isso fica evidente nas métricas retornadas.
+        """
+        historico = self.banco.concursos
+        n = len(historico)
+        testes = historico[:min(num_testes, n)]
+
+        resultados_seletor = []
+        resultados_baseline = []
+        pulados = 0
+
+        progress_bar = st.progress(0, text="Retrotestando o Seletor (Estrutura + Seleção)...")
+
+        for i, concurso in enumerate(testes):
+            dezenas_reais = concurso['dezenas']
+            concursos_anteriores = historico[i + 1:]
+            if len(concursos_anteriores) < max(self.JANELA_PERFIL, 40):
+                pulados += 1
+                progress_bar.progress((i + 1) / len(testes))
+                continue
+
+            banco_pt = _BancoTemporalMegaV10(concursos_anteriores)
+            estatisticas_pt = EstatisticasMegaAvancadas(banco_pt)
+            motor_pt = MotorEstruturaSelecaoMegaV10(banco_pt, estatisticas_pt)
+
+            jogos_seletor = motor_pt.gerar_jogos(
+                qtd_jogos=jogos_por_teste, top_candidatos=top_candidatos, max_tentativas=2000
+            )
+            for jogo in jogos_seletor:
+                resultados_seletor.append(len(set(jogo) & set(dezenas_reais)))
+
+            pontuacao_pt = MotorPontuacaoAdaptativoMega(estatisticas_pt)
+            ranking_baseline = [num for num, _ in pontuacao_pt.get_ranking(6)]
+            resultados_baseline.append(len(set(ranking_baseline) & set(dezenas_reais)))
+
+            progress_bar.progress((i + 1) / len(testes))
+
+        progress_bar.empty()
+        if pulados:
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) por histórico anterior insuficiente.")
+
+        def _resumo(lista):
+            if not lista:
+                return {'media': 0.0, 'max': 0, 'distribuicao': {}}
+            return {'media': float(np.mean(lista)), 'max': int(max(lista)), 'distribuicao': dict(Counter(lista))}
+
+        return {
+            'seletor': _resumo(resultados_seletor),
+            'baseline_top6': _resumo(resultados_baseline),
+            'total_simulacoes_seletor': len(resultados_seletor),
+            'total_simulacoes_baseline': len(resultados_baseline)
+        }
+
+
+def formatar_perfil_mega(perfil):
+    """Formata um dicionário de perfil estrutural em texto legível (ex.: '2 zerados + 1 atrasado + 2 médios + 1 quente')."""
+    nomes = {'zerado': 'zerado', 'atrasado': 'atrasado', 'medio': 'médio', 'quente': 'quente'}
+    partes = []
+    for cat in ['zerado', 'atrasado', 'medio', 'quente']:
+        qtd = perfil.get(cat, 0)
+        if qtd <= 0:
+            continue
+        nome = nomes[cat] + ('s' if qtd != 1 else '')
+        partes.append(f"{qtd} {nome}")
+    return " + ".join(partes) if partes else "perfil indefinido"
+
+
+# =====================================================
 # MÓDULO 8: CONFERÊNCIA DE RESULTADOS - MEGA V10
 # =====================================================
 
@@ -1713,6 +2071,12 @@ def main():
         st.session_state.fechamento_metodo = ""
     if "fechamento_cobertura" not in st.session_state:
         st.session_state.fechamento_cobertura = None
+    if "motor_estrutura" not in st.session_state:
+        st.session_state.motor_estrutura = None
+    if "jogos_estrutura" not in st.session_state:
+        st.session_state.jogos_estrutura = []
+    if "retroteste_estrutura" not in st.session_state:
+        st.session_state.retroteste_estrutura = None
 
     # Barra Lateral
     with st.sidebar:
@@ -1755,6 +2119,13 @@ def main():
                         st.session_state.conferencia = ConferenciaMegaV10(
                             st.session_state.banco_dados
                         )
+                        
+                        st.session_state.motor_estrutura = MotorEstruturaSelecaoMegaV10(
+                            st.session_state.banco_dados,
+                            st.session_state.estatisticas
+                        )
+                        st.session_state.jogos_estrutura = []
+                        st.session_state.retroteste_estrutura = None
                         
                         st.success(f"✅ {len(dados)} concursos carregados!")
                         st.info("🔄 IA pronta para treinamento")
@@ -1800,7 +2171,8 @@ def main():
         "🔬 Backtests",
         "📈 Análise Avançada",
         "✅ Conferência",
-        "💾 Salvos"
+        "💾 Salvos",
+        "🧩 Estrutura + Seleção"
     ])
 
     # ================= TAB 1: DASHBOARD =================
@@ -2780,6 +3152,205 @@ def main():
                     <strong>Versão:</strong> {jogo.get('schema_version', 'desconhecida')}
                 </div>
                 """, unsafe_allow_html=True)
+
+    # ================= TAB 9: ESTRUTURA + SELEÇÃO =================
+    with tabs[8]:
+        st.markdown("### 🧩 Estrutura + Seleção (Camada 1 + Camada 2)")
+        st.caption("Implementação do seu estudo: primeiro descobre o 'molde' do concurso, depois pontua e escolhe as melhores dezenas dentro de cada categoria — em vez de espalhar aleatoriamente dentro do grupo.")
+
+        if not st.session_state.motor_estrutura:
+            st.warning("⚠️ Carregue os dados na barra lateral para habilitar este módulo.")
+        else:
+            motor = st.session_state.motor_estrutura
+
+            # ---------- CAMADA 1: PERFIL ESPERADO ----------
+            st.markdown("#### 1️⃣ Camada 1 — Perfil estrutural esperado")
+            st.caption(f"Baseado em {sum(motor.distribuicao_perfis.values())} concurso(s) reclassificados retrospectivamente (janela de {motor.JANELA_PERFIL} concursos).")
+
+            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+            with col_p1:
+                st.metric("🧊 Zerados", motor.perfil_esperado.get('zerado', 0))
+            with col_p2:
+                st.metric("⏳ Atrasados", motor.perfil_esperado.get('atrasado', 0))
+            with col_p3:
+                st.metric("🌤️ Médios", motor.perfil_esperado.get('medio', 0))
+            with col_p4:
+                st.metric("🔥 Quentes", motor.perfil_esperado.get('quente', 0))
+
+            st.markdown(f"""
+            <div class='highlight'>
+                🎯 <strong>Perfil mais provável:</strong> {formatar_perfil_mega(motor.perfil_esperado)}
+            </div>
+            """, unsafe_allow_html=True)
+
+            with st.expander("📊 Distribuição de perfis observados no histórico"):
+                if motor.distribuicao_perfis:
+                    df_perfis = pd.DataFrame([
+                        {**dict(perfil), 'Ocorrências': qtd}
+                        for perfil, qtd in motor.distribuicao_perfis.most_common(15)
+                    ])
+                    st.dataframe(df_perfis, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Histórico insuficiente para reclassificação retrospectiva.")
+
+            st.markdown("---")
+
+            # ---------- CAMADA 2: SCORE DE SELEÇÃO ----------
+            st.markdown("#### 2️⃣ Camada 2 — Score de Seleção por dezena")
+            st.caption("30% comportamento últimos 10 · 25% comportamento últimos 5 · 20% atraso · 15% índice de repetição · 10% compatibilidade com a estrutura")
+
+            linhas_score = []
+            for num in range(1, 61):
+                comp = motor.componentes_score.get(num, {})
+                linhas_score.append({
+                    'Dezena': f"{num:02d}",
+                    'Categoria': comp.get('categoria', '-'),
+                    'Subgrupo': comp.get('subgrupo') or '-',
+                    'Score': motor.score_selecao.get(num, 0),
+                    'Comp. 10': comp.get('comportamento_10', 0),
+                    'Comp. 5': comp.get('comportamento_5', 0),
+                    'Atraso': comp.get('atraso', 0),
+                    'Repetição': comp.get('repeticao', 0),
+                    'Compatibilidade': comp.get('compatibilidade', 0)
+                })
+            df_score = pd.DataFrame(linhas_score).sort_values('Score', ascending=False)
+
+            filtro_categoria = st.multiselect(
+                "Filtrar por categoria",
+                options=['zerado', 'atrasado', 'medio', 'quente'],
+                default=['zerado', 'atrasado', 'medio', 'quente'],
+                key="filtro_categoria_estrutura"
+            )
+            df_score_filtrado = df_score[df_score['Categoria'].isin(filtro_categoria)]
+            st.dataframe(df_score_filtrado, use_container_width=True, hide_index=True, height=350)
+
+            st.markdown("---")
+
+            # ---------- GERAÇÃO DE JOGOS ----------
+            st.markdown("#### 3️⃣ Gerar jogos (Etapas 4 a 7 — candidatos, cruzamento e filtros)")
+
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                qtd_jogos_estrutura = st.slider("Quantidade de jogos", 1, 20, 3, key="qtd_jogos_estrutura")
+            with col_g2:
+                top_candidatos_estrutura = st.slider("Melhores candidatos por categoria", 3, 10, 5, key="top_candidatos_estrutura")
+
+            if st.button("🧩 GERAR JOGOS (ESTRUTURA + SELEÇÃO)", use_container_width=True, type="primary", key="gerar_estrutura_btn"):
+                with st.spinner("Cruzando candidatos e aplicando filtros..."):
+                    jogos_estrutura = motor.gerar_jogos(
+                        qtd_jogos=qtd_jogos_estrutura,
+                        top_candidatos=top_candidatos_estrutura
+                    )
+                    st.session_state.jogos_estrutura = jogos_estrutura
+                    if jogos_estrutura:
+                        st.success(f"✅ {len(jogos_estrutura)} jogo(s) gerado(s)!")
+                    else:
+                        st.warning("⚠️ Não foi possível gerar jogos com esses parâmetros — tente aumentar 'Melhores candidatos por categoria'.")
+
+            if st.session_state.jogos_estrutura:
+                jogos_estrutura = st.session_state.jogos_estrutura
+                st.markdown(f"##### 📋 Jogos gerados ({len(jogos_estrutura)})")
+                for i, jogo in enumerate(jogos_estrutura):
+                    pares = contar_pares_mega(jogo)
+                    soma = sum(jogo)
+                    categorias_jogo = [motor.componentes_score.get(n, {}).get('categoria', '-') for n in jogo]
+                    resumo_cat = Counter(categorias_jogo)
+                    resumo_txt = ", ".join(f"{v}× {k}" for k, v in resumo_cat.items())
+                    st.markdown(f"""
+                    <div class='card' style='border-left: 5px solid #9b59b6;'>
+                        🧩 <strong>Jogo {i+1}</strong><br>
+                        {formatar_jogo_html_mega(jogo)}<br>
+                        <small style='color:#aaa;'>⚖️ {pares}p/{6-pares}i | ➕ {soma} | 🧬 {resumo_txt}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                col_e1, col_e2, col_e3 = st.columns(3)
+                with col_e1:
+                    if st.button("💾 Salvar Jogos", key="salvar_estrutura_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_mega_elite(jogos_estrutura, {
+                            'metodo': 'estrutura_selecao_camada2',
+                            'perfil_esperado': motor.perfil_esperado,
+                            'qtd': len(jogos_estrutura),
+                            'versao': 'V10'
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogos salvos! ID: {jogo_id}")
+                with col_e2:
+                    df_export_estrutura = pd.DataFrame({
+                        'Jogo': range(1, len(jogos_estrutura) + 1),
+                        'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_estrutura],
+                        'Pares': [contar_pares_mega(j) for j in jogos_estrutura],
+                        'Soma': [sum(j) for j in jogos_estrutura]
+                    })
+                    st.download_button(
+                        label="📥 Exportar CSV",
+                        data=df_export_estrutura.to_csv(index=False),
+                        file_name=f"mega_estrutura_selecao_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_estrutura_csv"
+                    )
+                with col_e3:
+                    txt_estrutura = "MEGA-SENA - ESTRUTURA + SELEÇÃO (CAMADA 1+2)\n"
+                    txt_estrutura += "=" * 50 + "\n"
+                    txt_estrutura += f"Perfil esperado: {formatar_perfil_mega(motor.perfil_esperado)}\n\n"
+                    for i, jogo in enumerate(jogos_estrutura):
+                        txt_estrutura += f"Jogo {i+1:2d}: {', '.join(f'{d:02d}' for d in jogo)}\n"
+                    st.download_button(
+                        label="📝 Exportar TXT",
+                        data=txt_estrutura,
+                        file_name=f"mega_estrutura_selecao_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                        key="download_estrutura_txt"
+                    )
+
+            st.markdown("---")
+
+            # ---------- RETROTESTE DO SELETOR ----------
+            st.markdown("#### 4️⃣ Retroteste do Seletor (Etapa 8)")
+            st.caption("Compara o Score de Seleção contra o método anterior (top-6 do motor de pontuação simples) nos últimos concursos, ponto-no-tempo.")
+
+            num_testes_estrutura = st.slider("Quantidade de concursos para retrotestar", 5, 100, 30, key="num_testes_estrutura")
+
+            if st.button("🔬 RETROTESTAR SELETOR", use_container_width=True, key="retroteste_estrutura_btn"):
+                resultado_rt = motor.retrotestar(
+                    num_testes=num_testes_estrutura,
+                    top_candidatos=top_candidatos_estrutura,
+                    jogos_por_teste=3
+                )
+                st.session_state.retroteste_estrutura = resultado_rt
+
+            if st.session_state.retroteste_estrutura:
+                rt = st.session_state.retroteste_estrutura
+                col_r1, col_r2 = st.columns(2)
+                with col_r1:
+                    st.markdown("##### 🧩 Seletor (Estrutura + Seleção)")
+                    st.metric("Média de acertos", f"{rt['seletor']['media']:.2f}")
+                    st.metric("Melhor resultado", rt['seletor']['max'])
+                    st.caption(f"{rt['total_simulacoes_seletor']} jogo(s) simulado(s)")
+                with col_r2:
+                    st.markdown("##### 📌 Método anterior (top-6 simples)")
+                    st.metric("Média de acertos", f"{rt['baseline_top6']['media']:.2f}")
+                    st.metric("Melhor resultado", rt['baseline_top6']['max'])
+                    st.caption(f"{rt['total_simulacoes_baseline']} jogo(s) simulado(s)")
+
+                if rt['seletor']['media'] > rt['baseline_top6']['media']:
+                    st.success("✅ O Seletor (Camada 1+2) superou o método anterior neste retroteste.")
+                elif rt['seletor']['media'] < rt['baseline_top6']['media']:
+                    st.warning("⚠️ O Seletor ainda não superou o método anterior neste retroteste — ajuste os pesos ou a quantidade de candidatos.")
+                else:
+                    st.info("ℹ️ Empate técnico entre os dois métodos neste retroteste.")
+
+                dist_seletor = rt['seletor']['distribuicao']
+                dist_baseline = rt['baseline_top6']['distribuicao']
+                if dist_seletor or dist_baseline:
+                    todas_faixas = sorted(set(list(dist_seletor.keys()) + list(dist_baseline.keys())))
+                    fig_rt = go.Figure()
+                    fig_rt.add_trace(go.Bar(x=todas_faixas, y=[dist_seletor.get(f, 0) for f in todas_faixas], name='Seletor'))
+                    fig_rt.add_trace(go.Bar(x=todas_faixas, y=[dist_baseline.get(f, 0) for f in todas_faixas], name='Top-6 simples'))
+                    fig_rt.update_layout(title='Distribuição de acertos por jogo', xaxis_title='Acertos', yaxis_title='Quantidade de jogos', barmode='group')
+                    st.plotly_chart(fig_rt, use_container_width=True)
 
 if __name__ == "__main__":
     main()
