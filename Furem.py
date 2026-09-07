@@ -1765,24 +1765,35 @@ class MotorEstruturaSelecaoMegaV10:
         self.indice_repeticao = indice
         return indice
 
-    def _calcular_compatibilidade_estrutura(self):
-        """Frequência condicional de cada dezena nos concursos históricos cujo
-        perfil estrutural retrospectivo bateu com o perfil esperado atual."""
+    def _concursos_compativeis_com_perfil(self, perfil_alvo):
+        """Retorna, para cada concurso retrospectivo cujo perfil (calculado
+        ponto-no-tempo) bate com `perfil_alvo`, uma tupla (dezenas_sorteadas,
+        historico_anterior_aquele_ponto). Usado tanto pela compatibilidade
+        estrutural (Camada 2) quanto pela seleção condicional (Matriz 4.0)."""
         historico = self.historico
         n = len(historico)
         limite = min(self.JANELA_PERFIL, max(0, n - self.JANELA_CURTA - 1))
-        alvo = tuple(sorted(self.perfil_esperado.items()))
+        alvo = tuple(sorted(perfil_alvo.items()))
 
-        contagem = Counter()
-        concursos_compat = 0
+        compativeis = []
         for i in range(limite):
             historico_antes = historico[i + 1:]
             if len(historico_antes) < self.JANELA_CURTA:
                 continue
             perfil = self._perfil_de_concurso(historico[i], historico_antes)
             if tuple(sorted(perfil.items())) == alvo:
-                concursos_compat += 1
-                contagem.update(historico[i])
+                compativeis.append((historico[i], historico_antes))
+        return compativeis
+
+    def _calcular_compatibilidade_estrutura(self):
+        """Frequência condicional de cada dezena nos concursos históricos cujo
+        perfil estrutural retrospectivo bateu com o perfil esperado atual."""
+        compativeis = self._concursos_compativeis_com_perfil(self.perfil_esperado)
+
+        contagem = Counter()
+        for dezenas, _ in compativeis:
+            contagem.update(dezenas)
+        concursos_compat = len(compativeis)
 
         compat = {}
         if concursos_compat > 0:
@@ -1971,6 +1982,245 @@ class MotorEstruturaSelecaoMegaV10:
             'total_simulacoes_baseline': len(resultados_baseline)
         }
 
+    # ---------------- MATRIZ 4.0: SELEÇÃO CONDICIONAL POR PERFIL ----------------
+    # Em vez de perguntar "qual é o melhor número?", pergunta "quando o
+    # sorteio apresenta este perfil, quais números historicamente aparecem
+    # mais?" — frequência, atraso e freq-últimos-5 são medidos SÓ dentro dos
+    # concursos retrospectivos cujo perfil bateu com o perfil esperado, e o
+    # pareamento final usa pares/trincas que já coocorreram nesses mesmos
+    # concursos compatíveis.
+
+    def calcular_selecao_condicional(self, perfil_alvo=None):
+        """Calcula, para as 60 dezenas, as métricas condicionais (freq,
+        atraso e freq-últimos-5 medidos apenas nos concursos compatíveis com
+        o perfil) e a tabela de pares que coocorreram nesses concursos."""
+        perfil_alvo = perfil_alvo or self.perfil_esperado
+        compativeis = self._concursos_compativeis_com_perfil(perfil_alvo)
+
+        freq_cond = Counter()
+        atraso_soma = defaultdict(float)
+        freq5_soma = defaultdict(float)
+        qtd_pt = defaultdict(int)
+        pares_cond = Counter()
+
+        for dezenas, historico_antes in compativeis:
+            freq_cond.update(dezenas)
+            dezenas_ordenadas = sorted(dezenas)
+            for a in range(len(dezenas_ordenadas)):
+                for b in range(a + 1, len(dezenas_ordenadas)):
+                    pares_cond[(dezenas_ordenadas[a], dezenas_ordenadas[b])] += 1
+            for num in range(1, 61):
+                info_pt = self._classificar_ponto(num, historico_antes)
+                atraso_soma[num] += info_pt['atraso']
+                freq5_soma[num] += info_pt['freq5']
+                qtd_pt[num] += 1
+
+        total_compat = len(compativeis)
+        max_freq_cond = max(freq_cond.values()) if freq_cond else 1
+        atrasos_medios = {num: (atraso_soma[num] / qtd_pt[num]) if qtd_pt[num] else 0 for num in range(1, 61)}
+        max_atraso_medio = max(atrasos_medios.values()) if atrasos_medios else 1
+
+        metricas = {}
+        for num in range(1, 61):
+            freq_c = (freq_cond.get(num, 0) / max_freq_cond) if max_freq_cond else 0
+            atraso_c = (atrasos_medios[num] / max_atraso_medio) if max_atraso_medio else 0
+            freq5_c = ((freq5_soma[num] / qtd_pt[num]) / self.JANELA_MEDIA) if qtd_pt.get(num) else 0
+            score_condicional = 0.45 * freq_c + 0.30 * atraso_c + 0.25 * freq5_c
+            metricas[num] = {
+                'freq_condicional': round(freq_c * 100, 1),
+                'atraso_condicional': round(atraso_c * 100, 1),
+                'freq5_condicional': round(freq5_c * 100, 1),
+                'score_condicional': round(score_condicional * 100, 2)
+            }
+
+        self.metricas_condicionais = metricas
+        self.pares_condicionais = pares_cond
+        self.total_concursos_compativeis_condicional = total_compat
+        return metricas
+
+    def gerar_jogos_condicional(self, qtd_jogos=3, perfil_customizado=None,
+                                 candidatos_por_categoria=8, intermediario_por_categoria=4,
+                                 max_tentativas=5000):
+        """
+        Pipeline da Matriz 4.0:
+        candidatos amplos por categoria (Camada 2)
+          -> narrow pelas métricas condicionais (freq/atraso/freq5 medidos só
+             nos concursos compatíveis com o perfil)
+          -> pool intermediário por categoria
+          -> montagem dos jogos priorizando pares que mais coocorreram nos
+             concursos compatíveis (em vez de sorteio aleatório dentro do grupo)
+        """
+        perfil = perfil_customizado or self.perfil_esperado
+        self.calcular_selecao_condicional(perfil_alvo=perfil)
+        metricas = self.metricas_condicionais
+        pares_cond = self.pares_condicionais
+
+        ranking_cat = self.get_ranking_por_categoria(top_n=candidatos_por_categoria)
+
+        pool_intermediario = {}
+        for cat, qtd_necessaria in perfil.items():
+            candidatos_amplos = [n for n, _ in ranking_cat.get(cat, [])]
+            if qtd_necessaria > 0 and len(candidatos_amplos) < qtd_necessaria:
+                todos_cat = [n for n, info in self.componentes_score.items() if info['categoria'] == cat]
+                todos_cat.sort(key=lambda n: self.score_selecao[n], reverse=True)
+                candidatos_amplos = todos_cat
+
+            candidatos_amplos = sorted(
+                candidatos_amplos,
+                key=lambda n: metricas.get(n, {}).get('score_condicional', 0),
+                reverse=True
+            )
+            pool_intermediario[cat] = candidatos_amplos[:max(intermediario_por_categoria, qtd_necessaria)]
+
+        def _score_par(a, b):
+            return pares_cond.get((min(a, b), max(a, b)), 0)
+
+        jogos = []
+        jogos_set = set()
+        rng = random.Random()
+        tentativas = 0
+
+        while len(jogos) < qtd_jogos and tentativas < max_tentativas:
+            tentativas += 1
+            jogo = []
+            valido = True
+            for cat, qtd_necessaria in perfil.items():
+                if qtd_necessaria <= 0:
+                    continue
+                candidatos_disponiveis = [n for n in pool_intermediario.get(cat, []) if n not in jogo]
+                if len(candidatos_disponiveis) < qtd_necessaria:
+                    valido = False
+                    break
+                if not jogo:
+                    escolhidos = rng.sample(candidatos_disponiveis, qtd_necessaria)
+                else:
+                    candidatos_disponiveis.sort(
+                        key=lambda n: sum(_score_par(n, j) for j in jogo) + rng.random() * 0.01,
+                        reverse=True
+                    )
+                    topo = candidatos_disponiveis[:max(qtd_necessaria * 2, qtd_necessaria)]
+                    escolhidos = (
+                        rng.sample(topo, qtd_necessaria) if len(topo) >= qtd_necessaria
+                        else candidatos_disponiveis[:qtd_necessaria]
+                    )
+                jogo.extend(escolhidos)
+
+            if not valido or len(set(jogo)) != 6:
+                continue
+
+            jogo_final = sorted(set(jogo))
+            chave = tuple(jogo_final)
+            if chave in jogos_set or not self._filtro_leve(jogo_final):
+                continue
+
+            jogos_set.add(chave)
+            jogos.append(jogo_final)
+
+        return jogos
+
+    # ---------------- RETROTESTE COMPARATIVO (3 METODOLOGIAS) ----------------
+
+    def retrotestar_comparativo(self, concursos_alvo, top_candidatos=5, jogos_por_teste=3,
+                                 candidatos_condicional=8, intermediario_condicional=4):
+        """
+        Aplica a MESMA regra, sem adaptação posterior, a uma lista específica
+        de concursos (cada um só enxerga o histórico estritamente anterior a
+        ele), comparando três metodologias lado a lado:
+        - 'baseline': método antigo (top-6 do motor de pontuação simples)
+        - 'atual': Estrutura + Seleção (Camada 1+2)
+        - 'condicional': Matriz 4.0 - seleção condicional por perfil
+        """
+        historico_completo = self.banco.concursos
+        indice_por_numero = {c['numero']: i for i, c in enumerate(historico_completo)}
+
+        linhas = []
+        acumulado = {
+            'baseline': {'jogos': [], 'melhores': []},
+            'atual': {'jogos': [], 'melhores': []},
+            'condicional': {'jogos': [], 'melhores': []}
+        }
+
+        concursos_ordenados = sorted(concursos_alvo, key=lambda c: c['numero'])
+        pulados = 0
+        progress_bar = st.progress(0, text="Rodando retroteste comparativo (3 metodologias)...")
+
+        for idx_teste, concurso in enumerate(concursos_ordenados):
+            numero = concurso['numero']
+            i = indice_por_numero.get(numero)
+            progresso = (idx_teste + 1) / max(len(concursos_ordenados), 1)
+
+            if i is None:
+                pulados += 1
+                progress_bar.progress(progresso)
+                continue
+
+            concursos_anteriores = historico_completo[i + 1:]
+            if len(concursos_anteriores) < max(self.JANELA_PERFIL, 40):
+                pulados += 1
+                progress_bar.progress(progresso)
+                continue
+
+            dezenas_reais = set(concurso['dezenas'])
+            banco_pt = _BancoTemporalMegaV10(concursos_anteriores)
+            estatisticas_pt = EstatisticasMegaAvancadas(banco_pt)
+            motor_pt = MotorEstruturaSelecaoMegaV10(banco_pt, estatisticas_pt)
+            pontuacao_pt = MotorPontuacaoAdaptativoMega(estatisticas_pt)
+
+            jogo_baseline = [n for n, _ in pontuacao_pt.get_ranking(6)]
+            acertos_baseline = [len(set(jogo_baseline) & dezenas_reais)]
+
+            jogos_atual = motor_pt.gerar_jogos(
+                qtd_jogos=jogos_por_teste, top_candidatos=top_candidatos, max_tentativas=2000
+            )
+            acertos_atual = [len(set(j) & dezenas_reais) for j in jogos_atual] or [0]
+
+            jogos_condicional = motor_pt.gerar_jogos_condicional(
+                qtd_jogos=jogos_por_teste,
+                candidatos_por_categoria=candidatos_condicional,
+                intermediario_por_categoria=intermediario_condicional,
+                max_tentativas=2000
+            )
+            acertos_condicional = [len(set(j) & dezenas_reais) for j in jogos_condicional] or [0]
+
+            acumulado['baseline']['jogos'].extend(acertos_baseline)
+            acumulado['baseline']['melhores'].append(max(acertos_baseline))
+            acumulado['atual']['jogos'].extend(acertos_atual)
+            acumulado['atual']['melhores'].append(max(acertos_atual))
+            acumulado['condicional']['jogos'].extend(acertos_condicional)
+            acumulado['condicional']['melhores'].append(max(acertos_condicional))
+
+            linhas.append({
+                'Concurso': numero,
+                'Antigo (top-6)': acertos_baseline[0],
+                'Atual - jogos': ', '.join(str(a) for a in acertos_atual),
+                'Atual - melhor': max(acertos_atual),
+                'Condicional - jogos': ', '.join(str(a) for a in acertos_condicional),
+                'Condicional - melhor': max(acertos_condicional)
+            })
+
+            progress_bar.progress(progresso)
+
+        progress_bar.empty()
+        if pulados:
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) (não encontrado no histórico carregado ou sem histórico anterior suficiente).")
+
+        def _resumo(lista, melhores):
+            if not lista:
+                return {'total_jogos': 0, 'soma_acertos': 0, 'media': 0.0, 'distribuicao_melhores': {}}
+            return {
+                'total_jogos': len(lista),
+                'soma_acertos': int(sum(lista)),
+                'media': float(np.mean(lista)),
+                'distribuicao_melhores': dict(Counter(melhores))
+            }
+
+        return {
+            'linhas': linhas,
+            'baseline': _resumo(acumulado['baseline']['jogos'], acumulado['baseline']['melhores']),
+            'atual': _resumo(acumulado['atual']['jogos'], acumulado['atual']['melhores']),
+            'condicional': _resumo(acumulado['condicional']['jogos'], acumulado['condicional']['melhores'])
+        }
+
 
 def formatar_perfil_mega(perfil):
     """Formata um dicionário de perfil estrutural em texto legível (ex.: '2 zerados + 1 atrasado + 2 médios + 1 quente')."""
@@ -2077,6 +2327,10 @@ def main():
         st.session_state.jogos_estrutura = []
     if "retroteste_estrutura" not in st.session_state:
         st.session_state.retroteste_estrutura = None
+    if "jogos_condicional" not in st.session_state:
+        st.session_state.jogos_condicional = []
+    if "retroteste_comparativo" not in st.session_state:
+        st.session_state.retroteste_comparativo = None
 
     # Barra Lateral
     with st.sidebar:
@@ -3351,6 +3605,242 @@ def main():
                     fig_rt.add_trace(go.Bar(x=todas_faixas, y=[dist_baseline.get(f, 0) for f in todas_faixas], name='Top-6 simples'))
                     fig_rt.update_layout(title='Distribuição de acertos por jogo', xaxis_title='Acertos', yaxis_title='Quantidade de jogos', barmode='group')
                     st.plotly_chart(fig_rt, use_container_width=True)
+
+            st.markdown("---")
+
+            # ---------- MATRIZ 4.0: SELEÇÃO CONDICIONAL POR PERFIL ----------
+            st.markdown("#### 5️⃣ Seleção Condicional por Perfil (Matriz 4.0)")
+            st.caption(
+                "Em vez de perguntar 'qual é o melhor número?', pergunta 'quando o sorteio "
+                "apresenta este perfil, quais números historicamente aparecem mais?'. "
+                "Frequência, atraso e frequência-últimos-5 são medidos só nos concursos "
+                "compatíveis com o perfil, e os jogos são montados priorizando pares que já "
+                "coocorreram nesses mesmos concursos."
+            )
+
+            col_c1, col_c2, col_c3 = st.columns(3)
+            with col_c1:
+                qtd_jogos_condicional = st.slider("Quantidade de jogos", 1, 20, 3, key="qtd_jogos_condicional")
+            with col_c2:
+                candidatos_condicional = st.slider("Candidatos amplos por categoria", 5, 15, 8, key="candidatos_condicional")
+            with col_c3:
+                intermediario_condicional = st.slider("Pool intermediário por categoria", 2, 8, 4, key="intermediario_condicional")
+
+            if st.button("🧬 GERAR JOGOS (SELEÇÃO CONDICIONAL)", use_container_width=True, type="primary", key="gerar_condicional_btn"):
+                with st.spinner("Filtrando candidatos pelo comportamento condicional ao perfil..."):
+                    jogos_condicional = motor.gerar_jogos_condicional(
+                        qtd_jogos=qtd_jogos_condicional,
+                        candidatos_por_categoria=candidatos_condicional,
+                        intermediario_por_categoria=intermediario_condicional
+                    )
+                    st.session_state.jogos_condicional = jogos_condicional
+                    if jogos_condicional:
+                        st.success(f"✅ {len(jogos_condicional)} jogo(s) gerado(s)!")
+                    else:
+                        st.warning("⚠️ Não foi possível gerar jogos — tente aumentar o pool intermediário por categoria.")
+
+            if hasattr(motor, 'total_concursos_compativeis_condicional'):
+                st.caption(f"📚 Métricas condicionais calculadas sobre {motor.total_concursos_compativeis_condicional} concurso(s) compatível(is) com o perfil esperado.")
+
+            if hasattr(motor, 'metricas_condicionais') and motor.metricas_condicionais:
+                with st.expander("📋 Ver métricas condicionais por dezena"):
+                    linhas_cond = []
+                    for num in range(1, 61):
+                        m = motor.metricas_condicionais.get(num, {})
+                        categoria = motor.componentes_score.get(num, {}).get('categoria', '-')
+                        linhas_cond.append({
+                            'Dezena': f"{num:02d}",
+                            'Categoria': categoria,
+                            'Score Condicional': m.get('score_condicional', 0),
+                            'Freq. Condicional': m.get('freq_condicional', 0),
+                            'Atraso Condicional': m.get('atraso_condicional', 0),
+                            'Freq5 Condicional': m.get('freq5_condicional', 0)
+                        })
+                    df_cond = pd.DataFrame(linhas_cond).sort_values('Score Condicional', ascending=False)
+                    st.dataframe(df_cond, use_container_width=True, hide_index=True, height=300)
+
+            if st.session_state.jogos_condicional:
+                jogos_condicional = st.session_state.jogos_condicional
+                st.markdown(f"##### 📋 Jogos gerados — seleção condicional ({len(jogos_condicional)})")
+                for i, jogo in enumerate(jogos_condicional):
+                    pares = contar_pares_mega(jogo)
+                    soma = sum(jogo)
+                    categorias_jogo = [motor.componentes_score.get(n, {}).get('categoria', '-') for n in jogo]
+                    resumo_cat = Counter(categorias_jogo)
+                    resumo_txt = ", ".join(f"{v}× {k}" for k, v in resumo_cat.items())
+                    st.markdown(f"""
+                    <div class='card' style='border-left: 5px solid #ff6b6b;'>
+                        🧬 <strong>Jogo {i+1}</strong><br>
+                        {formatar_jogo_html_mega(jogo)}<br>
+                        <small style='color:#aaa;'>⚖️ {pares}p/{6-pares}i | ➕ {soma} | 🧬 {resumo_txt}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                col_cc1, col_cc2, col_cc3 = st.columns(3)
+                with col_cc1:
+                    if st.button("💾 Salvar Jogos", key="salvar_condicional_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_mega_elite(jogos_condicional, {
+                            'metodo': 'selecao_condicional_matriz4',
+                            'perfil_esperado': motor.perfil_esperado,
+                            'qtd': len(jogos_condicional),
+                            'versao': 'V10'
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogos salvos! ID: {jogo_id}")
+                with col_cc2:
+                    df_export_cond = pd.DataFrame({
+                        'Jogo': range(1, len(jogos_condicional) + 1),
+                        'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_condicional],
+                        'Pares': [contar_pares_mega(j) for j in jogos_condicional],
+                        'Soma': [sum(j) for j in jogos_condicional]
+                    })
+                    st.download_button(
+                        label="📥 Exportar CSV",
+                        data=df_export_cond.to_csv(index=False),
+                        file_name=f"mega_selecao_condicional_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_condicional_csv"
+                    )
+                with col_cc3:
+                    txt_cond = "MEGA-SENA - SELEÇÃO CONDICIONAL POR PERFIL (MATRIZ 4.0)\n"
+                    txt_cond += "=" * 50 + "\n"
+                    txt_cond += f"Perfil esperado: {formatar_perfil_mega(motor.perfil_esperado)}\n\n"
+                    for i, jogo in enumerate(jogos_condicional):
+                        txt_cond += f"Jogo {i+1:2d}: {', '.join(f'{d:02d}' for d in jogo)}\n"
+                    st.download_button(
+                        label="📝 Exportar TXT",
+                        data=txt_cond,
+                        file_name=f"mega_selecao_condicional_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                        key="download_condicional_txt"
+                    )
+
+            st.markdown("---")
+
+            # ---------- RETROTESTE COMPARATIVO (3 METODOLOGIAS) ----------
+            st.markdown("#### 6️⃣ Retroteste Sequencial Comparativo (3 metodologias)")
+            st.caption(
+                "Aplica a MESMA regra a uma sequência de concursos, sem adaptar nada depois de "
+                "ver o resultado — exatamente como no seu retroteste 3045→3054. Compara o método "
+                "antigo (top-6 simples), o atual (Estrutura + Seleção) e o condicional (Matriz 4.0)."
+            )
+
+            modo_periodo = st.radio(
+                "Período do retroteste",
+                ["Últimos N concursos", "Intervalo por número de concurso"],
+                horizontal=True,
+                key="modo_periodo_comparativo"
+            )
+
+            concursos_alvo_comparativo = []
+            if modo_periodo == "Últimos N concursos":
+                total_disp = len(st.session_state.banco_dados.concursos)
+                n_comparativo = st.slider("Quantidade de concursos mais recentes", 5, min(100, total_disp), min(10, total_disp), key="n_comparativo")
+                concursos_alvo_comparativo = st.session_state.banco_dados.concursos[:n_comparativo]
+            else:
+                numeros_disponiveis = [c['numero'] for c in st.session_state.banco_dados.concursos]
+                if numeros_disponiveis:
+                    col_i1, col_i2 = st.columns(2)
+                    with col_i1:
+                        concurso_inicio = st.number_input(
+                            "Concurso inicial", min_value=min(numeros_disponiveis),
+                            max_value=max(numeros_disponiveis), value=min(numeros_disponiveis), key="concurso_inicio_comparativo"
+                        )
+                    with col_i2:
+                        concurso_fim = st.number_input(
+                            "Concurso final", min_value=min(numeros_disponiveis),
+                            max_value=max(numeros_disponiveis), value=max(numeros_disponiveis), key="concurso_fim_comparativo"
+                        )
+                    concursos_alvo_comparativo = [
+                        c for c in st.session_state.banco_dados.concursos
+                        if concurso_inicio <= c['numero'] <= concurso_fim
+                    ]
+                    st.caption(f"📌 {len(concursos_alvo_comparativo)} concurso(s) no intervalo [{int(concurso_inicio)}, {int(concurso_fim)}].")
+
+            if st.button("🔬 RODAR RETROTESTE COMPARATIVO", use_container_width=True, key="retroteste_comparativo_btn"):
+                if not concursos_alvo_comparativo:
+                    st.warning("⚠️ Nenhum concurso no período selecionado.")
+                else:
+                    resultado_comp = motor.retrotestar_comparativo(
+                        concursos_alvo=concursos_alvo_comparativo,
+                        top_candidatos=top_candidatos_estrutura,
+                        jogos_por_teste=3,
+                        candidatos_condicional=candidatos_condicional,
+                        intermediario_condicional=intermediario_condicional
+                    )
+                    st.session_state.retroteste_comparativo = resultado_comp
+
+            if st.session_state.retroteste_comparativo:
+                rc = st.session_state.retroteste_comparativo
+
+                if rc['linhas']:
+                    st.markdown("##### 📋 Resultado por concurso")
+                    st.dataframe(pd.DataFrame(rc['linhas']), use_container_width=True, hide_index=True)
+
+                st.markdown("##### 📊 Resumo agregado")
+                col_m1, col_m2, col_m3 = st.columns(3)
+                with col_m1:
+                    st.markdown("**📌 Antigo (top-6)**")
+                    st.metric("Média de acertos", f"{rc['baseline']['media']:.2f}")
+                    st.metric("Soma de acertos", rc['baseline']['soma_acertos'])
+                    st.caption(f"{rc['baseline']['total_jogos']} jogo(s)")
+                with col_m2:
+                    st.markdown("**🧩 Atual (Camada 1+2)**")
+                    st.metric("Média de acertos", f"{rc['atual']['media']:.2f}")
+                    st.metric("Soma de acertos", rc['atual']['soma_acertos'])
+                    st.caption(f"{rc['atual']['total_jogos']} jogo(s)")
+                with col_m3:
+                    st.markdown("**🧬 Condicional (Matriz 4.0)**")
+                    st.metric("Média de acertos", f"{rc['condicional']['media']:.2f}")
+                    st.metric("Soma de acertos", rc['condicional']['soma_acertos'])
+                    st.caption(f"{rc['condicional']['total_jogos']} jogo(s)")
+
+                medias = {
+                    'Antigo (top-6)': rc['baseline']['media'],
+                    'Atual (Camada 1+2)': rc['atual']['media'],
+                    'Condicional (Matriz 4.0)': rc['condicional']['media']
+                }
+                melhor_metodo = max(medias, key=medias.get)
+                st.markdown(f"""
+                <div class='highlight'>
+                    🏆 <strong>Melhor média neste retroteste:</strong> {melhor_metodo} ({medias[melhor_metodo]:.2f} acertos/jogo)
+                </div>
+                """, unsafe_allow_html=True)
+                st.caption("⚠️ Um bom resultado isolado em um único concurso não é confiável — o que importa é a mesma regra se sustentar numa sequência de concursos, sem ajuste retroativo.")
+
+                dist_baseline_m = rc['baseline']['distribuicao_melhores']
+                dist_atual_m = rc['atual']['distribuicao_melhores']
+                dist_cond_m = rc['condicional']['distribuicao_melhores']
+                if dist_baseline_m or dist_atual_m or dist_cond_m:
+                    todas_faixas_m = sorted(set(list(dist_baseline_m.keys()) + list(dist_atual_m.keys()) + list(dist_cond_m.keys())))
+                    fig_comp = go.Figure()
+                    fig_comp.add_trace(go.Bar(x=todas_faixas_m, y=[dist_baseline_m.get(f, 0) for f in todas_faixas_m], name='Antigo (top-6)'))
+                    fig_comp.add_trace(go.Bar(x=todas_faixas_m, y=[dist_atual_m.get(f, 0) for f in todas_faixas_m], name='Atual (Camada 1+2)'))
+                    fig_comp.add_trace(go.Bar(x=todas_faixas_m, y=[dist_cond_m.get(f, 0) for f in todas_faixas_m], name='Condicional (Matriz 4.0)'))
+                    fig_comp.update_layout(
+                        title='Melhor resultado por concurso, por metodologia',
+                        xaxis_title='Acertos (melhor jogo do concurso)',
+                        yaxis_title='Quantidade de concursos',
+                        barmode='group'
+                    )
+                    st.plotly_chart(fig_comp, use_container_width=True)
+
+                col_dl1, col_dl2 = st.columns(2)
+                with col_dl1:
+                    st.download_button(
+                        label="📥 Exportar Retroteste Comparativo (CSV)",
+                        data=pd.DataFrame(rc['linhas']).to_csv(index=False),
+                        file_name=f"retroteste_comparativo_mega_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_comparativo_csv"
+                    )
+                with col_dl2:
+                    if st.button("🗑️ Limpar Retroteste Comparativo", key="limpar_comparativo_btn", use_container_width=True):
+                        st.session_state.retroteste_comparativo = None
+                        st.rerun()
 
 if __name__ == "__main__":
     main()
