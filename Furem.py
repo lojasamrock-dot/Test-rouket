@@ -2221,6 +2221,254 @@ class MotorEstruturaSelecaoMegaV10:
             'condicional': _resumo(acumulado['condicional']['jogos'], acumulado['condicional']['melhores'])
         }
 
+    # ---------------- CAMADA DE FINAIS (núcleos por par) ----------------
+    # Camada adicional, cruzada com o motor de continuidade (score estrutural
+    # + condicional + pares/trincas): em vez de espalhar todos os finais,
+    # cada jogo recebe um par de finais prioritários como núcleo — sem forçar
+    # que todas as dezenas do jogo terminem nesses dígitos. Finais não alteram
+    # a probabilidade matemática individual de nenhuma dezena; servem só como
+    # critério de seleção a mais, testado via retroteste.
+
+    def _final_de(self, numero):
+        return numero % 10
+
+    def analisar_finais(self, janela=10):
+        """Frequência de cada final (0-9) nos últimos `janela` concursos —
+        análise descritiva usada para identificar os finais mais fortes."""
+        janela_concursos = self.historico[:janela]
+        contagem = Counter()
+        for dezenas in janela_concursos:
+            for num in dezenas:
+                contagem[self._final_de(num)] += 1
+        total = sum(contagem.values()) or 1
+
+        resultado = []
+        for final in range(10):
+            qtd = contagem.get(final, 0)
+            resultado.append({
+                'final': final,
+                'ocorrencias': qtd,
+                'percentual': round(qtd / total * 100, 1),
+                'dezenas_possiveis': [n for n in range(1, 61) if n % 10 == final]
+            })
+        resultado.sort(key=lambda x: x['ocorrencias'], reverse=True)
+        return resultado
+
+    def sugerir_pares_finais(self, janela=10, top_n=4):
+        """Sugere 3 pares de finais prioritários a partir dos `top_n` finais
+        mais frequentes na janela: (1º+3º), (2º+4º), (1º+2º) — o mesmo padrão
+        usado manualmente no estudo (líder isolado + segundo mais frequente)."""
+        ranking = self.analisar_finais(janela=janela)
+        top = [item['final'] for item in ranking[:max(top_n, 4)]]
+        while len(top) < 4:
+            top.append(top[-1] if top else 0)
+        f1, f2, f3, f4 = top[0], top[1], top[2], top[3]
+        return [(f1, f3), (f2, f4), (f1, f2)]
+
+    def gerar_jogo_com_par_finais(self, final_a, final_b, perfil_customizado=None, usar_condicional=True,
+                                   candidatos_por_categoria=8, intermediario_por_categoria=4,
+                                   max_concentracao_final=3, max_tentativas=3000):
+        """
+        Gera UM jogo garantindo pelo menos uma dezena terminada em `final_a`
+        e pelo menos uma terminada em `final_b` — os dois finais funcionam
+        como núcleos, cruzados com o motor de continuidade (Camada 1+2 ou
+        Matriz 4.0), sem forçar que todo o jogo tenha esses finais.
+        """
+        perfil = perfil_customizado or self.perfil_esperado
+
+        if usar_condicional:
+            self.calcular_selecao_condicional(perfil_alvo=perfil)
+            metricas = self.metricas_condicionais
+            pares_cond = self.pares_condicionais
+            score_ref = {n: metricas.get(n, {}).get('score_condicional', 0) for n in range(1, 61)}
+            ranking_cat = self.get_ranking_por_categoria(top_n=candidatos_por_categoria)
+            pool_por_categoria = {}
+            for cat, qtd_necessaria in perfil.items():
+                candidatos_amplos = [n for n, _ in ranking_cat.get(cat, [])]
+                if qtd_necessaria > 0 and len(candidatos_amplos) < qtd_necessaria:
+                    todos_cat = [n for n, info in self.componentes_score.items() if info['categoria'] == cat]
+                    todos_cat.sort(key=lambda n: self.score_selecao[n], reverse=True)
+                    candidatos_amplos = todos_cat
+                candidatos_amplos = sorted(candidatos_amplos, key=lambda n: score_ref.get(n, 0), reverse=True)
+                pool_por_categoria[cat] = candidatos_amplos[:max(intermediario_por_categoria, qtd_necessaria)]
+        else:
+            pares_cond = getattr(self, 'pares_condicionais', Counter())
+            score_ref = self.score_selecao
+            ranking_cat = self.get_ranking_por_categoria(top_n=intermediario_por_categoria)
+            pool_por_categoria = {cat: [n for n, _ in nums] for cat, nums in ranking_cat.items()}
+
+        def _score_par(a, b):
+            return pares_cond.get((min(a, b), max(a, b)), 0)
+
+        rng = random.Random()
+        tentativas = 0
+        while tentativas < max_tentativas:
+            tentativas += 1
+            jogo = []
+            valido = True
+            for cat, qtd_necessaria in perfil.items():
+                if qtd_necessaria <= 0:
+                    continue
+                candidatos_disponiveis = [n for n in pool_por_categoria.get(cat, []) if n not in jogo]
+                if len(candidatos_disponiveis) < qtd_necessaria:
+                    valido = False
+                    break
+                if not jogo:
+                    candidatos_disponiveis.sort(key=lambda n: score_ref.get(n, 0) + rng.random() * 5, reverse=True)
+                    topo = candidatos_disponiveis[:max(qtd_necessaria * 2, qtd_necessaria)]
+                    escolhidos = rng.sample(topo, qtd_necessaria) if len(topo) >= qtd_necessaria else candidatos_disponiveis[:qtd_necessaria]
+                else:
+                    candidatos_disponiveis.sort(
+                        key=lambda n: sum(_score_par(n, j) for j in jogo) + score_ref.get(n, 0) * 0.01 + rng.random() * 0.01,
+                        reverse=True
+                    )
+                    topo = candidatos_disponiveis[:max(qtd_necessaria * 2, qtd_necessaria)]
+                    escolhidos = rng.sample(topo, qtd_necessaria) if len(topo) >= qtd_necessaria else candidatos_disponiveis[:qtd_necessaria]
+                jogo.extend(escolhidos)
+
+            if not valido or len(set(jogo)) != 6:
+                continue
+
+            jogo_final = sorted(set(jogo))
+            finais_presentes = {self._final_de(n) for n in jogo_final}
+            if final_a not in finais_presentes or final_b not in finais_presentes:
+                continue
+
+            contagem_finais = Counter(self._final_de(n) for n in jogo_final)
+            if max(contagem_finais.values()) > max_concentracao_final:
+                continue
+
+            if not self._filtro_leve(jogo_final):
+                continue
+
+            return jogo_final
+
+        return None
+
+    def gerar_jogos_com_finais(self, pares_finais, perfil_customizado=None, usar_condicional=True,
+                                candidatos_por_categoria=8, intermediario_por_categoria=4,
+                                max_concentracao_final=3, max_tentativas=3000):
+        """
+        Gera um jogo para cada par de finais em `pares_finais`
+        (ex.: [(8,3), (1,6), (8,1)]), cruzando os finais prioritários com o
+        motor de continuidade. Retorna a lista de jogos e guarda o detalhe
+        (par usado / status) em `self.ultimo_detalhe_finais`.
+        """
+        jogos = []
+        detalhes = []
+        for final_a, final_b in pares_finais:
+            jogo = self.gerar_jogo_com_par_finais(
+                final_a, final_b,
+                perfil_customizado=perfil_customizado,
+                usar_condicional=usar_condicional,
+                candidatos_por_categoria=candidatos_por_categoria,
+                intermediario_por_categoria=intermediario_por_categoria,
+                max_concentracao_final=max_concentracao_final,
+                max_tentativas=max_tentativas
+            )
+            if jogo:
+                jogos.append(jogo)
+                detalhes.append({'par_finais': (final_a, final_b), 'jogo': jogo, 'status': 'ok'})
+            else:
+                detalhes.append({'par_finais': (final_a, final_b), 'jogo': None, 'status': 'falhou'})
+        self.ultimo_detalhe_finais = detalhes
+        return jogos
+
+    def retrotestar_camada_finais(self, concursos_alvo, top_candidatos=5, candidatos_condicional=8,
+                                   intermediario_condicional=4, janela_finais=10):
+        """
+        Testa a hipótese do estudo: será que concentrar em pares de finais
+        prioritários melhora o desempenho, comparado ao mesmo motor
+        (Matriz 4.0) SEM a camada de finais? Para cada concurso da lista,
+        sugere os finais só com dados anteriores àquele concurso, gera os
+        3 jogos com finais e os 3 jogos sem finais, e compara os acertos.
+        """
+        historico_completo = self.banco.concursos
+        indice_por_numero = {c['numero']: i for i, c in enumerate(historico_completo)}
+
+        linhas = []
+        acumulado_com = {'jogos': [], 'melhores': []}
+        acumulado_sem = {'jogos': [], 'melhores': []}
+
+        concursos_ordenados = sorted(concursos_alvo, key=lambda c: c['numero'])
+        pulados = 0
+        progress_bar = st.progress(0, text="Retrotestando a Camada de Finais...")
+
+        for idx_teste, concurso in enumerate(concursos_ordenados):
+            numero = concurso['numero']
+            i = indice_por_numero.get(numero)
+            progresso = (idx_teste + 1) / max(len(concursos_ordenados), 1)
+
+            if i is None:
+                pulados += 1
+                progress_bar.progress(progresso)
+                continue
+
+            concursos_anteriores = historico_completo[i + 1:]
+            if len(concursos_anteriores) < max(self.JANELA_PERFIL, 40):
+                pulados += 1
+                progress_bar.progress(progresso)
+                continue
+
+            dezenas_reais = set(concurso['dezenas'])
+            banco_pt = _BancoTemporalMegaV10(concursos_anteriores)
+            estatisticas_pt = EstatisticasMegaAvancadas(banco_pt)
+            motor_pt = MotorEstruturaSelecaoMegaV10(banco_pt, estatisticas_pt)
+
+            pares_finais_pt = motor_pt.sugerir_pares_finais(janela=janela_finais)
+
+            jogos_com_finais = motor_pt.gerar_jogos_com_finais(
+                pares_finais_pt,
+                candidatos_por_categoria=candidatos_condicional,
+                intermediario_por_categoria=intermediario_condicional,
+                max_tentativas=2000
+            )
+            acertos_com = [len(set(j) & dezenas_reais) for j in jogos_com_finais] or [0]
+
+            jogos_sem_finais = motor_pt.gerar_jogos_condicional(
+                qtd_jogos=len(pares_finais_pt),
+                candidatos_por_categoria=candidatos_condicional,
+                intermediario_por_categoria=intermediario_condicional,
+                max_tentativas=2000
+            )
+            acertos_sem = [len(set(j) & dezenas_reais) for j in jogos_sem_finais] or [0]
+
+            acumulado_com['jogos'].extend(acertos_com)
+            acumulado_com['melhores'].append(max(acertos_com))
+            acumulado_sem['jogos'].extend(acertos_sem)
+            acumulado_sem['melhores'].append(max(acertos_sem))
+
+            linhas.append({
+                'Concurso': numero,
+                'Pares de finais usados': ', '.join(f"{a}+{b}" for a, b in pares_finais_pt),
+                'Com finais - jogos': ', '.join(str(a) for a in acertos_com),
+                'Com finais - melhor': max(acertos_com),
+                'Sem finais - jogos': ', '.join(str(a) for a in acertos_sem),
+                'Sem finais - melhor': max(acertos_sem)
+            })
+
+            progress_bar.progress(progresso)
+
+        progress_bar.empty()
+        if pulados:
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) (não encontrado no histórico carregado ou sem histórico anterior suficiente).")
+
+        def _resumo(lista, melhores):
+            if not lista:
+                return {'total_jogos': 0, 'soma_acertos': 0, 'media': 0.0, 'distribuicao_melhores': {}}
+            return {
+                'total_jogos': len(lista),
+                'soma_acertos': int(sum(lista)),
+                'media': float(np.mean(lista)),
+                'distribuicao_melhores': dict(Counter(melhores))
+            }
+
+        return {
+            'linhas': linhas,
+            'com_finais': _resumo(acumulado_com['jogos'], acumulado_com['melhores']),
+            'sem_finais': _resumo(acumulado_sem['jogos'], acumulado_sem['melhores'])
+        }
+
 
 def formatar_perfil_mega(perfil):
     """Formata um dicionário de perfil estrutural em texto legível (ex.: '2 zerados + 1 atrasado + 2 médios + 1 quente')."""
@@ -2331,6 +2579,10 @@ def main():
         st.session_state.jogos_condicional = []
     if "retroteste_comparativo" not in st.session_state:
         st.session_state.retroteste_comparativo = None
+    if "jogos_finais" not in st.session_state:
+        st.session_state.jogos_finais = []
+    if "retroteste_finais" not in st.session_state:
+        st.session_state.retroteste_finais = None
 
     # Barra Lateral
     with st.sidebar:
@@ -3841,6 +4093,235 @@ def main():
                     if st.button("🗑️ Limpar Retroteste Comparativo", key="limpar_comparativo_btn", use_container_width=True):
                         st.session_state.retroteste_comparativo = None
                         st.rerun()
+
+            st.markdown("---")
+
+            # ---------- CAMADA DE FINAIS (núcleos por par) ----------
+            st.markdown("#### 7️⃣ Camada de Finais — concentração controlada")
+            st.caption(
+                "Cada jogo recebe um par de finais prioritários como núcleo, cruzado com o motor de "
+                "continuidade (score + atraso/recência + pares e trincas). Os finais não aumentam a "
+                "probabilidade matemática individual de nenhuma dezena — são só mais um critério de "
+                "seleção, e o objetivo é testar no retroteste se essa concentração ajuda ou não."
+            )
+
+            janela_finais = st.slider("Janela de análise dos finais (últimos N concursos)", 5, 30, 10, key="janela_finais")
+            ranking_finais = motor.analisar_finais(janela=janela_finais)
+
+            with st.expander("📊 Ver frequência de todos os finais (0-9)"):
+                df_finais = pd.DataFrame([
+                    {'Final': item['final'], 'Ocorrências': item['ocorrencias'], '%': item['percentual']}
+                    for item in ranking_finais
+                ])
+                st.dataframe(df_finais, use_container_width=True, hide_index=True)
+
+            pares_sugeridos = motor.sugerir_pares_finais(janela=janela_finais)
+            st.caption(f"💡 Sugestão automática com base na janela atual: {', '.join(f'{a}+{b}' for a, b in pares_sugeridos)}")
+
+            finais_opcoes = list(range(10))
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1:
+                st.markdown("🥇 **Par 1**")
+                fa1 = st.selectbox("Final A", finais_opcoes, index=pares_sugeridos[0][0], key="fa1")
+                fb1 = st.selectbox("Final B", finais_opcoes, index=pares_sugeridos[0][1], key="fb1")
+            with col_f2:
+                st.markdown("🥈 **Par 2**")
+                fa2 = st.selectbox("Final A", finais_opcoes, index=pares_sugeridos[1][0], key="fa2")
+                fb2 = st.selectbox("Final B", finais_opcoes, index=pares_sugeridos[1][1], key="fb2")
+            with col_f3:
+                st.markdown("🥉 **Par 3**")
+                fa3 = st.selectbox("Final A", finais_opcoes, index=pares_sugeridos[2][0], key="fa3")
+                fb3 = st.selectbox("Final B", finais_opcoes, index=pares_sugeridos[2][1], key="fb3")
+
+            pares_finais_escolhidos = [(fa1, fb1), (fa2, fb2), (fa3, fb3)]
+
+            col_fc1, col_fc2 = st.columns(2)
+            with col_fc1:
+                usar_condicional_finais = st.checkbox("Usar seleção condicional (Matriz 4.0)", value=True, key="usar_condicional_finais")
+            with col_fc2:
+                max_concentracao_final = st.slider("Máx. dezenas com o mesmo final por jogo", 2, 6, 3, key="max_concentracao_final")
+
+            if st.button("🎯 GERAR JOGOS COM FINAIS PRIORITÁRIOS", use_container_width=True, type="primary", key="gerar_finais_btn"):
+                with st.spinner("Cruzando pares de finais com o motor de continuidade..."):
+                    jogos_finais = motor.gerar_jogos_com_finais(
+                        pares_finais_escolhidos,
+                        usar_condicional=usar_condicional_finais,
+                        candidatos_por_categoria=candidatos_condicional,
+                        intermediario_por_categoria=intermediario_condicional,
+                        max_concentracao_final=max_concentracao_final
+                    )
+                    st.session_state.jogos_finais = jogos_finais
+                    if len(jogos_finais) < len(pares_finais_escolhidos):
+                        st.warning(f"⚠️ Só foi possível gerar {len(jogos_finais)} de {len(pares_finais_escolhidos)} jogo(s) — algum par de finais pode ser incompatível com o perfil esperado. Tente aumentar o pool intermediário.")
+                    else:
+                        st.success(f"✅ {len(jogos_finais)} jogo(s) gerado(s) com finais prioritários!")
+
+            if st.session_state.jogos_finais:
+                jogos_finais = st.session_state.jogos_finais
+                medalhas = ['🥇', '🥈', '🥉']
+                detalhes_finais = getattr(motor, 'ultimo_detalhe_finais', [])
+                st.markdown(f"##### 📋 Jogos gerados — camada de finais ({len(jogos_finais)})")
+                for i, jogo in enumerate(jogos_finais):
+                    pares = contar_pares_mega(jogo)
+                    soma = sum(jogo)
+                    par_usado = detalhes_finais[i]['par_finais'] if i < len(detalhes_finais) else pares_finais_escolhidos[i]
+                    medalha = medalhas[i] if i < len(medalhas) else '🎯'
+                    st.markdown(f"""
+                    <div class='card' style='border-left: 5px solid #f1c40f;'>
+                        {medalha} <strong>Jogo {i+1} — Finais {par_usado[0]} + {par_usado[1]}</strong><br>
+                        {formatar_jogo_html_mega(jogo)}<br>
+                        <small style='color:#aaa;'>⚖️ {pares}p/{6-pares}i | ➕ {soma}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                col_ff1, col_ff2, col_ff3 = st.columns(3)
+                with col_ff1:
+                    if st.button("💾 Salvar Jogos", key="salvar_finais_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_mega_elite(jogos_finais, {
+                            'metodo': 'camada_finais_nucleos',
+                            'pares_finais': pares_finais_escolhidos,
+                            'perfil_esperado': motor.perfil_esperado,
+                            'qtd': len(jogos_finais),
+                            'versao': 'V10'
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogos salvos! ID: {jogo_id}")
+                with col_ff2:
+                    df_export_finais = pd.DataFrame({
+                        'Jogo': range(1, len(jogos_finais) + 1),
+                        'Par de Finais': [f"{p[0]}+{p[1]}" for p in pares_finais_escolhidos[:len(jogos_finais)]],
+                        'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_finais],
+                        'Pares': [contar_pares_mega(j) for j in jogos_finais],
+                        'Soma': [sum(j) for j in jogos_finais]
+                    })
+                    st.download_button(
+                        label="📥 Exportar CSV",
+                        data=df_export_finais.to_csv(index=False),
+                        file_name=f"mega_camada_finais_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_finais_csv"
+                    )
+                with col_ff3:
+                    txt_finais = "MEGA-SENA - CAMADA DE FINAIS (NÚCLEOS POR PAR)\n"
+                    txt_finais += "=" * 50 + "\n"
+                    txt_finais += f"Perfil esperado: {formatar_perfil_mega(motor.perfil_esperado)}\n\n"
+                    for i, jogo in enumerate(jogos_finais):
+                        par_usado = detalhes_finais[i]['par_finais'] if i < len(detalhes_finais) else pares_finais_escolhidos[i]
+                        txt_finais += f"Jogo {i+1} (finais {par_usado[0]}+{par_usado[1]}): {', '.join(f'{d:02d}' for d in jogo)}\n"
+                    st.download_button(
+                        label="📝 Exportar TXT",
+                        data=txt_finais,
+                        file_name=f"mega_camada_finais_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                        key="download_finais_txt"
+                    )
+
+            st.markdown("---")
+
+            # ---------- RETROTESTE DA CAMADA DE FINAIS ----------
+            st.markdown("#### 8️⃣ Retroteste: a concentração em finais ajuda?")
+            st.caption(
+                "Para cada concurso testado, os pares de finais são sugeridos automaticamente com base "
+                "só no histórico anterior a ele (sem espiar o resultado). Compara os jogos 'com finais' "
+                "contra os mesmos 3 jogos gerados pela Matriz 4.0 'sem finais'."
+            )
+
+            modo_periodo_finais = st.radio(
+                "Período do retroteste",
+                ["Últimos N concursos", "Intervalo por número de concurso"],
+                horizontal=True,
+                key="modo_periodo_finais"
+            )
+
+            concursos_alvo_finais = []
+            if modo_periodo_finais == "Últimos N concursos":
+                total_disp_f = len(st.session_state.banco_dados.concursos)
+                n_finais = st.slider("Quantidade de concursos mais recentes", 5, min(100, total_disp_f), min(10, total_disp_f), key="n_finais")
+                concursos_alvo_finais = st.session_state.banco_dados.concursos[:n_finais]
+            else:
+                numeros_disponiveis_f = [c['numero'] for c in st.session_state.banco_dados.concursos]
+                if numeros_disponiveis_f:
+                    col_if1, col_if2 = st.columns(2)
+                    with col_if1:
+                        concurso_inicio_f = st.number_input(
+                            "Concurso inicial", min_value=min(numeros_disponiveis_f),
+                            max_value=max(numeros_disponiveis_f), value=min(numeros_disponiveis_f), key="concurso_inicio_finais"
+                        )
+                    with col_if2:
+                        concurso_fim_f = st.number_input(
+                            "Concurso final", min_value=min(numeros_disponiveis_f),
+                            max_value=max(numeros_disponiveis_f), value=max(numeros_disponiveis_f), key="concurso_fim_finais"
+                        )
+                    concursos_alvo_finais = [
+                        c for c in st.session_state.banco_dados.concursos
+                        if concurso_inicio_f <= c['numero'] <= concurso_fim_f
+                    ]
+                    st.caption(f"📌 {len(concursos_alvo_finais)} concurso(s) no intervalo [{int(concurso_inicio_f)}, {int(concurso_fim_f)}].")
+
+            if st.button("🔬 RODAR RETROTESTE DA CAMADA DE FINAIS", use_container_width=True, key="retroteste_finais_btn"):
+                if not concursos_alvo_finais:
+                    st.warning("⚠️ Nenhum concurso no período selecionado.")
+                else:
+                    resultado_finais_rt = motor.retrotestar_camada_finais(
+                        concursos_alvo=concursos_alvo_finais,
+                        top_candidatos=top_candidatos_estrutura,
+                        candidatos_condicional=candidatos_condicional,
+                        intermediario_condicional=intermediario_condicional,
+                        janela_finais=janela_finais
+                    )
+                    st.session_state.retroteste_finais = resultado_finais_rt
+
+            if st.session_state.retroteste_finais:
+                rf = st.session_state.retroteste_finais
+
+                if rf['linhas']:
+                    st.markdown("##### 📋 Resultado por concurso")
+                    st.dataframe(pd.DataFrame(rf['linhas']), use_container_width=True, hide_index=True)
+
+                col_rf1, col_rf2 = st.columns(2)
+                with col_rf1:
+                    st.markdown("**🎯 Com finais prioritários**")
+                    st.metric("Média de acertos", f"{rf['com_finais']['media']:.2f}")
+                    st.metric("Soma de acertos", rf['com_finais']['soma_acertos'])
+                    st.caption(f"{rf['com_finais']['total_jogos']} jogo(s)")
+                with col_rf2:
+                    st.markdown("**🧬 Sem finais (Matriz 4.0 pura)**")
+                    st.metric("Média de acertos", f"{rf['sem_finais']['media']:.2f}")
+                    st.metric("Soma de acertos", rf['sem_finais']['soma_acertos'])
+                    st.caption(f"{rf['sem_finais']['total_jogos']} jogo(s)")
+
+                if rf['com_finais']['media'] > rf['sem_finais']['media']:
+                    st.success("✅ Neste retroteste, a concentração em finais prioritários melhorou a média de acertos.")
+                elif rf['com_finais']['media'] < rf['sem_finais']['media']:
+                    st.warning("⚠️ Neste retroteste, a concentração em finais prioritários NÃO melhorou a média — pode ser ruído da amostra pequena, vale rodar em mais concursos.")
+                else:
+                    st.info("ℹ️ Empate técnico entre 'com finais' e 'sem finais' neste retroteste.")
+
+                dist_com = rf['com_finais']['distribuicao_melhores']
+                dist_sem = rf['sem_finais']['distribuicao_melhores']
+                if dist_com or dist_sem:
+                    todas_faixas_f = sorted(set(list(dist_com.keys()) + list(dist_sem.keys())))
+                    fig_finais = go.Figure()
+                    fig_finais.add_trace(go.Bar(x=todas_faixas_f, y=[dist_com.get(f, 0) for f in todas_faixas_f], name='Com finais'))
+                    fig_finais.add_trace(go.Bar(x=todas_faixas_f, y=[dist_sem.get(f, 0) for f in todas_faixas_f], name='Sem finais'))
+                    fig_finais.update_layout(
+                        title='Melhor resultado por concurso — com finais vs. sem finais',
+                        xaxis_title='Acertos (melhor jogo do concurso)',
+                        yaxis_title='Quantidade de concursos',
+                        barmode='group'
+                    )
+                    st.plotly_chart(fig_finais, use_container_width=True)
+
+                st.download_button(
+                    label="📥 Exportar Retroteste da Camada de Finais (CSV)",
+                    data=pd.DataFrame(rf['linhas']).to_csv(index=False),
+                    file_name=f"retroteste_finais_mega_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_finais_rt_csv"
+                )
 
 if __name__ == "__main__":
     main()
