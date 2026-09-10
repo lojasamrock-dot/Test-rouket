@@ -1658,6 +1658,8 @@ class MotorEstruturaSelecaoMegaV10:
     JANELA_REPETICAO = 3    # concursos seguintes p/ medir repetição individual
     JANELA_PERFIL = 60      # quantos concursos passados usar p/ achar o perfil típico
 
+    LINHAS_DEF = [(1, 10), (11, 20), (21, 30), (31, 40), (41, 50), (51, 60)]  # L1..L6
+
     PESOS_SCORE = {
         'comportamento_10': 0.30,
         'comportamento_5': 0.25,
@@ -2469,6 +2471,257 @@ class MotorEstruturaSelecaoMegaV10:
             'sem_finais': _resumo(acumulado_sem['jogos'], acumulado_sem['melhores'])
         }
 
+    # ---------------- DETECTOR LINHA + FINAL ----------------
+    # REGIME -> LINHA -> FINAL -> DEZENA -> REPETIÇÃO CONTROLADA
+    # Camada 1: frequência de cada linha (faixa de 10 dezenas: L1=01-10 ... L6=51-60)
+    # Camada 2: tendência recente (mais peso aos últimos concursos)
+    # Camada 3: força de cada final (0-9)
+    # Camada 4: cruzamento linha+final, combinado com o score individual (Camada 2 já existente)
+    # E, por fim, controle de repetição em relação ao último concurso sorteado.
+
+    def _linha_de(self, numero):
+        for idx, (ini, fim) in enumerate(self.LINHAS_DEF, start=1):
+            if ini <= numero <= fim:
+                return idx
+        return None
+
+    def analisar_linhas(self, janela=10, janela_recente=3):
+        """Frequência de cada linha (L1-L6), separando os concursos mais
+        recentes (`janela_recente`) do restante da janela, para detectar
+        tendências (ex.: uma linha 'acelerando')."""
+        janela_recente = min(janela_recente, janela)
+        recente_concursos = self.historico[:janela_recente]
+        primeiros_concursos = self.historico[janela_recente:janela]
+
+        contagem_recente = Counter()
+        contagem_primeiros = Counter()
+        for dezenas in recente_concursos:
+            for num in dezenas:
+                contagem_recente[self._linha_de(num)] += 1
+        for dezenas in primeiros_concursos:
+            for num in dezenas:
+                contagem_primeiros[self._linha_de(num)] += 1
+
+        resultado = []
+        for linha in range(1, 7):
+            occ_primeiros = contagem_primeiros.get(linha, 0)
+            occ_recente = contagem_recente.get(linha, 0)
+            occ_total = occ_primeiros + occ_recente
+            resultado.append({
+                'linha': linha,
+                'faixa': f"{self.LINHAS_DEF[linha - 1][0]:02d}-{self.LINHAS_DEF[linha - 1][1]:02d}",
+                'ocorrencias_total': occ_total,
+                'media_total': round(occ_total / janela, 2) if janela else 0,
+                'ocorrencias_primeiros': occ_primeiros,
+                'ocorrencias_recentes': occ_recente,
+                'media_recente': round(occ_recente / janela_recente, 2) if janela_recente else 0
+            })
+        return resultado
+
+    def analisar_matriz_linha_final(self, janela=10):
+        """Matriz de contagem cruzando linha (L1-L6) x final (0-9) na janela informada."""
+        janela_concursos = self.historico[:janela]
+        matriz = defaultdict(lambda: defaultdict(int))
+        for dezenas in janela_concursos:
+            for num in dezenas:
+                matriz[self._linha_de(num)][self._final_de(num)] += 1
+        return matriz
+
+    def calcular_score_linha_final(self, janela=10, janela_recente=3,
+                                    peso_linha=0.30, peso_final=0.25,
+                                    peso_cruzamento=0.20, peso_individual=0.25):
+        """Combina as 4 camadas do detector em um score por dezena (0-100)."""
+        linhas_info = self.analisar_linhas(janela=janela, janela_recente=janela_recente)
+        max_total = max((l['ocorrencias_total'] for l in linhas_info), default=1) or 1
+        max_recente = max((l['ocorrencias_recentes'] for l in linhas_info), default=1) or 1
+
+        linha_trend = {}
+        for l in linhas_info:
+            norm_total = l['ocorrencias_total'] / max_total
+            norm_recente = l['ocorrencias_recentes'] / max_recente
+            linha_trend[l['linha']] = 0.4 * norm_total + 0.6 * norm_recente  # recência pesa mais
+
+        finais_info = self.analisar_finais(janela=janela)
+        max_final = max((f['ocorrencias'] for f in finais_info), default=1) or 1
+        final_score = {f['final']: f['ocorrencias'] / max_final for f in finais_info}
+
+        matriz = self.analisar_matriz_linha_final(janela=janela)
+        max_cell = 1
+        for linha_dict in matriz.values():
+            if linha_dict:
+                max_cell = max(max_cell, max(linha_dict.values()))
+
+        scores = {}
+        detalhes = {}
+        for num in range(1, 61):
+            linha = self._linha_de(num)
+            final = self._final_de(num)
+            linha_norm = linha_trend.get(linha, 0)
+            final_norm = final_score.get(final, 0)
+            cell_norm = matriz.get(linha, {}).get(final, 0) / max_cell
+            individual_norm = self.score_selecao.get(num, 0) / 100
+
+            score = (
+                peso_linha * linha_norm +
+                peso_final * final_norm +
+                peso_cruzamento * cell_norm +
+                peso_individual * individual_norm
+            )
+            scores[num] = round(score * 100, 2)
+            detalhes[num] = {
+                'linha': linha,
+                'final': final,
+                'linha_score': round(linha_norm * 100, 1),
+                'final_score': round(final_norm * 100, 1),
+                'cruzamento_score': round(cell_norm * 100, 1),
+                'individual_score': round(individual_norm * 100, 1)
+            }
+
+        self.score_linha_final = scores
+        self.detalhes_linha_final = detalhes
+        self.linha_trend = linha_trend
+        return scores
+
+    def gerar_jogos_linha_final(self, qtd_jogos=3, janela=10, janela_recente=3,
+                                 top_candidatos=18, max_repetidas_anterior=2,
+                                 max_por_linha=3, max_tentativas=5000):
+        """
+        Pipeline REGIME -> LINHA -> FINAL -> DEZENA -> REPETIÇÃO CONTROLADA:
+        pontua as 60 dezenas pelo Detector Linha+Final, monta o pool de
+        candidatos (o "núcleo" do concurso) e gera jogos respeitando um
+        teto de dezenas por linha e o número máximo de repetições em
+        relação ao último concurso sorteado.
+        """
+        self.calcular_score_linha_final(janela=janela, janela_recente=janela_recente)
+        scores = self.score_linha_final
+
+        pool = sorted(range(1, 61), key=lambda n: scores.get(n, 0), reverse=True)[:top_candidatos]
+        ultimo_concurso = set(self.historico[0]) if self.historico else set()
+
+        jogos = []
+        jogos_set = set()
+        rng = random.Random()
+        tentativas = 0
+
+        while len(jogos) < qtd_jogos and tentativas < max_tentativas:
+            tentativas += 1
+            candidatos_ordenados = sorted(pool, key=lambda n: scores.get(n, 0) + rng.random() * 8, reverse=True)
+            corte = candidatos_ordenados[:min(len(candidatos_ordenados), max(top_candidatos // 2, 6))]
+            if len(corte) < 6:
+                corte = candidatos_ordenados
+
+            jogo = sorted(rng.sample(corte, 6)) if len(corte) >= 6 else None
+            if not jogo:
+                continue
+
+            contagem_linha = Counter(self._linha_de(n) for n in jogo)
+            if max(contagem_linha.values()) > max_por_linha:
+                continue
+
+            repetidas = len(set(jogo) & ultimo_concurso)
+            if repetidas > max_repetidas_anterior:
+                continue
+
+            if not self._filtro_leve(jogo):
+                continue
+
+            chave = tuple(jogo)
+            if chave in jogos_set:
+                continue
+
+            jogos_set.add(chave)
+            jogos.append(jogo)
+
+        return jogos
+
+    def retrotestar_linha_final(self, concursos_alvo, janela=10, janela_recente=3,
+                                 top_candidatos=18, max_repetidas_anterior=2, max_por_linha=3,
+                                 candidatos_condicional=8, intermediario_condicional=4):
+        """
+        Compara, ponto-no-tempo, o Detector Linha+Final contra a Matriz 4.0
+        pura (sem essa camada), nos mesmos concursos — mesma regra, sem
+        adaptação posterior.
+        """
+        historico_completo = self.banco.concursos
+        indice_por_numero = {c['numero']: i for i, c in enumerate(historico_completo)}
+
+        linhas = []
+        acumulado_com = {'jogos': [], 'melhores': []}
+        acumulado_sem = {'jogos': [], 'melhores': []}
+
+        concursos_ordenados = sorted(concursos_alvo, key=lambda c: c['numero'])
+        pulados = 0
+        progress_bar = st.progress(0, text="Retrotestando o Detector Linha + Final...")
+
+        for idx_teste, concurso in enumerate(concursos_ordenados):
+            numero = concurso['numero']
+            i = indice_por_numero.get(numero)
+            progresso = (idx_teste + 1) / max(len(concursos_ordenados), 1)
+
+            if i is None:
+                pulados += 1
+                progress_bar.progress(progresso)
+                continue
+
+            concursos_anteriores = historico_completo[i + 1:]
+            if len(concursos_anteriores) < max(self.JANELA_PERFIL, 40):
+                pulados += 1
+                progress_bar.progress(progresso)
+                continue
+
+            dezenas_reais = set(concurso['dezenas'])
+            banco_pt = _BancoTemporalMegaV10(concursos_anteriores)
+            estatisticas_pt = EstatisticasMegaAvancadas(banco_pt)
+            motor_pt = MotorEstruturaSelecaoMegaV10(banco_pt, estatisticas_pt)
+
+            jogos_linha_final = motor_pt.gerar_jogos_linha_final(
+                qtd_jogos=3, janela=janela, janela_recente=janela_recente,
+                top_candidatos=top_candidatos, max_repetidas_anterior=max_repetidas_anterior,
+                max_por_linha=max_por_linha, max_tentativas=2000
+            )
+            acertos_com = [len(set(j) & dezenas_reais) for j in jogos_linha_final] or [0]
+
+            jogos_sem = motor_pt.gerar_jogos_condicional(
+                qtd_jogos=3, candidatos_por_categoria=candidatos_condicional,
+                intermediario_por_categoria=intermediario_condicional, max_tentativas=2000
+            )
+            acertos_sem = [len(set(j) & dezenas_reais) for j in jogos_sem] or [0]
+
+            acumulado_com['jogos'].extend(acertos_com)
+            acumulado_com['melhores'].append(max(acertos_com))
+            acumulado_sem['jogos'].extend(acertos_sem)
+            acumulado_sem['melhores'].append(max(acertos_sem))
+
+            linhas.append({
+                'Concurso': numero,
+                'Linha+Final - jogos': ', '.join(str(a) for a in acertos_com),
+                'Linha+Final - melhor': max(acertos_com),
+                'Matriz 4.0 pura - jogos': ', '.join(str(a) for a in acertos_sem),
+                'Matriz 4.0 pura - melhor': max(acertos_sem)
+            })
+
+            progress_bar.progress(progresso)
+
+        progress_bar.empty()
+        if pulados:
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) (não encontrado ou histórico anterior insuficiente).")
+
+        def _resumo(lista, melhores):
+            if not lista:
+                return {'total_jogos': 0, 'soma_acertos': 0, 'media': 0.0, 'distribuicao_melhores': {}}
+            return {
+                'total_jogos': len(lista),
+                'soma_acertos': int(sum(lista)),
+                'media': float(np.mean(lista)),
+                'distribuicao_melhores': dict(Counter(melhores))
+            }
+
+        return {
+            'linhas': linhas,
+            'linha_final': _resumo(acumulado_com['jogos'], acumulado_com['melhores']),
+            'matriz4_pura': _resumo(acumulado_sem['jogos'], acumulado_sem['melhores'])
+        }
+
 
 def formatar_perfil_mega(perfil):
     """Formata um dicionário de perfil estrutural em texto legível (ex.: '2 zerados + 1 atrasado + 2 médios + 1 quente')."""
@@ -2583,6 +2836,10 @@ def main():
         st.session_state.jogos_finais = []
     if "retroteste_finais" not in st.session_state:
         st.session_state.retroteste_finais = None
+    if "jogos_linha_final" not in st.session_state:
+        st.session_state.jogos_linha_final = []
+    if "retroteste_linha_final" not in st.session_state:
+        st.session_state.retroteste_linha_final = None
 
     # Barra Lateral
     with st.sidebar:
@@ -4321,6 +4578,262 @@ def main():
                     mime="text/csv",
                     use_container_width=True,
                     key="download_finais_rt_csv"
+                )
+
+            st.markdown("---")
+
+            # ---------- DETECTOR LINHA + FINAL ----------
+            st.markdown("#### 9️⃣ Detector Linha + Final")
+            st.caption(
+                "REGIME → LINHA → FINAL → DEZENA → REPETIÇÃO CONTROLADA. Mede a força e a tendência "
+                "recente de cada linha (L1=01-10 … L6=51-60), cruza com a força dos finais e com o "
+                "score individual (Camada 2), e por fim aplica um teto de repetições em relação ao "
+                "último concurso sorteado."
+            )
+
+            col_lf1, col_lf2 = st.columns(2)
+            with col_lf1:
+                janela_linhas = st.slider("Janela de análise (concursos)", 5, 30, 10, key="janela_linhas")
+            with col_lf2:
+                janela_recente_linhas = st.slider("Concursos mais recentes (tendência)", 2, 10, 3, key="janela_recente_linhas")
+
+            linhas_info = motor.analisar_linhas(janela=janela_linhas, janela_recente=janela_recente_linhas)
+
+            st.markdown("##### 📊 Distribuição das linhas")
+            df_linhas = pd.DataFrame([
+                {
+                    'Linha': f"L{l['linha']}",
+                    'Faixa': l['faixa'],
+                    f'Total ({janela_linhas} concursos)': l['ocorrencias_total'],
+                    'Média/concurso': l['media_total'],
+                    f'Primeiros {janela_linhas - janela_recente_linhas}': l['ocorrencias_primeiros'],
+                    f'Últimos {janela_recente_linhas}': l['ocorrencias_recentes'],
+                    'Média recente': l['media_recente']
+                }
+                for l in linhas_info
+            ])
+            st.dataframe(df_linhas, use_container_width=True, hide_index=True)
+
+            linha_mais_forte = max(linhas_info, key=lambda l: motor.linha_trend.get(l['linha'], 0)) if hasattr(motor, 'linha_trend') else None
+
+            with st.expander("🧮 Matriz Linha × Final"):
+                matriz_lf = motor.analisar_matriz_linha_final(janela=janela_linhas)
+                linhas_matriz = []
+                for linha in range(1, 7):
+                    row = {'Linha': f"L{linha} ({motor.LINHAS_DEF[linha-1][0]:02d}-{motor.LINHAS_DEF[linha-1][1]:02d})"}
+                    for final in range(10):
+                        row[f"Final {final}"] = matriz_lf.get(linha, {}).get(final, 0)
+                    linhas_matriz.append(row)
+                st.dataframe(pd.DataFrame(linhas_matriz), use_container_width=True, hide_index=True)
+
+            col_lf3, col_lf4, col_lf5 = st.columns(3)
+            with col_lf3:
+                qtd_jogos_lf = st.slider("Quantidade de jogos", 1, 20, 3, key="qtd_jogos_lf")
+            with col_lf4:
+                top_candidatos_lf = st.slider("Tamanho do núcleo candidato", 10, 30, 18, key="top_candidatos_lf")
+            with col_lf5:
+                max_repetidas_lf = st.slider("Máx. repetidas do concurso anterior", 0, 4, 2, key="max_repetidas_lf")
+
+            max_por_linha_lf = st.slider("Máx. dezenas da mesma linha por jogo", 2, 6, 3, key="max_por_linha_lf")
+
+            if st.button("📐 GERAR JOGOS (DETECTOR LINHA + FINAL)", use_container_width=True, type="primary", key="gerar_lf_btn"):
+                with st.spinner("Cruzando linha, final e score individual..."):
+                    jogos_lf = motor.gerar_jogos_linha_final(
+                        qtd_jogos=qtd_jogos_lf,
+                        janela=janela_linhas,
+                        janela_recente=janela_recente_linhas,
+                        top_candidatos=top_candidatos_lf,
+                        max_repetidas_anterior=max_repetidas_lf,
+                        max_por_linha=max_por_linha_lf
+                    )
+                    st.session_state.jogos_linha_final = jogos_lf
+                    if jogos_lf:
+                        st.success(f"✅ {len(jogos_lf)} jogo(s) gerado(s)!")
+                    else:
+                        st.warning("⚠️ Não foi possível gerar jogos — tente aumentar o núcleo candidato ou o teto de repetições.")
+
+            if linha_mais_forte:
+                st.caption(f"📈 Linha em maior tendência de alta na janela atual: L{linha_mais_forte['linha']} ({linha_mais_forte['faixa']}).")
+
+            with st.expander("📋 Ver score Linha+Final por dezena"):
+                if hasattr(motor, 'detalhes_linha_final'):
+                    linhas_score_lf = []
+                    for num in range(1, 61):
+                        d = motor.detalhes_linha_final.get(num, {})
+                        linhas_score_lf.append({
+                            'Dezena': f"{num:02d}",
+                            'Linha': f"L{d.get('linha', '-')}",
+                            'Final': d.get('final', '-'),
+                            'Score': motor.score_linha_final.get(num, 0),
+                            'Score Linha': d.get('linha_score', 0),
+                            'Score Final': d.get('final_score', 0),
+                            'Score Cruzamento': d.get('cruzamento_score', 0),
+                            'Score Individual': d.get('individual_score', 0)
+                        })
+                    df_score_lf = pd.DataFrame(linhas_score_lf).sort_values('Score', ascending=False)
+                    st.dataframe(df_score_lf, use_container_width=True, hide_index=True, height=300)
+
+            if st.session_state.jogos_linha_final:
+                jogos_lf = st.session_state.jogos_linha_final
+                ultimo_concurso_lf = set(motor.historico[0]) if motor.historico else set()
+                st.markdown(f"##### 📋 Jogos gerados — Detector Linha + Final ({len(jogos_lf)})")
+                for i, jogo in enumerate(jogos_lf):
+                    pares = contar_pares_mega(jogo)
+                    soma = sum(jogo)
+                    linhas_jogo = Counter(motor._linha_de(n) for n in jogo)
+                    resumo_linhas = ", ".join(f"L{l}×{q}" for l, q in sorted(linhas_jogo.items()))
+                    repetidas_jogo = len(set(jogo) & ultimo_concurso_lf)
+                    st.markdown(f"""
+                    <div class='card' style='border-left: 5px solid #2ecc71;'>
+                        📐 <strong>Jogo {i+1}</strong><br>
+                        {formatar_jogo_html_mega(jogo)}<br>
+                        <small style='color:#aaa;'>⚖️ {pares}p/{6-pares}i | ➕ {soma} | 📊 {resumo_linhas} | 🔁 {repetidas_jogo} repetida(s) do último concurso</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                col_lg1, col_lg2, col_lg3 = st.columns(3)
+                with col_lg1:
+                    if st.button("💾 Salvar Jogos", key="salvar_lf_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_mega_elite(jogos_lf, {
+                            'metodo': 'detector_linha_final',
+                            'janela': janela_linhas,
+                            'janela_recente': janela_recente_linhas,
+                            'qtd': len(jogos_lf),
+                            'versao': 'V10'
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogos salvos! ID: {jogo_id}")
+                with col_lg2:
+                    df_export_lf = pd.DataFrame({
+                        'Jogo': range(1, len(jogos_lf) + 1),
+                        'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_lf],
+                        'Pares': [contar_pares_mega(j) for j in jogos_lf],
+                        'Soma': [sum(j) for j in jogos_lf]
+                    })
+                    st.download_button(
+                        label="📥 Exportar CSV",
+                        data=df_export_lf.to_csv(index=False),
+                        file_name=f"mega_linha_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_lf_csv"
+                    )
+                with col_lg3:
+                    txt_lf = "MEGA-SENA - DETECTOR LINHA + FINAL\n"
+                    txt_lf += "=" * 50 + "\n"
+                    for i, jogo in enumerate(jogos_lf):
+                        txt_lf += f"Jogo {i+1:2d}: {', '.join(f'{d:02d}' for d in jogo)}\n"
+                    st.download_button(
+                        label="📝 Exportar TXT",
+                        data=txt_lf,
+                        file_name=f"mega_linha_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                        key="download_lf_txt"
+                    )
+
+            st.markdown("---")
+
+            # ---------- RETROTESTE DO DETECTOR LINHA + FINAL ----------
+            st.markdown("#### 🔟 Retroteste: Linha + Final ajuda?")
+            st.caption("Compara o Detector Linha+Final contra a Matriz 4.0 pura, ponto-no-tempo, sem adaptação posterior.")
+
+            modo_periodo_lf = st.radio(
+                "Período do retroteste",
+                ["Últimos N concursos", "Intervalo por número de concurso"],
+                horizontal=True,
+                key="modo_periodo_lf"
+            )
+
+            concursos_alvo_lf = []
+            if modo_periodo_lf == "Últimos N concursos":
+                total_disp_lf = len(st.session_state.banco_dados.concursos)
+                n_lf = st.slider("Quantidade de concursos mais recentes", 5, min(100, total_disp_lf), min(10, total_disp_lf), key="n_lf")
+                concursos_alvo_lf = st.session_state.banco_dados.concursos[:n_lf]
+            else:
+                numeros_disponiveis_lf = [c['numero'] for c in st.session_state.banco_dados.concursos]
+                if numeros_disponiveis_lf:
+                    col_ilf1, col_ilf2 = st.columns(2)
+                    with col_ilf1:
+                        concurso_inicio_lf = st.number_input(
+                            "Concurso inicial", min_value=min(numeros_disponiveis_lf),
+                            max_value=max(numeros_disponiveis_lf), value=min(numeros_disponiveis_lf), key="concurso_inicio_lf"
+                        )
+                    with col_ilf2:
+                        concurso_fim_lf = st.number_input(
+                            "Concurso final", min_value=min(numeros_disponiveis_lf),
+                            max_value=max(numeros_disponiveis_lf), value=max(numeros_disponiveis_lf), key="concurso_fim_lf"
+                        )
+                    concursos_alvo_lf = [
+                        c for c in st.session_state.banco_dados.concursos
+                        if concurso_inicio_lf <= c['numero'] <= concurso_fim_lf
+                    ]
+                    st.caption(f"📌 {len(concursos_alvo_lf)} concurso(s) no intervalo [{int(concurso_inicio_lf)}, {int(concurso_fim_lf)}].")
+
+            if st.button("🔬 RODAR RETROTESTE (LINHA + FINAL)", use_container_width=True, key="retroteste_lf_btn"):
+                if not concursos_alvo_lf:
+                    st.warning("⚠️ Nenhum concurso no período selecionado.")
+                else:
+                    resultado_lf_rt = motor.retrotestar_linha_final(
+                        concursos_alvo=concursos_alvo_lf,
+                        janela=janela_linhas,
+                        janela_recente=janela_recente_linhas,
+                        top_candidatos=top_candidatos_lf,
+                        max_repetidas_anterior=max_repetidas_lf,
+                        max_por_linha=max_por_linha_lf,
+                        candidatos_condicional=candidatos_condicional,
+                        intermediario_condicional=intermediario_condicional
+                    )
+                    st.session_state.retroteste_linha_final = resultado_lf_rt
+
+            if st.session_state.retroteste_linha_final:
+                rlf = st.session_state.retroteste_linha_final
+
+                if rlf['linhas']:
+                    st.markdown("##### 📋 Resultado por concurso")
+                    st.dataframe(pd.DataFrame(rlf['linhas']), use_container_width=True, hide_index=True)
+
+                col_rlf1, col_rlf2 = st.columns(2)
+                with col_rlf1:
+                    st.markdown("**📐 Detector Linha + Final**")
+                    st.metric("Média de acertos", f"{rlf['linha_final']['media']:.2f}")
+                    st.metric("Soma de acertos", rlf['linha_final']['soma_acertos'])
+                    st.caption(f"{rlf['linha_final']['total_jogos']} jogo(s)")
+                with col_rlf2:
+                    st.markdown("**🧬 Matriz 4.0 pura**")
+                    st.metric("Média de acertos", f"{rlf['matriz4_pura']['media']:.2f}")
+                    st.metric("Soma de acertos", rlf['matriz4_pura']['soma_acertos'])
+                    st.caption(f"{rlf['matriz4_pura']['total_jogos']} jogo(s)")
+
+                if rlf['linha_final']['media'] > rlf['matriz4_pura']['media']:
+                    st.success("✅ Neste retroteste, o Detector Linha+Final superou a Matriz 4.0 pura.")
+                elif rlf['linha_final']['media'] < rlf['matriz4_pura']['media']:
+                    st.warning("⚠️ Neste retroteste, o Detector Linha+Final ainda não superou a Matriz 4.0 pura — vale testar em mais concursos antes de confiar na camada.")
+                else:
+                    st.info("ℹ️ Empate técnico entre as duas metodologias neste retroteste.")
+
+                dist_lf = rlf['linha_final']['distribuicao_melhores']
+                dist_m4 = rlf['matriz4_pura']['distribuicao_melhores']
+                if dist_lf or dist_m4:
+                    todas_faixas_lf = sorted(set(list(dist_lf.keys()) + list(dist_m4.keys())))
+                    fig_lf = go.Figure()
+                    fig_lf.add_trace(go.Bar(x=todas_faixas_lf, y=[dist_lf.get(f, 0) for f in todas_faixas_lf], name='Linha + Final'))
+                    fig_lf.add_trace(go.Bar(x=todas_faixas_lf, y=[dist_m4.get(f, 0) for f in todas_faixas_lf], name='Matriz 4.0 pura'))
+                    fig_lf.update_layout(
+                        title='Melhor resultado por concurso — Linha+Final vs. Matriz 4.0 pura',
+                        xaxis_title='Acertos (melhor jogo do concurso)',
+                        yaxis_title='Quantidade de concursos',
+                        barmode='group'
+                    )
+                    st.plotly_chart(fig_lf, use_container_width=True)
+
+                st.download_button(
+                    label="📥 Exportar Retroteste Linha+Final (CSV)",
+                    data=pd.DataFrame(rlf['linhas']).to_csv(index=False),
+                    file_name=f"retroteste_linha_final_mega_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_lf_rt_csv"
                 )
 
 if __name__ == "__main__":
