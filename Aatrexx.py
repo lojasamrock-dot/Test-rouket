@@ -1668,6 +1668,25 @@ class MotorEstruturaSelecaoMegaV10:
         'compatibilidade': 0.10
     }
 
+    # Portfólio Universo 01-60: a janela recente é usada como SENSOR de
+    # atividade (calcula as métricas), nunca como FILTRO que descarta
+    # dezenas. Cada jogo do portfólio usa um perfil de pesos diferente para
+    # cobrir uma região diferente do universo completo.
+    PERFIS_PORTFOLIO = {
+        'equilibrio': {  # Jogo A — mistura geral, cobre todas as categorias
+            'freq10': 0.20, 'freq5': 0.15, 'atraso': 0.15, 'retorno_apos_1': 0.10,
+            'retorno_apos_2mais': 0.10, 'forca_conector': 0.15, 'freq_fora_janela': 0.15
+        },
+        'reversao': {  # Jogo B — mais peso em zeradas/atrasadas e comportamento fora da janela
+            'freq10': 0.05, 'freq5': 0.05, 'atraso': 0.30, 'retorno_apos_1': 0.05,
+            'retorno_apos_2mais': 0.25, 'forca_conector': 0.10, 'freq_fora_janela': 0.20
+        },
+        'hibrido': {  # Jogo C — continuidade + retorno + associações
+            'freq10': 0.20, 'freq5': 0.20, 'atraso': 0.10, 'retorno_apos_1': 0.20,
+            'retorno_apos_2mais': 0.10, 'forca_conector': 0.15, 'freq_fora_janela': 0.05
+        }
+    }
+
     def __init__(self, banco_dados, estatisticas):
         self.banco = banco_dados
         self.estatisticas = estatisticas
@@ -2722,6 +2741,253 @@ class MotorEstruturaSelecaoMegaV10:
             'matriz4_pura': _resumo(acumulado_sem['jogos'], acumulado_sem['melhores'])
         }
 
+    # ---------------- PORTFÓLIO UNIVERSO 01-60 ----------------
+    # Correção conceitual importante: a janela recente é apenas o SENSOR que
+    # calcula as características de cada dezena — o universo de busca continua
+    # sendo as 60 dezenas inteiras. Uma dezena zerada na janela não é
+    # descartada; ela vira "candidata de reversão" com pontuação própria.
+    # Três jogos cobrem regiões diferentes desse universo: A-equilíbrio,
+    # B-reversão e C-híbrido.
+
+    def calcular_metricas_universo(self, janela=10, janela_media=5, janela_retorno_max=5, top_parceiras=5):
+        """Calcula as 10 métricas por dezena sobre o universo completo (não
+        restrito à janela): freq10, freq5, atraso, última ocorrência, retorno
+        após 1, retorno após 2+, associações/força de conector, se está
+        zerada na janela e comportamento histórico fora da janela."""
+        historico = self.historico  # index 0 = mais recente
+        historico_asc = list(reversed(historico))  # mais antigo -> mais recente
+
+        ocorrencias_idx = defaultdict(list)
+        for i, dezenas in enumerate(historico_asc):
+            for num in dezenas:
+                ocorrencias_idx[num].append(i)
+
+        retorno1 = {}
+        retorno2mais = {}
+        for num in range(1, 61):
+            idxs = ocorrencias_idx.get(num, [])
+            if len(idxs) < 2:
+                retorno1[num] = 0.0
+                retorno2mais[num] = 0.0
+                continue
+            gaps = [idxs[k + 1] - idxs[k] for k in range(len(idxs) - 1)]
+            retorno1[num] = sum(1 for g in gaps if g == 1) / len(gaps)
+            retorno2mais[num] = sum(1 for g in gaps if 2 <= g <= janela_retorno_max) / len(gaps)
+
+        janela_associacao = min(len(historico), 100)
+        pares_geral = Counter()
+        for dezenas in historico[:janela_associacao]:
+            dz = sorted(dezenas)
+            for a in range(len(dz)):
+                for b in range(a + 1, len(dz)):
+                    pares_geral[(dz[a], dz[b])] += 1
+
+        parceiras = defaultdict(list)
+        for (a, b), qtd in pares_geral.items():
+            parceiras[a].append((b, qtd))
+            parceiras[b].append((a, qtd))
+        for num in parceiras:
+            parceiras[num].sort(key=lambda x: x[1], reverse=True)
+
+        forca_bruta = {}
+        max_forca = 1
+        for num in range(1, 61):
+            top = parceiras.get(num, [])[:top_parceiras]
+            forca = sum(qtd for _, qtd in top)
+            forca_bruta[num] = forca
+            max_forca = max(max_forca, forca)
+
+        resto_historico = historico[janela:]
+        contagem_resto = Counter()
+        for dezenas in resto_historico:
+            contagem_resto.update(dezenas)
+        total_resto = len(resto_historico) or 1
+
+        metricas = {}
+        for num in range(1, 61):
+            info_atual = self.classificacao_atual.get(num, {})
+            freq10 = info_atual.get('freq10', 0)
+            freq5 = info_atual.get('freq5', 0)
+            atraso = info_atual.get('atraso', 0)
+            ultima_ocorrencia = (
+                self.banco.concursos[atraso]['numero']
+                if atraso < len(self.banco.concursos) else None
+            )
+            metricas[num] = {
+                'freq10': freq10,
+                'freq5': freq5,
+                'atraso': atraso,
+                'ultima_ocorrencia': ultima_ocorrencia,
+                'retorno_apos_1': round(retorno1.get(num, 0) * 100, 1),
+                'retorno_apos_2mais': round(retorno2mais.get(num, 0) * 100, 1),
+                'forca_conector': round((forca_bruta.get(num, 0) / max_forca) * 100, 1) if max_forca else 0,
+                'parceiras': [p for p, _ in parceiras.get(num, [])[:top_parceiras]],
+                'zerada_na_janela': freq10 == 0,
+                'freq_fora_janela': round((contagem_resto.get(num, 0) / total_resto) * 100, 1)
+            }
+
+        self.metricas_universo = metricas
+        return metricas
+
+    def calcular_score_portfolio(self, janela=10, janela_media=5):
+        """Pontua as 60 dezenas com os 3 perfis de peso (equilíbrio, reversão,
+        híbrido) definidos em PERFIS_PORTFOLIO."""
+        self.calcular_metricas_universo(janela=janela, janela_media=janela_media)
+        metricas = self.metricas_universo
+        max_atraso = max((m['atraso'] for m in metricas.values()), default=1) or 1
+
+        scores = {perfil: {} for perfil in self.PERFIS_PORTFOLIO}
+        for num in range(1, 61):
+            m = metricas[num]
+            componentes = {
+                'freq10': m['freq10'] / self.JANELA_CURTA,
+                'freq5': m['freq5'] / self.JANELA_MEDIA,
+                'atraso': m['atraso'] / max_atraso,
+                'retorno_apos_1': m['retorno_apos_1'] / 100,
+                'retorno_apos_2mais': m['retorno_apos_2mais'] / 100,
+                'forca_conector': m['forca_conector'] / 100,
+                'freq_fora_janela': m['freq_fora_janela'] / 100
+            }
+            for perfil, pesos in self.PERFIS_PORTFOLIO.items():
+                score = sum(componentes[k] * pesos.get(k, 0) for k in componentes)
+                scores[perfil][num] = round(score * 100, 2)
+
+        self.scores_portfolio = scores
+        return scores
+
+    def gerar_portfolio_universo(self, janela=10, janela_media=5, tamanho_corte=18,
+                                  max_sobreposicao=3, max_tentativas=5000):
+        """
+        Gera os 3 jogos do portfólio (A-equilíbrio, B-reversão, C-híbrido)
+        sobre o universo completo 01-60 — nenhuma dezena é descartada por
+        estar zerada na janela. Cada jogo usa seu próprio perfil de pesos e
+        um teto de sobreposição evita que os 3 jogos sejam praticamente o
+        mesmo grupo de dezenas.
+        """
+        self.calcular_score_portfolio(janela=janela, janela_media=janela_media)
+        scores = self.scores_portfolio
+        rng = random.Random()
+
+        jogos = {}
+        for nome_perfil in ['equilibrio', 'reversao', 'hibrido']:
+            score_perfil = scores[nome_perfil]
+            jogo_escolhido = None
+            tentativas = 0
+
+            while tentativas < max_tentativas:
+                tentativas += 1
+                candidatos_ordenados = sorted(
+                    range(1, 61),
+                    key=lambda n: score_perfil.get(n, 0) + rng.random() * 6,
+                    reverse=True
+                )
+                corte = candidatos_ordenados[:tamanho_corte]
+                if len(corte) < 6:
+                    continue
+                jogo = sorted(rng.sample(corte, 6))
+
+                sobreposicao_max = max(
+                    (len(set(jogo) & set(outro)) for outro in jogos.values()),
+                    default=0
+                )
+                if sobreposicao_max > max_sobreposicao:
+                    continue
+
+                if not self._filtro_leve(jogo):
+                    continue
+
+                jogo_escolhido = jogo
+                break
+
+            if jogo_escolhido is None:
+                jogo_escolhido = sorted(
+                    n for n, _ in sorted(score_perfil.items(), key=lambda x: x[1], reverse=True)[:6]
+                )
+            jogos[nome_perfil] = jogo_escolhido
+
+        return jogos
+
+    def retrotestar_portfolio_universo(self, concursos_alvo, janela=10, janela_media=5,
+                                        candidatos_condicional=8, intermediario_condicional=4):
+        """Compara, ponto-no-tempo, o Portfólio Universo 01-60 (3 jogos A/B/C)
+        contra a Matriz 4.0 pura, sem adaptação posterior."""
+        historico_completo = self.banco.concursos
+        indice_por_numero = {c['numero']: i for i, c in enumerate(historico_completo)}
+
+        linhas = []
+        acumulado_portfolio = {'jogos': [], 'melhores': []}
+        acumulado_sem = {'jogos': [], 'melhores': []}
+
+        concursos_ordenados = sorted(concursos_alvo, key=lambda c: c['numero'])
+        pulados = 0
+        progress_bar = st.progress(0, text="Retrotestando o Portfólio Universo 01-60...")
+
+        for idx_teste, concurso in enumerate(concursos_ordenados):
+            numero = concurso['numero']
+            i = indice_por_numero.get(numero)
+            progresso = (idx_teste + 1) / max(len(concursos_ordenados), 1)
+
+            if i is None:
+                pulados += 1
+                progress_bar.progress(progresso)
+                continue
+
+            concursos_anteriores = historico_completo[i + 1:]
+            if len(concursos_anteriores) < max(self.JANELA_PERFIL, 40):
+                pulados += 1
+                progress_bar.progress(progresso)
+                continue
+
+            dezenas_reais = set(concurso['dezenas'])
+            banco_pt = _BancoTemporalMegaV10(concursos_anteriores)
+            estatisticas_pt = EstatisticasMegaAvancadas(banco_pt)
+            motor_pt = MotorEstruturaSelecaoMegaV10(banco_pt, estatisticas_pt)
+
+            portfolio = motor_pt.gerar_portfolio_universo(janela=janela, janela_media=janela_media)
+            jogos_portfolio = [j for j in portfolio.values() if j]
+            acertos_portfolio = [len(set(j) & dezenas_reais) for j in jogos_portfolio] or [0]
+
+            jogos_sem = motor_pt.gerar_jogos_condicional(
+                qtd_jogos=3, candidatos_por_categoria=candidatos_condicional,
+                intermediario_por_categoria=intermediario_condicional, max_tentativas=2000
+            )
+            acertos_sem = [len(set(j) & dezenas_reais) for j in jogos_sem] or [0]
+
+            acumulado_portfolio['jogos'].extend(acertos_portfolio)
+            acumulado_portfolio['melhores'].append(max(acertos_portfolio))
+            acumulado_sem['jogos'].extend(acertos_sem)
+            acumulado_sem['melhores'].append(max(acertos_sem))
+
+            linhas.append({
+                'Concurso': numero,
+                'Portfólio A/B/C - jogos': ', '.join(str(a) for a in acertos_portfolio),
+                'Portfólio - melhor': max(acertos_portfolio),
+                'Matriz 4.0 pura - jogos': ', '.join(str(a) for a in acertos_sem),
+                'Matriz 4.0 pura - melhor': max(acertos_sem)
+            })
+
+            progress_bar.progress(progresso)
+
+        progress_bar.empty()
+        if pulados:
+            st.caption(f"ℹ️ {pulados} concurso(s) pulado(s) (não encontrado ou histórico anterior insuficiente).")
+
+        def _resumo(lista, melhores):
+            if not lista:
+                return {'total_jogos': 0, 'soma_acertos': 0, 'media': 0.0, 'distribuicao_melhores': {}}
+            return {
+                'total_jogos': len(lista),
+                'soma_acertos': int(sum(lista)),
+                'media': float(np.mean(lista)),
+                'distribuicao_melhores': dict(Counter(melhores))
+            }
+
+        return {
+            'linhas': linhas,
+            'portfolio': _resumo(acumulado_portfolio['jogos'], acumulado_portfolio['melhores']),
+            'matriz4_pura': _resumo(acumulado_sem['jogos'], acumulado_sem['melhores'])
+        }
+
 
 def formatar_perfil_mega(perfil):
     """Formata um dicionário de perfil estrutural em texto legível (ex.: '2 zerados + 1 atrasado + 2 médios + 1 quente')."""
@@ -2840,6 +3106,10 @@ def main():
         st.session_state.jogos_linha_final = []
     if "retroteste_linha_final" not in st.session_state:
         st.session_state.retroteste_linha_final = None
+    if "portfolio_universo" not in st.session_state:
+        st.session_state.portfolio_universo = None
+    if "retroteste_portfolio" not in st.session_state:
+        st.session_state.retroteste_portfolio = None
 
     # Barra Lateral
     with st.sidebar:
@@ -4834,6 +5104,232 @@ def main():
                     mime="text/csv",
                     use_container_width=True,
                     key="download_lf_rt_csv"
+                )
+
+            st.markdown("---")
+
+            # ---------- PORTFÓLIO UNIVERSO 01-60 ----------
+            st.markdown("#### 1️⃣1️⃣ Portfólio Universo 01-60 (A / B / C)")
+            st.markdown("""
+            <div class='highlight'>
+                ⚠️ <strong>Correção de modelo:</strong> a janela recente é só o <em>sensor</em> que calcula as
+                características de cada dezena — o universo de busca continua sendo as 60 dezenas inteiras.
+                Uma dezena zerada na janela não é descartada; ela vira <strong>candidata de reversão</strong>
+                com pontuação própria.
+            </div>
+            """, unsafe_allow_html=True)
+            st.caption(
+                "Jogo A (equilíbrio): mistura geral cobrindo todas as categorias. "
+                "Jogo B (reversão): prioriza zeradas/atrasadas e comportamento fora da janela. "
+                "Jogo C (híbrido): prioriza continuidade, retorno e associações. Os 3 jogos cobrem "
+                "regiões diferentes do universo, com um teto de sobreposição entre eles."
+            )
+
+            col_pu1, col_pu2, col_pu3 = st.columns(3)
+            with col_pu1:
+                janela_portfolio = st.slider("Janela sensor (concursos)", 5, 30, 10, key="janela_portfolio")
+            with col_pu2:
+                tamanho_corte_portfolio = st.slider("Tamanho do corte de candidatos por jogo", 10, 30, 18, key="tamanho_corte_portfolio")
+            with col_pu3:
+                max_sobreposicao_portfolio = st.slider("Máx. dezenas repetidas entre os 3 jogos", 0, 5, 3, key="max_sobreposicao_portfolio")
+
+            if st.button("🌐 GERAR PORTFÓLIO (A/B/C — UNIVERSO 01-60)", use_container_width=True, type="primary", key="gerar_portfolio_btn"):
+                with st.spinner("Pontuando as 60 dezenas nos 3 perfis (equilíbrio, reversão, híbrido)..."):
+                    portfolio = motor.gerar_portfolio_universo(
+                        janela=janela_portfolio,
+                        tamanho_corte=tamanho_corte_portfolio,
+                        max_sobreposicao=max_sobreposicao_portfolio
+                    )
+                    st.session_state.portfolio_universo = portfolio
+                    st.success("✅ Portfólio gerado!")
+
+            with st.expander("📋 Ver as 10 métricas por dezena (universo completo)"):
+                if hasattr(motor, 'metricas_universo'):
+                    linhas_universo = []
+                    for num in range(1, 61):
+                        m = motor.metricas_universo.get(num, {})
+                        linhas_universo.append({
+                            'Dezena': f"{num:02d}",
+                            'Freq10': m.get('freq10', 0),
+                            'Freq5': m.get('freq5', 0),
+                            'Atraso': m.get('atraso', 0),
+                            'Última Ocorrência': m.get('ultima_ocorrencia', '-'),
+                            'Retorno após 1': m.get('retorno_apos_1', 0),
+                            'Retorno após 2+': m.get('retorno_apos_2mais', 0),
+                            'Força Conector': m.get('forca_conector', 0),
+                            'Zerada na Janela': '✅' if m.get('zerada_na_janela') else '—',
+                            'Freq. Fora da Janela': m.get('freq_fora_janela', 0)
+                        })
+                    df_universo = pd.DataFrame(linhas_universo)
+                    st.dataframe(df_universo, use_container_width=True, hide_index=True, height=350)
+                else:
+                    st.info("Gere o portfólio primeiro para calcular as métricas.")
+
+            if st.session_state.portfolio_universo:
+                portfolio = st.session_state.portfolio_universo
+                rotulos = {'equilibrio': ('🅰️', 'Equilíbrio geral', '#3498db'), 'reversao': ('🅱️', 'Reversão', '#e74c3c'), 'hibrido': ('🅲', 'Híbrido', '#9b59b6')}
+                st.markdown("##### 📋 Jogos do portfólio")
+                for nome_perfil in ['equilibrio', 'reversao', 'hibrido']:
+                    jogo = portfolio.get(nome_perfil)
+                    if not jogo:
+                        continue
+                    emoji, rotulo, cor = rotulos[nome_perfil]
+                    pares = contar_pares_mega(jogo)
+                    soma = sum(jogo)
+                    categorias_jogo = [motor.componentes_score.get(n, {}).get('categoria', '-') for n in jogo]
+                    resumo_cat = Counter(categorias_jogo)
+                    resumo_txt = ", ".join(f"{v}× {k}" for k, v in resumo_cat.items())
+                    zeradas_no_jogo = sum(1 for n in jogo if motor.metricas_universo.get(n, {}).get('zerada_na_janela'))
+                    st.markdown(f"""
+                    <div class='card' style='border-left: 5px solid {cor};'>
+                        {emoji} <strong>Jogo {rotulo}</strong><br>
+                        {formatar_jogo_html_mega(jogo)}<br>
+                        <small style='color:#aaa;'>⚖️ {pares}p/{6-pares}i | ➕ {soma} | 🧬 {resumo_txt} | 🔄 {zeradas_no_jogo} zerada(s) na janela</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                jogos_portfolio_lista = [j for j in portfolio.values() if j]
+                col_pp1, col_pp2, col_pp3 = st.columns(3)
+                with col_pp1:
+                    if st.button("💾 Salvar Jogos", key="salvar_portfolio_btn", use_container_width=True):
+                        arquivo, jogo_id = salvar_jogos_mega_elite(jogos_portfolio_lista, {
+                            'metodo': 'portfolio_universo_01_60',
+                            'janela_sensor': janela_portfolio,
+                            'qtd': len(jogos_portfolio_lista),
+                            'versao': 'V10'
+                        })
+                        if arquivo:
+                            st.success(f"✅ Jogos salvos! ID: {jogo_id}")
+                with col_pp2:
+                    df_export_portfolio = pd.DataFrame({
+                        'Perfil': ['Equilíbrio', 'Reversão', 'Híbrido'][:len(jogos_portfolio_lista)],
+                        'Dezenas': [', '.join(f'{d:02d}' for d in j) for j in jogos_portfolio_lista],
+                        'Pares': [contar_pares_mega(j) for j in jogos_portfolio_lista],
+                        'Soma': [sum(j) for j in jogos_portfolio_lista]
+                    })
+                    st.download_button(
+                        label="📥 Exportar CSV",
+                        data=df_export_portfolio.to_csv(index=False),
+                        file_name=f"mega_portfolio_universo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_portfolio_csv"
+                    )
+                with col_pp3:
+                    txt_portfolio = "MEGA-SENA - PORTFÓLIO UNIVERSO 01-60 (A/B/C)\n"
+                    txt_portfolio += "=" * 50 + "\n"
+                    nomes_txt = {'equilibrio': 'Jogo A (Equilíbrio)', 'reversao': 'Jogo B (Reversão)', 'hibrido': 'Jogo C (Híbrido)'}
+                    for nome_perfil in ['equilibrio', 'reversao', 'hibrido']:
+                        jogo = portfolio.get(nome_perfil)
+                        if jogo:
+                            txt_portfolio += f"{nomes_txt[nome_perfil]}: {', '.join(f'{d:02d}' for d in jogo)}\n"
+                    st.download_button(
+                        label="📝 Exportar TXT",
+                        data=txt_portfolio,
+                        file_name=f"mega_portfolio_universo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        use_container_width=True,
+                        key="download_portfolio_txt"
+                    )
+
+            st.markdown("---")
+
+            # ---------- RETROTESTE DO PORTFÓLIO UNIVERSO ----------
+            st.markdown("#### 1️⃣2️⃣ Retroteste: o Portfólio Universo 01-60 ajuda?")
+            st.caption("Compara os 3 jogos do portfólio (A/B/C) contra a Matriz 4.0 pura, ponto-no-tempo, sem adaptação posterior.")
+
+            modo_periodo_pu = st.radio(
+                "Período do retroteste",
+                ["Últimos N concursos", "Intervalo por número de concurso"],
+                horizontal=True,
+                key="modo_periodo_pu"
+            )
+
+            concursos_alvo_pu = []
+            if modo_periodo_pu == "Últimos N concursos":
+                total_disp_pu = len(st.session_state.banco_dados.concursos)
+                n_pu = st.slider("Quantidade de concursos mais recentes", 5, min(100, total_disp_pu), min(10, total_disp_pu), key="n_pu")
+                concursos_alvo_pu = st.session_state.banco_dados.concursos[:n_pu]
+            else:
+                numeros_disponiveis_pu = [c['numero'] for c in st.session_state.banco_dados.concursos]
+                if numeros_disponiveis_pu:
+                    col_ipu1, col_ipu2 = st.columns(2)
+                    with col_ipu1:
+                        concurso_inicio_pu = st.number_input(
+                            "Concurso inicial", min_value=min(numeros_disponiveis_pu),
+                            max_value=max(numeros_disponiveis_pu), value=min(numeros_disponiveis_pu), key="concurso_inicio_pu"
+                        )
+                    with col_ipu2:
+                        concurso_fim_pu = st.number_input(
+                            "Concurso final", min_value=min(numeros_disponiveis_pu),
+                            max_value=max(numeros_disponiveis_pu), value=max(numeros_disponiveis_pu), key="concurso_fim_pu"
+                        )
+                    concursos_alvo_pu = [
+                        c for c in st.session_state.banco_dados.concursos
+                        if concurso_inicio_pu <= c['numero'] <= concurso_fim_pu
+                    ]
+                    st.caption(f"📌 {len(concursos_alvo_pu)} concurso(s) no intervalo [{int(concurso_inicio_pu)}, {int(concurso_fim_pu)}].")
+
+            if st.button("🔬 RODAR RETROTESTE (PORTFÓLIO UNIVERSO)", use_container_width=True, key="retroteste_portfolio_btn"):
+                if not concursos_alvo_pu:
+                    st.warning("⚠️ Nenhum concurso no período selecionado.")
+                else:
+                    resultado_pu_rt = motor.retrotestar_portfolio_universo(
+                        concursos_alvo=concursos_alvo_pu,
+                        janela=janela_portfolio,
+                        candidatos_condicional=candidatos_condicional,
+                        intermediario_condicional=intermediario_condicional
+                    )
+                    st.session_state.retroteste_portfolio = resultado_pu_rt
+
+            if st.session_state.retroteste_portfolio:
+                rpu = st.session_state.retroteste_portfolio
+
+                if rpu['linhas']:
+                    st.markdown("##### 📋 Resultado por concurso")
+                    st.dataframe(pd.DataFrame(rpu['linhas']), use_container_width=True, hide_index=True)
+
+                col_rpu1, col_rpu2 = st.columns(2)
+                with col_rpu1:
+                    st.markdown("**🌐 Portfólio Universo (A/B/C)**")
+                    st.metric("Média de acertos", f"{rpu['portfolio']['media']:.2f}")
+                    st.metric("Soma de acertos", rpu['portfolio']['soma_acertos'])
+                    st.caption(f"{rpu['portfolio']['total_jogos']} jogo(s)")
+                with col_rpu2:
+                    st.markdown("**🧬 Matriz 4.0 pura**")
+                    st.metric("Média de acertos", f"{rpu['matriz4_pura']['media']:.2f}")
+                    st.metric("Soma de acertos", rpu['matriz4_pura']['soma_acertos'])
+                    st.caption(f"{rpu['matriz4_pura']['total_jogos']} jogo(s)")
+
+                if rpu['portfolio']['media'] > rpu['matriz4_pura']['media']:
+                    st.success("✅ Neste retroteste, o Portfólio Universo 01-60 superou a Matriz 4.0 pura.")
+                elif rpu['portfolio']['media'] < rpu['matriz4_pura']['media']:
+                    st.warning("⚠️ Neste retroteste, o Portfólio Universo ainda não superou a Matriz 4.0 pura — vale testar em mais concursos.")
+                else:
+                    st.info("ℹ️ Empate técnico entre as duas metodologias neste retroteste.")
+
+                dist_pu = rpu['portfolio']['distribuicao_melhores']
+                dist_m4pu = rpu['matriz4_pura']['distribuicao_melhores']
+                if dist_pu or dist_m4pu:
+                    todas_faixas_pu = sorted(set(list(dist_pu.keys()) + list(dist_m4pu.keys())))
+                    fig_pu = go.Figure()
+                    fig_pu.add_trace(go.Bar(x=todas_faixas_pu, y=[dist_pu.get(f, 0) for f in todas_faixas_pu], name='Portfólio A/B/C'))
+                    fig_pu.add_trace(go.Bar(x=todas_faixas_pu, y=[dist_m4pu.get(f, 0) for f in todas_faixas_pu], name='Matriz 4.0 pura'))
+                    fig_pu.update_layout(
+                        title='Melhor resultado por concurso — Portfólio Universo vs. Matriz 4.0 pura',
+                        xaxis_title='Acertos (melhor jogo do concurso)',
+                        yaxis_title='Quantidade de concursos',
+                        barmode='group'
+                    )
+                    st.plotly_chart(fig_pu, use_container_width=True)
+
+                st.download_button(
+                    label="📥 Exportar Retroteste Portfólio Universo (CSV)",
+                    data=pd.DataFrame(rpu['linhas']).to_csv(index=False),
+                    file_name=f"retroteste_portfolio_universo_mega_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_portfolio_rt_csv"
                 )
 
 if __name__ == "__main__":
